@@ -41,7 +41,7 @@ import type { BaselineAnalysisMeta, BaselineFile, BaselineRepoState } from './ba
 import { assessCaptureDeferral, type DeferredCaptureClass } from './deferral';
 import { resolveBaselineMode } from './modes';
 import type { ResolvedMode } from './modes';
-import { loadPolicyFromCwd } from './policy';
+import { loadPolicyFromCwd, prohibitedLicensePatterns } from './policy';
 import {
   customCheckRecallInputs,
   gatherCustomCheckFindings,
@@ -319,6 +319,7 @@ export async function gatherCurrentScan(options: {
     inlineAllowlistAnnotations,
     customCheckFindings,
     customCheckRecall,
+    prohibitedLicenses: prohibitedLicensePatterns(policy),
   };
 
   // Dispatch through the canonical producer registry (CLAUDE.md

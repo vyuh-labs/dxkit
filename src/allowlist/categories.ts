@@ -158,6 +158,11 @@ export const CATEGORIES_BY_KIND: Readonly<Record<IdentityKind, readonly Allowlis
   // when the rule's globs misfire on a file that isn't really the `if` surface.
   'paired-change': ['false-positive', 'accepted-risk', 'deferred'],
 
+  // Prohibited license: accepted-risk (legal signed off on this dependency —
+  // e.g. a GPL tool used at build time only) or deferred (migration under
+  // way, time-boxed); false-positive when the scanner misread the license.
+  license: ['false-positive', 'accepted-risk', 'deferred'],
+
   // Stale-allow (orphaned inline allowlist annotation): never
   // allowlisted. The right response is always "remove the stale
   // annotation" — allowlisting the warning that an annotation is

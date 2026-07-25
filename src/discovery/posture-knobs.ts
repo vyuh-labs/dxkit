@@ -133,6 +133,17 @@ export const POSTURE_KNOBS: readonly PostureKnob[] = [
       'a CI-performance transport (graph.json Actions-cache), not a gate/posture — rebuild-on-demand is the correct default and changes no finding, so there is no behavioral difference to recommend. Installed by init/update when set to "cache"; documented in policy.md.',
   },
   {
+    path: 'licenses.prohibited',
+    command: 'licenses',
+    requiresPlan: false,
+    requiresRecommend: false,
+    exemptionReason:
+      'which licenses a business prohibits is a LEGAL posture — no repo-observable fact ' +
+      'selects the list, and dxkit recommending one would be practicing law. The licenses ' +
+      'report + BOM surface the inventory to decide from; documented under "Prohibited ' +
+      'licenses" in policy.md and the licenses command docs.',
+  },
+  {
     path: 'deepSast',
     command: 'ingest',
     requiresPlan: false,

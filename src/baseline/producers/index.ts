@@ -59,6 +59,7 @@ import type { BaselineEntry, RichBaselineEntry } from '../types';
 import { RECALL_EPOCHS, type RecallContext, type RecallMap } from '../recall';
 import { resolveToolInputs, splitTools, toolRecall } from './recall-inputs';
 import { customCheckFindingsToBaselineEntries } from './custom-checks';
+import { prohibitedLicensesToBaselineEntries } from './licenses';
 import { largeFilesToBaselineEntries } from './health';
 import { duplicationToBaselineEntries, staleFilesToBaselineEntries } from './quality';
 import { rawSecretsToBaselineEntries } from './secret-hmac';
@@ -134,6 +135,11 @@ export interface ProducerContext {
    *  recall context, and a clean run is exactly when you need to know whether
    *  "clean" was comparable to the baseline's "clean". */
   readonly customCheckRecall: Readonly<Record<string, string>>;
+  /** The repo's normalized `licenses.prohibited` list (the ONE normalizer,
+   *  `prohibitedLicensePatterns`). Empty (the default) ⟹ the license producer
+   *  emits nothing. Part of the context — not re-read from disk — so the
+   *  producer stays pure and the playbook can inject it. */
+  readonly prohibitedLicenses: ReadonlyArray<string>;
 }
 
 /**
@@ -424,6 +430,39 @@ const CUSTOM_CHECK_PRODUCER: BaselineProducer = {
   },
 };
 
+const LICENSES_PRODUCER: BaselineProducer = {
+  name: 'licenses',
+  contributes: ['license'],
+  produce(ctx) {
+    return prohibitedLicensesToBaselineEntries(
+      ctx.analysisResult.capabilities.licenses?.findings,
+      ctx.prohibitedLicenses,
+    );
+  },
+  recallContexts(ctx) {
+    const base = toolRecall(
+      'license',
+      splitTools(ctx.analysisResult.capabilities.licenses?.tool),
+      ctx.cwd,
+    );
+    // The prohibited list is itself a recall input (Rule 19, cause 6):
+    // widening it makes previously-invisible standing violations appear, and
+    // that delta is a policy change, never the next PR author's fault — the
+    // drift demotion is what keeps the brownfield promise when a repo
+    // tightens its legal posture. Normalized (sorted, deduped) upstream so
+    // a policy reformat is byte-stable.
+    return new Map([
+      [
+        'license',
+        {
+          epoch: base.epoch,
+          inputs: { ...base.inputs, 'licenses.prohibited': ctx.prohibitedLicenses.join(',') },
+        },
+      ],
+    ]);
+  },
+};
+
 /**
  * The canonical producer list. Order is preserved in baseline-file
  * output for deterministic diffs; adding a new producer appends
@@ -441,6 +480,7 @@ export const PRODUCERS: ReadonlyArray<BaselineProducer> = Object.freeze([
   TESTS_PRODUCER,
   STALE_ALLOW_PRODUCER,
   CUSTOM_CHECK_PRODUCER,
+  LICENSES_PRODUCER,
 ]);
 
 /**

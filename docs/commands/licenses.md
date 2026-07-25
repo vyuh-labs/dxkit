@@ -76,6 +76,14 @@ groups by package name + version + license type.
 The XLSX is drop-in compatible with the standard BOM-template shape
 used in customer audits.
 
+## Gating on prohibited licenses
+
+The inventory this command renders can also gate: declare
+`licenses.prohibited` in `.dxkit/policy.json` and the guardrail blocks a NEW
+dependency whose license matches (pre-existing violations are grandfathered
+and burn down via `debt`). See
+[policy.json — Prohibited licenses](../configuration/policy.md#prohibited-licenses).
+
 ## See also
 
 - [`bom`](bom.md) — licenses joined with vulnerabilities, ordered by Risk

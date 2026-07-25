@@ -92,6 +92,19 @@ const ENTRIES: Record<BaselineEntry['kind'], BaselineEntry> = {
     ],
     score: 1.0,
   },
+  'paired-change': {
+    id: FP,
+    kind: 'paired-change',
+    check: 'model-needs-migration',
+    blocking: true,
+  },
+  license: {
+    id: FP,
+    kind: 'license',
+    package: 'copyleft-lib',
+    licenseType: 'GPL-3.0',
+    version: '2.0.0',
+  },
 };
 
 const ALL_KINDS = Object.keys(ENTRIES) as BaselineEntry['kind'][];

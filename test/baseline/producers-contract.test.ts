@@ -66,6 +66,7 @@ const ALL_KINDS: ReadonlyArray<IdentityKind> = [
   'code-reimplementation',
   'custom-check',
   'paired-change',
+  'license',
 ];
 
 /** Compile-time exhaustiveness check — adding a new kind to

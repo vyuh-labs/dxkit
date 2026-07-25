@@ -109,6 +109,11 @@ const SECURITY_BLOCK_RULES: BrownfieldBlockRules = {
   // eslint-config-prettier compromise showed the default posture passing
   // it silently.
   newMaliciousDependency: true,
+  // A prohibited license is a compliance must-fix, not open-ended debt —
+  // armed under every posture, and inert until the repo declares a
+  // `licenses.prohibited` list (no list ⇒ no findings ⇒ the rule never
+  // fires), so arming it costs an unconfigured repo nothing.
+  newProhibitedLicense: true,
   // Open-ended debt — OFF in security-only (warn, never block).
   newUntestedChangedSource: false,
   newSevereQualityIssueInChangedFiles: false,

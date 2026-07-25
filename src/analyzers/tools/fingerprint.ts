@@ -463,6 +463,30 @@ export function computeCodeReimplementationFingerprint(
   );
 }
 
+// ─── Prohibited-license identity (the license block rule, Rule 9) ────────────
+
+/**
+ * Tool-independent canonical rule for a prohibited-license finding. Every
+ * violation shares this constant (the secrets / flow-binding pattern): the
+ * finding is intrinsic ("this dependency carries this license"), never a
+ * per-tool classification — license-checker, pip-licenses, and a future
+ * scanner reporting the same package+license share one identity.
+ */
+export const PROHIBITED_LICENSE_CANONICAL_RULE = 'canonical:prohibited-license';
+
+/**
+ * Durable identity for a prohibited-license finding (the `license` kind).
+ * Identity is exactly `(package, licenseType)` — the dep-vuln doctrine: a
+ * package is a contract-domain entity whose name is its address. Deliberately
+ * NOT the version: a routine bump of a package under the same prohibited
+ * license is the same standing violation, so one allowlist decision covers
+ * it; the license CHANGING re-mints (that is a new legal fact). All inputs
+ * are dxkit-normalized SPDX ids, never a tool's raw text (Rule 9).
+ */
+export function computeProhibitedLicenseFingerprint(pkg: string, licenseType: string): string {
+  return computeContentFingerprint(PROHIBITED_LICENSE_CANONICAL_RULE, '', `${pkg}\0${licenseType}`);
+}
+
 // ─── Paired-change identity (the paired-change gate, Rule 9) ─────────────────
 
 /**

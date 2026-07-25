@@ -213,6 +213,10 @@ export function entryToLocated(entry: BaselineEntry): LocatedIdentity {
       // Identity is the declared rule name → locator-less by design (a
       // violation is a property of the diff, not a file).
       return { id: entry.id };
+    case 'license':
+      // Version-free contract-domain identity (package + license) →
+      // locator-less; the multiset pass pairs by exact identity-hash.
+      return { id: entry.id };
   }
 }
 

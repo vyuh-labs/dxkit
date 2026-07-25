@@ -1012,6 +1012,22 @@ const FIXTURES: ReadonlyArray<IdentityFixture> = [
     current: { kind: 'paired-change', check: 'api-needs-docs' },
     expected: 'changed',
   },
+
+  // ─── license (2) ──────────────────────────────────────────────────────
+  {
+    name: 'license/version-free — a bump under the same license keeps identity',
+    // The dep-vuln doctrine: (package, licenseType), never the version — one
+    // allowlist decision covers the standing violation across routine bumps.
+    prior: { kind: 'license', package: 'copyleft-lib', licenseType: 'GPL-3.0' },
+    current: { kind: 'license', package: 'copyleft-lib', licenseType: 'GPL-3.0' },
+    expected: 'persisted',
+  },
+  {
+    name: 'license/license change re-mints — a new legal fact',
+    prior: { kind: 'license', package: 'copyleft-lib', licenseType: 'GPL-3.0' },
+    current: { kind: 'license', package: 'copyleft-lib', licenseType: 'AGPL-3.0' },
+    expected: 'changed',
+  },
 ];
 
 describe('identityFor — per-kind deterministic identity', () => {
@@ -1234,6 +1250,7 @@ const EXPECTED_KINDS = [
   'code-reimplementation',
   'custom-check',
   'paired-change',
+  'license',
 ] as const;
 
 describe('identityFor — coverage contract (Rule 9)', () => {

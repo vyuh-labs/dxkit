@@ -431,12 +431,18 @@ export interface GuardrailCheckResult {
  * from a fully-provisioned tree) is the mode that gates it; ref-based excludes
  * it. (The loop Stop-gate + pre-push run in the working tree, so they gate it
  * fine via the committed baseline.)
+ *
+ * `license` joins them for the same reason: the license gather reads the
+ * INSTALLED dependency tree (license-checker walks `node_modules`,
+ * pip-licenses the venv), which a bare worktree lacks — the ref side would
+ * report zero licenses and every standing violation would read net-new.
  */
 const REF_UNRELIABLE_KINDS: ReadonlySet<BaselineEntry['kind']> = new Set([
   'duplication',
   'test-gap',
   'secret-hmac',
   'custom-check',
+  'license',
 ]);
 
 /**
@@ -529,6 +535,11 @@ export const KIND_DEFAULT_SEVERITY: Readonly<Record<BaselineEntry['kind'], Findi
     // A paired-change violation. Same doctrine as custom-check: block intent
     // is rule-declared (`blocking`), never severity-derived.
     'paired-change': 'medium',
+    // A prohibited-license dependency. High — a statically proven policy
+    // violation (the flow-binding / model-schema-drift tier); the block
+    // decision itself comes from the `newProhibitedLicense` rule, not from
+    // this default.
+    license: 'high',
   });
 
 /**
@@ -1183,6 +1194,10 @@ export function describeEntryLocation(entry: BaselineEntry): string {
     // Locator-less by design (a violation is a property of the diff, not a
     // file) — lead with the declared rule name so the row is identifiable.
     return entry.check;
+  }
+  if (!isSanitized(entry) && entry.kind === 'license') {
+    const ver = entry.version ? `@${entry.version}` : '';
+    return `${entry.package}${ver} · ${entry.licenseType}`;
   }
   const file = locatorFile(entry);
   if (file === undefined) return '';

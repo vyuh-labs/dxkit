@@ -112,6 +112,11 @@ export interface BrownfieldBlockRules {
   readonly newUntestedChangedSource?: boolean;
   /** Block any newly-introduced severe quality issue in changed files. */
   readonly newSevereQualityIssueInChangedFiles?: boolean;
+  /** Block a newly-introduced dependency whose license matches the repo's
+   *  `licenses.prohibited` list. Inert until that list is declared — every
+   *  minted `license` finding IS a prohibited-license match (the inventory
+   *  itself never becomes findings), so the rule needs no severity tier. */
+  readonly newProhibitedLicense?: boolean;
 }
 
 /**
@@ -349,6 +354,12 @@ export interface BrownfieldPolicy {
    */
   readonly newAdvisories?: NewAdvisoriesPolicy;
   /**
+   * License posture. `licenses.prohibited` names SPDX ids/prefixes whose
+   * appearance on a NEW dependency blocks (the `newProhibitedLicense` block
+   * rule). Absent ⟹ inert — dxkit never invents a legal posture.
+   */
+  readonly licenses?: LicensesPolicy;
+  /**
    * Recall-attribution tuning (Rule 19). Absent ⟹ `inputs: 'resolved'`.
    */
   readonly recall?: RecallPolicy;
@@ -433,6 +444,35 @@ export function baselineRefreshCron(policy: Pick<BrownfieldPolicy, 'baseline'>):
   return DEFAULT_BASELINE_REFRESH_CRON;
 }
 
+/** `licenses.*` block in `.dxkit/policy.json`. */
+export interface LicensesPolicy {
+  /**
+   * SPDX license ids or family prefixes this repo prohibits in its dependency
+   * tree (e.g. `["GPL-", "AGPL-3.0"]`). Matching is prefix-based per SPDX
+   * term, with compound expressions (`"GPL-3.0 OR MIT"`) split so a
+   * dual-licensed package still matches — the one canonical matcher
+   * (`licenseMatchesAny`). Empty/absent ⟹ the prohibited-license rule is
+   * inert (the default). `UNKNOWN` never matches unless explicitly listed —
+   * an unresolvable license is a disclosure problem, not a violation (the
+   * false-negative bias).
+   */
+  readonly prohibited?: ReadonlyArray<string>;
+}
+
+/**
+ * The ONE normalizer of the prohibited-license list (Rule 2): the baseline
+ * producer, the recall inputs, and every renderer read the effective list
+ * through this. Non-strings and blanks are dropped; order is normalized so
+ * the recall input is byte-stable across policy reformats.
+ */
+export function prohibitedLicensePatterns(
+  policy: Pick<BrownfieldPolicy, 'licenses'>,
+): ReadonlyArray<string> {
+  const declared = policy.licenses?.prohibited;
+  if (!Array.isArray(declared)) return [];
+  return [...new Set(declared.filter((s): s is string => typeof s === 'string').map((s) => s.trim()).filter(Boolean))].sort();
+}
+
 /** `graph.*` block in `.dxkit/policy.json`. */
 export interface GraphSection {
   /** `'cache'` → install the graph-refresh workflow (Actions-cache transport);
@@ -477,6 +517,7 @@ export const DEFAULT_BROWNFIELD_POLICY: BrownfieldPolicy = Object.freeze({
     newMaliciousDependency: true,
     newUntestedChangedSource: true,
     newSevereQualityIssueInChangedFiles: true,
+    newProhibitedLicense: true,
   }),
   addedRequiresChangedLines: Object.freeze(['code', 'hygiene']),
 });
