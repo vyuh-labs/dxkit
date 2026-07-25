@@ -28,6 +28,7 @@ import { rmSync } from 'fs';
 import { evaluateFlowGateForGuardrail } from '../../src/baseline/flow-gate-check';
 import { evaluateSchemaDriftGateForGuardrail } from '../../src/baseline/schema-drift-gate-check';
 import { evaluateDupGateForGuardrail } from '../../src/baseline/dup-gate-check';
+import { evaluatePairedGateForGuardrail } from '../../src/baseline/paired-gate-check';
 import { captureGateFailure } from '../../src/baseline/gate-failopen';
 import { RefBaselineError } from '../../src/baseline/ref-baseline';
 import { createBaseline } from '../../src/baseline/create';
@@ -143,6 +144,48 @@ describe('gate fail-open contract — no silent swallow', () => {
     expect(out.ran).toBe(false);
     // The dup gate only reaches the base-worktree step when HEAD has a
     // candidate duplicate; the fixture guarantees one.
+    expect(out.skipped).toBe('error');
+    expect(out.error).toBeDefined();
+    expect(out.error!.step.length).toBeGreaterThan(0);
+    expect(out.error!.message.length).toBeGreaterThan(0);
+    expect(out.blocks).toBe(false);
+  });
+
+  it('paired gate: an unreachable base ref degrades to a DISCLOSED no-changed-set skip', () => {
+    const dir = makeRepo();
+    mkdirSync(join(dir, '.dxkit'), { recursive: true });
+    writeFileSync(
+      join(dir, '.dxkit', 'policy.json'),
+      JSON.stringify({
+        pairedChecks: [{ name: 'model-needs-migration', if: ['models/**'], then: ['mig/**'] }],
+      }),
+    );
+    // The changed-path read returns null on a bad ref (it never throws), so
+    // the gate's fail-open shape here is the disclosed skip, not an error.
+    const out = evaluatePairedGateForGuardrail({ cwd: dir, baseRef: UNREACHABLE_REF });
+    expect(out.ran).toBe(false);
+    expect(out.skipped).toBe('no-changed-set');
+    expect(out.blocks).toBe(false);
+    expect(out.warns).toBe(false);
+  });
+
+  it('paired gate: a thrown step errors WITH a reason, never silently', () => {
+    const dir = makeRepo();
+    mkdirSync(join(dir, '.dxkit'), { recursive: true });
+    writeFileSync(
+      join(dir, '.dxkit', 'policy.json'),
+      JSON.stringify({
+        pairedChecks: [{ name: 'model-needs-migration', if: ['models/**'], then: ['mig/**'] }],
+      }),
+    );
+    const out = evaluatePairedGateForGuardrail({
+      cwd: dir,
+      baseRef: 'HEAD',
+      changedPathsProvider: () => {
+        throw new Error('boom');
+      },
+    });
+    expect(out.ran).toBe(false);
     expect(out.skipped).toBe('error');
     expect(out.error).toBeDefined();
     expect(out.error!.step.length).toBeGreaterThan(0);

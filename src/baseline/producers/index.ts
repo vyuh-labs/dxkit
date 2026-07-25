@@ -256,6 +256,16 @@ export const DEFERRED_KINDS: Readonly<
       'complete producer for this kind.',
     landingPhase: 'seam gate (ships with the kind)',
   },
+  'paired-change': {
+    reason:
+      'a paired-change violation is a property of ONE DIFF ("this change touched the ' +
+      'if side of a declared pairing without touching the then side"), not of a tree: ' +
+      'a full-scan producer has no diff to evaluate, so there is nothing to capture ' +
+      'and nothing to grandfather. The paired-change gate mints the kind per check ' +
+      'from the changed-path set. Substitute: none — the gate is the complete ' +
+      'producer for this kind.',
+    landingPhase: 'paired-change gate (ships with the kind)',
+  },
 });
 
 // ─── Producer module wrappers ─────────────────────────────────────────────

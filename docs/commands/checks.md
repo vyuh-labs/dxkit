@@ -57,6 +57,35 @@ Declare user checks and/or enable the lint gate in `.dxkit/policy.json`:
 See [policy.json](../configuration/policy.md#custom-checks--lint-gate) for every
 field.
 
+## Paired-change rules — no command at all
+
+A third declaration shape covers "changing X requires also changing Y"
+invariants (a model change ships with its migration; an API change ships with
+its docs) with **no command executed** — dxkit evaluates the globs against
+what the change touched:
+
+```jsonc
+{
+  "pairedChecks": [
+    {
+      "name": "model-needs-migration",
+      "if": ["src/models/**"],
+      "then": ["migrations/**"],
+      "message": "a data-model change ships with its migration",
+    },
+  ],
+}
+```
+
+A change touching `if` without touching `then` blocks (or warns with
+`"blocking": false`); deletions count as touches on both sides. Because
+nothing is spawned, paired rules — unlike command checks — also gate in
+**ref-based mode** and on untrusted fork PRs. A change that genuinely needs no
+companion is deferred time-boxed:
+`vyuh-dxkit allowlist add --fingerprint=<id> --kind=paired-change
+--category=deferred --expires=+7d --reason="…"`. Full semantics in
+[policy.json](../configuration/policy.md#paired-change-rules).
+
 ## Two finding shapes: binary vs located
 
 How a check parses its output decides how precisely the gate grandfathers debt:

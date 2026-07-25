@@ -31,7 +31,12 @@ import {
   gatherCustomCheckFindings,
 } from './analyzers/custom-checks/gather';
 import { runCustomChecks, describeCustomChecks } from './analyzers/custom-checks/run';
-import { normalizeCustomChecks, LINT_CHECK_PREFIX } from './analyzers/custom-checks/config';
+import {
+  normalizeCustomChecks,
+  normalizePairedChecks,
+  LINT_CHECK_PREFIX,
+  type PairedCheckRule,
+} from './analyzers/custom-checks/config';
 import type { CustomCheckSpec } from './analyzers/custom-checks/types';
 import { trustedLocalContext } from './analysis-trust';
 
@@ -54,17 +59,19 @@ export function runChecks(cwd: string, sub: ChecksSubcommand, opts: ChecksOption
   const policy = loadPolicyFromCwd(cwd);
   const specs = resolveCustomCheckSpecs({ cwd, policy, trust: trustedLocalContext() });
   const { warnings } = normalizeCustomChecks(policy.checks);
+  const paired = normalizePairedChecks(policy.pairedChecks);
 
   if (sub === 'run') {
-    runChecksDryRun(cwd, policy, specs, warnings, opts);
+    runChecksDryRun(cwd, policy, specs, [...warnings, ...paired.warnings], opts);
     return;
   }
-  listChecks(specs, warnings, opts);
+  listChecks(specs, paired.rules, [...warnings, ...paired.warnings], opts);
 }
 
-/** `checks list` — show the configured checks + active lint gates. */
+/** `checks list` — show the configured checks + active lint gates + paired rules. */
 function listChecks(
   specs: readonly CustomCheckSpec[],
+  pairedRules: readonly PairedCheckRule[],
   warnings: readonly string[],
   opts: ChecksOptions,
 ): void {
@@ -79,6 +86,13 @@ function listChecks(
         parse: s.parse.mode, // 'exit' (binary) | 'regex' | 'structured' (located)
         expectedExit: s.expectedExit,
       })),
+      pairedChecks: pairedRules.map((r) => ({
+        name: r.name,
+        if: r.ifGlobs,
+        then: r.thenGlobs,
+        blocking: r.blocking,
+        ...(r.message !== undefined ? { message: r.message } : {}),
+      })),
       warnings,
     };
     console.log(JSON.stringify(payload, null, 2)); // slop-ok
@@ -86,11 +100,12 @@ function listChecks(
   }
 
   logger.header('dxkit checks');
-  if (specs.length === 0) {
+  if (specs.length === 0 && pairedRules.length === 0) {
     console.log(''); // slop-ok
     logger.info('No custom checks configured.');
-    logger.dim('  Declare repo invariants in .dxkit/policy.json:checks, or enable the built-in');
-    logger.dim('  lint gate with .dxkit/policy.json:lint.enabled. The guardrail then blocks');
+    logger.dim('  Declare repo invariants in .dxkit/policy.json:checks, enable the built-in');
+    logger.dim('  lint gate with .dxkit/policy.json:lint.enabled, or declare paired-change');
+    logger.dim('  rules in .dxkit/policy.json:pairedChecks. The guardrail then blocks');
     logger.dim('  only NET-NEW failures — pre-existing debt is grandfathered.');
     renderWarnings(warnings);
     return;
@@ -100,10 +115,23 @@ function listChecks(
   const lint = specs.filter(isLintSpec);
   renderGroup('User checks (.dxkit/policy.json:checks)', user);
   renderGroup('Built-in lint gate (.dxkit/policy.json:lint)', lint);
+  renderPairedGroup(pairedRules);
   renderWarnings(warnings);
 
   console.log(''); // slop-ok
   logger.dim('Run `vyuh-dxkit checks run` to see what the gate would find right now.');
+}
+
+function renderPairedGroup(rules: readonly PairedCheckRule[]): void {
+  if (rules.length === 0) return;
+  console.log(''); // slop-ok
+  logger.info('Paired-change rules (.dxkit/policy.json:pairedChecks)');
+  for (const r of rules) {
+    const intent = r.blocking ? 'blocking' : 'warn-only';
+    logger.dim(`  ${r.name.padEnd(22)} ${intent} · paired-change`);
+    logger.dim(`    if ${r.ifGlobs.join(', ')}  ⇒  then ${r.thenGlobs.join(', ')}`);
+    if (r.message) logger.dim(`    ↳ ${r.message}`);
+  }
 }
 
 function renderGroup(title: string, specs: readonly CustomCheckSpec[]): void {
@@ -143,7 +171,9 @@ function runChecksDryRun(
 ): void {
   if (specs.length === 0) {
     // Nothing to run — reuse the list path's "nothing configured" guidance.
-    listChecks(specs, warnings, opts);
+    // Paired rules are gate-evaluated (they need a diff base), so the dry-run
+    // has nothing to execute for them either way.
+    listChecks(specs, normalizePairedChecks(policy.pairedChecks).rules, warnings, opts);
     return;
   }
 

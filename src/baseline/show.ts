@@ -222,6 +222,8 @@ function describeEntry(entry: BaselineEntry): string {
       const [a, b] = entry.anchors;
       return `${a.symbol} @ ${a.file}:${a.line}  ≈  ${b.symbol} @ ${b.file}:${b.line}  [dup ${entry.score.toFixed(2)}]`;
     }
+    case 'paired-change':
+      return `${entry.check}  [paired-change${entry.blocking ? '' : ' · warn-only'}]`;
     case 'custom-check':
       return entry.file !== undefined
         ? `${entry.file}:${entry.line ?? '?'}  [${entry.check}${entry.rule ? '/' + entry.rule : ''}]`

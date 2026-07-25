@@ -161,8 +161,9 @@ ${path}` keys, which discards catch-all structure — so it did exact membership
   `CLAUDE.md`) are reverted by `src/uninstall/reversals.ts`, a separate
   centralized mechanism — a merge-only surface carries an empty `artifacts` list.
 - how a fail-open guardrail gate reports its OWN failure → `captureGateFailure`
-  in `src/baseline/gate-failopen.ts`. The three additive gates (flow, schema-
-  drift, seam-dup) are deliberately fail-OPEN: a bad ref, an unparseable tree, a
+  in `src/baseline/gate-failopen.ts`. The four additive gates (flow, schema-
+  drift, seam-dup, paired-change) are deliberately fail-OPEN: a bad ref, an
+  unparseable tree, a
   plugin throw must NOT wedge the build, so each degrades to "did not gate". The
   recurring shape (the shipped bug): each gate ended in a bare `} catch { return
 skip(mode, 'error'); }` that DISCARDED the error, and the renderers printed
@@ -1075,6 +1076,15 @@ The seam has one spine; every consumer routes through it:
   git ref lacks the toolchain, so a linter would fail-open-skip on the "before"
   side and false-flag every finding as net-new. Committed/baseline mode
   captures the floor from a provisioned tree, so the diff is honest.
+- **Paired-change rules are the declarative sibling, NOT a command check.**
+  `policy.json:pairedChecks` ("changing X requires also changing Y" — model ⇒
+  migration, API ⇒ docs) is evaluated by its own additive gate
+  (`src/baseline/paired-gate-check.ts`, kind `paired-change`, identity = the
+  rule name) over `computeChangedPaths` (the deletions-inclusive projection in
+  `changed-files.ts`). Because it spawns NOTHING, it is deliberately OUTSIDE
+  `REF_UNRELIABLE_KINDS` and runs on every surface including ref-based mode
+  and untrusted trees — do not "fix" it into the runner or the ref exclusion;
+  both restrictions exist for command execution, which this gate has none of.
 - **Opt-in, default-off.** `policy.json:checks[]` (user) and
   `policy.json:lint{enabled,blocking}` (pack lint) — a repo that configures
   nothing spawns nothing.

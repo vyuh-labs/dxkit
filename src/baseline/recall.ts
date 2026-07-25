@@ -159,6 +159,7 @@ export const RECALL_EPOCHS: Readonly<Record<IdentityKind, number>> = Object.free
   'flow-binding': 1,
   'model-schema-drift': 1,
   'code-reimplementation': 1,
+  'paired-change': 1,
   // 2 — the output-capture fix. Before it, a check's output was truncated to a
   // 4000-byte DISPLAY tail before being parsed, and a located-finding cap
   // (`MAX_LOCATED=500`) kept a content-dependent PREFIX. Both mean dxkit saw a

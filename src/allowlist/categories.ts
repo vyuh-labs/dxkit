@@ -153,6 +153,11 @@ export const CATEGORIES_BY_KIND: Readonly<Record<IdentityKind, readonly Allowlis
   // accepted-risk (we know it's a duplicate and accept it) or deferred
   'code-reimplementation': ['false-positive', 'accepted-risk', 'deferred'],
 
+  // Paired-change: deferred (this one change genuinely needs no companion —
+  // time-boxed so the exception stays visible) or accepted-risk; false-positive
+  // when the rule's globs misfire on a file that isn't really the `if` surface.
+  'paired-change': ['false-positive', 'accepted-risk', 'deferred'],
+
   // Stale-allow (orphaned inline allowlist annotation): never
   // allowlisted. The right response is always "remove the stale
   // annotation" — allowlisting the warning that an annotation is

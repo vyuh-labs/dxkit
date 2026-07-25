@@ -65,6 +65,7 @@ const ALL_KINDS: ReadonlyArray<IdentityKind> = [
   'model-schema-drift',
   'code-reimplementation',
   'custom-check',
+  'paired-change',
 ];
 
 /** Compile-time exhaustiveness check — adding a new kind to

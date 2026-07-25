@@ -126,7 +126,8 @@ export type IdentityInput =
   | FlowBindingIdentityInput
   | ModelSchemaDriftIdentityInput
   | CodeReimplementationIdentityInput
-  | CustomCheckIdentityInput;
+  | CustomCheckIdentityInput
+  | PairedChangeIdentityInput;
 
 /**
  * Content anchor for the secret/code/config identity schemes.
@@ -506,6 +507,27 @@ export interface CustomCheckIdentityInput {
 }
 
 /**
+ * A paired-change violation — the change touched files a declared pairing's
+ * `if` globs match without touching any file its `then` globs match ("model
+ * changed ⇒ a migration must change", "public API changed ⇒ docs must
+ * change"). Minted by the paired-change gate — a violation is a property of
+ * ONE DIFF, not of a tree, so there is nothing for a full-scan producer to
+ * capture and nothing to grandfather (`DEFERRED_KINDS`, the flow-binding /
+ * code-reimplementation precedent).
+ *
+ * Identity is the rule's declared NAME alone (the custom-check binary
+ * doctrine): the rule is the repo's committed declaration, so one allowlist
+ * decision covers it regardless of which files triggered it — deliberately
+ * not the matched file set (identity would churn as the diff iterates) and
+ * not the globs (editing a rule's patterns is policy evolution).
+ */
+export interface PairedChangeIdentityInput {
+  readonly kind: 'paired-change';
+  /** The declared rule name from `policy.json:pairedChecks[].name`. */
+  readonly check: string;
+}
+
+/**
  * Per-finding entry stored in a baseline. Carries identity plus the
  * minimum metadata needed for cross-run drift-tolerant matching —
  * never raw payloads (no titles, no secret content, no source
@@ -675,6 +697,17 @@ export type BaselineEntry =
        * (it is tool-captured text; Rule 9 forbids it from identity). */
       message?: string;
     }
+  | {
+      id: FindingId;
+      kind: 'paired-change';
+      /** The declared rule name — the whole identity (Rule 9). */
+      check: string;
+      /** Whether a violation blocks (the rule declared `blocking: true`, the
+       * default) or only warns. Verdict metadata, never an identity input. */
+      blocking: boolean;
+      /** The rule's declared message, when present. Display metadata only. */
+      message?: string;
+    }
   | SanitizedBaselineEntry;
 
 /**
@@ -725,7 +758,8 @@ export interface SanitizedBaselineEntry {
     | 'flow-binding'
     | 'model-schema-drift'
     | 'code-reimplementation'
-    | 'custom-check';
+    | 'custom-check'
+    | 'paired-change';
   readonly sanitized: true;
 }
 

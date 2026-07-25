@@ -77,6 +77,8 @@ import { evaluateSchemaDriftGateForGuardrail } from './schema-drift-gate-check';
 import type { SchemaDriftGateOutcome } from './schema-drift-gate-check';
 import { evaluateDupGateForGuardrail } from './dup-gate-check';
 import type { DupGateOutcome } from './dup-gate-check';
+import { evaluatePairedGateForGuardrail } from './paired-gate-check';
+import type { PairedGateOutcome } from './paired-gate-check';
 import type { DuplicationGateMode } from '../analyzers/duplication/config';
 import type { AnalysisTrustContext } from '../analysis-trust';
 import type { SchemaGateMode } from '../analyzers/model-schema/config';
@@ -376,6 +378,13 @@ export interface GuardrailCheckResult {
    *  code graph); `undefined` when off or when no base commit is resolvable. A
    *  lone duplicate only ever warns; convergence (downstream) can escalate. */
   readonly dupGate?: DupGateOutcome;
+  /** The paired-change gate pass — additive + fail-open like its three
+   *  siblings, evaluating declared "changing X requires also changing Y"
+   *  rules (`.dxkit/policy.json:pairedChecks`) against the changed-path set.
+   *  Pure (no spawn, no worktree), so it runs on every surface including
+   *  untrusted PRs and in ref-based mode. Opt-in (default off — no rules);
+   *  `undefined` when off or when no base commit is resolvable. */
+  readonly pairedGate?: PairedGateOutcome;
   /** Set when the CURRENT dependency-vulnerability scan could not run — the
    *  scanner was absent / timed out / failed — AND the scan was actually
    *  REQUESTED this run (not incrementally skipped because no manifest changed,
@@ -517,6 +526,9 @@ export const KIND_DEFAULT_SEVERITY: Readonly<Record<BaselineEntry['kind'], Findi
     // severity-derived, so severity only feeds the confidence-threshold logic
     // for persisted pairs here, never the block decision.
     'custom-check': 'medium',
+    // A paired-change violation. Same doctrine as custom-check: block intent
+    // is rule-declared (`blocking`), never severity-derived.
+    'paired-change': 'medium',
   });
 
 /**
@@ -944,6 +956,18 @@ export async function runGuardrailCheck(
     ...(options.verbose !== undefined ? { verbose: options.verbose } : {}),
   });
 
+  // The paired-change gate — the fourth additive, fail-open sibling. PURE
+  // (globs vs the changed-path set, no spawn), so it needs no trust gating
+  // and no mode restriction; it shares the base-commit resolution, allowlist,
+  // and clock.
+  const pairedGate = evaluatePairedGateForGuardrail({
+    cwd,
+    ...(flowBaseRef ? { baseRef: flowBaseRef } : {}),
+    allowlist,
+    now,
+    ...(options.verbose !== undefined ? { verbose: options.verbose } : {}),
+  });
+
   const baseBlocks = options.changedOnly ? filteredBlocks : blocks;
   const baseWarns = options.changedOnly ? filteredWarns : warns;
 
@@ -964,8 +988,9 @@ export async function runGuardrailCheck(
     pairs: filteredPairs,
     envelopeDrift,
     policy,
-    blocks: baseBlocks || flowGate.blocks || schemaDriftGate.blocks || dupGate.blocks,
-    warns: baseWarns || flowGate.warns || schemaDriftGate.warns || dupGate.warns,
+    blocks:
+      baseBlocks || flowGate.blocks || schemaDriftGate.blocks || dupGate.blocks || pairedGate.blocks,
+    warns: baseWarns || flowGate.warns || schemaDriftGate.warns || dupGate.warns || pairedGate.warns,
     attributionGaps,
     allowlistDelta,
     refExcludedKinds,
@@ -988,6 +1013,13 @@ export async function runGuardrailCheck(
     // repos see nothing new.
     ...(dupGate.ran || (dupGate.skipped !== 'off' && dupGate.skipped !== 'no-base-ref')
       ? { dupGate }
+      : {}),
+    // Attach when the paired gate is configured on (ran, or skipped for a
+    // reason worth disclosing — an uncomputable changed set or an error on a
+    // repo that DECLARED rules must be visible); an off/no-base-ref skip
+    // stays out so unconfigured repos see nothing new.
+    ...(pairedGate.ran || (pairedGate.skipped !== 'off' && pairedGate.skipped !== 'no-base-ref')
+      ? { pairedGate }
       : {}),
     // Fail-loud: a dep scan that was REQUESTED but could not run must not read as
     // a clean "no net-new dep vulns" — surface it. Incrementally-skipped scans
@@ -1146,6 +1178,11 @@ export function describeEntryLocation(entry: BaselineEntry): string {
         ? ` · ${entry.file}${entry.line !== undefined && entry.line > 0 ? `:${entry.line}` : ''}`
         : '';
     return `${entry.check}${rule}${loc}`;
+  }
+  if (!isSanitized(entry) && entry.kind === 'paired-change') {
+    // Locator-less by design (a violation is a property of the diff, not a
+    // file) — lead with the declared rule name so the row is identifiable.
+    return entry.check;
   }
   const file = locatorFile(entry);
   if (file === undefined) return '';

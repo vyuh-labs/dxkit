@@ -240,6 +240,14 @@ export function remediationFor(kind: BaselineEntry['kind']): string {
         'parallel is deliberate (a sanctioned by-design twin) — allowlist with ' +
         'category=false-positive.'
       );
+    case 'paired-change':
+      return (
+        'This change touched files a declared pairing requires a companion change ' +
+        "for (policy.json:pairedChecks — e.g. a data model changed but no migration " +
+        'did). Add the companion change, or — when this specific change genuinely ' +
+        'needs none — allowlist with category=deferred and a short expiry so the ' +
+        'exception stays visible and time-boxed.'
+      );
   }
 }
 
@@ -282,8 +290,10 @@ function entryLocator(entry: BaselineEntry): { file?: string; line?: number } {
     case 'dep-vuln':
     case 'duplication':
     case 'code-reimplementation':
-      // A symmetric PAIR of anchors, no single canonical file:line → route to
-      // the `--fingerprint=<id>` CLI form, like duplication.
+    case 'paired-change':
+      // A symmetric PAIR of anchors (or a diff-scoped rule), no single
+      // canonical file:line → route to the `--fingerprint=<id>` CLI form,
+      // like duplication.
       return {};
   }
 }

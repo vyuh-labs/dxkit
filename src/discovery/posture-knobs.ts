@@ -74,6 +74,18 @@ export const POSTURE_KNOBS: readonly PostureKnob[] = [
     requiresRecommend: true,
     note: 'user invariants are repo-specific — dxkit cannot author a check command for the user, so no planConfig; recommendChecks surfaces wiring a detected linter into the gate.',
   },
+  {
+    path: 'pairedChecks',
+    command: 'checks',
+    requiresPlan: false,
+    requiresRecommend: false,
+    exemptionReason:
+      'a paired-change rule encodes a repo-specific convention ("model change ships with ' +
+      'its migration") whose if/then surfaces only the repo knows — dxkit inferring them ' +
+      'from directory names would recommend wrong pairings confidently. Documented under ' +
+      '"Paired-change rules" in policy.md and the dxkit-checks skill; `checks list` ' +
+      'renders declared rules.',
+  },
   { path: 'baseline.mode', command: 'baseline', requiresPlan: true, requiresRecommend: true },
   {
     path: 'baseline.anchor',

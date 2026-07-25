@@ -209,6 +209,10 @@ export function entryToLocated(entry: BaselineEntry): LocatedIdentity {
       // Line-independent identity (advisory id; value HMAC) → locator-less;
       // the matcher's multiset pass pairs them by exact identity-hash.
       return { id: entry.id };
+    case 'paired-change':
+      // Identity is the declared rule name → locator-less by design (a
+      // violation is a property of the diff, not a file).
+      return { id: entry.id };
   }
 }
 
