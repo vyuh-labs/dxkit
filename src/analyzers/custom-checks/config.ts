@@ -11,7 +11,12 @@
  * the lint capability. Both feed the SAME runner.
  */
 
-import type { CustomCheckConfig, LintPolicy, RecallPolicy } from '../../baseline/policy';
+import type {
+  CustomCheckConfig,
+  LintPolicy,
+  PairedCheckConfig,
+  RecallPolicy,
+} from '../../baseline/policy';
 import type { LanguageSupport } from '../../languages/types';
 import type {
   LintGateContext,
@@ -75,6 +80,74 @@ export function normalizeCustomChecks(
     });
   }
   return { specs, warnings };
+}
+
+/** A validated paired-change rule the gate evaluates. */
+export interface PairedCheckRule {
+  readonly name: string;
+  readonly ifGlobs: readonly string[];
+  readonly thenGlobs: readonly string[];
+  readonly message?: string;
+  readonly blocking: boolean;
+}
+
+export interface NormalizePairedResult {
+  readonly rules: readonly PairedCheckRule[];
+  readonly warnings: readonly string[];
+}
+
+/**
+ * Convert the policy's `pairedChecks` array to validated rules — the ONE
+ * normalizer every consumer reads (the gate, `checks list`). Same defensive
+ * posture as `normalizeCustomChecks`: a malformed entry is DROPPED with the
+ * reason surfaced, never crashing the gate.
+ */
+export function normalizePairedChecks(
+  configs: readonly PairedCheckConfig[] | undefined,
+): NormalizePairedResult {
+  if (!configs || configs.length === 0) return { rules: [], warnings: [] };
+  const rules: PairedCheckRule[] = [];
+  const warnings: string[] = [];
+  const seenNames = new Set<string>();
+
+  for (const raw of configs) {
+    const name = typeof raw?.name === 'string' ? raw.name.trim() : '';
+    if (!name) {
+      warnings.push('a pairedChecks entry has no `name` and was skipped');
+      continue;
+    }
+    if (seenNames.has(name)) {
+      warnings.push(`duplicate pairedChecks name '${name}' — only the first is used`);
+      continue;
+    }
+    const ifGlobs = normalizeGlobs(raw.if);
+    const thenGlobs = normalizeGlobs(raw.then);
+    if (ifGlobs.length === 0 || thenGlobs.length === 0) {
+      warnings.push(
+        `pairedChecks rule '${name}' needs at least one \`if\` and one \`then\` glob and was skipped`,
+      );
+      continue;
+    }
+    seenNames.add(name);
+    rules.push({
+      name,
+      ifGlobs,
+      thenGlobs,
+      ...(typeof raw.message === 'string' && raw.message.trim()
+        ? { message: raw.message.trim() }
+        : {}),
+      blocking: raw.blocking !== false, // default true
+    });
+  }
+  return { rules, warnings };
+}
+
+function normalizeGlobs(value: PairedCheckConfig['if'] | undefined): readonly string[] {
+  const list = typeof value === 'string' ? [value] : Array.isArray(value) ? value : [];
+  return list
+    .filter((g): g is string => typeof g === 'string')
+    .map((g) => g.trim())
+    .filter(Boolean);
 }
 
 function parseCommand(cmd: CustomCheckConfig['command'] | undefined): CustomCheckCommand | null {

@@ -144,6 +144,10 @@ export function baselineEntryToIdentityInput(entry: BaselineEntry): IdentityInpu
         line: e.line,
         rule: e.rule,
       };
+    case 'paired-change':
+      // `blocking` + `message` are verdict/display metadata; identity is the
+      // rule name alone.
+      return { kind: 'paired-change', check: e.check };
   }
 }
 

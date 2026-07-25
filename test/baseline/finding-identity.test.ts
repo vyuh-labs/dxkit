@@ -996,6 +996,22 @@ const FIXTURES: ReadonlyArray<IdentityFixture> = [
     },
     expected: 'changed',
   },
+
+  // ─── paired-change (2) ────────────────────────────────────────────────
+  {
+    name: 'paired-change/clean — identity is the rule name alone',
+    // The matched file set is NOT hashed: the same rule violated by a
+    // different diff keeps one identity, so one allowlist decision covers it.
+    prior: { kind: 'paired-change', check: 'model-needs-migration' },
+    current: { kind: 'paired-change', check: 'model-needs-migration' },
+    expected: 'persisted',
+  },
+  {
+    name: 'paired-change/renamed rule is a new identity',
+    prior: { kind: 'paired-change', check: 'model-needs-migration' },
+    current: { kind: 'paired-change', check: 'api-needs-docs' },
+    expected: 'changed',
+  },
 ];
 
 describe('identityFor — per-kind deterministic identity', () => {
@@ -1217,6 +1233,7 @@ const EXPECTED_KINDS = [
   'model-schema-drift',
   'code-reimplementation',
   'custom-check',
+  'paired-change',
 ] as const;
 
 describe('identityFor — coverage contract (Rule 9)', () => {

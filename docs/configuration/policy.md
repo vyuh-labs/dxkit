@@ -62,6 +62,7 @@ tuning belongs here.
 | `addedRequiresChangedLines` | `string[]`     | Finding kinds whose `added` classification only blocks when the finding overlaps lines actually changed in the diff. Demotes scanner-wobble false positives to `uncertain` (warn).                                                                                                                                  |
 | `baseline`                  | `object`       | Pin the baseline mode + ref repo-wide. See "Baseline mode pinning" below.                                                                                                                                                                                                                                           |
 | `checks`                    | `object[]`     | Custom repo-invariant gates dxkit runs as first-class findings. See "Custom checks + lint gate" below and [`vyuh-dxkit checks`](../commands/checks.md).                                                                                                                                                             |
+| `pairedChecks`              | `object[]`     | Declarative "changing X requires also changing Y" rules evaluated over the diff (no command run). See "Paired-change rules" below.                                                                                                                                                                                   |
 | `lint`                      | `object`       | Enable the pack-declared built-in lint gate. `{ enabled, blocking }`, both default `false`.                                                                                                                                                                                                                         |
 | `largeFileThreshold`        | `number`       | Line count above which a source file is flagged `large-file` (default `500`). Applied once at gather time, so it drives the guardrail `large-file` finding, the "files over N lines" count, and the Quality + Maintainability scores together. A non-positive / non-numeric value is ignored (falls back to `500`). |
 | `reports`                   | `object`       | Opt-in report snapshots on merge. See "Report snapshots on merge" below.                                                                                                                                                                                                                                            |
@@ -198,6 +199,38 @@ and they gate in **committed/baseline mode** only. **Security:** the commands
 are executed, so they come only from this committed file — the same trust
 boundary as your npm scripts / CI config. The full model, the two finding
 shapes, and troubleshooting live in [`vyuh-dxkit checks`](../commands/checks.md).
+
+## Paired-change rules
+
+`pairedChecks` declares "changing X requires also changing Y" invariants —
+evaluated over the **diff** by a dedicated gate, with no command executed:
+
+```jsonc
+{
+  "pairedChecks": [
+    {
+      "name": "model-needs-migration",
+      "if": ["src/models/**"],
+      "then": ["migrations/**"],
+      "message": "a data-model change ships with its migration",
+    },
+    { "name": "api-needs-docs", "if": "src/api/**", "then": "docs/api/**", "blocking": false },
+  ],
+}
+```
+
+When the change touches a path matching any `if` glob but no path matching a
+`then` glob, the guardrail reports one violation for the rule — blocking by
+default (`"blocking": false` for warn-only). Globs support `**`/`*`/`?`
+against repo-relative paths; a **deleted** `if` file counts as a touch
+(removing a model warrants a migration too).
+
+Because nothing is spawned, this gate — unlike command checks — also runs in
+**ref-based mode** and on untrusted fork PRs. When a specific change genuinely
+needs no companion, defer it time-boxed:
+`vyuh-dxkit allowlist add --fingerprint=<id> --kind=paired-change
+--category=deferred --expires=+7d --reason="…"` (the fingerprint is printed
+with the violation). `vyuh-dxkit checks list` shows the declared rules.
 
 ## Finding statuses
 

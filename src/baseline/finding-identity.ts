@@ -21,6 +21,7 @@ import {
   computeFingerprintV1,
   computeFlowBindingFingerprint,
   computeModelSchemaDriftFingerprint,
+  computePairedChangeFingerprint,
   lineWindowFor,
   SECRET_CANONICAL_RULE,
 } from '../analyzers/tools/fingerprint';
@@ -155,6 +156,12 @@ export function identityFor(
       // parseable output) hashes only the check name, so it is line-independent
       // and locator-less. Never hashes the raw output text (Rule 9).
       return computeCustomCheckIdentity(input.check, input.file, input.line, input.rule);
+    case 'paired-change':
+      // Version-independent. The declared rule NAME is the whole identity
+      // (the custom-check binary doctrine) — never the matched file set
+      // (would churn as the diff iterates) and never the globs (editing a
+      // committed rule's patterns is policy evolution, not a new violation).
+      return computePairedChangeFingerprint(input.check);
   }
 }
 

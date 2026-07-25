@@ -43,6 +43,7 @@ import type { FlowGateOutcome } from './flow-gate-check';
 import { describeSchemaDrift } from '../analyzers/model-schema/gate';
 import type { SchemaDriftGateOutcome } from './schema-drift-gate-check';
 import type { DupGateOutcome } from './dup-gate-check';
+import type { PairedChangeFinding, PairedGateOutcome } from './paired-gate-check';
 import type { GateFailure } from './gate-failopen';
 import {
   groupDuplicatesByAdded,
@@ -151,9 +152,16 @@ function extraGateTallies(result: GuardrailCheckResult): { block: number; warn: 
   // an added function that copies N existing reads as one warning everywhere.
   const dupFindings = result.dupGate?.findings ?? [];
   const dupWarns = dupFindings.length > 0 ? groupDuplicatesByAdded(dupFindings).length : 0;
+  // Paired-change findings carry their own rule-declared verdict.
+  const paired = result.pairedGate?.findings ?? [];
   return {
-    block: findings.filter((f) => f.verdict === 'block').length,
-    warn: findings.filter((f) => f.verdict === 'warn').length + dupWarns,
+    block:
+      findings.filter((f) => f.verdict === 'block').length +
+      paired.filter((f) => f.blocking).length,
+    warn:
+      findings.filter((f) => f.verdict === 'warn').length +
+      dupWarns +
+      paired.filter((f) => !f.blocking).length,
   };
 }
 
@@ -338,6 +346,7 @@ export function renderConsole(result: GuardrailCheckResult): string {
   lines.push(...formatFlowGate(result.flowGate));
   lines.push(...formatSchemaDriftGate(result.schemaDriftGate));
   lines.push(...formatDupGate(result.dupGate));
+  lines.push(...formatPairedGate(result.pairedGate));
 
   // Always show a summary footer — sets expectations for what
   // happens next (exit code, what to read on a fail).
@@ -638,6 +647,56 @@ function formatDupGate(gate: DupGateOutcome | undefined): string[] {
     }
     out.push('');
   }
+  return out;
+}
+
+function formatPairedGate(gate: PairedGateOutcome | undefined): string[] {
+  if (!gate) return [];
+  const failure = formatGateFailure('Paired-change', gate);
+  if (failure.length > 0) return failure;
+  const structuralSkip = formatGateSkip('Paired-change', gate);
+  if (structuralSkip.length > 0) return structuralSkip;
+  const out: string[] = [];
+  for (const w of gate.warnings) out.push(`  paired-change config: ${w}`);
+  const suppressed = gate.suppressed ?? [];
+  if (gate.findings.length === 0 && suppressed.length === 0) {
+    if (out.length > 0) out.push('');
+    return out;
+  }
+  if (gate.findings.length > 0) {
+    const blocking = gate.findings.filter((f) => f.blocking).length;
+    const label =
+      blocking > 0
+        ? `Paired-change — BLOCKING (${blocking}${gate.findings.length > blocking ? ` + ${gate.findings.length - blocking} warn` : ''})`
+        : `Paired-change — warning (${gate.findings.length})`;
+    out.push(logger.bold(label));
+    for (const f of gate.findings) out.push(...describePairedFinding(f));
+    out.push('');
+  }
+  if (suppressed.length > 0) {
+    out.push(logger.bold(`Paired-change — suppressed by allowlist (${suppressed.length})`));
+    for (const s of suppressed) {
+      const exp = s.expiresAt ? `, expires ${s.expiresAt}` : '';
+      out.push(`  ${s.finding.check}`);
+      out.push(`    · allowlisted: ${s.category}${exp} (waived from the verdict)`);
+    }
+    out.push('');
+  }
+  return out;
+}
+
+/** Render one paired-change violation: the rule, its evidence (which changed
+ *  paths triggered it), the required companion surface, and the two remedies
+ *  (make the companion change, or defer time-boxed). */
+function describePairedFinding(f: PairedChangeFinding): string[] {
+  const out = [`  ${f.check}${f.blocking ? '' : ' (warn-only)'}${f.message ? ` — ${f.message}` : ''}`];
+  out.push(`    changed: ${f.ifMatched.join(', ')}`);
+  out.push(`    but nothing changed under: ${f.thenGlobs.join(', ')}`);
+  out.push(
+    `    · add the companion change, or defer time-boxed: allowlist add ` +
+      `--fingerprint=${f.id} --kind=paired-change --category=deferred ` +
+      `--expires=+7d --reason="<why this change needs none>"`,
+  );
   return out;
 }
 
@@ -1192,6 +1251,31 @@ export interface GuardrailJsonPayload {
       readonly expiresAt?: string;
     }>;
   };
+  /** The paired-change gate — declared "changing X requires also changing Y"
+   *  rules the diff violated. Absent when the gate is off (no rules) or no
+   *  base commit was resolvable. */
+  readonly pairedGate?: {
+    readonly ran: boolean;
+    readonly skipped?: string;
+    readonly error?: { readonly step: string; readonly message: string };
+    readonly blocks: boolean;
+    readonly warns: boolean;
+    readonly warnings: ReadonlyArray<string>;
+    readonly findings: ReadonlyArray<{
+      readonly id: string;
+      readonly check: string;
+      readonly blocking: boolean;
+      readonly message?: string;
+      readonly ifMatched: ReadonlyArray<string>;
+      readonly thenGlobs: ReadonlyArray<string>;
+    }>;
+    readonly suppressed: ReadonlyArray<{
+      readonly id: string;
+      readonly check: string;
+      readonly category: string;
+      readonly expiresAt?: string;
+    }>;
+  };
 }
 
 export function renderJson(result: GuardrailCheckResult): GuardrailJsonPayload {
@@ -1385,6 +1469,34 @@ export function renderJson(result: GuardrailCheckResult): GuardrailJsonPayload {
           },
         }
       : {}),
+    ...(result.pairedGate !== undefined
+      ? {
+          pairedGate: {
+            ran: result.pairedGate.ran,
+            ...(result.pairedGate.skipped !== undefined
+              ? { skipped: result.pairedGate.skipped }
+              : {}),
+            ...(result.pairedGate.error !== undefined ? { error: result.pairedGate.error } : {}),
+            blocks: result.pairedGate.blocks,
+            warns: result.pairedGate.warns,
+            warnings: [...result.pairedGate.warnings],
+            findings: result.pairedGate.findings.map((f) => ({
+              id: f.id,
+              check: f.check,
+              blocking: f.blocking,
+              ...(f.message !== undefined ? { message: f.message } : {}),
+              ifMatched: [...f.ifMatched],
+              thenGlobs: [...f.thenGlobs],
+            })),
+            suppressed: (result.pairedGate.suppressed ?? []).map((s) => ({
+              id: s.finding.id,
+              check: s.finding.check,
+              category: s.category,
+              ...(s.expiresAt !== undefined ? { expiresAt: s.expiresAt } : {}),
+            })),
+          },
+        }
+      : {}),
   };
 }
 
@@ -1487,6 +1599,7 @@ export function renderMarkdown(result: GuardrailCheckResult): string {
   lines.push(...markdownFlowGate(result.flowGate));
   lines.push(...markdownSchemaDriftGate(result.schemaDriftGate));
   lines.push(...markdownDupGate(result.dupGate));
+  lines.push(...markdownPairedGate(result.pairedGate));
 
   if (suppressed.length > 0) {
     lines.push('<details>');
@@ -1805,6 +1918,60 @@ function markdownSchemaDriftGate(gate: SchemaDriftGateOutcome | undefined): stri
 
 /** Markdown for the structural-duplicate (seam) gate. All warn-tier, so a
  *  single collapsed section names each twin, its similarity, and fingerprint. */
+function markdownPairedGate(gate: PairedGateOutcome | undefined): string[] {
+  if (!gate) return [];
+  const failure = markdownGateFailure('Paired-change', gate);
+  if (failure.length > 0) return failure;
+  const structuralSkip = markdownGateSkip('Paired-change', gate);
+  if (structuralSkip.length > 0) return structuralSkip;
+  const out: string[] = [];
+  for (const w of gate.warnings) out.push(`> ⚠️ paired-change config: ${escapeMd(w)}`, '');
+  const suppressed = gate.suppressed ?? [];
+  if (gate.findings.length === 0 && suppressed.length === 0) return out;
+  if (gate.findings.length > 0) {
+    const blocking = gate.findings.filter((f) => f.blocking).length;
+    out.push(
+      `### Paired-change ${blocking > 0 ? 'violations — blocking' : 'warnings'} (${gate.findings.length})`,
+    );
+    out.push('');
+    out.push(
+      '_A declared pairing (`.dxkit/policy.json:pairedChecks`) requires a companion ' +
+        'change this diff does not carry. Add the companion change, or defer time-boxed ' +
+        'with `allowlist add --fingerprint=<id> --kind=paired-change --category=deferred ' +
+        '--expires=+7d`._',
+    );
+    out.push('');
+    out.push('| Rule | Verdict | Changed (`if`) | Missing (`then`) | Fingerprint |');
+    out.push('|---|---|---|---|---|');
+    for (const f of gate.findings) {
+      const rule = f.message ? `${escapeMd(f.check)} — ${escapeMd(f.message)}` : escapeMd(f.check);
+      out.push(
+        `| ${rule} | ${f.blocking ? '**block**' : 'warn'} | ${f.ifMatched.map(escapeMd).join('<br>')} | ` +
+          `${f.thenGlobs.map((g) => `\`${escapeMd(g)}\``).join('<br>')} | \`${escapeMd(f.id)}\` |`,
+      );
+    }
+    out.push('');
+  }
+  if (suppressed.length > 0) {
+    out.push('<details>');
+    out.push(
+      `<summary>Paired-change violations suppressed by allowlist (${suppressed.length})</summary>`,
+    );
+    out.push('');
+    out.push('| Rule | Category | Expires |');
+    out.push('|---|---|---|');
+    for (const s of suppressed) {
+      out.push(
+        `| ${escapeMd(s.finding.check)} | ${escapeMd(s.category)} | ${escapeMd(s.expiresAt ?? '—')} |`,
+      );
+    }
+    out.push('');
+    out.push('</details>');
+    out.push('');
+  }
+  return out;
+}
+
 function markdownDupGate(gate: DupGateOutcome | undefined): string[] {
   if (!gate) return [];
   const failure = markdownGateFailure('Structural duplicate', gate);

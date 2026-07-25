@@ -63,6 +63,29 @@ export function computeChangedFiles(cwd: string, baseSha: string): ReadonlyArray
 }
 
 /**
+ * Path-granularity sibling of `computeChangedFiles` — every project-relative
+ * PATH the change touched, INCLUDING deletions and renames-away. Same diff
+ * basis (base → working tree, staged + unstaged + untracked); the only
+ * difference is the absence of the exists-on-disk filter, because consumers
+ * of this projection ask "did the change touch this path?" (the paired-change
+ * gate: deleting a model file warrants a migration exactly as editing one
+ * does), not "which current files can I scan?".
+ *
+ * Returns `null` on the same terms as `computeChangedFiles`; callers MUST
+ * treat `null` as "cannot evaluate", never as "nothing changed".
+ */
+export function computeChangedPaths(cwd: string, baseSha: string): ReadonlyArray<string> | null {
+  if (!baseSha) return null;
+  try {
+    const tracked = gitLines(cwd, ['diff', '--name-only', baseSha, '--']);
+    const untracked = gitLines(cwd, ['ls-files', '--others', '--exclude-standard']);
+    return [...new Set<string>([...tracked, ...untracked])];
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Line-granularity sibling of `computeChangedFiles` — the ONE changed-line
  * attribution the guardrail consults. Both live in this module because they
  * are two projections of one concept ("what did the working tree change vs

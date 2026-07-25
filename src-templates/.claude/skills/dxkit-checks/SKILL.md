@@ -86,6 +86,33 @@ Each active pack contributes a `lint:<language>` gate (e.g. `lint:typescript`, `
 
 Start `blocking: false` to observe what the gate *would* block for a release or two, then flip to `blocking: true` once the net-new stream is clean.
 
+## Declare a paired-change rule
+
+For "changing X requires also changing Y" invariants — a data-model change must ship with a migration, an API change with its docs — declare a **paired-change rule** instead of scripting a check. No command runs; dxkit evaluates the globs against what the change touched:
+
+```jsonc
+{
+  "pairedChecks": [
+    {
+      "name": "model-needs-migration",
+      "if": ["src/models/**"],           // trigger surface (glob or array)
+      "then": ["migrations/**"],         // required companion surface
+      "message": "a data-model change ships with its migration",
+      "blocking": true                    // default true; false = warn-only
+    }
+  ]
+}
+```
+
+Semantics worth knowing when you author one:
+
+- The rule fires when the change touches an `if` path but **no** `then` path. Deletions count as touches on both sides (deleting a model warrants a migration; adding OR deleting a migration satisfies `then`).
+- Because nothing spawns, paired rules gate on **every** surface — including ref-based mode and untrusted fork PRs, where command checks are skipped.
+- A change that genuinely needs no companion (a comment-only model edit) gets a **time-boxed deferral**, not a rule edit: `vyuh-dxkit allowlist add --fingerprint=<id> --kind=paired-change --category=deferred --expires=+7d --reason="…"` — the fingerprint prints with the violation. The expiry re-blocks, which is the point.
+- Identity is the rule NAME, so renaming a rule resets any allowlist decision on it.
+
+`vyuh-dxkit checks list` shows declared paired rules alongside command checks.
+
 ## After you configure — capture the baseline
 
 A check only grandfathers pre-existing failures if they're in the committed baseline. After adding checks (or enabling lint), refresh the baseline so today's failures are recorded as the accepted floor:

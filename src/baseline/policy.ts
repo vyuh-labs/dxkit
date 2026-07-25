@@ -158,6 +158,42 @@ export interface CustomCheckConfig {
 }
 
 /**
+ * One declared paired-change rule in `.dxkit/policy.json:pairedChecks` — a
+ * "changing X requires also changing Y" invariant evaluated over the diff by
+ * the paired-change gate: when the change touches a path matching `if` but no
+ * path matching `then`, the gate mints one `paired-change` finding for the
+ * rule. Canonical uses: a data model changed but no migration did; a public
+ * API changed but no docs did.
+ *
+ * Purely declarative — no command is executed, nothing is spawned, so the
+ * gate is safe on every surface including untrusted fork PRs, and works in
+ * ref-based mode (unlike command checks, which need a provisioned toolchain).
+ *
+ * Globs support `**` / `*` / `?` against repo-relative POSIX paths; deletions
+ * count as touches on both sides (removing a model warrants a migration too).
+ *
+ * Schema example:
+ *
+ *   "pairedChecks": [
+ *     { "name": "model-needs-migration",
+ *       "if": ["src/models/**"], "then": ["migrations/**"],
+ *       "message": "a data-model change ships with its migration" }
+ *   ]
+ */
+export interface PairedCheckConfig {
+  /** Stable rule name — the finding's whole identity (Rule 9). Required. */
+  readonly name?: string;
+  /** Glob(s) selecting the trigger surface. Required, at least one. */
+  readonly if?: string | readonly string[];
+  /** Glob(s) selecting the required companion surface. Required, at least one. */
+  readonly then?: string | readonly string[];
+  /** Human-facing explanation rendered with a violation. */
+  readonly message?: string;
+  /** A violation blocks (default true) or only warns (false). */
+  readonly blocking?: boolean;
+}
+
+/**
  * `.dxkit/policy.json:lint` — opt-in gating on pack-declared built-in lint
  * (`LanguageSupport.lint`). Off by default: a lint gate is noisy on a repo that
  * hasn't opted in, so it ships dormant. When enabled, dxkit synthesizes a
@@ -289,6 +325,13 @@ export interface BrownfieldPolicy {
    * by `policyChecksToSpecs` (`src/analyzers/custom-checks/config.ts`).
    */
   readonly checks?: readonly CustomCheckConfig[];
+  /**
+   * Declared paired-change rules ("changing X requires also changing Y"),
+   * evaluated over the diff by the paired-change gate. Absent/empty ⟹ the
+   * gate is off (the default). Normalized by `normalizePairedChecks`
+   * (`src/analyzers/custom-checks/config.ts`).
+   */
+  readonly pairedChecks?: readonly PairedCheckConfig[];
   /**
    * Opt-in gating on pack-declared built-in lint. Absent ⟹ disabled (the
    * default — lint ships dormant).

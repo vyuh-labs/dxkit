@@ -463,6 +463,31 @@ export function computeCodeReimplementationFingerprint(
   );
 }
 
+// ─── Paired-change identity (the paired-change gate, Rule 9) ─────────────────
+
+/**
+ * Tool-independent canonical rule for a paired-change violation. Every
+ * violation shares this constant (the secrets / flow-binding pattern) because
+ * the finding is intrinsic ("this change touched the `if` side of a declared
+ * pairing without touching the `then` side"), never a per-tool classification.
+ */
+export const PAIRED_CHANGE_CANONICAL_RULE = 'canonical:paired-change';
+
+/**
+ * Durable identity for a paired-change violation (the `paired-change` kind —
+ * the unit the paired-change gate mints and the allowlist waives). The rule's
+ * declared NAME is the whole identity — the custom-check binary doctrine: the
+ * rule is the repo's own committed declaration, its name is its address, and
+ * one allowlist decision covers the rule however the triggering file set
+ * varies. Deliberately NOT the matched file set (churns every time the diff
+ * grows a file — an expiring deferral would break mid-iteration) and NOT the
+ * globs (editing a committed rule's patterns is policy evolution, not a new
+ * violation). Location-free and environment-independent by construction.
+ */
+export function computePairedChangeFingerprint(check: string): string {
+  return computeContentFingerprint(PAIRED_CHANGE_CANONICAL_RULE, '', check);
+}
+
 // ─── Secret HMAC primitive ───────────────────────────────────────────────────
 
 /**
