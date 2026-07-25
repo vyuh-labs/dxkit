@@ -5,6 +5,111 @@ All notable changes to `@vyuhlabs/dxkit` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.2.0] - 2026-07-25
+
+The trust release. Every item repairs a way the gate could say something it
+could not back up, in both directions: a change that broke the build passed
+every gate on a real repository, and innocent changes were blocked for
+problems they did not cause. The scope came from an external audit
+(claims verified in source before adoption) plus production incidents,
+and the fixes were validated against a real-repository mirror before
+release. Also debuts [RELEASES.md](RELEASES.md), the release policy.
+
+### ⚠ Declared tightenings
+
+- **Untrusted trees no longer execute repo-declared commands.** Custom
+  checks and pack lint commands come from the repository's committed
+  policy — running them against a tree the repository's writers do not
+  control (a fork PR checkout) executes whatever that tree put in reach.
+  On an untrusted run every check is now a disclosed `skipped-untrusted`,
+  decided before any spawn. This closes a real hole: previously these
+  commands still executed under `guardrail check --untrusted`. If your
+  fork-PR workflow relied on lint findings from the untrusted leg, they
+  now come from the trusted (own-branch) runs instead.
+- **Tooling-config files leave the test-gap census.** Files like
+  `jest.config.js`, `vite.config.ts`, `build.gradle.kts`, and
+  `Package.swift` carry a source extension but are build/test
+  configuration — nobody unit-tests a jest config, and a change that
+  legitimately added one was blocked as a net-new test gap. Known config
+  basenames only (pack-declared), so a real source file named like config
+  still counts.
+
+### The correctness floor got four upgrades
+
+- **A dependency-manifest-only diff now runs the full test suite.** The
+  affected-scope heuristics read "no source files changed" as nothing to
+  run — but a lockfile change alters module resolution for every file.
+  Decided once in the runner (all language packs inherit it), disclosed on
+  every surface that shows the run.
+- **Import-resolution check: the floor between "compiles" and "bundles".**
+  A lockfile change can un-hoist a package that source imports but no
+  manifest declares; the import worked only through a transitive copy, and
+  the break appears at build time in files the diff never touched. The new
+  check verifies every bare import resolves against the installed
+  dependency surface, per ecosystem: TypeScript/JavaScript (node_modules
+  walk), Python (project venv + declared manifests, with a curated
+  import-name↔package-name alias table), Ruby (Gemfile.lock with
+  require↔gem name folding), PHP (composer's generated autoload maps).
+  Compiled languages decline by design — their compiler is that check.
+  Pure and read-only; every skip is disclosed (no install, Yarn PnP,
+  unmodeled bundler aliases); biased hard against false blocks. Framework
+  static-asset directories (`public/`) are exempt: files there are copied
+  verbatim, never module-resolved, and vendored UMD bundles under them
+  carry internal `require` calls that are the bundle's own resolver
+  (found during release validation against a real repository).
+- **Failure-level attribution.** Floor identity was the whole check, so a
+  repository whose test suite was already red could never block on a NEW
+  failing test inside it. Packs can now parse per-test and per-suite
+  failure identities from the runner's output (jest + vitest first); the
+  comparator diffs the sets, and when identities are unavailable it says
+  the comparison is check-level rather than pretending precision.
+- **A floor internal error is disclosed, never silent.** The loop
+  Stop-gate's floor previously returned the same nothing for "no floor
+  configured" and "the floor runner crashed"; the ledger now records
+  which, with the reason.
+
+### Trust and attribution
+
+- **Typed trust context, required on every plugin-capable path.** Whether
+  repo-declared executable content may run was an optional boolean that
+  silently defaulted to trusted when omitted — the shape that shipped the
+  fork-PR plugin hole once and the command hole above. It is now a
+  required typed parameter constructed once at the boundary; forgetting it
+  fails to compile, an architecture rule bans reintroducing the optional
+  carrier, and a side-effect canary pins every entry point with positive
+  controls.
+- **Capture provenance on baselines.** Every baseline records whether it
+  was captured in CI or on a developer machine. Recall-drift remedies on
+  locally captured baselines now lead with the canonical fix — the CI
+  refresh re-captures with the toolchain the required check actually runs
+  under — instead of suggesting a local overwrite that would just stamp
+  another machine's environment.
+
+### Honest reporting
+
+- **Debt ordering uses captured severity.** The `debt` inventory ranked
+  finding groups by a per-kind default; it now uses each finding's
+  observed severity with a per-severity breakdown, and discloses when a
+  pre-4.2 baseline forces it back to the kind-priority guess.
+- **Evaluate-first onboarding.** The first baseline also records the
+  repository's build/test state, which means running the build and full
+  test suite once — minutes on a large repository. `init` now names the
+  exact commands before they run and accepts `--no-floor` to defer that
+  capture to CI; the README leads with the zero-write `evaluate` trial.
+
+### Docs
+
+- `RELEASES.md`: the release policy, stated (batched minors, same-day
+  verified patches as deliberate practice, the full per-release bar,
+  pin-and-update consumer guidance).
+- The Languages table caught up with reality: 10 ecosystems in the
+  headline table, the C# lint entry reflects the Roslyn-tiered gate it
+  has had since 3.6, and the import-extraction notes state their actual
+  impact (conservative indirect test crediting) instead of reading as
+  product limitations. The adding-a-language guide covers the two new
+  floor capabilities with reference implementations per
+  dependency-surface shape.
+
 ## [4.1.6] - 2026-07-23
 
 First-run reliability release: a field report showed that the very first
