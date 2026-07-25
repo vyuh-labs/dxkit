@@ -34,7 +34,7 @@ import {
   type BaselineMode,
   type BaselineAnchor,
 } from './baseline/modes';
-import { loadPolicyFromCwd } from './baseline/policy';
+import { baselineRefreshCron, loadPolicyFromCwd } from './baseline/policy';
 import { readFlowConfig } from './analyzers/flow/config';
 import { discoverExtensions } from './extensions/manifest';
 import { mergeIntoPolicyFile } from './baseline/policy-write';
@@ -893,6 +893,10 @@ export function installCiBaselineRefresh(
     {
       __DXKIT_DEFAULT_BRANCH__: defaultBranch,
       __DXKIT_ANCHOR_REF__: plan.anchorRef,
+      // Cadence of the scheduled refresh (the advisory decision surface).
+      // Policy-driven through the ONE normalizer; the 'tree' template has no
+      // schedule (it refreshes per push), so the key is simply absent there.
+      __DXKIT_REFRESH_CRON__: baselineRefreshCron({ baseline: readPolicyBaselineSection(cwd) }),
       [CI_RUNTIME_SETUP_KEY]: renderCiRuntimeSetup(cwd),
       // Multi-env capture (Rule 20 / design §3.4): per-host fragment jobs +
       // the merge before the commit. All three slots render empty on a repo

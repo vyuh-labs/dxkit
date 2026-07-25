@@ -72,6 +72,16 @@ export interface BaselineSection {
   /** Branch that stores the anchor when `anchor: 'branch'`. Default
    *  `'dxkit-baselines'`. Must NOT be a protection-covered branch. */
   readonly anchorRef?: string;
+  /**
+   * How often the scheduled baseline-refresh workflow runs — the cadence of
+   * the advisory decision surface, not a gate posture. `'weekly'` (default),
+   * `'daily'`, or a raw 5-field cron expression. Applies to the anchor
+   * transports that refresh on a schedule (`branch`, `cache`); the `tree`
+   * transport refreshes on every default-branch push and carries no schedule.
+   * Cadence tunes how soon newly published advisories reach the standing
+   * decision PR; it never absorbs them into the baseline.
+   */
+  readonly refreshCadence?: string;
 }
 
 /**
@@ -344,6 +354,40 @@ export function newAdvisoryBlockSeverities(
   return new Set(
     declared.filter((s): s is FindingSeverity => (VALID_SEVERITIES as string[]).includes(s)),
   );
+}
+
+/** The default refresh cadence: weekly, Monday 06:00 UTC — matches the cron
+ *  the refresh workflow templates have always shipped with. */
+export const DEFAULT_BASELINE_REFRESH_CRON = '0 6 * * 1';
+
+/** Named cadences a repo can declare instead of a raw cron. */
+const NAMED_REFRESH_CADENCES: Readonly<Record<string, string>> = Object.freeze({
+  weekly: DEFAULT_BASELINE_REFRESH_CRON,
+  daily: '0 6 * * *',
+});
+
+/** One 5-field cron expression, fields limited to the numeric/step/range/list
+ *  forms GitHub's scheduler accepts. Deliberately strict: the value is
+ *  interpolated into a workflow YAML the repo executes, so anything outside
+ *  this shape (quotes, names, newlines) is rejected, never passed through. */
+const CRON_FIELD = String.raw`(\*|\d+(-\d+)?)(\/\d+)?(,(\*|\d+(-\d+)?)(\/\d+)?)*`;
+const CRON_RE = new RegExp(`^${CRON_FIELD}( ${CRON_FIELD}){4}$`);
+
+/**
+ * The ONE normalizer of the baseline-refresh cadence (Rule 2): the workflow
+ * installer renders whatever this returns, and every other reader (docs
+ * tooling, future surfaces) goes through it too. Named cadences map to their
+ * cron; a raw value must pass the strict 5-field validation; anything else —
+ * absent, malformed, unsafe — falls back to the weekly default.
+ */
+export function baselineRefreshCron(policy: Pick<BrownfieldPolicy, 'baseline'>): string {
+  const declared = policy.baseline?.refreshCadence;
+  if (typeof declared !== 'string') return DEFAULT_BASELINE_REFRESH_CRON;
+  const trimmed = declared.trim();
+  const named = NAMED_REFRESH_CADENCES[trimmed];
+  if (named) return named;
+  if (CRON_RE.test(trimmed)) return trimmed;
+  return DEFAULT_BASELINE_REFRESH_CRON;
 }
 
 /** `graph.*` block in `.dxkit/policy.json`. */
