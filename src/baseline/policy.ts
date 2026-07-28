@@ -381,6 +381,14 @@ export interface NewAdvisoriesPolicy {
    *  warn-everything posture. Unknown values are dropped by the ONE
    *  normalizer `newAdvisoryBlockSeverities`. */
   readonly blockSeverities?: ReadonlyArray<FindingSeverity>;
+  /**
+   * Install the `dxkit-comment-defer` workflow: a reviewer with write access
+   * can defer blocking dep-vuln advisories from the PR conversation
+   * (`/dxkit defer …` — strict grammar, commenter attributed, committed to
+   * the PR branch). Opt-in, default off: the workflow reacts to comments and
+   * pushes commits, which a repo must choose deliberately.
+   */
+  readonly commentCommands?: boolean;
 }
 
 /** The default advisory block tier: a live high/critical advisory must not

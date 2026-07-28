@@ -157,7 +157,9 @@ export function recommendNewAdvisoryTier(ctx: RecommendContext): Recommendation 
       `the last guardrail run blocked ${advisories.length} newly published advisor` +
       `${advisories.length === 1 ? 'y' : 'ies'} (not introduced by the change) — the tier knob ` +
       `decides which severities block vs warn (default: critical/high block, medium/low warn); ` +
-      `set .dxkit/policy.json newAdvisories.blockSeverities to tune`,
+      `set .dxkit/policy.json newAdvisories.blockSeverities to tune. For reviewer-driven ` +
+      `deferral from the PR conversation (\`/dxkit defer …\`), set ` +
+      `newAdvisories.commentCommands: true and run update`,
     command: 'vyuh-dxkit allowlist defer --from-last-check --reason="<why>"',
   };
 }

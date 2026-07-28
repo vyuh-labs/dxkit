@@ -1,0 +1,192 @@
+name: dxkit comment commands
+
+# Reviewer-driven deferral from the PR conversation: a user with WRITE access
+# comments
+#
+#   /dxkit defer <fingerprint> [<fingerprint>…] [--expires=+7d] [--reason="…"]
+#   /dxkit defer --new-advisories
+#
+# on a pull request (typically one the dxkit-guardrails check blocked for
+# newly published advisories), and this workflow applies the same time-boxed,
+# dep-vuln-only deferral `vyuh-dxkit allowlist defer` performs locally:
+# it re-runs the guardrail on the PR head to warm the verdict cache (so
+# fingerprints are validated against what is actually blocking), writes the
+# allowlist entries, commits `.dxkit/allowlist.json` to the PR branch, and
+# replies with what it did. The commit re-triggers the guardrail check.
+#
+# Security model:
+#   - only comments from users with write/maintain/admin permission execute;
+#   - the comment body is passed to the CLI via ENVIRONMENT VARIABLES only
+#     (never interpolated into a shell line) and parsed against a strict
+#     grammar — an unrecognized token refuses the whole command;
+#   - same-repo PRs only (the repo token cannot push to a fork, and a fork
+#     head is untrusted content);
+#   - the cache-warming guardrail run passes --untrusted, so no repo-declared
+#     command executes against the PR head here;
+#   - every entry is dep-vuln-only with a short default expiry — the same
+#     "expiry is the forcing function" model as the local command.
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  comment-defer:
+    name: dxkit-comment-defer
+    # Cheap pre-filter; the real authorization check is the explicit
+    # permission probe below.
+    if: github.event.issue.pull_request && startsWith(github.event.comment.body, '/dxkit ')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check commenter permission
+        id: perm
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COMMENT_AUTHOR: ${{ github.event.comment.user.login }}
+        run: |
+          LEVEL=$(gh api "repos/${GITHUB_REPOSITORY}/collaborators/${COMMENT_AUTHOR}/permission" --jq .permission 2>/dev/null || echo none)
+          echo "level=$LEVEL" >> "$GITHUB_OUTPUT"
+          case "$LEVEL" in
+            admin|maintain|write) echo "authorized=true" >> "$GITHUB_OUTPUT" ;;
+            *) echo "authorized=false" >> "$GITHUB_OUTPUT" ;;
+          esac
+
+      - name: Refuse without write permission
+        if: steps.perm.outputs.authorized != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+          COMMENT_AUTHOR: ${{ github.event.comment.user.login }}
+        run: |
+          gh pr comment "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --body \
+            "<!-- dxkit-comment-defer -->
+          **dxkit:** command refused — @${COMMENT_AUTHOR} does not have write access to this repository. A maintainer can run it, or defer locally with \`vyuh-dxkit allowlist defer\`."
+          exit 0
+
+      - name: Resolve the pull request head
+        if: steps.perm.outputs.authorized == 'true'
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" > pr.json
+          echo "head_ref=$(jq -r .head.ref pr.json)" >> "$GITHUB_OUTPUT"
+          echo "same_repo=$(jq -r '.head.repo.full_name == .base.repo.full_name' pr.json)" >> "$GITHUB_OUTPUT"
+          rm pr.json
+
+      - name: Refuse fork pull requests
+        if: steps.perm.outputs.authorized == 'true' && steps.pr.outputs.same_repo != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          gh pr comment "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --body \
+            "<!-- dxkit-comment-defer -->
+          **dxkit:** comment commands only run on same-repository pull requests (the workflow cannot push to a fork). Defer locally with \`vyuh-dxkit allowlist defer\` and push to the PR branch."
+          exit 0
+
+      - uses: actions/checkout@v6
+        if: steps.perm.outputs.authorized == 'true' && steps.pr.outputs.same_repo == 'true'
+        with:
+          ref: ${{ steps.pr.outputs.head_ref }}
+          # Full history so the git-aware matcher can resolve the baseline's
+          # anchor commit + diff against the PR head.
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v6
+        if: steps.perm.outputs.authorized == 'true' && steps.pr.outputs.same_repo == 'true'
+        with:
+          node-version: '22'
+
+      # Language runtime(s) for the detected stack — same slot the guardrails
+      # workflow renders, so the cache-warming check sees the same toolchain.
+__DXKIT_CI_RUNTIME_SETUP__
+      # Install the project's deps with ITS package manager (see the guardrails
+      # workflow for the full rationale — the audited tree must be the tree the
+      # repo ships, so `npm ci` may only relax the peer check, never re-resolve).
+      - name: Install dependencies + dxkit
+        if: steps.perm.outputs.authorized == 'true' && steps.pr.outputs.same_repo == 'true'
+        run: |
+          corepack enable >/dev/null 2>&1 || true
+          if [ -f pnpm-lock.yaml ]; then
+            pnpm install --frozen-lockfile
+          elif [ -f yarn.lock ]; then
+            yarn install --immutable 2>/dev/null || yarn install --frozen-lockfile
+          elif [ -f bun.lockb ] || [ -f bun.lock ]; then
+            npm install -g bun >/dev/null 2>&1 || true
+            bun install --frozen-lockfile
+          elif [ -f package-lock.json ]; then
+            npm ci || npm ci --legacy-peer-deps
+          elif [ -f package.json ]; then
+            npm install || npm install --legacy-peer-deps
+          else
+            npm install -g @vyuhlabs/dxkit
+          fi
+
+      - name: Install scanner tools
+        if: steps.perm.outputs.authorized == 'true' && steps.pr.outputs.same_repo == 'true'
+        run: |
+          if [ -x ./node_modules/.bin/vyuh-dxkit ]; then
+            ./node_modules/.bin/vyuh-dxkit tools install --yes
+          else
+            vyuh-dxkit tools install --yes
+          fi
+          for d in "$HOME/.local/bin" "$HOME/go/bin" "$HOME/.cargo/bin"; do
+            echo "$d" >> "$GITHUB_PATH"
+          done
+
+      # Warm the same-tree verdict cache so `--new-advisories` has a finding
+      # list and explicit fingerprints are kind-validated against what is
+      # actually blocking. --untrusted: no repo-declared command executes here.
+      # A blocking verdict exits non-zero — expected; the defer is the point.
+      - name: Run the guardrail check (verdict cache)
+        if: steps.perm.outputs.authorized == 'true' && steps.pr.outputs.same_repo == 'true'
+        run: |
+          if [ -x ./node_modules/.bin/vyuh-dxkit ]; then DXKIT=./node_modules/.bin/vyuh-dxkit; else DXKIT=vyuh-dxkit; fi
+          "$DXKIT" guardrail check --untrusted --json > /dev/null 2>guardrail-stderr.log || true
+
+      - name: Apply the comment command
+        if: steps.perm.outputs.authorized == 'true' && steps.pr.outputs.same_repo == 'true'
+        id: apply
+        env:
+          # The ONLY transport for the untrusted comment text: environment
+          # variables, read by the CLI — never a shell interpolation.
+          DXKIT_COMMENT_BODY: ${{ github.event.comment.body }}
+          DXKIT_COMMENT_AUTHOR: ${{ github.event.comment.user.login }}
+          DXKIT_COMMENT_PR: ${{ github.event.issue.number }}
+        run: |
+          if [ -x ./node_modules/.bin/vyuh-dxkit ]; then DXKIT=./node_modules/.bin/vyuh-dxkit; else DXKIT=vyuh-dxkit; fi
+          "$DXKIT" allowlist comment-defer > comment-defer.json
+          echo "action=$(jq -r .action comment-defer.json)" >> "$GITHUB_OUTPUT"
+          jq -r .replyMarkdown comment-defer.json > comment-defer-reply.md
+
+      - name: Commit the allowlist to the PR branch
+        if: steps.apply.outputs.action == 'deferred'
+        env:
+          PR_NUMBER: ${{ github.event.issue.number }}
+          COMMENT_AUTHOR: ${{ github.event.comment.user.login }}
+          HEAD_REF: ${{ steps.pr.outputs.head_ref }}
+        run: |
+          git config user.name "dxkit-bot"
+          git config user.email "dxkit-bot@users.noreply.github.com"
+          git add .dxkit/allowlist.json
+          git commit -m "chore(dxkit): defer advisories via PR comment
+
+          Requested by @${COMMENT_AUTHOR} on PR #${PR_NUMBER}. Time-boxed
+          (category=deferred) — the expiry re-blocks these findings." \
+            -- .dxkit/allowlist.json
+          git push --no-verify origin "HEAD:refs/heads/${HEAD_REF}"
+
+      - name: Reply on the pull request
+        if: steps.apply.outputs.action && steps.apply.outputs.action != 'ignored'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          gh pr comment "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --body-file comment-defer-reply.md

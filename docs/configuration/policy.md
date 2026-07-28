@@ -297,6 +297,17 @@ instead of the generic block list:
   grandfathered) and raised as one standing decision PR
   (`dxkit/advisory-decision`) whose merge defers them time-boxed — dependency
   owners decide before feature PRs fight the findings one at a time.
+- `"commentCommands": true` additionally installs the `dxkit-comment-defer`
+  workflow (on the next `init`/`update`): a reviewer with **write access** can
+  defer straight from the blocked PR's conversation —
+  `/dxkit defer --new-advisories` or `/dxkit defer <fingerprint>…
+[--expires=+7d] [--reason="…"]`. The workflow re-runs the guardrail on the
+  PR head, applies the same dep-vuln-only time-boxed deferral as the local
+  command, commits `.dxkit/allowlist.json` to the PR branch attributed to the
+  commenter, and replies with what it did. Strict grammar — an unrecognized
+  token refuses the whole command; same-repo PRs only. Opt-in and default
+  off: the workflow reacts to comments and pushes commits, so a repo must
+  choose it deliberately.
 
 ## Prohibited licenses
 

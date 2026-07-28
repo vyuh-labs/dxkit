@@ -1036,6 +1036,30 @@ export function flowRefreshEnabled(cwd: string): boolean {
   return readFlowConfig(cwd).onMergeRefresh;
 }
 
+export function installCiCommentDefer(cwd: string, opts: InstallerOpts = {}): ShipInstallResult {
+  const result = installWorkflow(cwd, 'dxkit-comment-defer.yml', opts, {
+    [CI_RUNTIME_SETUP_KEY]: renderCiRuntimeSetup(cwd),
+  });
+  if (result.installed.length > 0) {
+    result.notes.push(
+      'comment-commands workflow installed: a reviewer with write access can defer ' +
+        'newly published advisories from the PR conversation (`/dxkit defer …`) — ' +
+        'time-boxed, dep-vuln-only, committed to the PR branch with the commenter attributed.',
+    );
+  }
+  return result;
+}
+
+/** Whether PR-comment commands are enabled in policy
+ *  (`newAdvisories.commentCommands: true`). */
+export function commentCommandsEnabled(cwd: string): boolean {
+  try {
+    return loadPolicyFromCwd(cwd).newAdvisories?.commentCommands === true;
+  } catch {
+    return false;
+  }
+}
+
 export function installCiExtensionsRefresh(
   cwd: string,
   opts: InstallerOpts = {},

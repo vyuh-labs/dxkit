@@ -51,6 +51,8 @@ import {
   reportsRefreshEnabled,
   installCiFlowRefresh,
   installCiExtensionsRefresh,
+  installCiCommentDefer,
+  commentCommandsEnabled,
   extensionsRefreshEnabled,
   flowRefreshEnabled,
   installCiGuardrails,
@@ -78,6 +80,7 @@ type PrimaryFlag =
   | 'withReportsRefresh'
   | 'withFlowRefresh'
   | 'withExtensionsRefresh'
+  | 'withCommentDefer'
   | 'withClaudeLoop';
 
 /**
@@ -309,6 +312,19 @@ export const MANAGED_SHIP_SURFACES: readonly ManagedShipSurface[] = [
     detectPresent: (cwd) => existsRel(cwd, '.github/workflows/dxkit-extensions-refresh.yml'),
   },
   {
+    // PR-comment defer commands (`/dxkit defer …` from a reviewer with write
+    // access). Opt-in via policy newAdvisories.commentCommands — the workflow
+    // reacts to comments and pushes commits, so a repo must choose it
+    // deliberately; presence uninstall detection mirrors flow-refresh.
+    id: 'ci-comment-defer',
+    gate: { kind: 'flag', flag: 'withCommentDefer' },
+    artifacts: () => ['.github/workflows/dxkit-comment-defer.yml'],
+    uninstallDetection: 'presence',
+    refreshOnUpdate: true,
+    install: (cwd, { force }) => installCiCommentDefer(cwd, { force }),
+    detectPresent: (cwd) => existsRel(cwd, '.github/workflows/dxkit-comment-defer.yml'),
+  },
+  {
     // On-merge flow-contract refresh (task: keep committed served/consumed
     // snapshots current). Opt-in via policy flow.onMergeRefresh; presence
     // uninstall detection mirrors reports-refresh.
@@ -399,6 +415,7 @@ export function detectInstallFlags(cwd: string): ManifestInstallFlags {
   flags.withReportsRefresh = flags.withReportsRefresh || reportsRefreshEnabled(cwd);
   flags.withFlowRefresh = flags.withFlowRefresh || flowRefreshEnabled(cwd);
   flags.withExtensionsRefresh = flags.withExtensionsRefresh || extensionsRefreshEnabled(cwd);
+  flags.withCommentDefer = flags.withCommentDefer || commentCommandsEnabled(cwd);
   return flags;
 }
 
