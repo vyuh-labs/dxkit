@@ -19,7 +19,7 @@
  * identity contract with the baseline + allowlist.
  */
 
-import { computeFlowBindingFingerprint } from '../tools/fingerprint';
+import { computeFlowBindingFingerprint } from '../tools/fingerprint-contract';
 import { type ConsumedBinding } from './contract';
 import { buildServedMatcher, servedMatch } from './model';
 

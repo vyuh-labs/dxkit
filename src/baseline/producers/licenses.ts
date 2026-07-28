@@ -16,6 +16,8 @@
 
 import type { LicenseFinding } from '../../languages/capabilities/types';
 import { licenseMatchesAny } from '../../analyzers/licenses/detailed';
+import { splitTools, toolRecall } from './recall-inputs';
+import type { BaselineProducer } from './index';
 import { identityFor } from '../finding-identity';
 import type { RichBaselineEntry } from '../types';
 
@@ -44,3 +46,42 @@ export function prohibitedLicensesToBaselineEntries(
   }
   return entries;
 }
+
+/**
+ * The registered producer half (moved here from `producers/index.ts` at the
+ * large-file bar — the recall-inputs precedent: the registry stays a listing
+ * of producers). Type-only import back into the registry module is erased at
+ * compile time, so no runtime cycle exists.
+ */
+export const LICENSES_PRODUCER: BaselineProducer = {
+  name: 'licenses',
+  contributes: ['license'],
+  produce(ctx) {
+    return prohibitedLicensesToBaselineEntries(
+      ctx.analysisResult.capabilities.licenses?.findings,
+      ctx.prohibitedLicenses,
+    );
+  },
+  recallContexts(ctx) {
+    const base = toolRecall(
+      'license',
+      splitTools(ctx.analysisResult.capabilities.licenses?.tool),
+      ctx.cwd,
+    );
+    // The prohibited list is itself a recall input (Rule 19, cause 6):
+    // widening it makes previously-invisible standing violations appear, and
+    // that delta is a policy change, never the next PR author's fault — the
+    // drift demotion is what keeps the brownfield promise when a repo
+    // tightens its legal posture. Normalized (sorted, deduped) upstream so
+    // a policy reformat is byte-stable.
+    return new Map([
+      [
+        'license',
+        {
+          epoch: base.epoch,
+          inputs: { ...base.inputs, 'licenses.prohibited': ctx.prohibitedLicenses.join(',') },
+        },
+      ],
+    ]);
+  },
+};

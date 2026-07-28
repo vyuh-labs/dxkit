@@ -23,7 +23,7 @@ import {
 } from '../../src/baseline/paired-gate-check';
 import { normalizePairedChecks } from '../../src/analyzers/custom-checks/config';
 import { computeChangedPaths } from '../../src/baseline/changed-files';
-import { computePairedChangeFingerprint } from '../../src/analyzers/tools/fingerprint';
+import { computePairedChangeFingerprint } from '../../src/analyzers/tools/fingerprint-contract';
 import { emptyAllowlistFile } from '../../src/allowlist/file';
 import type { AllowlistFile } from '../../src/allowlist/file';
 

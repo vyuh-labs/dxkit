@@ -6,7 +6,7 @@ import { tmpdir } from 'os';
 import { createBaseline } from '../../src/baseline/create';
 import { runGuardrailCheck } from '../../src/baseline/check';
 import { renderConsole, renderJson, renderMarkdown } from '../../src/baseline/check-renderers';
-import { computeFlowBindingFingerprint } from '../../src/analyzers/tools/fingerprint';
+import { computeFlowBindingFingerprint } from '../../src/analyzers/tools/fingerprint-contract';
 import { trustedLocalContext } from '../../src/analysis-trust';
 
 /**

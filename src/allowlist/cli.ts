@@ -69,13 +69,11 @@ import {
   ALL_CATEGORIES,
   DEFAULT_EXPIRY_DAYS,
   INLINE_COMPATIBLE_CATEGORIES,
-  deferAdvisoryExpiryDate,
   defaultExpiryDate,
   isCategoryValidForKind,
   requiresExpiry,
   type AllowlistCategory,
 } from './categories';
-import { readVerdictForTree } from '../baseline/verdict-cache';
 import { executeDefer, parseDeferExpiry } from './defer-core';
 import { runCommentDefer } from './comment-defer';
 import {

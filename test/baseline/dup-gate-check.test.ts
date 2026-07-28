@@ -17,7 +17,7 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import { evaluateDupGateForGuardrail } from '../../src/baseline/dup-gate-check';
 import type { DuplicateFinding } from '../../src/analyzers/duplication/findings';
-import { computeCodeReimplementationFingerprint } from '../../src/analyzers/tools/fingerprint';
+import { computeCodeReimplementationFingerprint } from '../../src/analyzers/tools/fingerprint-contract';
 import type { AllowlistFile } from '../../src/allowlist/file';
 
 const dirs: string[] = [];

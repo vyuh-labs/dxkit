@@ -14,7 +14,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { evaluateFlowGateForGuardrail } from '../../src/baseline/flow-gate-check';
-import { computeFlowBindingFingerprint } from '../../src/analyzers/tools/fingerprint';
+import { computeFlowBindingFingerprint } from '../../src/analyzers/tools/fingerprint-contract';
 import type { AllowlistFile } from '../../src/allowlist/file';
 import { trustedLocalContext } from '../../src/analysis-trust';
 
