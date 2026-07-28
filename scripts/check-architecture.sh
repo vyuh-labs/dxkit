@@ -1960,6 +1960,18 @@ if [ -n "$ROGUE_POLICY_READ" ]; then
   echo "     the malformed-file semantics stay uniform."
   ERRORS=$((ERRORS + 1))
 fi
+# Template side: a shipped workflow that hand-parses policy.json (an inline
+# `node -e require(...)`) is a strict-JSON reader that breaks on the first
+# comment in a user's JSONC policy — and a second parser to drift. Templates
+# read policy via `$DXKIT policy get <path> --default <v>` only.
+ROGUE_TEMPLATE_POLICY_PARSE=$(grep -rnE "require\(['\"]\./\.dxkit/policy\.json" src-templates/ 2>/dev/null \
+  | grep -v 'policy-text-ok' || true)
+if [ -n "$ROGUE_TEMPLATE_POLICY_PARSE" ]; then
+  echo "❌ Policy-text violation: hand-rolled policy.json parse in a shipped template:"
+  echo "$ROGUE_TEMPLATE_POLICY_PARSE"
+  echo "   → Use: \$DXKIT policy get <dotted.path> --default <value>"
+  ERRORS=$((ERRORS + 1))
+fi
 # Writer side: parse→stringify of the policy file destroys comments. The one
 # comment-preserving writer is mergeIntoPolicyFile (jsonc-parser modify/
 # applyEdits); a writeFileSync of the policy path elsewhere is a clobber path.
