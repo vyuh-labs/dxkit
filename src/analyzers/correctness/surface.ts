@@ -26,7 +26,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 
-import { DEFAULT_POLICY_FILENAME } from '../../baseline/policy';
+import { readPolicySection } from '../../baseline/policy-text';
 
 export type CorrectnessSurface = 'loop-stop' | 'pre-push' | 'ci';
 
@@ -173,21 +173,15 @@ export function detectTestCi(cwd: string): TestCiDetection {
 /** Read `correctness.surfaces.<surface>` from `.dxkit/policy.json`. Best-effort:
  *  a missing / malformed file or absent block yields an empty map. */
 export function readSurfacePolicy(cwd: string): Partial<Record<CorrectnessSurface, boolean>> {
-  try {
-    const raw = fs.readFileSync(path.join(cwd, DEFAULT_POLICY_FILENAME), 'utf8');
-    const parsed = JSON.parse(raw) as {
-      correctness?: { surfaces?: Partial<Record<CorrectnessSurface, unknown>> };
-    };
-    const surfaces = parsed.correctness?.surfaces;
-    if (!surfaces || typeof surfaces !== 'object') return {};
-    const out: Partial<Record<CorrectnessSurface, boolean>> = {};
-    for (const s of ['loop-stop', 'pre-push', 'ci'] as const) {
-      if (typeof surfaces[s] === 'boolean') out[s] = surfaces[s];
-    }
-    return out;
-  } catch {
-    return {};
+  const surfaces = readPolicySection(cwd, 'correctness')?.surfaces as
+    | Partial<Record<CorrectnessSurface, unknown>>
+    | undefined;
+  if (!surfaces || typeof surfaces !== 'object') return {};
+  const out: Partial<Record<CorrectnessSurface, boolean>> = {};
+  for (const s of ['loop-stop', 'pre-push', 'ci'] as const) {
+    if (typeof surfaces[s] === 'boolean') out[s] = surfaces[s];
   }
+  return out;
 }
 
 const ENV_VAR: Record<CorrectnessSurface, string> = {

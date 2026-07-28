@@ -1942,6 +1942,38 @@ if [ -n "$REGISTRY_RAW_PS_DL" ]; then
   ERRORS=$((ERRORS + 1))
 fi
 
+# ──────────────────────────────────────────────────────────────────────────────
+# Policy-text rule (4.3): every read of .dxkit/policy.json flows through the
+# ONE JSONC entry point src/baseline/policy-text.ts. The policy file is JSONC
+# (commented scaffold); a stray readFileSync + JSON.parse of it is a reader
+# that BREAKS on the first comment — the exact pre-4.3 eight-reader divergence
+# class. Annotate '// policy-text-ok' for a justified exception.
+ROGUE_POLICY_READ=$(grep -rnE "readFileSync\([^)]*policy\.json|JSON\.parse\([^)]*policy" src/ --include='*.ts' 2>/dev/null \
+  | grep -v '^src/baseline/policy-text\.ts:' \
+  | grep -v 'policy-text-ok' \
+  | grep -v -E ':[[:space:]]*(//|\*)' || true)
+if [ -n "$ROGUE_POLICY_READ" ]; then
+  echo "❌ Policy-text violation: direct policy.json read/parse outside src/baseline/policy-text.ts:"
+  echo "$ROGUE_POLICY_READ"
+  echo "   → Route through parsePolicyText / readPolicyRoot / readPolicySection /"
+  echo "     readPolicyObjectSafe so JSONC (comments, trailing commas) parses and"
+  echo "     the malformed-file semantics stay uniform."
+  ERRORS=$((ERRORS + 1))
+fi
+# Writer side: parse→stringify of the policy file destroys comments. The one
+# comment-preserving writer is mergeIntoPolicyFile (jsonc-parser modify/
+# applyEdits); a writeFileSync of the policy path elsewhere is a clobber path.
+ROGUE_POLICY_WRITE=$(grep -rnE "writeFileSync\([^)]*policy\.json" src/ --include='*.ts' 2>/dev/null \
+  | grep -v '^src/baseline/policy-write\.ts:' \
+  | grep -v 'policy-text-ok' \
+  | grep -v -E ':[[:space:]]*(//|\*)' || true)
+if [ -n "$ROGUE_POLICY_WRITE" ]; then
+  echo "❌ Policy-text violation: direct policy.json write outside src/baseline/policy-write.ts:"
+  echo "$ROGUE_POLICY_WRITE"
+  echo "   → Route through mergeIntoPolicyFile — it preserves the user's comments."
+  ERRORS=$((ERRORS + 1))
+fi
+
 if [ $ERRORS -gt 0 ]; then
   echo ""
   echo "Architecture checks failed. See CLAUDE.md for rules."

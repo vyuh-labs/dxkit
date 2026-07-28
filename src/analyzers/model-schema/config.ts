@@ -10,9 +10,8 @@
  * `configure` plans `warn`, the user promotes to `block`).
  */
 
-import * as fs from 'fs';
-import * as path from 'path';
 import { mergeIntoPolicyFile } from '../../baseline/policy-write';
+import { readPolicySection } from '../../baseline/policy-text';
 
 /** How the guardrail treats net-new schema drift.
  *   - `block`: honor the per-finding verdict — a fully-determined breaking
@@ -61,12 +60,7 @@ function isMode(v: unknown): v is SchemaGateMode {
 }
 
 function rawSection(cwd: string): RawSchema | undefined {
-  try {
-    const text = fs.readFileSync(path.join(cwd, '.dxkit', 'policy.json'), 'utf8');
-    return (JSON.parse(text) as { schema?: RawSchema })?.schema;
-  } catch {
-    return undefined;
-  }
+  return readPolicySection(cwd, 'schema') as RawSchema | undefined;
 }
 
 /** Read the `schema` section of `.dxkit/policy.json`. Fail-open — a
