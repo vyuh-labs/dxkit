@@ -102,10 +102,9 @@ __DXKIT_CI_RUNTIME_SETUP__
       - name: Detect baseline anchor transport
         id: anchor
         run: |
-          T=tree
-          if [ -f .dxkit/policy.json ]; then
-            T=$(node -e "try{const a=(require('./.dxkit/policy.json').baseline||{}).anchor;process.stdout.write(a||'tree')}catch(e){process.stdout.write('tree')}")
-          fi
+          # One policy reader everywhere (JSONC-aware) — never a hand-rolled parse.
+          if [ -x ./node_modules/.bin/vyuh-dxkit ]; then DXKIT=./node_modules/.bin/vyuh-dxkit; else DXKIT=vyuh-dxkit; fi
+          T=$("$DXKIT" policy get baseline.anchor --default tree)
           echo "transport=$T" >> "$GITHUB_OUTPUT"
 
       - name: Restore cached baseline anchor

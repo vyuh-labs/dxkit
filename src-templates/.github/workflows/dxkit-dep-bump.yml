@@ -80,10 +80,9 @@ __DXKIT_CI_RUNTIME_SETUP__
         run: |
           if [ -x ./node_modules/.bin/vyuh-dxkit ]; then DXKIT=./node_modules/.bin/vyuh-dxkit; else DXKIT=vyuh-dxkit; fi
           EXTRA=""
-          if [ -f .dxkit/policy.json ]; then
-            AM=$(node -e "try{process.stdout.write(String((require('./.dxkit/policy.json').depBump||{}).allowMajor===true))}catch(e){process.stdout.write('false')}")
-            if [ "$AM" = "true" ]; then EXTRA="--allow-major"; fi
-          fi
+          # One policy reader everywhere (JSONC-aware) — never a hand-rolled parse.
+          AM=$("$DXKIT" policy get depBump.allowMajor --default false)
+          if [ "$AM" = "true" ]; then EXTRA="--allow-major"; fi
           "$DXKIT" deps bump --apply --land pr $EXTRA --json > dep-bump.json
           # Surface the outcome; a refused/floor-red lane already exited 1.
           node -e "const r=require('./dep-bump.json');console.log('outcome:',r.outcome, r.land&&r.land.prUrl?r.land.prUrl:'')"

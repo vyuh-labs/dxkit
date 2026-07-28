@@ -365,6 +365,8 @@ export async function run(argv: string[]): Promise<void> {
       rescan: { type: 'boolean', default: false },
       json: { type: 'boolean', default: false },
       since: { type: 'string' },
+      // `policy get <path> --default <v>` — fallback value for scripts.
+      default: { type: 'string' },
       verbose: { type: 'boolean', default: false },
       'no-save': { type: 'boolean', default: false },
       detailed: { type: 'boolean', default: false },
@@ -1081,6 +1083,20 @@ export async function run(argv: string[]): Promise<void> {
         json: !!values.json,
         html: !!values.html,
         out: values.out as string | undefined,
+      });
+      break;
+    }
+
+    case 'policy': {
+      const sub = positionals[1];
+      if (sub !== 'get' || !positionals[2]) {
+        logger.fail('usage: vyuh-dxkit policy get <dotted.path> [--default <value>]');
+        process.exitCode = 1;
+        break;
+      }
+      const { runPolicyGet } = await import('./policy-cli');
+      runPolicyGet(process.cwd(), positionals[2], {
+        default: values.default as string | undefined,
       });
       break;
     }
