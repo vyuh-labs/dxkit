@@ -13,9 +13,8 @@
  * effectively `block`) when it wants the gate live.
  */
 
-import * as fs from 'fs';
-import * as path from 'path';
 import { DUP_DEFAULT_MIN_SCORE } from './detect';
+import { readPolicySection } from '../../baseline/policy-text';
 
 /** How the guardrail treats a net-new structural duplicate.
  *   - `block`: enables seam CONVERGENCE to escalate a duplicate that is ALSO a
@@ -54,12 +53,7 @@ function isMode(v: unknown): v is DuplicationGateMode {
 }
 
 function rawSection(cwd: string): RawDuplication | undefined {
-  try {
-    const text = fs.readFileSync(path.join(cwd, '.dxkit', 'policy.json'), 'utf8');
-    return (JSON.parse(text) as { duplication?: RawDuplication })?.duplication;
-  } catch {
-    return undefined;
-  }
+  return readPolicySection(cwd, 'duplication') as RawDuplication | undefined;
 }
 
 /** Read the `duplication` section of `.dxkit/policy.json`. Fail-open — a

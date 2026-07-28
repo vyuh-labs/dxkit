@@ -12,6 +12,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { execFileSync } from 'child_process';
 import { CONTRACT_SOURCE_READERS } from '../analyzers/flow/contract-sources';
+import { readPolicyObjectSafe } from '../baseline/policy-text';
 import { tryLoadGraph } from '../explore/load';
 import { isClaudeLoopInstalled } from '../loop/scaffold';
 import { LANGUAGES } from '../languages';
@@ -90,7 +91,7 @@ function manifestSignalHit(
 export function hasFlowSignal(cwd: string): boolean {
   // Already configured? workspace.json or a flow policy block means yes.
   if (existsAt(cwd, '.dxkit', 'workspace.json')) return false;
-  const policy = readJsonSafe(path.join(cwd, '.dxkit', 'policy.json'));
+  const policy = readPolicyObjectSafe(cwd);
   if (policy && 'flow' in policy) return false;
   return manifestSignalHit(
     cwd,
@@ -106,7 +107,7 @@ export function hasFlowSignal(cwd: string): boolean {
  * block exists — configured repos are never re-recommended.
  */
 export function hasSchemaSignal(cwd: string): boolean {
-  const policy = readJsonSafe(path.join(cwd, '.dxkit', 'policy.json'));
+  const policy = readPolicyObjectSafe(cwd);
   if (policy && 'schema' in policy) return false;
   return manifestSignalHit(
     cwd,
@@ -131,7 +132,7 @@ const DUPLICATION_MIN_CALL_DENSITY = 0.8;
  * alone (the seam gate needs a dense call graph to add value).
  */
 export function hasDuplicationSignal(cwd: string): boolean {
-  const policy = readJsonSafe(path.join(cwd, '.dxkit', 'policy.json'));
+  const policy = readPolicyObjectSafe(cwd);
   if (policy && 'duplication' in policy) return false;
   const graph = tryLoadGraph(cwd);
   if (!graph) return false;
@@ -149,7 +150,7 @@ export function hasDuplicationSignal(cwd: string): boolean {
  * `checks` / `lint` policy opts in.
  */
 export function hasLintSignal(cwd: string): boolean {
-  const policy = readJsonSafe(path.join(cwd, '.dxkit', 'policy.json')) ?? {};
+  const policy = readPolicyObjectSafe(cwd) ?? {};
   // `.dxkit/policy.json` is flat (resolvePolicy spreads it at the top level),
   // so `checks` / `lint` are top-level keys — mirror of the flow probe's
   // `'flow' in policy`.
@@ -193,7 +194,7 @@ export function hasLintSignal(cwd: string): boolean {
  * the flow planner own specs).
  */
 export function undeclaredContractArtifacts(cwd: string): Array<{ kind: string; path: string }> {
-  const policy = readJsonSafe(path.join(cwd, '.dxkit', 'policy.json')) ?? {};
+  const policy = readPolicyObjectSafe(cwd) ?? {};
   const flow = policy.flow as Record<string, unknown> | undefined;
   const sources = flow?.sources;
   if (Array.isArray(sources) && sources.length > 0) return [];
@@ -223,7 +224,7 @@ export function undeclaredContractArtifacts(cwd: string): Array<{ kind: string; 
  */
 export function loopStopGateNeedsPreset(cwd: string): boolean {
   if (!isClaudeLoopInstalled(cwd)) return false;
-  const policy = readJsonSafe(path.join(cwd, '.dxkit', 'policy.json')) ?? {};
+  const policy = readPolicyObjectSafe(cwd) ?? {};
   const loop = policy.loop as Record<string, unknown> | undefined;
   return !(loop && typeof loop.preset === 'string'); // true ⟹ unpinned
 }

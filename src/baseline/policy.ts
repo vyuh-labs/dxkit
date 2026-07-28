@@ -25,6 +25,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { readPolicyRoot } from './policy-text';
 import type { BaselineMode, BaselineAnchor } from './modes';
 import type { FindingSeverity, FindingStatus } from './types';
 import type { LicensesPolicy, NewAdvisoriesPolicy, PairedCheckConfig } from './policy-sections';
@@ -437,22 +438,16 @@ export function resolvePolicy(policyPath: string | undefined, cwd: string): Brow
     if (fs.existsSync(conventional)) resolvedPath = conventional;
   }
   if (!resolvedPath) return DEFAULT_BROWNFIELD_POLICY;
-  let raw: string;
-  try {
-    raw = fs.readFileSync(resolvedPath, 'utf8');
-  } catch (err) {
-    throw new Error(`policy file not readable: ${resolvedPath} (${(err as Error).message})`);
+  const read = readPolicyRoot(resolvedPath);
+  if (read.status === 'absent') {
+    // Only reachable via an explicit `--policy <p>` pointing at a missing file
+    // (the conventional path is existence-checked above).
+    throw new Error(`policy file not readable: ${resolvedPath} (no such file)`);
   }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch (err) {
-    throw new Error(`policy file is not valid JSON: ${resolvedPath} (${(err as Error).message})`);
+  if (read.status === 'malformed') {
+    throw new Error(`policy file is not valid JSON/JSONC: ${resolvedPath} (${read.error})`);
   }
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new Error(`policy file root is not an object: ${resolvedPath}`);
-  }
-  const obj = parsed as Partial<BrownfieldPolicy>;
+  const obj = read.value as Partial<BrownfieldPolicy>;
   return {
     ...DEFAULT_BROWNFIELD_POLICY,
     ...obj,
