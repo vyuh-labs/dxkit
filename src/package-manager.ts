@@ -106,6 +106,63 @@ export function pmAwareDevInstall(command: string, pm: PackageManager): string {
   return command.split('npm install --save-dev').join(addDevPrefix(pm));
 }
 
+/** Which package.json section a dependency lives in — decides the save flag
+ *  an upgrade command must carry so a devDependency bump never migrates the
+ *  package into `dependencies`. */
+export type DependencySection = 'dependencies' | 'devDependencies' | 'optionalDependencies';
+
+/**
+ * The argv to upgrade one dependency to an exact version with the repo's own
+ * package manager, preserving its manifest section. Returned as an argv (not
+ * a string) so callers execFile it — package names come from advisory data
+ * and must never transit a shell.
+ */
+export function upgradeArgv(
+  pm: PackageManager,
+  pkg: string,
+  version: string,
+  section: DependencySection,
+): string[] {
+  const spec = `${pkg}@${version}`;
+  switch (pm) {
+    case 'pnpm':
+      return [
+        'pnpm',
+        'add',
+        spec,
+        ...(section === 'devDependencies'
+          ? ['--save-dev']
+          : section === 'optionalDependencies'
+            ? ['--save-optional']
+            : []),
+      ];
+    case 'yarn':
+      return [
+        'yarn',
+        'add',
+        spec,
+        ...(section === 'devDependencies'
+          ? ['--dev']
+          : section === 'optionalDependencies'
+            ? ['--optional']
+            : []),
+      ];
+    case 'bun':
+      return ['bun', 'add', spec, ...(section === 'devDependencies' ? ['--dev'] : [])];
+    case 'npm':
+      return [
+        'npm',
+        'install',
+        spec,
+        section === 'devDependencies'
+          ? '--save-dev'
+          : section === 'optionalDependencies'
+            ? '--save-optional'
+            : '--save-prod',
+      ];
+  }
+}
+
 /** The command to (re)provision `node_modules` from the manifest + lockfile —
  *  the "your project-local tools aren't installed, run this" hint. */
 export function provisionCommand(pm: PackageManager): string {

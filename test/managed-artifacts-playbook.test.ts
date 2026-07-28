@@ -41,6 +41,7 @@ const ALL_OFF: ManifestInstallFlags = {
   withFlowRefresh: false,
   withExtensionsRefresh: false,
   withCommentDefer: false,
+  withDepBump: false,
 };
 
 const SENTINEL_ARTIFACT = '.dxkit-synthetic-surface-sentinel';
@@ -85,6 +86,7 @@ describe('managed-artifact registry — contract', () => {
       ['withPrReview', '.github/workflows/pr-review.yml'],
       ['withDevcontainer', '.devcontainer/devcontainer.json'],
       ['withCommentDefer', '.github/workflows/dxkit-comment-defer.yml'],
+      ['withDepBump', '.github/workflows/dxkit-dep-bump.yml'],
     ];
     for (const [flag, artifact] of cases) {
       expect(managedGatedArtifacts({ ...ALL_OFF, [flag]: true })).toContain(artifact);

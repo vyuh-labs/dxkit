@@ -171,6 +171,9 @@ export interface ManifestInstallFlags {
   /** PR-comment defer commands workflow (`/dxkit defer …` from reviewers;
    *  opt-in via `.dxkit/policy.json:newAdvisories.commentCommands: true`). */
   withCommentDefer?: boolean;
+  /** Scheduled deterministic dep-bump lane (opt-in via
+   *  `.dxkit/policy.json:depBump.enabled: true`). */
+  withDepBump?: boolean;
 }
 
 /** A dependency `vyuh-dxkit tools install` added to the repo on dxkit's behalf

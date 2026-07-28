@@ -144,6 +144,16 @@ export const POSTURE_KNOBS: readonly PostureKnob[] = [
       'a CI-performance transport (graph.json Actions-cache), not a gate/posture — rebuild-on-demand is the correct default and changes no finding, so there is no behavioral difference to recommend. Installed by init/update when set to "cache"; documented in policy.md.',
   },
   {
+    path: 'depBump.enabled',
+    command: 'deps',
+    requiresPlan: false,
+    requiresRecommend: true,
+    note:
+      'enabling installs the dxkit-dep-bump managed workflow, which configure’s policy-only ' +
+      'merge-write cannot place — so no planConfig; recommendDepBump surfaces the lane when ' +
+      'the committed baseline carries grandfathered dependency vulnerabilities.',
+  },
+  {
     path: 'licenses.prohibited',
     command: 'licenses',
     requiresPlan: false,

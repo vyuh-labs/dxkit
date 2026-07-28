@@ -1,0 +1,89 @@
+name: dxkit dep bump
+
+# The deterministic dependency-bump lane, scheduled: computes the fixable
+# subset of the repo's dependency vulnerabilities from the scanners' own fix
+# versions (no LLM anywhere), applies the bumps with the repo's OWN package
+# manager, verifies with the correctness floor (full compile + test run) and
+# the guardrail, and lands manifest + lockfile as ONE standing, reviewable PR
+# (`dxkit/dep-bump`) whose body is the verification ledger. A red floor means
+# NO PR — the job fails with the ledger in the step summary instead.
+#
+# Majors are skipped-and-named by default (a scheduled robot PR must be
+# boring to merge); opt in per-repo via `.dxkit/policy.json:depBump.allowMajor`.
+# Enabled by `.dxkit/policy.json:depBump.enabled: true` + `vyuh-dxkit update`.
+
+on:
+  schedule:
+    - cron: '0 7 * * 1'
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  dep-bump:
+    name: dxkit-dep-bump
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: __DXKIT_DEFAULT_BRANCH__
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      # Language runtime(s) for the detected stack, so the correctness floor
+      # can build + run the tests that verify the bumps.
+__DXKIT_CI_RUNTIME_SETUP__
+      # Install with the repo's own package manager (see the guardrails
+      # workflow for the rationale — the verified tree must be the tree the
+      # repo ships).
+      - name: Install dependencies + dxkit
+        run: |
+          corepack enable >/dev/null 2>&1 || true
+          if [ -f pnpm-lock.yaml ]; then
+            pnpm install --frozen-lockfile
+          elif [ -f yarn.lock ]; then
+            yarn install --immutable 2>/dev/null || yarn install --frozen-lockfile
+          elif [ -f bun.lockb ] || [ -f bun.lock ]; then
+            npm install -g bun >/dev/null 2>&1 || true
+            bun install --frozen-lockfile
+          elif [ -f package-lock.json ]; then
+            npm ci || npm ci --legacy-peer-deps
+          elif [ -f package.json ]; then
+            npm install || npm install --legacy-peer-deps
+          else
+            npm install -g @vyuhlabs/dxkit
+          fi
+
+      - name: Install scanner tools
+        run: |
+          if [ -x ./node_modules/.bin/vyuh-dxkit ]; then
+            ./node_modules/.bin/vyuh-dxkit tools install --yes
+          else
+            vyuh-dxkit tools install --yes
+          fi
+          for d in "$HOME/.local/bin" "$HOME/go/bin" "$HOME/.cargo/bin"; do
+            echo "$d" >> "$GITHUB_PATH"
+          done
+
+      # Plan → apply → verify (floor + guardrail) → land the standing PR.
+      # Branch + PR mechanics live in the CLI (the shared refresh lander),
+      # never in this workflow. --allow-major is appended only when the
+      # committed policy opts in.
+      - name: Run the bump lane
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ -x ./node_modules/.bin/vyuh-dxkit ]; then DXKIT=./node_modules/.bin/vyuh-dxkit; else DXKIT=vyuh-dxkit; fi
+          EXTRA=""
+          if [ -f .dxkit/policy.json ]; then
+            AM=$(node -e "try{process.stdout.write(String((require('./.dxkit/policy.json').depBump||{}).allowMajor===true))}catch(e){process.stdout.write('false')}")
+            if [ "$AM" = "true" ]; then EXTRA="--allow-major"; fi
+          fi
+          "$DXKIT" deps bump --apply --land pr $EXTRA --json > dep-bump.json
+          # Surface the outcome; a refused/floor-red lane already exited 1.
+          node -e "const r=require('./dep-bump.json');console.log('outcome:',r.outcome, r.land&&r.land.prUrl?r.land.prUrl:'')"

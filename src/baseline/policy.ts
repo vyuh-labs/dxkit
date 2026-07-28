@@ -360,6 +360,15 @@ export interface BrownfieldPolicy {
    */
   readonly licenses?: LicensesPolicy;
   /**
+   * The deterministic dependency-bump lane. `enabled: true` installs the
+   * scheduled `dxkit-dep-bump` workflow (weekly `deps bump --apply --land pr`
+   * — no LLM; the floor + guardrail verify before the standing PR opens).
+   * `allowMajor: true` lets the scheduled lane include producer-classified
+   * major bumps (default false — majors stay a human decision, disclosed in
+   * the skip list). Opt-in, default off.
+   */
+  readonly depBump?: { readonly enabled?: boolean; readonly allowMajor?: boolean };
+  /**
    * Recall-attribution tuning (Rule 19). Absent ⟹ `inputs: 'resolved'`.
    */
   readonly recall?: RecallPolicy;

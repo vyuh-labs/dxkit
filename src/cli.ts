@@ -449,6 +449,8 @@ export async function run(argv: string[]): Promise<void> {
       'from-last-check': { type: 'boolean', default: false },
       'acknowledged-severity': { type: 'string' },
       'added-by': { type: 'string' },
+      // deps bump flags (--apply and --land are shared flags, declared above)
+      'allow-major': { type: 'boolean', default: false },
       mode: { type: 'string' },
       ref: { type: 'string' },
       surface: { type: 'string' },
@@ -2962,6 +2964,32 @@ export async function run(argv: string[]): Promise<void> {
         logger.dim('  (skip with --no-feedback)');
       }
       process.exit(0);
+      break;
+    }
+
+    case 'deps': {
+      const subCommand = positionals[1];
+      if (subCommand !== 'bump') {
+        logger.fail(
+          `Unknown deps subcommand: ${subCommand ?? '(missing)'}. ` +
+            `Available: vyuh-dxkit deps bump [path] [--apply] [--allow-major] [--land pr] [--json]`,
+        );
+        process.exit(1);
+      }
+      const targetPath = resolveRepoPath(positionals[2]);
+      const landRaw = values.land as string | undefined;
+      if (landRaw !== undefined && landRaw !== 'pr' && landRaw !== 'none') {
+        logger.fail(`Unknown --land value: ${landRaw}. Expected one of: pr, none.`);
+        process.exit(1);
+      }
+      const { runDepsBumpCli } = await import('./deps-bump/cli');
+      const code = await runDepsBumpCli(targetPath, {
+        apply: !!values.apply,
+        allowMajor: !!values['allow-major'],
+        land: landRaw === 'pr' ? 'pr' : 'none',
+        json: !!values.json,
+      });
+      process.exit(code);
       break;
     }
 
