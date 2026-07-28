@@ -7,7 +7,8 @@ import hostedGitInfo from 'hosted-git-info';
 import { type Coverage, type FileCoverage, round1, toRelative } from '../analyzers/tools/coverage';
 import { walkSourceFiles } from '../analyzers/tools/walk-source-files';
 import { enrichReleaseDates } from '../analyzers/tools/npm-registry';
-import { resolveCvssScores } from '../analyzers/tools/osv';
+import { resolveCvssScores, resolveFixVersions } from '../analyzers/tools/osv';
+import { isMajorBump } from '../analyzers/tools/semver-bump';
 import {
   enrichWithUpgradePlans,
   gatherOsvScannerFixPlans,
@@ -536,6 +537,41 @@ async function gatherTsDepVulnsViaNpmAudit(
     if (findings.length > 0 && !opts?.skipRemediation) {
       const plans = await gatherOsvScannerFixPlans(cwd);
       enrichWithUpgradePlans(findings, plans);
+
+      // Fix-version recall for the in-range case. npm-audit's dominant
+      // `fixAvailable: true` shape (121 of 126 entries on a real CRA tree)
+      // means "a compatible fix exists in the declared range" WITHOUT naming
+      // the version, so `fixedVersion` stayed empty and the deterministic
+      // bump lane saw "no fix available" for advisories npm itself calls
+      // fixable. For DIRECT deps the advisory's own OSV record names the
+      // patched versions — resolve through the ONE session-cached OSV path
+      // (`resolveFixVersions`, alias-fallback, minimal-safe-move selection).
+      // Direct deps only: a transitive package's fixed version is not an
+      // actionable manifest change (that is the structured plan's job above).
+      const fixTargets = findings.filter(
+        (f) =>
+          !f.fixedVersion &&
+          !f.upgradePlan &&
+          f.topLevelDep !== undefined &&
+          f.topLevelDep.includes(f.package),
+      );
+      if (fixTargets.length > 0) {
+        const resolvedFixes = await resolveFixVersions(
+          fixTargets.map((f) => ({
+            primaryId: f.id,
+            aliases: f.aliases ?? [],
+            ...(f.installedVersion !== undefined ? { installedVersion: f.installedVersion } : {}),
+          })),
+        );
+        for (const f of fixTargets) {
+          const v = resolvedFixes.get(f.id);
+          if (v === undefined) continue;
+          f.fixedVersion = v;
+          if (f.breakingUpgrade === undefined && f.installedVersion) {
+            f.breakingUpgrade = isMajorBump(f.installedVersion, v);
+          }
+        }
+      }
     }
 
     const envelope: DepVulnResult = {

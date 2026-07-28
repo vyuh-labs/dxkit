@@ -5,6 +5,8 @@ import {
   extractOsvFixVersion,
   parseCvssV3BaseScore,
   resolveCvssScores,
+  resolveFixVersions,
+  selectFixVersion,
   scoreToTier,
   __clearOsvCache,
   type OsvVuln,
@@ -353,5 +355,62 @@ describe('extractOsvFixVersion', () => {
       ],
     };
     expect(extractOsvFixVersion(vuln)).toBe('3.2.1');
+  });
+});
+
+describe('selectFixVersion — minimal safe move per installed version', () => {
+  it('picks the smallest fixed event above the installed version (backport branch, not a surprise major)', () => {
+    expect(selectFixVersion(['2.0.5', '1.4.7'], '1.4.0')).toBe('1.4.7');
+    expect(selectFixVersion(['1.4.7', '2.0.5'], '1.9.0')).toBe('2.0.5');
+  });
+
+  it('unknown installed version falls back to the smallest fixed event', () => {
+    expect(selectFixVersion(['2.0.5', '1.4.7'], undefined)).toBe('1.4.7');
+  });
+
+  it('never proposes a downgrade; empty events yield undefined', () => {
+    expect(selectFixVersion(['1.4.7'], '2.1.0')).toBeUndefined();
+    expect(selectFixVersion([], '1.0.0')).toBeUndefined();
+  });
+});
+
+describe('resolveFixVersions — the resolveCvssScores sibling', () => {
+  const RECORD: OsvVuln = {
+    id: 'GHSA-fix-1',
+    affected: [
+      { ranges: [{ events: [{ introduced: '0' }, { fixed: '1.8.2' }] }] },
+      { ranges: [{ events: [{ introduced: '2.0.0' }, { fixed: '2.3.1' }] }] },
+    ],
+  };
+
+  it('resolves via the primary id and selects for the installed version', async () => {
+    const fetcher = async (id: string): Promise<OsvVuln | null> =>
+      id === 'GHSA-fix-1' ? RECORD : null;
+    const out = await resolveFixVersions(
+      [{ primaryId: 'GHSA-fix-1', aliases: [], installedVersion: '1.7.0' }],
+      fetcher,
+    );
+    expect(out.get('GHSA-fix-1')).toBe('1.8.2');
+  });
+
+  it('falls back through aliases when the primary record has no fixed events', async () => {
+    const fetcher = async (id: string): Promise<OsvVuln | null> => {
+      if (id === 'CVE-2026-0001') return RECORD;
+      if (id === 'GO-2026-1234') return { id }; // record exists, no events
+      return null;
+    };
+    const out = await resolveFixVersions(
+      [{ primaryId: 'GO-2026-1234', aliases: ['CVE-2026-0001'], installedVersion: '2.1.0' }],
+      fetcher,
+    );
+    expect(out.get('GO-2026-1234')).toBe('2.3.1');
+  });
+
+  it('no resolvable target stays undefined — the caller never guesses', async () => {
+    const out = await resolveFixVersions(
+      [{ primaryId: 'GHSA-none', aliases: [], installedVersion: '1.0.0' }],
+      async () => null,
+    );
+    expect(out.get('GHSA-none')).toBeUndefined();
   });
 });

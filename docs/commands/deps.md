@@ -16,12 +16,12 @@ vyuh-dxkit deps bump --apply --land pr   # …and land ONE standing PR (dxkit/de
 
 ## Options
 
-| Flag            | Meaning                                                                                     |
-| --------------- | ------------------------------------------------------------------------------------------- |
-| `--apply`       | Execute the planned bumps (default: dry-run plan only)                                       |
-| `--allow-major` | Include producer-classified major (breaking) bumps — skipped-and-named otherwise             |
-| `--land pr`     | Commit manifest + lockfile to the standing `dxkit/dep-bump` branch and open/update the PR    |
-| `--json`        | Machine-readable result (`deps-bump.v1`), including the full skip list and the ledger        |
+| Flag            | Meaning                                                                                   |
+| --------------- | ----------------------------------------------------------------------------------------- |
+| `--apply`       | Execute the planned bumps (default: dry-run plan only)                                    |
+| `--allow-major` | Include producer-classified major (breaking) bumps — skipped-and-named otherwise          |
+| `--land pr`     | Commit manifest + lockfile to the standing `dxkit/dep-bump` branch and open/update the PR |
+| `--json`        | Machine-readable result (`deps-bump.v1`), including the full skip list and the ledger     |
 
 ## How the plan is built
 

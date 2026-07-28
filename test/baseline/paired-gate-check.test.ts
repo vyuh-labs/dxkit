@@ -71,9 +71,7 @@ describe('evaluatePairedRule — the pure per-rule predicate', () => {
   });
 
   it('is silent when the companion change is present', () => {
-    expect(
-      evaluatePairedRule(rule, ['src/models/user.ts', 'migrations/0042_user.sql']),
-    ).toBeNull();
+    expect(evaluatePairedRule(rule, ['src/models/user.ts', 'migrations/0042_user.sql'])).toBeNull();
   });
 
   it('is silent when the trigger surface is untouched', () => {
@@ -239,7 +237,10 @@ describe('computeChangedPaths — deletions count (the paired-gate projection)',
       writeFileSync(path.join(dir, 'src/models/user.ts'), 'export const u = 1;\n');
       git(['add', '.']);
       git(['commit', '-q', '-m', 'base']);
-      const base = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: dir, encoding: 'utf8' }).trim();
+      const base = execFileSync('git', ['rev-parse', 'HEAD'], {
+        cwd: dir,
+        encoding: 'utf8',
+      }).trim();
 
       unlinkSync(path.join(dir, 'src/models/user.ts'));
       writeFileSync(path.join(dir, 'new.txt'), 'x\n');

@@ -127,7 +127,35 @@ describe('runDepsBump', () => {
     }
   });
 
-  it('a RED floor after applying lands NOTHING — outcome floor-red, exit path is a failure', async () => {
+  it('a NET-NEW floor failure (entry green → after red) lands NOTHING — outcome floor-red', async () => {
+    const dir = repoWithManifest({ dependencies: { axios: '^1.7.0' } });
+    const landed: unknown[] = [];
+    const floors = [GREEN_FLOOR, RED_FLOOR]; // entry run, then post-apply run
+    try {
+      const r = await runDepsBump({
+        cwd: dir,
+        trust: trustedLocalContext(),
+        apply: true,
+        land: 'pr',
+        gather,
+        execBump: () => ({ ok: true, output: '' }),
+        runFloor: () => floors.shift()!,
+        runGuardrail: async () => 'BLOCKED',
+        landPaths: (o) => {
+          landed.push(o);
+          return { outcome: 'pr-opened', mode: 'pr' };
+        },
+      });
+      expect(r.outcome).toBe('floor-red');
+      expect(landed).toHaveLength(0);
+      expect(r.note).toContain('NET-NEW');
+      expect(r.ledger).toContain('FAILED — net-new');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('a PRE-EXISTING floor failure (red before AND after) is disclosed, never blocks the lane', async () => {
     const dir = repoWithManifest({ dependencies: { axios: '^1.7.0' } });
     const landed: unknown[] = [];
     try {
@@ -138,17 +166,49 @@ describe('runDepsBump', () => {
         land: 'pr',
         gather,
         execBump: () => ({ ok: true, output: '' }),
-        runFloor: () => RED_FLOOR,
-        runGuardrail: async () => 'BLOCKED',
+        runFloor: () => RED_FLOOR, // same failing check on both sides
+        runGuardrail: async () => 'PASSED',
         landPaths: (o) => {
-          landed.push(o);
-          return { outcome: 'pr-opened', mode: 'pr' };
+          landed.push(o as never);
+          return { outcome: 'pr-opened', mode: 'pr', prUrl: 'local://pr/2' };
         },
       });
-      expect(r.outcome).toBe('floor-red');
-      expect(landed).toHaveLength(0);
-      expect(r.note).toContain('floor');
-      expect(r.ledger).toContain('FAILED');
+      expect(r.outcome).toBe('landed');
+      expect(landed).toHaveLength(1);
+      expect(r.floorAttribution?.some((a) => a.attribution === 'pre-existing')).toBe(true);
+      expect(r.ledger).toContain('Pre-existing floor debt');
+      expect(r.ledger).not.toContain('FAILED — net-new');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('an npm peer-conflict failure retries with --legacy-peer-deps (the shipped install doctrine)', async () => {
+    const dir = repoWithManifest({ dependencies: { axios: '^1.7.0' } });
+    const calls: string[][] = [];
+    try {
+      const r = await runDepsBump({
+        cwd: dir,
+        trust: trustedLocalContext(),
+        apply: true,
+        gather,
+        execBump: (argv) => {
+          calls.push([...argv]);
+          if (!argv.includes('--legacy-peer-deps')) {
+            return {
+              ok: false,
+              output: 'npm error code ERESOLVE\nunable to resolve dependency tree',
+            };
+          }
+          return { ok: true, output: '' };
+        },
+        runFloor: () => GREEN_FLOOR,
+        runGuardrail: async () => 'PASSED',
+      });
+      expect(calls).toHaveLength(2);
+      expect(calls[1]).toContain('--legacy-peer-deps');
+      expect(r.applied[0].applied).toBe(true);
+      expect(r.outcome).toBe('applied');
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -162,7 +222,13 @@ describe('runDepsBump', () => {
         trust: trustedLocalContext(),
         gather: async () => ({
           findings: [
-            { ...FINDING, id: 'A2', package: 'no-fix-lib', fixedVersion: undefined, topLevelDep: undefined },
+            {
+              ...FINDING,
+              id: 'A2',
+              package: 'no-fix-lib',
+              fixedVersion: undefined,
+              topLevelDep: undefined,
+            },
           ] as DepVulnFinding[],
         }),
       });

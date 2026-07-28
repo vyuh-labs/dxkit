@@ -75,7 +75,11 @@ describe('prohibitedLicensesToBaselineEntries', () => {
   });
 
   it('UNKNOWN never matches a family prefix — an unresolvable license is a disclosure problem, not a violation', () => {
-    expect(prohibitedLicensesToBaselineEntries(inventory, ['GPL-']).some((e) => e.kind === 'license' && e.package === 'unresolved-lib')).toBe(false);
+    expect(
+      prohibitedLicensesToBaselineEntries(inventory, ['GPL-']).some(
+        (e) => e.kind === 'license' && e.package === 'unresolved-lib',
+      ),
+    ).toBe(false);
     // ...unless the repo explicitly lists it.
     const explicit = prohibitedLicensesToBaselineEntries(inventory, ['UNKNOWN']);
     expect(explicit).toHaveLength(1);

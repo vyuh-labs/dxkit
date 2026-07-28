@@ -91,7 +91,13 @@ export function buildBumpPlan(
   const allowMajor = opts.allowMajor === true;
   const byParent = new Map<
     string,
-    { toVersion: string; fromVersion?: string; breaking: boolean; advisories: Set<string>; sev: string }
+    {
+      toVersion: string;
+      fromVersion?: string;
+      breaking: boolean;
+      advisories: Set<string>;
+      sev: string;
+    }
   >();
   const skipped: SkippedBump[] = [];
 

@@ -72,11 +72,96 @@ export function extractOsvFixVersion(vuln: OsvVuln): string | undefined {
   return undefined;
 }
 
+/** ALL `fixed` events across the record's ranges — one per affected range
+ *  (a 1.x backport and the 2.x mainline fix are separate events). Input to
+ *  `selectFixVersion`, which picks the right one for an installed version. */
+export function extractOsvFixedEvents(vuln: OsvVuln): string[] {
+  const events: string[] = [];
+  for (const affected of vuln.affected ?? []) {
+    for (const range of affected.ranges ?? []) {
+      for (const event of range.events ?? []) {
+        if (event.fixed && event.fixed.length > 0 && !events.includes(event.fixed)) {
+          events.push(event.fixed);
+        }
+      }
+    }
+  }
+  return events;
+}
+
+/** Numeric-field semver compare; non-numeric fields compare as 0. Total. */
+function compareVersions(a: string, b: string): number {
+  const pa = a.split('.').map((n) => parseInt(n, 10) || 0);
+  const pb = b.split('.').map((n) => parseInt(n, 10) || 0);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const d = (pa[i] ?? 0) - (pb[i] ?? 0);
+    if (d !== 0) return d;
+  }
+  return 0;
+}
+
+/**
+ * Pick the fix version appropriate for an INSTALLED version from a record's
+ * fixed events: the SMALLEST fixed version that is still above the installed
+ * one — the minimal safe move, and the right branch when a record carries
+ * both a backport fix and a mainline fix (installed 1.4.0 with fixes
+ * [1.4.7, 2.0.5] must propose 1.4.7, not a surprise major). Unknown
+ * installed version ⟹ the smallest fixed event (the conservative default).
+ * No event above the installed version ⟹ undefined — never propose a
+ * downgrade.
+ */
+export function selectFixVersion(
+  fixedEvents: readonly string[],
+  installedVersion: string | undefined,
+): string | undefined {
+  if (fixedEvents.length === 0) return undefined;
+  const sorted = [...fixedEvents].sort(compareVersions);
+  if (!installedVersion) return sorted[0];
+  for (const v of sorted) {
+    if (compareVersions(v, installedVersion) > 0) return v;
+  }
+  return undefined;
+}
+
+/**
+ * Best-effort fix-version resolution with alias-fallback — the sibling of
+ * `resolveCvssScores`, sharing the same session cache (one OSV fetch serves
+ * severity + fix resolution). For each input, resolves the primary id then
+ * each alias until a record with fixed events answers, and selects the
+ * target for the input's installed version via `selectFixVersion`. Returns
+ * a map keyed by `primaryId`; absent/undefined ⟹ no deterministic fix
+ * target — the caller stays honest ("no fix available"), never guesses.
+ */
+export async function resolveFixVersions(
+  inputs: ReadonlyArray<{ primaryId: string; aliases: string[]; installedVersion?: string }>,
+  fetcher: OsvFetcher = DEFAULT_FETCHER,
+): Promise<Map<string, string | undefined>> {
+  const allIds = [...new Set(inputs.flatMap((i) => [i.primaryId, ...i.aliases]))];
+  const details = await enrichOsv(allIds, fetcher);
+  const out = new Map<string, string | undefined>();
+  for (const input of inputs) {
+    let resolved: string | undefined;
+    for (const id of [input.primaryId, ...input.aliases]) {
+      const events = details.get(id)?.fixedEvents ?? [];
+      resolved = selectFixVersion(events, input.installedVersion);
+      if (resolved !== undefined) break;
+    }
+    out.set(input.primaryId, resolved);
+  }
+  return out;
+}
+
 /** Enriched OSV detail returned by lookups. cvssScore is the max CVSS base
- *  score across V4/V3 vectors when parseable; null otherwise. */
+ *  score across V4/V3 vectors when parseable; null otherwise. `fixedEvents`
+ *  carries every `fixed` version the record's ranges declare (one per
+ *  affected range — a backport branch and the mainline fix are separate
+ *  events), so consumers can select the right target for THEIR installed
+ *  version (`selectFixVersion`). Cached with the record, one fetch serves
+ *  severity + fix resolution. */
 export interface OsvDetail {
   severity: Severity;
   cvssScore: number | null;
+  fixedEvents: string[];
 }
 
 /** Process-scoped cache so repeated lookups in a session don't re-query. */
@@ -252,8 +337,12 @@ export async function enrichOsv(
     toFetch.map(async (id) => {
       const vuln = await fetcher(id);
       const detail: OsvDetail = vuln
-        ? { severity: classifyOsvSeverity(vuln), cvssScore: extractOsvCvssScore(vuln) }
-        : { severity: 'unknown', cvssScore: null };
+        ? {
+            severity: classifyOsvSeverity(vuln),
+            cvssScore: extractOsvCvssScore(vuln),
+            fixedEvents: extractOsvFixedEvents(vuln),
+          }
+        : { severity: 'unknown', cvssScore: null, fixedEvents: [] };
       return [id, detail] as const;
     }),
   );

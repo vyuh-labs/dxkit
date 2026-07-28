@@ -689,7 +689,9 @@ function formatPairedGate(gate: PairedGateOutcome | undefined): string[] {
  *  paths triggered it), the required companion surface, and the two remedies
  *  (make the companion change, or defer time-boxed). */
 function describePairedFinding(f: PairedChangeFinding): string[] {
-  const out = [`  ${f.check}${f.blocking ? '' : ' (warn-only)'}${f.message ? ` — ${f.message}` : ''}`];
+  const out = [
+    `  ${f.check}${f.blocking ? '' : ' (warn-only)'}${f.message ? ` — ${f.message}` : ''}`,
+  ];
   out.push(`    changed: ${f.ifMatched.join(', ')}`);
   out.push(`    but nothing changed under: ${f.thenGlobs.join(', ')}`);
   out.push(

@@ -62,8 +62,8 @@ tuning belongs here.
 | `addedRequiresChangedLines` | `string[]`     | Finding kinds whose `added` classification only blocks when the finding overlaps lines actually changed in the diff. Demotes scanner-wobble false positives to `uncertain` (warn).                                                                                                                                  |
 | `baseline`                  | `object`       | Pin the baseline mode + ref repo-wide. See "Baseline mode pinning" below.                                                                                                                                                                                                                                           |
 | `checks`                    | `object[]`     | Custom repo-invariant gates dxkit runs as first-class findings. See "Custom checks + lint gate" below and [`vyuh-dxkit checks`](../commands/checks.md).                                                                                                                                                             |
-| `pairedChecks`              | `object[]`     | Declarative "changing X requires also changing Y" rules evaluated over the diff (no command run). See "Paired-change rules" below.                                                                                                                                                                                   |
-| `licenses`                  | `object`       | License posture: `prohibited` lists SPDX ids/prefixes that block on new dependencies. See "Prohibited licenses" below.                                                                                                                                                                                               |
+| `pairedChecks`              | `object[]`     | Declarative "changing X requires also changing Y" rules evaluated over the diff (no command run). See "Paired-change rules" below.                                                                                                                                                                                  |
+| `licenses`                  | `object`       | License posture: `prohibited` lists SPDX ids/prefixes that block on new dependencies. See "Prohibited licenses" below.                                                                                                                                                                                              |
 | `depBump`                   | `object`       | Scheduled deterministic dependency-bump lane (`enabled`, `allowMajor`). See the `depBump` section below.                                                                                                                                                                                                            |
 | `lint`                      | `object`       | Enable the pack-declared built-in lint gate. `{ enabled, blocking }`, both default `false`.                                                                                                                                                                                                                         |
 | `largeFileThreshold`        | `number`       | Line count above which a source file is flagged `large-file` (default `500`). Applied once at gather time, so it drives the guardrail `large-file` finding, the "files over N lines" count, and the Quality + Maintainability scores together. A non-positive / non-numeric value is ignored (falls back to `500`). |
@@ -87,13 +87,13 @@ visibility-derived defaults (`gh repo view --json visibility` →
 }
 ```
 
-| Field       | Type     | Effect                                                                                                                                      |
-| ----------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `mode`      | `string` | `committed-full`, `committed-sanitized`, or `ref-based`. See [baseline modes](../commands/baseline.md#modes) for the disclosure trade-offs. |
-| `ref`       | `string` | Git ref the guardrail diffs against in `ref-based` mode. Default: `origin/HEAD` probe (falls back to `origin/main`).                        |
-| `anchor`    | `string` | Where a committed anchor is stored: `tree`, `branch`, or `cache`. See "Anchor transport" below. Auto-selected when omitted.                 |
-| `anchorRef` | `string` | Branch that stores the anchor when `anchor` is `branch`. Default `dxkit-baselines`. Must NOT be a protection-covered branch.                |
-| `refreshCadence` | `string` | How often the scheduled baseline refresh runs: `weekly` (default), `daily`, or a raw 5-field cron. See "Refresh cadence" below.        |
+| Field            | Type     | Effect                                                                                                                                      |
+| ---------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `mode`           | `string` | `committed-full`, `committed-sanitized`, or `ref-based`. See [baseline modes](../commands/baseline.md#modes) for the disclosure trade-offs. |
+| `ref`            | `string` | Git ref the guardrail diffs against in `ref-based` mode. Default: `origin/HEAD` probe (falls back to `origin/main`).                        |
+| `anchor`         | `string` | Where a committed anchor is stored: `tree`, `branch`, or `cache`. See "Anchor transport" below. Auto-selected when omitted.                 |
+| `anchorRef`      | `string` | Branch that stores the anchor when `anchor` is `branch`. Default `dxkit-baselines`. Must NOT be a protection-covered branch.                |
+| `refreshCadence` | `string` | How often the scheduled baseline refresh runs: `weekly` (default), `daily`, or a raw 5-field cron. See "Refresh cadence" below.             |
 
 CLI `--mode` / `--ref` flags override the policy fields.
 
@@ -158,7 +158,7 @@ installed workflow at `init`/`update` time, so after changing it run
 `vyuh-dxkit update` (or re-run `init`) to re-render
 `.github/workflows/dxkit-baseline-refresh.yml`, and commit the result.
 
-Cadence tunes how *soon* the decision surface sees a new advisory batch — it
+Cadence tunes how _soon_ the decision surface sees a new advisory batch — it
 never changes what a refresh does: newly published advisories are always held
 out of the baseline and raised for a decision, whatever the schedule. The
 `tree` transport refreshes on every default-branch push and has no schedule,
@@ -334,12 +334,12 @@ Semantics, deliberately biased toward false negatives:
   invents a legal posture.
 - **Brownfield semantics**: pre-existing violations are grandfathered into the
   baseline (burn them down via `vyuh-dxkit debt`); the gate blocks the next
-  dependency that *introduces* one. Widening the list later reads as policy
+  dependency that _introduces_ one. Widening the list later reads as policy
   drift (warn), not as the next PR author's fault — re-baseline to adopt the
   tightened posture.
 - Finding identity is `(package, license)` — version-free, so a routine bump
   of an accepted-risk dependency keeps its one allowlist decision, while a
-  license *change* on upgrade re-mints and gates.
+  license _change_ on upgrade re-mints and gates.
 - Gates in committed/baseline mode (the license gather reads the installed
   dependency tree, which a bare ref-worktree lacks — same class as custom
   checks). Exceptions with legal sign-off:
