@@ -13,6 +13,8 @@ import {
   installCiReportsRefresh,
   installCiFlowRefresh,
   flowRefreshEnabled,
+  installCiCommentDefer,
+  commentCommandsEnabled,
   reportsRefreshEnabled,
   installPrReview,
   installIgnoreFiles,
@@ -48,6 +50,9 @@ describe('Phase Ship templates exist on disk', () => {
     ).toBe(true);
     expect(
       fs.existsSync(path.join(TEMPLATES_DIR, '.github', 'workflows', 'dxkit-baseline-refresh.yml')),
+    ).toBe(true);
+    expect(
+      fs.existsSync(path.join(TEMPLATES_DIR, '.github', 'workflows', 'dxkit-comment-defer.yml')),
     ).toBe(true);
   });
 });
@@ -298,6 +303,34 @@ describe('installCiGuardrails + installCiBaselineRefresh', () => {
     // default-branch-anchored).
     expect(content).toContain('DXKIT_PR_BASE: ${{ github.base_ref }}');
     expect(content).toContain('--mode ref-based --ref origin/$DXKIT_PR_BASE');
+  });
+
+  it('comment-defer workflow is opt-in via policy newAdvisories.commentCommands and surface-gated', () => {
+    // No policy → disabled → surface contributes no uninstall artifact.
+    expect(commentCommandsEnabled(tmp)).toBe(false);
+    expect(detectInstallFlags(tmp).withCommentDefer).toBe(false);
+
+    fs.mkdirSync(path.join(tmp, '.dxkit'), { recursive: true });
+    fs.writeFileSync(
+      path.join(tmp, '.dxkit', 'policy.json'),
+      JSON.stringify({ newAdvisories: { commentCommands: true } }),
+    );
+    expect(commentCommandsEnabled(tmp)).toBe(true);
+    const flags = detectInstallFlags(tmp);
+    expect(flags.withCommentDefer).toBe(true);
+    expect(managedGatedArtifacts(flags)).toContain('.github/workflows/dxkit-comment-defer.yml');
+
+    const result = installCiCommentDefer(tmp);
+    expect(result.installed).toContain('.github/workflows/dxkit-comment-defer.yml');
+    const content = fs.readFileSync(
+      path.join(tmp, '.github/workflows/dxkit-comment-defer.yml'),
+      'utf8',
+    );
+    expect(content).not.toContain('__DXKIT_CI_RUNTIME_SETUP__');
+    // The safe transport: the comment body reaches the CLI via env, and the
+    // apply step never interpolates it into a shell line.
+    expect(content).toContain('DXKIT_COMMENT_BODY: ${{ github.event.comment.body }}');
+    expect(content).toContain('allowlist comment-defer');
   });
 
   it('renders the default weekly cron into a scheduled refresh transport', () => {

@@ -118,6 +118,17 @@ export const POSTURE_KNOBS: readonly PostureKnob[] = [
       'published advisory.',
   },
   {
+    path: 'newAdvisories.commentCommands',
+    command: 'guardrail',
+    requiresPlan: false,
+    requiresRecommend: true,
+    note:
+      'enabling installs the dxkit-comment-defer managed workflow (reacts to PR comments, ' +
+      'pushes commits), which configure’s policy-only merge-write cannot place — so no ' +
+      'planConfig; recommendNewAdvisoryTier surfaces the lane once a run has concretely ' +
+      'blocked a newly published advisory.',
+  },
+  {
     path: 'reports.onMerge',
     command: 'report',
     requiresPlan: false,

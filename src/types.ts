@@ -168,6 +168,9 @@ export interface ManifestInstallFlags {
    *  opt-in via `.dxkit/policy.json:flow.onMergeRefresh: true`). */
   withFlowRefresh?: boolean;
   withExtensionsRefresh?: boolean;
+  /** PR-comment defer commands workflow (`/dxkit defer …` from reviewers;
+   *  opt-in via `.dxkit/policy.json:newAdvisories.commentCommands: true`). */
+  withCommentDefer?: boolean;
 }
 
 /** A dependency `vyuh-dxkit tools install` added to the repo on dxkit's behalf

@@ -82,6 +82,8 @@ Commit the updated `.dxkit/allowlist.json` **via the blocked PR itself** (or a d
 
 **Base-branch-first (the well-configured path):** on repos with the scheduled refresh installed, `vyuh-dxkit baseline refresh` detects new advisories itself, holds them out of the baseline, and raises one standing decision PR (`dxkit/advisory-decision`) carrying exactly these deferred entries — merging it IS the defer lane, executed by the dependency owners before feature PRs ever fight the findings. The per-PR `defer` command above is the fallback for repos without the scheduled lane (or for an advisory batch that lands mid-decision).
 
+**From the PR conversation (opt-in):** with `.dxkit/policy.json:newAdvisories.commentCommands: true` (plus `vyuh-dxkit update` to install the `dxkit-comment-defer` workflow), a reviewer with write access can run the defer without leaving GitHub — comment `/dxkit defer --new-advisories` (or explicit fingerprints from the guardrail report, optionally `--expires=+7d --reason="…"`) on the blocked PR. The workflow validates the commenter's permission, re-runs the guardrail on the PR head, applies the identical dep-vuln-only time-boxed deferral, commits the allowlist to the PR branch attributed to the commenter, and replies with the outcome. The grammar is strict by design — anything but fingerprints and the known flags refuses; same-repo PRs only (fork PRs get a reply pointing at the local command).
+
 ## Remove a single entry
 
 ```bash
