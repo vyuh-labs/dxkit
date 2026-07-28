@@ -5,6 +5,111 @@ All notable changes to `@vyuhlabs/dxkit` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.2.1] - 2026-07-28
+
+The operations release. Five features that improve life AROUND the gate —
+for the reviewer staring at a blocked PR, the operator running the standing
+lanes, and the compliance posture a repository declares. Everything composes
+on shipped machinery (the additive-gate shape, the canonical finding
+identity, the managed-surface registry, the allowlist model), and everything
+was validated against real production-shaped repository mirrors before
+release — which found and fixed four defects the unit fixtures could not see.
+
+### Paired-change rules — "changing X requires also changing Y"
+
+`.dxkit/policy.json:pairedChecks` declares pairings like "a data-model
+change ships with its migration" or "an API change ships with its docs":
+
+```jsonc
+{ "pairedChecks": [{ "name": "model-needs-migration",
+    "if": ["src/models/**"], "then": ["migrations/**"],
+    "message": "a data-model change ships with its migration" }] }
+```
+
+A change touching `if` without touching `then` blocks (per-rule
+`blocking: false` for warn-only). Evaluated by a fourth additive fail-open
+gate that is PURE — globs against the changed-path set, no command executed
+— so unlike command checks it also gates in ref-based mode and on untrusted
+fork PRs. Deletions count as touches on both sides. A change that genuinely
+needs no companion defers time-boxed
+(`allowlist add --kind=paired-change --category=deferred --expires=+7d`);
+the expiry re-blocks.
+
+### Prohibited-license block rule
+
+`licenses.prohibited: ["GPL-", "AGPL-3.0"]` turns the license inventory into
+a gate: a NEW dependency whose license matches blocks
+(`newProhibitedLicense`, armed by default, inert until a list is declared —
+dxkit never invents a legal posture). Brownfield semantics throughout: the
+pre-existing backlog grandfathers and burns down via `debt`; only an
+introduction blocks. Biased toward false negatives — `UNKNOWN` never matches
+a prefix unless explicitly listed, compound SPDX expressions split so
+dual-licensed packages still match — and the prohibited list is itself a
+recall input, so WIDENING it reads as policy drift (warn + re-baseline
+remedy), never as the next PR author's fault. Identity is
+`(package, license)`, version-free: a routine bump keeps one allowlist
+decision; a license change on upgrade re-mints.
+
+### PR-comment defer commands
+
+With `newAdvisories.commentCommands: true`, a reviewer with write access can
+defer newly published advisories without leaving GitHub — comment on the
+blocked PR:
+
+```
+/dxkit defer --new-advisories
+/dxkit defer <fingerprint>… [--expires=+7d] [--reason="…"]
+```
+
+The new `dxkit-comment-defer` managed workflow checks the commenter's
+permission, re-runs the guardrail on the PR head (with `--untrusted` — no
+repo-declared command executes), applies the same dep-vuln-only time-boxed
+deferral as the local command through the same core, commits the allowlist
+to the PR branch attributed to the commenter, and replies with the outcome.
+The comment body is treated as untrusted text: env-only transport, strict
+grammar (fingerprints + three known flags; anything else refuses with the
+token named). Same-repo PRs only. Opt-in, default off.
+
+### Deterministic dependency-bump PRs
+
+`vyuh-dxkit deps bump` turns the fixable subset of dependency
+vulnerabilities into concrete verified upgrades — no LLM anywhere:
+
+- **Plan** from the scanners' own fix versions: structured upgrade plans
+  win, a direct dependency's fixed version is the fallback, and everything
+  else is skipped-and-named (no fix, transitive without a plan, breaking
+  without `--allow-major`, allowlisted, non-Node ecosystem).
+- **Apply** with the repository's own package manager, preserving the
+  dependency's manifest section, with the same `--legacy-peer-deps` retry
+  doctrine as every shipped install step.
+- **Verify** with the correctness floor at full scope, ATTRIBUTED against a
+  pre-bump entry run: only a net-new failure blocks; a repository whose
+  floor was already red keeps its debt disclosed, never weaponized against
+  the bump. The guardrail verdict rides the ledger.
+- **Land** exactly manifest + lockfile as ONE standing PR
+  (`dxkit/dep-bump`) whose body is the verification ledger.
+
+`depBump.enabled: true` schedules it weekly via a managed workflow. Fix
+recall on npm repos comes from the advisory's own OSV record (in-range
+`fixAvailable: true` answers, direct dependencies, minimal safe move — never
+a surprise major, never a downgrade).
+
+### Refresh cadence knob
+
+`baseline.refreshCadence: "weekly" | "daily" | "<5-field cron>"` sets how
+often the scheduled baseline refresh runs — how soon newly published
+advisories reach the standing decision PR. Strictly validated (the value
+lands in workflow YAML; anything outside the numeric cron shape falls back
+to weekly), rendered at `init`/`update`. Cadence changes when the decision
+surface runs, never what it holds out.
+
+### Also
+
+- `allowlist add --expires` now accepts the relative `+Nd` form the rendered
+  remedies use (previously only `allowlist defer` did).
+- `checks list` shows declared paired-change rules; the capability catalog,
+  doctor probes, and docs cover the new lanes.
+
 ## [4.2.0] - 2026-07-25
 
 The trust release. Every item repairs a way the gate could say something it
