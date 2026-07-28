@@ -15,7 +15,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { evaluateSchemaDriftGateForGuardrail } from '../../src/baseline/schema-drift-gate-check';
-import { computeModelSchemaDriftFingerprint } from '../../src/analyzers/tools/fingerprint';
+import { computeModelSchemaDriftFingerprint } from '../../src/analyzers/tools/fingerprint-contract';
 import type { AllowlistFile } from '../../src/allowlist/file';
 
 function git(dir: string, args: string[]): void {

@@ -16,7 +16,7 @@
  * emitted finding shares one identity contract with the allowlist.
  */
 
-import { computeModelSchemaDriftFingerprint } from '../tools/fingerprint';
+import { computeModelSchemaDriftFingerprint } from '../tools/fingerprint-contract';
 import { diffModelSets, type DriftClass, type ModelSet, type SchemaDrift } from './model';
 
 /** Change classes that are breaking by construction: a reader or writer of

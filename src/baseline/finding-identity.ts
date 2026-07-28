@@ -15,17 +15,19 @@ import { createHash } from 'crypto';
 import {
   canonicalRuleFor,
   computeCodeFingerprint,
-  computeCodeReimplementationFingerprint,
   computeContentFingerprint,
   computeFingerprint,
   computeFingerprintV1,
+  lineWindowFor,
+  SECRET_CANONICAL_RULE,
+} from '../analyzers/tools/fingerprint';
+import {
+  computeCodeReimplementationFingerprint,
   computeFlowBindingFingerprint,
   computeModelSchemaDriftFingerprint,
   computePairedChangeFingerprint,
   computeProhibitedLicenseFingerprint,
-  lineWindowFor,
-  SECRET_CANONICAL_RULE,
-} from '../analyzers/tools/fingerprint';
+} from '../analyzers/tools/fingerprint-contract';
 // Note: `computeSecretHmac` is the producer-side primitive that turns
 // a raw secret + salt into the HMAC string stored in
 // `SecretHmacIdentityInput.hmac`. It's called by the producer (Phase

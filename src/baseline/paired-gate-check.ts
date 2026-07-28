@@ -28,7 +28,7 @@
  */
 
 import { computeChangedPaths } from './changed-files';
-import { computePairedChangeFingerprint } from '../analyzers/tools/fingerprint';
+import { computePairedChangeFingerprint } from '../analyzers/tools/fingerprint-contract';
 import { globToRegex } from '../analyzers/tools/suppressions';
 import { normalizePairedChecks, type PairedCheckRule } from '../analyzers/custom-checks/config';
 import { loadPolicyFromCwd } from './policy';
