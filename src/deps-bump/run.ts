@@ -28,6 +28,11 @@ import type { AnalysisTrustContext } from '../analysis-trust';
 import type { DepVulnFinding } from '../languages/capabilities/types';
 import { gatherDepVulns } from '../analyzers/security/gather';
 import { runCorrectnessFloor, type CorrectnessFloorResult } from '../analyzers/correctness/run';
+import {
+  attributeFloorFailures,
+  type AttributedFloorFailure,
+  type FloorBaseCheck,
+} from '../analyzers/correctness/attribution';
 import { detectActiveLanguages } from '../languages';
 import {
   detectPackageManager,
@@ -52,16 +57,15 @@ export interface DepsBumpResult {
    *  opened/updated; 'nothing-to-do' — empty plan; 'refused' — trust or
    *  environment refusal (disclosed in `note`); 'floor-red' — bumps applied
    *  but the floor failed, so nothing landed. */
-  readonly outcome:
-    | 'planned'
-    | 'applied'
-    | 'landed'
-    | 'nothing-to-do'
-    | 'refused'
-    | 'floor-red';
+  readonly outcome: 'planned' | 'applied' | 'landed' | 'nothing-to-do' | 'refused' | 'floor-red';
   readonly plan: BumpPlan;
   readonly applied: readonly AppliedBump[];
   readonly floor?: CorrectnessFloorResult;
+  /** Post-apply floor failures attributed against the PRE-apply entry floor
+   *  through the ONE comparator (`attributeFloorFailures`): only a NET-NEW
+   *  failure blocks the lane; a repo whose floor was already red keeps its
+   *  debt disclosed, never weaponized against the bump. */
+  readonly floorAttribution?: readonly AttributedFloorFailure[];
   readonly guardrailVerdict?: string;
   readonly land?: LandRefreshResult;
   readonly note?: string;
@@ -156,14 +160,31 @@ export function renderLedger(result: Omit<DepsBumpResult, 'ledger'>): string {
 
   lines.push('### Verification', '');
   if (result.floor) {
-    const checks = result.floor.checks
-      .map((c) => `- ${c.pack}/${c.label}: ${c.status}`)
-      .join('\n');
+    const attributed = result.floorAttribution ?? [];
+    const netNew = attributed.filter((a) => a.attribution === 'net-new');
+    const preExisting = attributed.filter((a) => a.attribution === 'pre-existing');
+    const unattributed = attributed.filter((a) => a.attribution === 'unattributed');
+    const checks = result.floor.checks.map((c) => `- ${c.pack}/${c.label}: ${c.status}`).join('\n');
     lines.push(
-      `Correctness floor (full scope): **${result.floor.blocks ? 'FAILED' : 'passed'}**`,
+      `Correctness floor (full scope, attributed vs the pre-bump entry run): ` +
+        `**${netNew.length > 0 ? 'FAILED — net-new failures' : 'passed'}**`,
       checks,
       '',
     );
+    if (preExisting.length > 0) {
+      lines.push(
+        `Pre-existing floor debt (failing BEFORE the bumps too — disclosed, not blocking): ` +
+          preExisting.map((a) => `${a.check.pack}/${a.check.label}`).join(', '),
+        '',
+      );
+    }
+    if (unattributed.length > 0) {
+      lines.push(
+        `Unattributed floor failures (the entry run could not observe these checks): ` +
+          unattributed.map((a) => `${a.check.pack}/${a.check.label}`).join(', '),
+        '',
+      );
+    }
   } else {
     lines.push('Correctness floor: not run (dry run).', '');
   }
@@ -256,11 +277,40 @@ export async function runDepsBump(opts: DepsBumpOptions): Promise<DepsBumpResult
 
   const pm = detectPackageManager(cwd);
   const execBump = opts.execBump ?? defaultExecBump(cwd);
+  const runFloor =
+    opts.runFloor ??
+    (() =>
+      runCorrectnessFloor({
+        cwd,
+        changedFiles: bumpArtifactPaths(pm),
+        scope: 'full',
+        packs: detectActiveLanguages(cwd),
+      }));
+
+  // ENTRY floor, captured on the PRISTINE tree before any bump: the base side
+  // of the attribution comparator. A repo whose floor is already red must not
+  // have that debt weaponized against the bump — only a NET-NEW failure
+  // blocks (the loop Stop-gate's entry-snapshot doctrine, same comparator).
+  const entryFloor = runFloor();
+
   const applied: AppliedBump[] = [];
   for (const bump of plan.bumps) {
     const argv = upgradeArgv(pm, bump.parent, bump.toVersion, sectionFor(cwd, bump.parent));
-    const r = execBump(argv);
-    applied.push({ ...bump, applied: r.ok, ...(r.ok ? {} : { failure: r.output.slice(-300) }) });
+    let r = execBump(argv);
+    // A repo whose tree only resolves under --legacy-peer-deps (a peer
+    // conflict its own install already tolerates) must not fail the bump —
+    // the same fallback doctrine as every shipped `npm ci || npm ci
+    // --legacy-peer-deps` install step: the flag only skips the peer check
+    // that rejects the tree, it never fabricates a different resolution.
+    if (!r.ok && pm === 'npm' && /ERESOLVE|peer dep/i.test(r.output)) {
+      r = execBump([...argv, '--legacy-peer-deps']);
+    }
+    applied.push({
+      ...bump,
+      applied: r.ok,
+      // Single-line tail: this lands in a markdown table cell.
+      ...(r.ok ? {} : { failure: r.output.slice(-300).replace(/\s+/g, ' ').trim() }),
+    });
   }
   const anyApplied = applied.some((b) => b.applied);
   if (!anyApplied) {
@@ -273,17 +323,20 @@ export async function runDepsBump(opts: DepsBumpOptions): Promise<DepsBumpResult
   }
 
   // Verify: the floor at FULL scope (a dependency change alters resolution
-  // for every file — the manifest-aware escalation made explicit).
-  const runFloor =
-    opts.runFloor ??
-    (() =>
-      runCorrectnessFloor({
-        cwd,
-        changedFiles: bumpArtifactPaths(pm),
-        scope: 'full',
-        packs: detectActiveLanguages(cwd),
-      }));
+  // for every file), attributed against the entry snapshot.
   const floor = runFloor();
+  const baseChecks: FloorBaseCheck[] = entryFloor.checks.map((c) => ({
+    pack: c.pack,
+    label: c.label,
+    status: c.status === 'pass' ? 'pass' : c.status === 'fail' ? 'fail' : 'skipped',
+    ...(c.findings !== undefined ? { findings: c.findings } : {}),
+  }));
+  const floorAttribution = attributeFloorFailures(floor, baseChecks, {
+    // The entry floor always ran (just above), so an absent base check means
+    // the check itself is NEW post-bump — treat as net-new (conservative).
+    absentMeans: 'net-new',
+  });
+  const netNewFloorRed = floorAttribution.some((a) => a.attribution === 'net-new');
 
   let guardrailVerdict: string | undefined;
   if (opts.runGuardrail) {
@@ -301,16 +354,18 @@ export async function runDepsBump(opts: DepsBumpOptions): Promise<DepsBumpResult
     }
   }
 
-  if (floor.blocks) {
+  if (netNewFloorRed) {
     return finish({
       outcome: 'floor-red',
       plan,
       applied,
       floor,
+      floorAttribution,
       ...(guardrailVerdict !== undefined ? { guardrailVerdict } : {}),
       note:
-        'the correctness floor FAILED after applying the bumps — nothing was landed. ' +
-        'A bump that breaks the build must be a human decision, not a robot PR.',
+        'the correctness floor has NET-NEW failures after applying the bumps (the entry ' +
+        'floor did not have them) — nothing was landed. A bump that breaks the build ' +
+        'must be a human decision, not a robot PR.',
     });
   }
 
@@ -320,6 +375,7 @@ export async function runDepsBump(opts: DepsBumpOptions): Promise<DepsBumpResult
       plan,
       applied,
       floor,
+      floorAttribution,
       ...(guardrailVerdict !== undefined ? { guardrailVerdict } : {}),
     });
   }
@@ -329,6 +385,7 @@ export async function runDepsBump(opts: DepsBumpOptions): Promise<DepsBumpResult
     plan,
     applied,
     floor,
+    floorAttribution,
     ...(guardrailVerdict !== undefined ? { guardrailVerdict } : {}),
   };
   const land = (opts.landPaths ?? landRefreshPaths)({

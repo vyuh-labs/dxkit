@@ -30,10 +30,7 @@
 import { computeChangedPaths } from './changed-files';
 import { computePairedChangeFingerprint } from '../analyzers/tools/fingerprint';
 import { globToRegex } from '../analyzers/tools/suppressions';
-import {
-  normalizePairedChecks,
-  type PairedCheckRule,
-} from '../analyzers/custom-checks/config';
+import { normalizePairedChecks, type PairedCheckRule } from '../analyzers/custom-checks/config';
 import { loadPolicyFromCwd } from './policy';
 import { findEntry, isEntryActive } from '../allowlist/file';
 import type { AllowlistFile } from '../allowlist/file';
@@ -98,8 +95,15 @@ const MAX_IF_MATCHED_SAMPLE = 5;
 
 // A fail-open 'error' skip MUST carry the captured failure — the overload
 // makes a silent `skip('error')` a compile error (the swallow class).
-function skip(reason: 'error', warnings: readonly string[], failure: GateFailure): PairedGateOutcome;
-function skip(reason: Exclude<PairedGateSkip, 'error'>, warnings?: readonly string[]): PairedGateOutcome;
+function skip(
+  reason: 'error',
+  warnings: readonly string[],
+  failure: GateFailure,
+): PairedGateOutcome;
+function skip(
+  reason: Exclude<PairedGateSkip, 'error'>,
+  warnings?: readonly string[],
+): PairedGateOutcome;
 function skip(
   reason: PairedGateSkip,
   warnings: readonly string[] = [],

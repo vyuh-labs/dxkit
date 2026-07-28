@@ -18,10 +18,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, existsSync
 import { execFileSync } from 'child_process';
 import { tmpdir } from 'os';
 import * as path from 'path';
-import {
-  parseCommentCommand,
-  runCommentDeferCore,
-} from '../../src/allowlist/comment-defer';
+import { parseCommentCommand, runCommentDeferCore } from '../../src/allowlist/comment-defer';
 import { writeVerdict, type CachedBlockingFinding } from '../../src/baseline/verdict-cache';
 import type { BrownfieldPolicy } from '../../src/baseline/policy';
 
@@ -30,7 +27,9 @@ const FP_B = 'bbbbbbbbbbbbbbbb';
 
 describe('parseCommentCommand — the strict grammar', () => {
   it('parses fingerprints + flags', () => {
-    const out = parseCommentCommand(`/dxkit defer ${FP_A} ${FP_B} --expires=+3d --reason="axios batch"`);
+    const out = parseCommentCommand(
+      `/dxkit defer ${FP_A} ${FP_B} --expires=+3d --reason="axios batch"`,
+    );
     expect(out.ok).toBe(true);
     if (out.ok) {
       expect(out.command.fingerprints).toEqual([FP_A, FP_B]);

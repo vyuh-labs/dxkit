@@ -534,8 +534,8 @@ describe('baselineRefreshCron — the ONE cadence normalizer', () => {
         DEFAULT_BASELINE_REFRESH_CRON,
       );
     }
-    expect(
-      baselineRefreshCron({ baseline: { refreshCadence: 42 as unknown as string } }),
-    ).toBe(DEFAULT_BASELINE_REFRESH_CRON);
+    expect(baselineRefreshCron({ baseline: { refreshCadence: 42 as unknown as string } })).toBe(
+      DEFAULT_BASELINE_REFRESH_CRON,
+    );
   });
 });

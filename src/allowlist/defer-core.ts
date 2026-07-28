@@ -83,11 +83,7 @@ export function parseDeferExpiry(raw: string | undefined, now = new Date()): str
  * `--from-last-check` and for the explicit-fingerprint kind cross-check,
  * writes `.dxkit/allowlist.json` when anything was added.
  */
-export function executeDefer(
-  cwd: string,
-  req: DeferRequest,
-  now = new Date(),
-): DeferResult {
+export function executeDefer(cwd: string, req: DeferRequest, now = new Date()): DeferResult {
   const reason = (req.reason ?? '').trim();
   if (!reason) return refuse('--reason is required (non-empty rationale string)');
 

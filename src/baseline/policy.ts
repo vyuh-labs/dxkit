@@ -487,7 +487,14 @@ export function prohibitedLicensePatterns(
 ): ReadonlyArray<string> {
   const declared = policy.licenses?.prohibited;
   if (!Array.isArray(declared)) return [];
-  return [...new Set(declared.filter((s): s is string => typeof s === 'string').map((s) => s.trim()).filter(Boolean))].sort();
+  return [
+    ...new Set(
+      declared
+        .filter((s): s is string => typeof s === 'string')
+        .map((s) => s.trim())
+        .filter(Boolean),
+    ),
+  ].sort();
 }
 
 /** `graph.*` block in `.dxkit/policy.json`. */

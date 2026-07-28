@@ -1000,8 +1000,13 @@ export async function runGuardrailCheck(
     envelopeDrift,
     policy,
     blocks:
-      baseBlocks || flowGate.blocks || schemaDriftGate.blocks || dupGate.blocks || pairedGate.blocks,
-    warns: baseWarns || flowGate.warns || schemaDriftGate.warns || dupGate.warns || pairedGate.warns,
+      baseBlocks ||
+      flowGate.blocks ||
+      schemaDriftGate.blocks ||
+      dupGate.blocks ||
+      pairedGate.blocks,
+    warns:
+      baseWarns || flowGate.warns || schemaDriftGate.warns || dupGate.warns || pairedGate.warns,
     attributionGaps,
     allowlistDelta,
     refExcludedKinds,

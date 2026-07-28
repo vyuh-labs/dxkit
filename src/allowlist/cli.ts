@@ -76,7 +76,7 @@ import {
   type AllowlistCategory,
 } from './categories';
 import { readVerdictForTree } from '../baseline/verdict-cache';
-import { executeDefer } from './defer-core';
+import { executeDefer, parseDeferExpiry } from './defer-core';
 import { runCommentDefer } from './comment-defer';
 import {
   ALLOWLIST_FILENAME,
@@ -992,8 +992,15 @@ function resolveExpiresAt(
   category: AllowlistCategory,
 ): string | undefined {
   if (raw !== undefined) {
+    // Relative form (`+7d`) resolves through the ONE defer-expiry parser —
+    // every rendered remedy line says `--expires=+7d`, so `add` must accept
+    // exactly what `defer` accepts (this shipped divergent once: the paired
+    // remedy named a flag shape `add` refused).
+    if (/^\+\d+d$/.test(raw)) return parseDeferExpiry(raw)!;
     if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
-      logger.fail(`--expires must be ISO date YYYY-MM-DD; got ${JSON.stringify(raw)}`);
+      logger.fail(
+        `--expires must be ISO date YYYY-MM-DD or relative +Nd; got ${JSON.stringify(raw)}`,
+      );
       process.exit(1);
     }
     return raw;

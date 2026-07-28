@@ -101,9 +101,13 @@ function renderConsole(result: DepsBumpResult, opts: DepsBumpCliOptions): void {
   }
   if (result.note) logger.warn(result.note);
   if (plan.skipped.length > 0) {
-    logger.dim(`Not bumped (disclosed): ${plan.skipped.length} advisory/ies — see --json or the ledger.`);
+    logger.dim(
+      `Not bumped (disclosed): ${plan.skipped.length} advisory/ies — see --json or the ledger.`,
+    );
   }
   if (result.outcome === 'planned' && !opts.apply && plan.bumps.length > 0) {
-    logger.dim('  Apply + verify: vyuh-dxkit deps bump --apply   (add --land pr to open the standing PR)');
+    logger.dim(
+      '  Apply + verify: vyuh-dxkit deps bump --apply   (add --land pr to open the standing PR)',
+    );
   }
 }

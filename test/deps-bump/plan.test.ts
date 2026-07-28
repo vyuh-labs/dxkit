@@ -26,7 +26,12 @@ function f(over: Partial<DepVulnFinding>): DepVulnFinding {
 describe('buildBumpPlan', () => {
   it('plans a direct-dep bump from fixedVersion', () => {
     const { bumps, skipped } = buildBumpPlan([
-      f({ package: 'axios', installedVersion: '1.7.0', fixedVersion: '1.8.2', topLevelDep: ['axios'] }),
+      f({
+        package: 'axios',
+        installedVersion: '1.7.0',
+        fixedVersion: '1.8.2',
+        topLevelDep: ['axios'],
+      }),
     ]);
     expect(skipped).toHaveLength(0);
     expect(bumps).toEqual([
@@ -100,9 +105,27 @@ describe('buildBumpPlan', () => {
 
   it('dedupes per parent to the latest target and merges advisories; severity orders the plan', () => {
     const { bumps } = buildBumpPlan([
-      f({ id: 'L1', package: 'low-lib', severity: 'low', fixedVersion: '1.0.1', topLevelDep: ['low-lib'] }),
-      f({ id: 'C1', package: 'shared-lib', severity: 'medium', fixedVersion: '4.17.20', topLevelDep: ['shared-lib'] }),
-      f({ id: 'C2', package: 'shared-lib', severity: 'critical', fixedVersion: '4.17.21', topLevelDep: ['shared-lib'] }),
+      f({
+        id: 'L1',
+        package: 'low-lib',
+        severity: 'low',
+        fixedVersion: '1.0.1',
+        topLevelDep: ['low-lib'],
+      }),
+      f({
+        id: 'C1',
+        package: 'shared-lib',
+        severity: 'medium',
+        fixedVersion: '4.17.20',
+        topLevelDep: ['shared-lib'],
+      }),
+      f({
+        id: 'C2',
+        package: 'shared-lib',
+        severity: 'critical',
+        fixedVersion: '4.17.21',
+        topLevelDep: ['shared-lib'],
+      }),
     ]);
     expect(bumps.map((b) => b.parent)).toEqual(['shared-lib', 'low-lib']); // critical first
     expect(bumps[0].toVersion).toBe('4.17.21'); // the higher fix subsumes

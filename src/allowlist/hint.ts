@@ -243,7 +243,7 @@ export function remediationFor(kind: BaselineEntry['kind']): string {
     case 'paired-change':
       return (
         'This change touched files a declared pairing requires a companion change ' +
-        "for (policy.json:pairedChecks — e.g. a data model changed but no migration " +
+        'for (policy.json:pairedChecks — e.g. a data model changed but no migration ' +
         'did). Add the companion change, or — when this specific change genuinely ' +
         'needs none — allowlist with category=deferred and a short expiry so the ' +
         'exception stays visible and time-boxed.'
