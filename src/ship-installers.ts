@@ -1036,6 +1036,32 @@ export function flowRefreshEnabled(cwd: string): boolean {
   return readFlowConfig(cwd).onMergeRefresh;
 }
 
+export function installCiDepBump(cwd: string, opts: InstallerOpts = {}): ShipInstallResult {
+  const result = installWorkflow(cwd, 'dxkit-dep-bump.yml', opts, {
+    [CI_RUNTIME_SETUP_KEY]: renderCiRuntimeSetup(cwd),
+    __DXKIT_DEFAULT_BRANCH__: detectDefaultBranch(cwd),
+  });
+  if (result.installed.length > 0) {
+    result.notes.push(
+      'dep-bump workflow installed: weekly, it turns the fixable subset of dependency ' +
+        'vulnerabilities into one standing PR (dxkit/dep-bump) — bumps from the scanners’ ' +
+        'own fix versions, verified by the correctness floor + guardrail before opening. ' +
+        'Majors are skipped unless depBump.allowMajor.',
+    );
+  }
+  return result;
+}
+
+/** Whether the scheduled dep-bump lane is enabled in policy
+ *  (`depBump.enabled: true`). */
+export function depBumpEnabled(cwd: string): boolean {
+  try {
+    return loadPolicyFromCwd(cwd).depBump?.enabled === true;
+  } catch {
+    return false;
+  }
+}
+
 export function installCiCommentDefer(cwd: string, opts: InstallerOpts = {}): ShipInstallResult {
   const result = installWorkflow(cwd, 'dxkit-comment-defer.yml', opts, {
     [CI_RUNTIME_SETUP_KEY]: renderCiRuntimeSetup(cwd),

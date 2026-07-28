@@ -9,6 +9,7 @@ import {
   recommendBaseline,
   recommendChecks,
   recommendDebt,
+  recommendDepBump,
   recommendExtensions,
   recommendLoopPreset,
   recommendNewAdvisoryTier,
@@ -115,6 +116,22 @@ export const GATE_COMMANDS = [
       'Informational: it never gates.',
     skill: 'dxkit-action',
     whenToRecommend: recommendDebt,
+  },
+  {
+    id: 'deps',
+    audience: 'user',
+    group: 'gate',
+    summary: 'Deterministic dependency security bumps (plan / apply / land a PR)',
+    typicalRuntime: 'plan < 1 min; --apply varies (runs your install + tests)',
+    docsBlurb:
+      'Turn the fixable subset of your dependency vulnerabilities into concrete bumps: ' +
+      '`deps bump` plans from the scanners’ own fix versions (no LLM), `--apply` executes ' +
+      'them with your package manager and verifies with the correctness floor + guardrail, ' +
+      '`--land pr` opens one standing, floor-verified PR. Breaking (major) bumps are ' +
+      'skipped-and-named unless `--allow-major`. The scheduled workflow ' +
+      '(`depBump.enabled: true`) runs the same lane weekly.',
+    skill: 'dxkit-action',
+    whenToRecommend: recommendDepBump,
   },
   {
     id: 'checks',

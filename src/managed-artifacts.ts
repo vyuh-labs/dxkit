@@ -53,6 +53,8 @@ import {
   installCiExtensionsRefresh,
   installCiCommentDefer,
   commentCommandsEnabled,
+  installCiDepBump,
+  depBumpEnabled,
   extensionsRefreshEnabled,
   flowRefreshEnabled,
   installCiGuardrails,
@@ -81,6 +83,7 @@ type PrimaryFlag =
   | 'withFlowRefresh'
   | 'withExtensionsRefresh'
   | 'withCommentDefer'
+  | 'withDepBump'
   | 'withClaudeLoop';
 
 /**
@@ -325,6 +328,18 @@ export const MANAGED_SHIP_SURFACES: readonly ManagedShipSurface[] = [
     detectPresent: (cwd) => existsRel(cwd, '.github/workflows/dxkit-comment-defer.yml'),
   },
   {
+    // The scheduled deterministic dep-bump lane (weekly `deps bump --apply
+    // --land pr`). Opt-in via policy depBump.enabled; presence uninstall
+    // detection mirrors flow-refresh.
+    id: 'ci-dep-bump',
+    gate: { kind: 'flag', flag: 'withDepBump' },
+    artifacts: () => ['.github/workflows/dxkit-dep-bump.yml'],
+    uninstallDetection: 'presence',
+    refreshOnUpdate: true,
+    install: (cwd, { force }) => installCiDepBump(cwd, { force }),
+    detectPresent: (cwd) => existsRel(cwd, '.github/workflows/dxkit-dep-bump.yml'),
+  },
+  {
     // On-merge flow-contract refresh (task: keep committed served/consumed
     // snapshots current). Opt-in via policy flow.onMergeRefresh; presence
     // uninstall detection mirrors reports-refresh.
@@ -416,6 +431,7 @@ export function detectInstallFlags(cwd: string): ManifestInstallFlags {
   flags.withFlowRefresh = flags.withFlowRefresh || flowRefreshEnabled(cwd);
   flags.withExtensionsRefresh = flags.withExtensionsRefresh || extensionsRefreshEnabled(cwd);
   flags.withCommentDefer = flags.withCommentDefer || commentCommandsEnabled(cwd);
+  flags.withDepBump = flags.withDepBump || depBumpEnabled(cwd);
   return flags;
 }
 

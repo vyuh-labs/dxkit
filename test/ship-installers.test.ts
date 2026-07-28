@@ -15,6 +15,8 @@ import {
   flowRefreshEnabled,
   installCiCommentDefer,
   commentCommandsEnabled,
+  installCiDepBump,
+  depBumpEnabled,
   reportsRefreshEnabled,
   installPrReview,
   installIgnoreFiles,
@@ -331,6 +333,29 @@ describe('installCiGuardrails + installCiBaselineRefresh', () => {
     // apply step never interpolates it into a shell line.
     expect(content).toContain('DXKIT_COMMENT_BODY: ${{ github.event.comment.body }}');
     expect(content).toContain('allowlist comment-defer');
+  });
+
+  it('dep-bump workflow is opt-in via policy depBump.enabled and surface-gated', () => {
+    expect(depBumpEnabled(tmp)).toBe(false);
+    expect(detectInstallFlags(tmp).withDepBump).toBe(false);
+
+    fs.mkdirSync(path.join(tmp, '.dxkit'), { recursive: true });
+    fs.writeFileSync(
+      path.join(tmp, '.dxkit', 'policy.json'),
+      JSON.stringify({ depBump: { enabled: true } }),
+    );
+    expect(depBumpEnabled(tmp)).toBe(true);
+    const flags = detectInstallFlags(tmp);
+    expect(flags.withDepBump).toBe(true);
+    expect(managedGatedArtifacts(flags)).toContain('.github/workflows/dxkit-dep-bump.yml');
+
+    const result = installCiDepBump(tmp);
+    expect(result.installed).toContain('.github/workflows/dxkit-dep-bump.yml');
+    const content = fs.readFileSync(path.join(tmp, '.github/workflows/dxkit-dep-bump.yml'), 'utf8');
+    expect(content).not.toContain('__DXKIT_');
+    // Branch + PR mechanics live in the CLI (shared lander), never the YAML.
+    expect(content).toContain('deps bump --apply --land pr');
+    expect(content).not.toContain('git checkout -B');
   });
 
   it('renders the default weekly cron into a scheduled refresh transport', () => {

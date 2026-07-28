@@ -183,6 +183,33 @@ export function recommendDebt(ctx: RecommendContext): Recommendation | null {
   };
 }
 
+/**
+ * Deterministic dep-bump lane: fires when the committed baseline carries
+ * grandfathered dependency vulnerabilities and the repo has not enabled the
+ * scheduled bump workflow (`depBump.enabled`). Grounded in the baseline the
+ * repo already committed — a repo with no dep-vuln debt never hears about
+ * the lane, and one that enabled it stops hearing immediately.
+ */
+export function recommendDepBump(ctx: RecommendContext): Recommendation | null {
+  const policy = readJsonSafe(path.join(ctx.cwd, '.dxkit', 'policy.json')) as {
+    depBump?: unknown;
+  } | null;
+  if (policy && policy.depBump !== undefined) return null;
+  const parsed = readJsonSafe(path.join(ctx.cwd, '.dxkit', 'baselines', 'main.json')) as {
+    findings?: Array<{ kind?: string }>;
+  } | null;
+  const depVulns = (parsed?.findings ?? []).filter((f) => f.kind === 'dep-vuln').length;
+  if (depVulns === 0) return null;
+  return {
+    reason:
+      `the baseline grandfathers ${depVulns} dependency vulnerabilit${depVulns === 1 ? 'y' : 'ies'} — ` +
+      `the deterministic bump lane turns the fixable subset into one scheduled, ` +
+      `floor-verified PR (no agent involved). Preview with the command below; enable the ` +
+      `scheduled lane with .dxkit/policy.json depBump.enabled: true + vyuh-dxkit update`,
+    command: 'vyuh-dxkit deps bump',
+  };
+}
+
 // ─── Deterministic config planners (`vyuh-dxkit configure`) ──────────────────
 // Each is a PURE function of observable repo facts — same repo, same plan, every
 // run and every environment. That reproducibility is the whole point: the config

@@ -64,6 +64,7 @@ tuning belongs here.
 | `checks`                    | `object[]`     | Custom repo-invariant gates dxkit runs as first-class findings. See "Custom checks + lint gate" below and [`vyuh-dxkit checks`](../commands/checks.md).                                                                                                                                                             |
 | `pairedChecks`              | `object[]`     | Declarative "changing X requires also changing Y" rules evaluated over the diff (no command run). See "Paired-change rules" below.                                                                                                                                                                                   |
 | `licenses`                  | `object`       | License posture: `prohibited` lists SPDX ids/prefixes that block on new dependencies. See "Prohibited licenses" below.                                                                                                                                                                                               |
+| `depBump`                   | `object`       | Scheduled deterministic dependency-bump lane (`enabled`, `allowMajor`). See the `depBump` section below.                                                                                                                                                                                                            |
 | `lint`                      | `object`       | Enable the pack-declared built-in lint gate. `{ enabled, blocking }`, both default `false`.                                                                                                                                                                                                                         |
 | `largeFileThreshold`        | `number`       | Line count above which a source file is flagged `large-file` (default `500`). Applied once at gather time, so it drives the guardrail `large-file` finding, the "files over N lines" count, and the Quality + Maintainability scores together. A non-positive / non-numeric value is ignored (falls back to `500`). |
 | `reports`                   | `object`       | Opt-in report snapshots on merge. See "Report snapshots on merge" below.                                                                                                                                                                                                                                            |
@@ -574,6 +575,22 @@ and block completion if they fail. Configure that command durably here:
 precedence, but an env var is the easiest part of the loop config to silently
 lose (per-shell, per-machine) — committing it to policy keeps it durable and
 reviewable. `vyuh-dxkit loop doctor` shows which source (if any) supplied it.
+
+## `depBump` — the scheduled deterministic bump lane (opt-in)
+
+```jsonc
+{ "depBump": { "enabled": true, "allowMajor": false } }
+```
+
+`enabled: true` (+ `vyuh-dxkit update`) installs the `dxkit-dep-bump`
+workflow: weekly, it plans bumps from the scanners' own fix versions,
+applies them with the repo's package manager, verifies with the correctness
+floor (full scope) + the guardrail, and lands ONE standing PR
+(`dxkit/dep-bump`) whose body is the verification ledger. A red floor means
+no PR — the job fails with the ledger instead. `allowMajor` admits
+producer-classified major bumps (default false; majors are skipped-and-named
+so they stay a human decision). See
+[`vyuh-dxkit deps`](../commands/deps.md).
 
 ## `graph.refresh` — code-graph refresh transport (CI performance)
 
