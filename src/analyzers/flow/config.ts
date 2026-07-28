@@ -9,9 +9,8 @@
  * conservative defaults (fail-open), never a throw.
  */
 
-import * as fs from 'fs';
-import * as path from 'path';
 import { mergeIntoPolicyFile } from '../../baseline/policy-write';
+import { readPolicySection } from '../../baseline/policy-text';
 
 /** How the guardrail treats a net-new broken integration.
  *   - `block` (default): honor the per-finding verdict — an exact, fully
@@ -120,13 +119,9 @@ function isMode(v: unknown): v is FlowGateMode {
  * config behaves as "monorepo, block on exact net-new breaks".
  */
 export function readFlowConfig(cwd: string): FlowConfig {
-  let raw: RawFlow;
-  try {
-    const text = fs.readFileSync(path.join(cwd, '.dxkit', 'policy.json'), 'utf8');
-    raw = ((JSON.parse(text) as { flow?: RawFlow })?.flow ?? {}) as RawFlow;
-  } catch {
-    return DEFAULTS;
-  }
+  const section = readPolicySection(cwd, 'flow');
+  if (section === undefined) return DEFAULTS;
+  const raw = section as RawFlow;
   return {
     stripUrlPrefixes: stringList(raw.stripUrlPrefixes),
     specs: stringList(raw.specs),
@@ -154,13 +149,8 @@ export function readFlowConfig(cwd: string): FlowConfig {
  * invite users to tune).
  */
 export function existingFlowMode(cwd: string): FlowGateMode | undefined {
-  try {
-    const text = fs.readFileSync(path.join(cwd, '.dxkit', 'policy.json'), 'utf8');
-    const raw = (JSON.parse(text) as { flow?: RawFlow })?.flow;
-    return raw && isMode(raw.mode) ? raw.mode : undefined;
-  } catch {
-    return undefined;
-  }
+  const raw = readPolicySection(cwd, 'flow') as RawFlow | undefined;
+  return raw && isMode(raw.mode) ? raw.mode : undefined;
 }
 
 /**

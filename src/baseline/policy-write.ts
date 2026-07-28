@@ -7,14 +7,20 @@
  *
  *   - existing keys are PRESERVED (deep merge; the patch only adds/overrides
  *     the keys it names),
+ *   - existing COMMENTS and formatting are PRESERVED (the policy file is
+ *     JSONC and the user's file teaches through comments — edits go through
+ *     `jsonc-parser`'s `modify`/`applyEdits`, never parse→stringify, which
+ *     would strip every comment on first touch),
  *   - a malformed existing file is never overwritten (reported, left intact),
- *   - the write is idempotent (byte-equal merge result → file untouched).
+ *   - the write is idempotent (byte-equal result → file untouched).
  *
  * Domain decisions (WHAT to write, whether an existing value should win) stay
  * with the callers — this module owns only the read-merge-write mechanics.
  */
 import * as fs from 'fs';
 import * as path from 'path';
+import { applyEdits, modify } from 'jsonc-parser';
+import { policyPathFor, readPolicyRoot } from './policy-text';
 
 export interface PolicyMergeOutcome {
   readonly changed: boolean;
@@ -51,34 +57,78 @@ export function deepMergePolicy(
 /** Best-effort parse of the existing policy file. `{}` when absent; `null`
  *  when present but malformed (the caller must not overwrite it). */
 export function readPolicyFileRaw(cwd: string): Record<string, unknown> | null {
-  const abs = path.join(cwd, '.dxkit', 'policy.json');
-  if (!fs.existsSync(abs)) return {};
-  try {
-    return JSON.parse(fs.readFileSync(abs, 'utf8')) as Record<string, unknown>;
-  } catch {
-    return null;
-  }
+  const read = readPolicyRoot(policyPathFor(cwd));
+  if (read.status === 'absent') return {};
+  return read.status === 'ok' ? read.value : null;
+}
+
+/** One leaf edit the deep-merge decomposes into: set `value` at `pathSegs`. */
+interface LeafEdit {
+  readonly pathSegs: readonly string[];
+  readonly value: unknown;
 }
 
 /**
- * Deep-merge `patch` into `.dxkit/policy.json`, preserving every existing key.
- * Creates the file (and `.dxkit/`) when absent. Refuses to touch a malformed
- * existing file. Returns whether the file changed.
+ * Decompose `patch` into the leaf edits the deep-merge semantics imply:
+ * descend while BOTH sides are plain objects (those merge key-by-key); at the
+ * first level where they don't, the patch value replaces wholesale. Edits
+ * whose value already equals the base value are dropped (idempotence — an
+ * unchanged key must not disturb the file's text around it).
+ */
+function collectLeafEdits(
+  base: unknown,
+  patch: Record<string, unknown>,
+  prefix: readonly string[],
+  out: LeafEdit[],
+): void {
+  for (const [key, patchVal] of Object.entries(patch)) {
+    const baseVal = isPlainObject(base) ? base[key] : undefined;
+    if (isPlainObject(baseVal) && isPlainObject(patchVal)) {
+      collectLeafEdits(baseVal, patchVal, [...prefix, key], out);
+    } else if (JSON.stringify(baseVal) !== JSON.stringify(patchVal)) {
+      out.push({ pathSegs: [...prefix, key], value: patchVal });
+    }
+  }
+}
+
+const JSONC_FORMAT = { insertSpaces: true, tabSize: 2, eol: '\n' } as const;
+
+/**
+ * Deep-merge `patch` into `.dxkit/policy.json`, preserving every existing key,
+ * comment, and formatting choice. Creates the file (and `.dxkit/`) when
+ * absent. Refuses to touch a malformed existing file. Returns whether the
+ * file changed.
  */
 export function mergeIntoPolicyFile(
   cwd: string,
   patch: Record<string, unknown>,
 ): PolicyMergeOutcome {
-  const policy = readPolicyFileRaw(cwd);
-  if (policy === null) return { changed: false, reason: 'malformed-policy' };
+  const abs = policyPathFor(cwd);
+  const read = readPolicyRoot(abs);
+  if (read.status === 'malformed') return { changed: false, reason: 'malformed-policy' };
 
-  const merged = deepMergePolicy(policy, patch);
-  if (JSON.stringify(policy) === JSON.stringify(merged)) {
-    return { changed: false, reason: 'no-change' };
+  if (read.status === 'absent') {
+    const merged = deepMergePolicy({}, patch);
+    if (Object.keys(merged).length === 0) return { changed: false, reason: 'no-change' };
+    fs.mkdirSync(path.dirname(abs), { recursive: true });
+    fs.writeFileSync(abs, JSON.stringify(merged, null, 2) + '\n', 'utf8');
+    return { changed: true };
   }
 
-  const abs = path.join(cwd, '.dxkit', 'policy.json');
-  fs.mkdirSync(path.dirname(abs), { recursive: true });
-  fs.writeFileSync(abs, JSON.stringify(merged, null, 2) + '\n', 'utf8');
+  const edits: LeafEdit[] = [];
+  collectLeafEdits(read.value, patch, [], edits);
+  if (edits.length === 0) return { changed: false, reason: 'no-change' };
+
+  let text = read.text;
+  for (const edit of edits) {
+    text = applyEdits(
+      text,
+      modify(text, edit.pathSegs as string[], edit.value, { formattingOptions: JSONC_FORMAT }),
+    );
+  }
+  if (!text.endsWith('\n')) text += '\n';
+  if (text === read.text) return { changed: false, reason: 'no-change' };
+
+  fs.writeFileSync(abs, text, 'utf8');
   return { changed: true };
 }

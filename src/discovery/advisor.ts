@@ -12,6 +12,7 @@ import { readVerdictForTree } from '../baseline/verdict-cache';
 import { FLOW_CONFIG_SCHEMA_VERSION } from '../analyzers/flow/config';
 import { SCHEMA_CONFIG_SCHEMA_VERSION } from '../analyzers/model-schema/config';
 import { DUPLICATION_CONFIG_SCHEMA_VERSION } from '../analyzers/duplication/config';
+import { readPolicyObjectSafe } from '../baseline/policy-text';
 import {
   existsAt,
   readJsonSafe,
@@ -145,7 +146,7 @@ export function recommendChecks(ctx: RecommendContext): Recommendation | null {
  * one that tuned it stops hearing immediately.
  */
 export function recommendNewAdvisoryTier(ctx: RecommendContext): Recommendation | null {
-  const policy = readJsonSafe(path.join(ctx.cwd, '.dxkit', 'policy.json'));
+  const policy = readPolicyObjectSafe(ctx.cwd);
   if (policy && 'newAdvisories' in policy) return null;
   const cached = readVerdictForTree(ctx.cwd);
   const advisories = (cached?.blockingFindings ?? []).filter(
@@ -191,7 +192,7 @@ export function recommendDebt(ctx: RecommendContext): Recommendation | null {
  * the lane, and one that enabled it stops hearing immediately.
  */
 export function recommendDepBump(ctx: RecommendContext): Recommendation | null {
-  const policy = readJsonSafe(path.join(ctx.cwd, '.dxkit', 'policy.json')) as {
+  const policy = readPolicyObjectSafe(ctx.cwd) as {
     depBump?: unknown;
   } | null;
   if (policy && policy.depBump !== undefined) return null;
@@ -227,7 +228,7 @@ export function recommendDepBump(ctx: RecommendContext): Recommendation | null {
  * once `baseline.mode` is pinned.
  */
 export function planBaselineMode(ctx: ConfigContext): ConfigPlanItem | null {
-  const policy = readJsonSafe(path.join(ctx.cwd, '.dxkit', 'policy.json')) ?? {};
+  const policy = readPolicyObjectSafe(ctx.cwd) ?? {};
   const baseline = policy.baseline as Record<string, unknown> | undefined;
   if (baseline && typeof baseline.mode === 'string') return null; // already pinned
   const resolved = resolveBaselineMode({
@@ -385,7 +386,7 @@ export function recommendLoopPreset(ctx: RecommendContext): Recommendation | nul
 export function recommendReportsOnMerge(ctx: RecommendContext): Recommendation | null {
   if (!existsAt(ctx.cwd, '.vyuh-dxkit.json')) return null;
   if (!dirHasEntries(path.join(ctx.cwd, '.dxkit', 'baselines'))) return null;
-  const policy = readJsonSafe(path.join(ctx.cwd, '.dxkit', 'policy.json')) ?? {};
+  const policy = readPolicyObjectSafe(ctx.cwd) ?? {};
   const reports = policy.reports as Record<string, unknown> | undefined;
   if (reports?.onMerge === true) return null; // already publishing
   return {

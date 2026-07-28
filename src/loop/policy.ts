@@ -13,9 +13,8 @@
  * preset changes how an unattended loop blocks WITHOUT silently
  * downgrading a repo's CI posture.
  */
-import * as fs from 'fs';
-import * as path from 'path';
-import { type BrownfieldPolicy, DEFAULT_POLICY_FILENAME, resolvePolicy } from '../baseline/policy';
+import { type BrownfieldPolicy, resolvePolicy } from '../baseline/policy';
+import { readPolicySection } from '../baseline/policy-text';
 import {
   DEFAULT_LOOP_PRESET,
   isLoopPreset,
@@ -48,14 +47,8 @@ export interface ResolvedLoopPolicy {
  * loop concept stays out of the shared `BrownfieldPolicy` schema.
  */
 function readPresetFromPolicyFile(cwd: string): LoopPreset | undefined {
-  try {
-    const raw = fs.readFileSync(path.join(cwd, DEFAULT_POLICY_FILENAME), 'utf8');
-    const parsed = JSON.parse(raw) as { loop?: { preset?: unknown } };
-    const preset = parsed.loop?.preset;
-    return isLoopPreset(preset) ? preset : undefined;
-  } catch {
-    return undefined;
-  }
+  const preset = readPolicySection(cwd, 'loop')?.preset;
+  return isLoopPreset(preset) ? preset : undefined;
 }
 
 /**
@@ -73,14 +66,8 @@ export function resolveLoopPreset(cwd: string): LoopPreset {
 
 /** Read `loop.testCommand` from `.dxkit/policy.json`. Best-effort → undefined. */
 function readTestCommandFromPolicyFile(cwd: string): string | undefined {
-  try {
-    const raw = fs.readFileSync(path.join(cwd, DEFAULT_POLICY_FILENAME), 'utf8');
-    const parsed = JSON.parse(raw) as { loop?: { testCommand?: unknown } };
-    const cmd = parsed.loop?.testCommand;
-    return typeof cmd === 'string' && cmd.trim().length > 0 ? cmd : undefined;
-  } catch {
-    return undefined;
-  }
+  const cmd = readPolicySection(cwd, 'loop')?.testCommand;
+  return typeof cmd === 'string' && cmd.trim().length > 0 ? cmd : undefined;
 }
 
 /**
