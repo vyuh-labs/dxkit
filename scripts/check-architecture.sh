@@ -1985,6 +1985,28 @@ if [ -n "$ROGUE_POLICY_WRITE" ]; then
   echo "   → Route through mergeIntoPolicyFile — it preserves the user's comments."
   ERRORS=$((ERRORS + 1))
 fi
+# The literal-path grep above is blind to the shape every real writer uses:
+# `const abs = policyPathFor(cwd)` then `writeFileSync(abs, …)`. Catch the
+# class at file granularity — a module that resolves the policy path AND
+# writes a file is a policy writer, whatever it names the variable.
+ROGUE_POLICY_PATH_WRITE=""
+for f in $(grep -rl "policyPathFor(" src/ --include='*.ts' 2>/dev/null \
+  | grep -v '^src/baseline/policy-write\.ts$' || true); do
+  hits=$(grep -nE "writeFileSync\(" "$f" 2>/dev/null \
+    | grep -v 'policy-text-ok' \
+    | grep -v -E ':[[:space:]]*(//|\*)' || true)
+  if [ -n "$hits" ]; then
+    ROGUE_POLICY_PATH_WRITE="${ROGUE_POLICY_PATH_WRITE}${f}: ${hits}
+"
+  fi
+done
+if [ -n "$ROGUE_POLICY_PATH_WRITE" ]; then
+  echo "❌ Policy-text violation: policy-path write outside src/baseline/policy-write.ts:"
+  echo "$ROGUE_POLICY_PATH_WRITE"
+  echo "   → Route through mergeIntoPolicyFile, or annotate the write line with"
+  echo "     // policy-text-ok and say why it cannot destroy the user's comments."
+  ERRORS=$((ERRORS + 1))
+fi
 
 if [ $ERRORS -gt 0 ]; then
   echo ""

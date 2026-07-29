@@ -73,6 +73,10 @@ default branch only, with dxkit-authored prompts only.
   verified partial work lands as a DRAFT marked budget-bounded.
 - `agent-never-ran` — infrastructure (auth, missing CLI); the reason is in
   the note. Fix the secret/install, re-dispatch.
+- `sweep-failed` — the agent committed work, but the leftovers it left
+  uncommitted could not be swept into a reviewable commit (a pre-commit
+  hook, a signing requirement). Nothing lands: those files are staged, and
+  landing would push them unreviewed. The note names the git error.
 - `refused` — a trust or configuration refusal, with the remedy named.
 
 ## Tuning the budget

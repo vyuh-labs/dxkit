@@ -77,7 +77,8 @@ never weaponized), the guardrail as final arbiter, one standing PR per
 task whose body is the verification ledger plus the agent envelope
 (model, turns, spend, outcome). Outcomes are truthful and distinct —
 `verified`, `no-op`, `floor-red`, `budget-exhausted` (salvage policy:
-discard by default, opt-in draft PR), `agent-never-ran`, `refused`. The
+discard by default, opt-in draft PR), `agent-never-ran`, `sweep-failed`,
+`refused`. The
 managed workflow (`remediate.enabled: true` + `vyuh-dxkit update`)
 triggers on schedule and manual dispatch only, runs the default branch
 only, and derives its secret wiring from the driver's declaration.

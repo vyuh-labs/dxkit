@@ -55,6 +55,14 @@ export function landRemediateHead(opts: LandRemediateOptions): LandRefreshResult
         'commit',
         '-m',
         'chore: record the remediation delivery (dxkit lane ledger)',
+        // PATH-SCOPED, load-bearing: a bare `git commit` takes whatever else
+        // is staged. The runner's leftover sweep stages with `git add -A`
+        // before it commits, so a sweep whose commit failed leaves that
+        // content in the index — an unscoped ledger commit would bundle it
+        // and force-push unreviewed agent working state under a message that
+        // reads as bookkeeping.
+        '--',
+        opts.ledgerPath,
       ],
       { allowFail: true },
     );
