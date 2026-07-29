@@ -212,6 +212,25 @@ export async function runUpdate(cwd: string, force: boolean, rescan = false): Pr
   // as a side effect, so this is a no-op when both were stale.
   await refreshRecallIfStale(cwd);
 
+  // Policy-drift report (decision C3): knobs that shipped after this repo's
+  // policy was scaffolded become VISIBLE, never active — nothing is written
+  // here. Fail-soft: a drift-report error must never fail the update.
+  try {
+    const { computePolicySync, scaffoldCtxFor } = await import('./policy-sync');
+    const plan = computePolicySync(cwd, scaffoldCtxFor(cwd));
+    if (plan.status === 'ok' && plan.missing.length > 0) {
+      console.log(''); // slop-ok
+      logger.info(
+        `${plan.missing.length} policy knob(s) shipped since this policy was scaffolded` +
+          (plan.scaffoldedBy ? ` (by dxkit ${plan.scaffoldedBy})` : '') +
+          `: ${plan.missing.map((s) => s.key).join(', ')}`,
+      );
+      logger.dim('Preview with `vyuh-dxkit policy sync`; append them with `policy sync --apply`.');
+    }
+  } catch {
+    // fail-soft by design
+  }
+
   console.log(''); // slop-ok
   logger.success('Update complete. dxkit-owned files refreshed; your files preserved.');
 }
