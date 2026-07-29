@@ -77,7 +77,9 @@ describe('runMetrics', () => {
     ]);
     const out = await capture(() => runMetrics(d, { json: true }));
     const r = JSON.parse(out);
-    expect(r.schema).toBe('metrics.v1');
+    expect(r.schema).toBe('metrics.v2');
+    // v2 is additive over v1: the delivered block joined, nothing moved.
+    expect(r.delivered).toEqual({ events: 0, span: {}, lanes: [] });
     expect(r.interceptions).toBe(2);
     expect(r.blockedByCategory).toEqual([{ category: 'secret', count: 2 }]);
   });
