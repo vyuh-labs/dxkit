@@ -82,6 +82,14 @@ __DXKIT_CI_RUNTIME_SETUP__
       - name: Install the agent CLI
         run: npm install -g @anthropic-ai/claude-code
 
+      # A runner has no ambient git identity, and the AGENT's own commits
+      # need one (the runner's sweep + ledger commits carry the bot identity
+      # explicitly). Rendered from the one BOT_IDENTITY constant.
+      - name: Configure the lane's git identity
+        run: |
+          git config user.name "__DXKIT_BOT_NAME__"
+          git config user.email "__DXKIT_BOT_EMAIL__"
+
       # ONE invocation runs every policy-configured task: the CLI reads the
       # task list through the one config reader (never a shell parse of
       # policy JSON), opens one standing PR per task, writes each ledger to

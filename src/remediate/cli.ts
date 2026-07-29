@@ -125,11 +125,13 @@ export function runRemediatePlan(cwd: string, opts: RemediatePlanOptions = {}): 
   }
 }
 
-interface TaskRun {
+export interface TaskRun {
   readonly result: RemediateResult;
   readonly prUrl?: string;
   /** Why a land-eligible outcome was NOT landed (the branch guard). */
   readonly landRefused?: string;
+  /** The landing ran (branch pushed, PR opened/updated). */
+  readonly landed: boolean;
   /** Truthful per-task success: verified/no-op, or a landed salvage draft. */
   readonly clean: boolean;
 }
@@ -168,7 +170,11 @@ async function executeTask(
   const draftSalvage = result.outcome === 'budget-exhausted' && config.salvage === 'draft-pr';
   const landEligible = result.outcome === 'verified' || draftSalvage;
   if (land !== 'pr' || !landEligible) {
-    return { result, clean: result.outcome === 'verified' || result.outcome === 'no-op' };
+    return {
+      result,
+      landed: false,
+      clean: result.outcome === 'verified' || result.outcome === 'no-op',
+    };
   }
 
   // Landing guard (the standing branch is built from HEAD): a named
@@ -178,6 +184,7 @@ async function executeTask(
   if (branch !== 'HEAD' && branch !== defaultBranch) {
     return {
       result,
+      landed: false,
       clean: false,
       landRefused:
         `not landed: HEAD is on '${branch}', not '${defaultBranch}' — landing pushes HEAD ` +
@@ -213,6 +220,7 @@ async function executeTask(
   return {
     result,
     ...(landResult.prUrl ? { prUrl: landResult.prUrl } : {}),
+    landed: true,
     clean: result.outcome === 'verified' || draftSalvage,
   };
 }
@@ -281,30 +289,105 @@ export interface RemediateConfiguredOptions {
   readonly json?: boolean;
 }
 
+/** The seams the configured loop drives — injectable so the sequencing
+ *  POLICY is unit-testable without git or an agent. */
+export interface ConfiguredLoopOps {
+  execute(taskId: string): Promise<TaskRun>;
+  /** Current commit, or null when unreadable. */
+  head(): string | null;
+  /** Hard-reset the tree to a commit; false on failure. */
+  resetTo(head: string): boolean;
+  report(taskId: string, run: TaskRun): void;
+}
+
+export interface ConfiguredLoopResult {
+  readonly runs: ReadonlyArray<{ readonly taskId: string; readonly run: TaskRun }>;
+  /** Tasks NOT run because an earlier task left unlanded work in the tree
+   *  (or a reset failed) — disclosed, never silent. */
+  readonly skipped: readonly string[];
+  readonly failed: boolean;
+}
+
+/**
+ * The sequencing policy of `remediate configured` (X-1): tasks share one
+ * tree, so isolation between them is explicit —
+ *
+ *   - after a LANDED task, the tree resets to the initial head (the work
+ *     lives on the pushed standing branch), so the next task's PR carries
+ *     ONLY its own diff;
+ *   - a task that left UNLANDED work in the tree (floor-red, guardrail-red,
+ *     a discarded partial, a refused landing) STOPS the loop: resetting
+ *     would destroy the work the ledger promises stays for inspection, and
+ *     running the next task on a polluted tree would stack diffs into its
+ *     PR. The remaining tasks are named as skipped; the next scheduled run
+ *     picks them up on a fresh checkout.
+ */
+export async function runConfiguredLoop(
+  tasks: readonly string[],
+  ops: ConfiguredLoopOps,
+): Promise<ConfiguredLoopResult> {
+  const initialHead = ops.head();
+  const runs: Array<{ taskId: string; run: TaskRun }> = [];
+  let skipped: string[] = [];
+  let failed = false;
+
+  for (let i = 0; i < tasks.length; i++) {
+    const taskId = tasks[i];
+    const run = await ops.execute(taskId);
+    ops.report(taskId, run);
+    runs.push({ taskId, run });
+    if (!run.clean) failed = true;
+
+    const moved = initialHead !== null && ops.head() !== initialHead;
+    if (!moved) continue;
+
+    const remaining = tasks.slice(i + 1);
+    if (run.landed) {
+      if (ops.resetTo(initialHead!)) continue;
+      skipped = remaining; // a failed reset means a polluted tree — stop
+      failed = true;
+      break;
+    }
+    skipped = remaining;
+    break;
+  }
+  return { runs, skipped, failed };
+}
+
 /**
  * `remediate configured` — every policy-configured task through the one
- * executor. The managed workflow calls exactly this; per-task ledgers land
- * in the step summary, unknown task ids are disclosed, and the exit code is
- * the truthful aggregate (any non-clean task fails the job).
+ * executor, sequenced by `runConfiguredLoop`. The managed workflow calls
+ * exactly this; per-task ledgers land in the step summary, unknown task ids
+ * and skipped tasks are disclosed, and the exit code is the truthful
+ * aggregate (any non-clean task fails the job).
  */
 export async function runRemediateConfigured(
   cwd: string,
   opts: RemediateConfiguredOptions = {},
 ): Promise<void> {
   const config = resolveRemediateConfig(cwd);
-  const runs: Array<Record<string, unknown>> = [];
-  let failed = false;
+  const land = opts.land === 'pr' ? 'pr' : 'none';
 
   for (const unknown of config.unknownTasks) {
     logger.warn(`unknown task in policy (ignored): '${unknown}'`);
   }
-  for (const taskId of config.tasks) {
-    logger.header(`dxkit remediate — ${taskId}`);
-    const run = await executeTask(cwd, config, taskId, opts.land === 'pr' ? 'pr' : 'none');
-    reportTaskRun(run, !!opts.json);
-    appendStepSummary(run.result.ledger);
-    runs.push(taskRunJson(run));
-    if (!run.clean) failed = true;
+
+  const outcome = await runConfiguredLoop(config.tasks, {
+    execute: (taskId) => executeTask(cwd, config, taskId, land),
+    head: () => headCommit(cwd),
+    resetTo: (head) => resetHardTo(cwd, head),
+    report: (taskId, run) => {
+      logger.header(`dxkit remediate — ${taskId}`);
+      reportTaskRun(run, !!opts.json);
+      appendStepSummary(run.result.ledger);
+    },
+  });
+
+  if (outcome.skipped.length > 0) {
+    logger.warn(
+      `skipped ${outcome.skipped.length} remaining task(s) (${outcome.skipped.join(', ')}) — ` +
+        'an earlier task left unlanded work in the tree; the next scheduled run picks them up.',
+    );
   }
 
   if (opts.json) {
@@ -312,16 +395,45 @@ export async function runRemediateConfigured(
       JSON.stringify(
         {
           schema: 'remediate-configured.v1',
-          tasks: runs,
+          tasks: outcome.runs.map(({ run }) => taskRunJson(run)),
           unknownTasks: config.unknownTasks,
-          failed,
+          skipped: outcome.skipped,
+          failed: outcome.failed,
         },
         null,
         2,
       ) + '\n',
     );
   }
-  if (failed) process.exitCode = 1;
+  if (outcome.failed) process.exitCode = 1;
+}
+
+/** Current commit sha, or null when unreadable. */
+function headCommit(cwd: string): string | null {
+  try {
+    return execFileSync('git', ['rev-parse', 'HEAD'], {
+      cwd,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }).trim();
+  } catch {
+    return null;
+  }
+}
+
+/** Hard-reset to a commit (used only after a LANDED task — the work is on
+ *  the pushed standing branch). False on failure. */
+function resetHardTo(cwd: string, head: string): boolean {
+  try {
+    execFileSync('git', ['reset', '--hard', head], {
+      cwd,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** Credentials the configured driver declares, read from THIS process env
