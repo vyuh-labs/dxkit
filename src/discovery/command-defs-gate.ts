@@ -10,6 +10,7 @@ import {
   recommendChecks,
   recommendDebt,
   recommendDepBump,
+  recommendRemediate,
   recommendExtensions,
   recommendLoopPreset,
   recommendNewAdvisoryTier,
@@ -132,6 +133,23 @@ export const GATE_COMMANDS = [
       '(`depBump.enabled: true`) runs the same lane weekly.',
     skill: 'dxkit-action',
     whenToRecommend: recommendDepBump,
+  },
+  {
+    id: 'remediate',
+    audience: 'user',
+    group: 'gate',
+    summary: 'Agentic remediation inside the verified frame (plan / run / land a PR)',
+    typicalRuntime: 'plan < 5 sec; a task run is budget-bounded (default 30 min cap)',
+    docsBlurb:
+      'Run a coding agent on the debt the deterministic lanes cannot close (the ' +
+      'grandfathered build/tests, unfixable-by-bump advisories, the lint backlog, missing ' +
+      'tests) — inside the verified frame: entry-attributed correctness floor + guardrail ' +
+      "run before any PR opens, and the agent's own claim of success is never trusted. " +
+      '`remediate plan` shows the per-task model resolution and budget with no key and no ' +
+      'spend; the scheduled workflow (`remediate.enabled: true`) runs the configured tasks ' +
+      'on a cadence, one standing PR per task.',
+    skill: 'dxkit-remediate',
+    whenToRecommend: recommendRemediate,
   },
   {
     id: 'checks',

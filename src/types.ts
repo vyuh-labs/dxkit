@@ -174,6 +174,9 @@ export interface ManifestInstallFlags {
   /** Scheduled deterministic dep-bump lane (opt-in via
    *  `.dxkit/policy.json:depBump.enabled: true`). */
   withDepBump?: boolean;
+  /** Scheduled agentic remediation lane (opt-in via
+   *  `.dxkit/policy.json:remediate.enabled: true`). */
+  withRemediate?: boolean;
 }
 
 /** A dependency `vyuh-dxkit tools install` added to the repo on dxkit's behalf

@@ -211,6 +211,44 @@ export function recommendDepBump(ctx: RecommendContext): Recommendation | null {
   };
 }
 
+/**
+ * Agentic remediation lane: fires when the repo carries debt the
+ * deterministic lanes cannot close — grandfathered floor debt (a broken
+ * build / failing tests recorded in the baseline) or dependency
+ * vulnerabilities while the bump lane is ALREADY enabled (so the fixable
+ * subset is being handled and what remains needs code changes). Grounded in
+ * committed artifacts; a repo that configured `remediate` stops hearing
+ * about it immediately.
+ */
+export function recommendRemediate(ctx: RecommendContext): Recommendation | null {
+  const policy = readPolicyObjectSafe(ctx.cwd) as {
+    remediate?: unknown;
+    depBump?: { enabled?: unknown };
+  } | null;
+  if (policy && policy.remediate !== undefined) return null;
+  const parsed = readJsonSafe(path.join(ctx.cwd, '.dxkit', 'baselines', 'main.json')) as {
+    findings?: Array<{ kind?: string }>;
+    floorDebt?: { checks?: unknown[] };
+  } | null;
+  if (!parsed) return null;
+  const floorDebt = (parsed.floorDebt?.checks ?? []).length;
+  const depVulns = (parsed.findings ?? []).filter((f) => f.kind === 'dep-vuln').length;
+  const bumpLaneOn = policy?.depBump?.enabled === true;
+  if (floorDebt === 0 && !(depVulns > 0 && bumpLaneOn)) return null;
+  const why =
+    floorDebt > 0
+      ? `the baseline grandfathers a broken floor (${floorDebt} failing check${floorDebt === 1 ? '' : 's'})`
+      : `${depVulns} dependency vulnerabilit${depVulns === 1 ? 'y' : 'ies'} remain that the bump lane cannot version-solve`;
+  return {
+    reason:
+      `${why} — the agentic remediate lane runs an agent INSIDE the verified frame ` +
+      `(entry-attributed floor + guardrail before any PR; the agent's word is never ` +
+      `trusted). Preview the resolution with the command below; enable the scheduled ` +
+      `lane with .dxkit/policy.json remediate.enabled: true + vyuh-dxkit update`,
+    command: 'vyuh-dxkit remediate plan',
+  };
+}
+
 // ─── Deterministic config planners (`vyuh-dxkit configure`) ──────────────────
 // Each is a PURE function of observable repo facts — same repo, same plan, every
 // run and every environment. That reproducibility is the whole point: the config

@@ -95,6 +95,8 @@ export interface SurfaceFlags {
   readonly gitHooks?: boolean;
   /** The CI guardrail workflow is installed (`--with-ci`). */
   readonly ciGuardrails?: boolean;
+  /** The scheduled remediation workflow is installed (`remediate.enabled`). */
+  readonly ciRemediate?: boolean;
 }
 
 /** One artifact that auto-executes the dxkit CLI after install. */
@@ -139,6 +141,12 @@ export const SELF_INVOCATION_SURFACES: readonly SelfInvocationSurface[] = [
     description: '.github/workflows/dxkit-guardrails.yml guardrail check',
     invokes: 'guardrail check',
     installedWhen: (f) => !!f.ciGuardrails,
+  },
+  {
+    id: 'ci-remediate-workflow',
+    description: '.github/workflows/dxkit-remediate.yml agentic remediation lane',
+    invokes: 'remediate',
+    installedWhen: (f) => !!f.ciRemediate,
   },
 ];
 

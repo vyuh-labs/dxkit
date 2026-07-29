@@ -35,6 +35,9 @@ import {
   type BaselineAnchor,
 } from './baseline/modes';
 import { baselineRefreshCron, loadPolicyFromCwd } from './baseline/policy';
+import { cronFromCadence } from './baseline/policy-sections';
+import { resolveRemediateConfig } from './remediate/config';
+import { driverById } from './remediate/registry';
 import { readFlowConfig } from './analyzers/flow/config';
 import { discoverExtensions } from './extensions/manifest';
 import { mergeIntoPolicyFile } from './baseline/policy-write';
@@ -1034,6 +1037,43 @@ export function installCiFlowRefresh(cwd: string, opts: InstallerOpts = {}): Shi
  *  the ONE flow-section reader (Rule 2), same as every other flow surface. */
 export function flowRefreshEnabled(cwd: string): boolean {
   return readFlowConfig(cwd).onMergeRefresh;
+}
+
+export function installCiRemediate(cwd: string, opts: InstallerOpts = {}): ShipInstallResult {
+  const config = resolveRemediateConfig(cwd);
+  const driver = driverById(config.agent.driver);
+  // Secret wiring is DERIVED from the driver's credentialEnv declaration —
+  // a new driver never means hand-editing this template (Rule 15 + the
+  // driver-seam contract).
+  const credentialLines = (driver?.credentialEnv ?? [])
+    .map((name) => `          ${name}: \${{ secrets.${name} }}`)
+    .join('\n');
+  const result = installWorkflow(cwd, 'dxkit-remediate.yml', opts, {
+    [CI_RUNTIME_SETUP_KEY]: renderCiRuntimeSetup(cwd),
+    __DXKIT_DEFAULT_BRANCH__: detectDefaultBranch(cwd),
+    __DXKIT_REMEDIATE_CRON__: cronFromCadence(config.schedule),
+    __DXKIT_REMEDIATE_CREDENTIAL_ENV__: credentialLines,
+  });
+  if (result.installed.length > 0) {
+    result.notes.push(
+      'remediate workflow installed: on its schedule, an agent works the configured tasks ' +
+        'inside the verified frame (entry-attributed floor + guardrail before any PR) and ' +
+        `lands one standing PR per task. Set the ${
+          driver?.credentialEnv.join(', ') || 'driver credential'
+        } repo secret (a scoped key with a spend limit) before the first run.`,
+    );
+  }
+  return result;
+}
+
+/** Whether the scheduled remediation lane is enabled in policy
+ *  (`remediate.enabled: true`) — resolved through the ONE config reader. */
+export function remediateEnabled(cwd: string): boolean {
+  try {
+    return resolveRemediateConfig(cwd).enabled;
+  } catch {
+    return false;
+  }
 }
 
 export function installCiDepBump(cwd: string, opts: InstallerOpts = {}): ShipInstallResult {

@@ -146,6 +146,9 @@ export function openOrUpdateStandingPr(
     readonly defaultBranch: string;
     readonly prTitle: string;
     readonly prBody: string;
+    /** Open as a DRAFT (the remediate lane's budget-exhausted salvage). An
+     *  EXISTING PR's draft state is left as the reviewer set it. */
+    readonly draft?: boolean;
   },
 ): LandRefreshResult {
   const existing = exec(
@@ -178,6 +181,7 @@ export function openOrUpdateStandingPr(
       opts.prTitle,
       '--body',
       opts.prBody,
+      ...(opts.draft ? ['--draft'] : []),
     ],
     { allowFail: true },
   ).trim();
