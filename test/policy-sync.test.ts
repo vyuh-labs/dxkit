@@ -73,7 +73,7 @@ describe('computePolicySync', () => {
 });
 
 describe('applyPolicySync', () => {
-  it('appends only the missing stanzas, touching nothing above the append', () => {
+  it('appends only the missing stanzas; above the append, the ONLY byte change is the terminating comma', () => {
     const original = `{
   // my hand-written policy, with my own notes
   "baseline": {
@@ -88,9 +88,10 @@ describe('applyPolicySync', () => {
     expect(written).toBe(true);
 
     const after = readFileSync(policyFile(), 'utf8');
-    // everything before the append is byte-identical
-    const headLen = original.lastIndexOf('}');
-    expect(after.startsWith(original.slice(0, headLen).replace(/\s*$/, '\n'))).toBe(true);
+    // everything before the append is byte-identical EXCEPT the one comma
+    // sync adds after the last member, so a later uncomment still parses
+    const codeEnd = original.lastIndexOf('"block" }') + '"block" }'.length;
+    expect(after.startsWith(original.slice(0, codeEnd) + ',')).toBe(true);
     expect(after).toContain('// my hand-written policy, with my own notes');
     expect(after).toContain('// pinned after the visibility incident');
     // appended stanzas are commented and the file still parses
@@ -116,6 +117,48 @@ describe('applyPolicySync', () => {
     expect(created).toBe(true);
     expect(existsSync(policyFile())).toBe(true);
     expect(parsePolicyText(readFileSync(policyFile(), 'utf8'))).toBeTruthy();
+  });
+
+  it('activation works after sync onto a strict-JSON policy with NO trailing comma (the real-repo class)', () => {
+    // A hand-written policy ends its last member without a trailing comma;
+    // sync must leave the file so that uncommenting an appended stanza still
+    // parses — mirror validation caught exactly this on a customer-shaped repo.
+    writePolicy(`{
+  "baseline": {
+    "mode": "committed-full"
+  },
+  "schema": {
+    "mode": "warn" // their own trailing comment, with a URL: https://x.test/a
+  }
+}
+`);
+    applyPolicySync(repo, computePolicySync(repo, CTX), CTX, '4.3.0-test');
+    const synced = readFileSync(policyFile(), 'utf8');
+    // uncomment the first appended stanza exactly as a user would
+    const lines = synced.split('\n');
+    let depth = 0;
+    let started = false;
+    const uncommented = lines
+      .map((l) => {
+        const m = /^(\s*)\/\/ (\s*["{}[\]].*)$/.exec(l);
+        if (!started && m && /^"pairedChecks":/.test(m[2].trim())) {
+          started = true;
+          depth = (m[2].match(/[{[]/g) ?? []).length - (m[2].match(/[}\]]/g) ?? []).length;
+          return m[1] + m[2];
+        }
+        if (started && depth > 0 && m) {
+          depth += (m[2].match(/[{[]/g) ?? []).length - (m[2].match(/[}\]]/g) ?? []).length;
+          return m[1] + m[2];
+        }
+        return l;
+      })
+      .join('\n');
+    const parsed = parsePolicyText(uncommented) as Record<string, unknown>;
+    expect(parsed.pairedChecks).toBeDefined();
+    expect(parsed).toMatchObject({
+      baseline: { mode: 'committed-full' },
+      schema: { mode: 'warn' },
+    });
   });
 
   it('never writes to a malformed file', () => {
