@@ -19,6 +19,7 @@
  * can never disagree about what is missing.
  */
 import * as fs from 'fs';
+import { createScanner, SyntaxKind } from 'jsonc-parser';
 import { policyPathFor, readPolicyRoot, parsePolicyText } from './baseline/policy-text';
 import { writeNewPolicyFile } from './baseline/policy-write';
 import {
@@ -93,14 +94,47 @@ export function applyPolicySync(
   const closeAt = text.lastIndexOf('}');
   if (closeAt < 0) return { written: false, created: false };
 
+  // The uncomment-to-activate promise must hold on a SYNCED file too (E3):
+  // a hand-written strict-JSON policy has NO trailing comma after its last
+  // member, so a stanza uncommented later would sit comma-less behind it —
+  // the real-repo class the 4.3.0 mirror validation caught. Insert the comma
+  // at the last code token before the close (comment- and string-safe via
+  // the jsonc scanner), unless the object is empty or already terminated.
+  const body = ensureTrailingComma(text.slice(0, closeAt));
+
   const blocks = plan.missing.map((s) => renderStanzaBlock(s, ctx).join('\n')).join('\n\n');
-  const head = text.slice(0, closeAt).replace(/\s*$/, '\n\n');
+  const head = body.replace(/\s*$/, '\n\n');
   const next = `${head}${blocks}\n${text.slice(closeAt)}`;
 
   // The append must never break the file — parse before writing, refuse after.
   parsePolicyText(next);
   fs.writeFileSync(abs, next.endsWith('\n') ? next : next + '\n', 'utf8');
   return { written: true, created: false };
+}
+
+/** Append a comma after the last CODE token of `body` (everything before the
+ *  root close) unless it is `{` (empty object) or already `,`. Token-walked
+ *  with the jsonc scanner, so trailing comments and `//` inside strings can
+ *  never be mistaken for code. */
+function ensureTrailingComma(body: string): string {
+  const scanner = createScanner(body, false);
+  let lastEnd = -1;
+  let lastKind: SyntaxKind = SyntaxKind.Unknown;
+  for (let t = scanner.scan(); t !== SyntaxKind.EOF; t = scanner.scan()) {
+    if (
+      t === SyntaxKind.Trivia ||
+      t === SyntaxKind.LineBreakTrivia ||
+      t === SyntaxKind.LineCommentTrivia ||
+      t === SyntaxKind.BlockCommentTrivia
+    ) {
+      continue;
+    }
+    lastKind = t;
+    lastEnd = scanner.getTokenOffset() + scanner.getTokenLength();
+  }
+  if (lastEnd < 0) return body;
+  if (lastKind === SyntaxKind.OpenBraceToken || lastKind === SyntaxKind.CommaToken) return body;
+  return body.slice(0, lastEnd) + ',' + body.slice(lastEnd);
 }
 
 /** The ONE ScaffoldCtx builder — init's scaffold step and `policy sync` must
