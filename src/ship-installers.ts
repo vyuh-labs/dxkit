@@ -36,6 +36,7 @@ import {
 } from './baseline/modes';
 import { baselineRefreshCron, loadPolicyFromCwd } from './baseline/policy';
 import { cronFromCadence } from './baseline/policy-sections';
+import { BOT_IDENTITY } from './land-refresh';
 import { resolveRemediateConfig } from './remediate/config';
 import { driverById } from './remediate/registry';
 import { readFlowConfig } from './analyzers/flow/config';
@@ -1053,6 +1054,8 @@ export function installCiRemediate(cwd: string, opts: InstallerOpts = {}): ShipI
     __DXKIT_DEFAULT_BRANCH__: detectDefaultBranch(cwd),
     __DXKIT_REMEDIATE_CRON__: cronFromCadence(config.schedule),
     __DXKIT_REMEDIATE_CREDENTIAL_ENV__: credentialLines,
+    __DXKIT_BOT_NAME__: BOT_IDENTITY.name,
+    __DXKIT_BOT_EMAIL__: BOT_IDENTITY.email,
   });
   if (result.installed.length > 0) {
     result.notes.push(

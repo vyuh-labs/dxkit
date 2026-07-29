@@ -75,7 +75,15 @@ export interface LandRefreshResult {
   readonly note?: string;
 }
 
-const BOT = { name: 'dxkit-bot', email: 'dxkit-bot@users.noreply.github.com' };
+/** The ONE machine-commit identity (Rule 2): the refresh lander, the
+ *  remediate lane's sweep + ledger commits, and the remediate workflow's
+ *  `git config` step (rendered from this constant) all use it — a CI runner
+ *  has no ambient git identity, so every lane commit must carry its own. */
+export const BOT_IDENTITY = {
+  name: 'dxkit-bot',
+  email: 'dxkit-bot@users.noreply.github.com',
+} as const;
+const BOT = BOT_IDENTITY;
 
 export function landRefreshPaths(opts: LandRefreshOptions): LandRefreshResult {
   const exec = opts.exec ?? makeExec(opts.cwd);

@@ -6,7 +6,7 @@ import { execFileSync } from 'child_process';
 import { installCiRemediate } from '../../src/ship-installers';
 import { AGENT_DRIVERS, driverById } from '../../src/remediate/registry';
 import { landRemediateHead, remediateBranchFor } from '../../src/remediate/land';
-import type { Exec } from '../../src/land-refresh';
+import { BOT_IDENTITY, type Exec } from '../../src/land-refresh';
 
 /**
  * The remediate SURFFACES: the managed workflow's secret wiring must DERIVE
@@ -48,6 +48,22 @@ describe('installCiRemediate (the managed workflow)', () => {
     // no unrendered substitution keys survive
     expect(text).not.toContain('__DXKIT_REMEDIATE_CREDENTIAL_ENV__');
     expect(text).not.toContain('__DXKIT_REMEDIATE_CRON__');
+  });
+
+  it('renders the git-identity step from the ONE bot identity (a runner has none ambient)', () => {
+    writeFileSync(join(repo, '.dxkit', 'policy.json'), '{"remediate": {"enabled": true}}', 'utf8');
+    installCiRemediate(repo);
+    const text = readFileSync(workflowPath(), 'utf8');
+    expect(text).toContain(`git config user.name "${BOT_IDENTITY.name}"`);
+    expect(text).toContain(`git config user.email "${BOT_IDENTITY.email}"`);
+    expect(text).not.toContain('__DXKIT_BOT_NAME__');
+    // the runner-side machine commits carry the same identity explicitly
+    const land = readFileSync(join(__dirname, '../../src/remediate/land.ts'), 'utf8');
+    const run = readFileSync(join(__dirname, '../../src/remediate/run.ts'), 'utf8');
+    for (const src of [land, run]) {
+      expect(src).toContain('BOT_IDENTITY.name');
+      expect(src).toContain('BOT_IDENTITY.email');
+    }
   });
 
   it('renders the schedule through the one cadence grammar (daily → its cron)', () => {
