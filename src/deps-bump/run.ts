@@ -41,6 +41,7 @@ import {
   type PackageManager,
 } from '../package-manager';
 import { buildBumpPlan, type BumpPlan, type PlannedBump } from './plan';
+import { renderFloorVerification, renderGuardrailVerdict } from '../lanes/verification-render';
 import { landRefreshPaths, type LandRefreshResult } from '../land-refresh';
 import { detectDefaultBranch } from '../ship-installers';
 
@@ -159,38 +160,10 @@ export function renderLedger(result: Omit<DepsBumpResult, 'ledger'>): string {
   }
 
   lines.push('### Verification', '');
-  if (result.floor) {
-    const attributed = result.floorAttribution ?? [];
-    const netNew = attributed.filter((a) => a.attribution === 'net-new');
-    const preExisting = attributed.filter((a) => a.attribution === 'pre-existing');
-    const unattributed = attributed.filter((a) => a.attribution === 'unattributed');
-    const checks = result.floor.checks.map((c) => `- ${c.pack}/${c.label}: ${c.status}`).join('\n');
-    lines.push(
-      `Correctness floor (full scope, attributed vs the pre-bump entry run): ` +
-        `**${netNew.length > 0 ? 'FAILED — net-new failures' : 'passed'}**`,
-      checks,
-      '',
-    );
-    if (preExisting.length > 0) {
-      lines.push(
-        `Pre-existing floor debt (failing BEFORE the bumps too — disclosed, not blocking): ` +
-          preExisting.map((a) => `${a.check.pack}/${a.check.label}`).join(', '),
-        '',
-      );
-    }
-    if (unattributed.length > 0) {
-      lines.push(
-        `Unattributed floor failures (the entry run could not observe these checks): ` +
-          unattributed.map((a) => `${a.check.pack}/${a.check.label}`).join(', '),
-        '',
-      );
-    }
-  } else {
-    lines.push('Correctness floor: not run (dry run).', '');
-  }
-  if (result.guardrailVerdict) {
-    lines.push(`Guardrail: **${result.guardrailVerdict}**`, '');
-  }
+  lines.push(
+    ...renderFloorVerification(result.floor, result.floorAttribution, 'the pre-bump entry run'),
+  );
+  lines.push(...renderGuardrailVerdict(result.guardrailVerdict));
 
   if (result.plan.skipped.length > 0) {
     lines.push('### Not bumped (disclosed)', '');
