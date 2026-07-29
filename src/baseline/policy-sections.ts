@@ -115,7 +115,16 @@ const CRON_RE = new RegExp(`^${CRON_FIELD}( ${CRON_FIELD}){4}$`);
 export function baselineRefreshCron(policy: {
   readonly baseline?: { readonly refreshCadence?: string };
 }): string {
-  const declared = policy.baseline?.refreshCadence;
+  return cronFromCadence(policy.baseline?.refreshCadence);
+}
+
+/**
+ * The cadence GRAMMAR itself, shared by every scheduled-lane knob (baseline
+ * refresh, remediate schedule): a named cadence, a strictly-validated raw
+ * 5-field cron, or the weekly default. One grammar, so "weekly" means the
+ * same thing on every surface that schedules anything.
+ */
+export function cronFromCadence(declared: string | undefined): string {
   if (typeof declared !== 'string') return DEFAULT_BASELINE_REFRESH_CRON;
   const trimmed = declared.trim();
   const named = NAMED_REFRESH_CADENCES[trimmed];

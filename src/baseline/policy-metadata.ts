@@ -177,6 +177,55 @@ export const POLICY_PARAMS: readonly PolicyParamMeta[] = [
     anchor: 'loop-preset',
     enumValues: ['security-only', 'full-debt'],
   },
+  {
+    path: 'remediate.enabled',
+    summary: 'scheduled agent runs inside the verified frame',
+    anchor: 'remediate',
+  },
+  {
+    path: 'remediate.tasks',
+    summary: 'which registry tasks the agent works',
+    anchor: 'remediate-tasks',
+  },
+  {
+    // Same open shape as baseline.refreshCadence: named cadences OR a cron.
+    path: 'remediate.schedule',
+    summary: 'cadence: weekly, daily, or a 5-field cron line',
+    anchor: 'remediate-schedule',
+  },
+  {
+    path: 'remediate.salvage',
+    summary: 'fate of budget-cut partial work',
+    anchor: 'remediate-salvage',
+    enumValues: ['discard', 'draft-pr'],
+  },
+  {
+    path: 'remediate.agent.driver',
+    summary: 'which agent CLI runs the task',
+    anchor: 'remediate-driver',
+  },
+  {
+    // Deliberately NOT an enum: auto + the three tiers are documented, but a
+    // driver-native id must pass through (new models outrun dxkit releases).
+    path: 'remediate.agent.model',
+    summary: 'auto (per-task tier), a tier (light|standard|deep), or a driver-native id',
+    anchor: 'remediate-model',
+  },
+  {
+    path: 'remediate.agent.budget.maxTurns',
+    summary: 'agent iteration cap',
+    anchor: 'remediate-budget',
+  },
+  {
+    path: 'remediate.agent.budget.maxMinutes',
+    summary: 'wall-clock cap; salvage policy applies on a hit',
+    anchor: 'remediate-budget',
+  },
+  {
+    path: 'remediate.agent.budget.maxUsd',
+    summary: 'spend cap, enforced by the runner from the spend envelope',
+    anchor: 'remediate-budget',
+  },
 ];
 
 const paramByPath = new Map(POLICY_PARAMS.map((p) => [p.path, p]));
@@ -320,6 +369,31 @@ export const POLICY_STANZAS: readonly PolicyStanzaMeta[] = [
     blurb: ['What blocks an unattended coding loop from declaring done.'],
     anchor: 'loop-preset',
     example: () => ({ preset: 'security-only' }),
+  },
+  {
+    key: 'remediate',
+    coversKnobs: ['remediate.enabled'],
+    title: 'Agentic remediation (scheduled agent inside the verified frame)',
+    blurb: [
+      'An agent works the debt the deterministic lanes cannot close; every run',
+      "is floor-attributed + guardrail-verified before a PR opens (the agent's",
+      'word is never trusted). Credentials come from repo secrets, never here.',
+    ],
+    anchor: 'remediate',
+    example: () => ({
+      enabled: true,
+      tasks: ['fix-vulns'],
+      schedule: 'weekly',
+      agent: {
+        driver: 'claude-code',
+        model: 'auto',
+        budget: { maxTurns: 80, maxMinutes: 30, maxUsd: 5 },
+      },
+    }),
+    followUp: [
+      'Installs a managed workflow: run `vyuh-dxkit update` after enabling, and set',
+      'the ANTHROPIC_API_KEY repo secret (a scoped key with a spend limit).',
+    ],
   },
 ];
 

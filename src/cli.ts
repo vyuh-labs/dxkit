@@ -367,6 +367,8 @@ export async function run(argv: string[]): Promise<void> {
       since: { type: 'string' },
       // `policy get <path> --default <v>` — fallback value for scripts.
       default: { type: 'string' },
+      // `remediate --task <t>` — which registry task the agent runs.
+      task: { type: 'string' },
       verbose: { type: 'boolean', default: false },
       'no-save': { type: 'boolean', default: false },
       detailed: { type: 'boolean', default: false },
@@ -844,6 +846,8 @@ export async function run(argv: string[]): Promise<void> {
           claudeLoop: wantClaudeLoop,
           gitHooks: wantHooks,
           ciGuardrails: wantCi,
+          // init never installs the remediate workflow directly (it is
+          // policy-gated via update), so no init flag feeds it here.
         })
       ) {
         shipResults.push({
@@ -2995,6 +2999,31 @@ export async function run(argv: string[]): Promise<void> {
         logger.dim('  (skip with --no-feedback)');
       }
       process.exit(0);
+      break;
+    }
+
+    case 'remediate': {
+      const { runRemediate, runRemediatePlan, remediateUsage } = await import('./remediate/cli');
+      if (positionals[1] === 'plan') {
+        runRemediatePlan(resolveRepoPath(positionals[2]), { json: !!values.json });
+        break;
+      }
+      const taskId = values.task as string | undefined;
+      if (!taskId) {
+        logger.fail(remediateUsage());
+        process.exitCode = 1;
+        break;
+      }
+      const landRaw = values.land as string | undefined;
+      if (landRaw !== undefined && landRaw !== 'pr' && landRaw !== 'none') {
+        logger.fail(`Unknown --land value: ${landRaw}. Expected one of: pr, none.`);
+        process.exit(1);
+      }
+      await runRemediate(resolveRepoPath(positionals[1]), {
+        taskId,
+        land: landRaw === 'pr' ? 'pr' : 'none',
+        json: !!values.json,
+      });
       break;
     }
 

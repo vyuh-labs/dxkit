@@ -55,6 +55,8 @@ import {
   commentCommandsEnabled,
   installCiDepBump,
   depBumpEnabled,
+  installCiRemediate,
+  remediateEnabled,
   extensionsRefreshEnabled,
   flowRefreshEnabled,
   installCiGuardrails,
@@ -84,6 +86,7 @@ type PrimaryFlag =
   | 'withExtensionsRefresh'
   | 'withCommentDefer'
   | 'withDepBump'
+  | 'withRemediate'
   | 'withClaudeLoop';
 
 /**
@@ -236,6 +239,7 @@ export const MANAGED_SHIP_SURFACES: readonly ManagedShipSurface[] = [
           claudeLoop: flags.withClaudeLoop,
           gitHooks: flags.withHooks,
           ciGuardrails: flags.withCiGuardrails,
+          ciRemediate: flags.withRemediate,
         }),
     },
     artifacts: () => [],
@@ -340,6 +344,18 @@ export const MANAGED_SHIP_SURFACES: readonly ManagedShipSurface[] = [
     detectPresent: (cwd) => existsRel(cwd, '.github/workflows/dxkit-dep-bump.yml'),
   },
   {
+    // The scheduled agentic remediation lane (an agent inside the verified
+    // frame, one standing PR per task). Opt-in via policy remediate.enabled;
+    // presence uninstall detection mirrors ci-dep-bump.
+    id: 'ci-remediate',
+    gate: { kind: 'flag', flag: 'withRemediate' },
+    artifacts: () => ['.github/workflows/dxkit-remediate.yml'],
+    uninstallDetection: 'presence',
+    refreshOnUpdate: true,
+    install: (cwd, { force }) => installCiRemediate(cwd, { force }),
+    detectPresent: (cwd) => existsRel(cwd, '.github/workflows/dxkit-remediate.yml'),
+  },
+  {
     // On-merge flow-contract refresh (task: keep committed served/consumed
     // snapshots current). Opt-in via policy flow.onMergeRefresh; presence
     // uninstall detection mirrors reports-refresh.
@@ -432,6 +448,7 @@ export function detectInstallFlags(cwd: string): ManifestInstallFlags {
   flags.withExtensionsRefresh = flags.withExtensionsRefresh || extensionsRefreshEnabled(cwd);
   flags.withCommentDefer = flags.withCommentDefer || commentCommandsEnabled(cwd);
   flags.withDepBump = flags.withDepBump || depBumpEnabled(cwd);
+  flags.withRemediate = flags.withRemediate || remediateEnabled(cwd);
   return flags;
 }
 

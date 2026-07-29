@@ -1,0 +1,108 @@
+name: dxkit remediate
+
+# The agentic remediation lane, scheduled: an agent fixes what the
+# deterministic lanes cannot (majors needing code changes, the grandfathered
+# build/test/lint debt, missing tests), INSIDE the verified frame — entry
+# floor snapshot, agent run under a hard budget, floor re-run attributed
+# against entry (only net-new failures block), guardrail as final arbiter —
+# then ONE standing, reviewable PR per task (dxkit/remediate-<task>) whose
+# body is the verification ledger + the agent envelope (model, turns, spend,
+# outcome). The agent's own claim of "done" is never trusted; a red net-new
+# floor means NO PR and a failing job with the ledger in the step summary.
+#
+# SECURITY: schedule + workflow_dispatch ONLY — never issue_comment, never
+# pull_request. The agent runs exclusively against the default branch (the
+# maintainers' own tree) with dxkit-authored task prompts; free-text prompts
+# do not exist in this lane. The API key comes from repo secrets, reaches the
+# driver as env only, and is never logged or echoed into the ledger. Use a
+# scoped workspace key with a spend limit, not a personal key. Expected
+# egress: the Anthropic API, the package registry, and git origin.
+#
+# Enabled by `.dxkit/policy.json:remediate.enabled: true` + `vyuh-dxkit update`.
+# Budget, tasks, model tier, and salvage policy are read from the committed
+# policy by the CLI itself — this workflow carries no tuning of its own.
+
+on:
+  schedule:
+    - cron: '__DXKIT_REMEDIATE_CRON__'
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  remediate:
+    name: dxkit-remediate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: __DXKIT_DEFAULT_BRANCH__
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      # Language runtime(s) for the detected stack, so the correctness floor
+      # can build + run the tests that verify the agent's work.
+__DXKIT_CI_RUNTIME_SETUP__
+      # Install with the repo's own package manager (the verified tree must
+      # be the tree the repo ships).
+      - name: Install dependencies + dxkit
+        run: |
+          corepack enable >/dev/null 2>&1 || true
+          if [ -f pnpm-lock.yaml ]; then
+            pnpm install --frozen-lockfile
+          elif [ -f yarn.lock ]; then
+            yarn install --immutable 2>/dev/null || yarn install --frozen-lockfile
+          elif [ -f bun.lockb ] || [ -f bun.lock ]; then
+            npm install -g bun >/dev/null 2>&1 || true
+            bun install --frozen-lockfile
+          elif [ -f package-lock.json ]; then
+            npm ci || npm ci --legacy-peer-deps
+          elif [ -f package.json ]; then
+            npm install || npm install --legacy-peer-deps
+          else
+            npm install -g @vyuhlabs/dxkit
+          fi
+
+      - name: Install scanner tools
+        run: |
+          if [ -x ./node_modules/.bin/vyuh-dxkit ]; then
+            ./node_modules/.bin/vyuh-dxkit tools install --yes
+          else
+            vyuh-dxkit tools install --yes
+          fi
+          for d in "$HOME/.local/bin" "$HOME/go/bin" "$HOME/.cargo/bin"; do
+            echo "$d" >> "$GITHUB_PATH"
+          done
+
+      - name: Install the agent CLI
+        run: npm install -g @anthropic-ai/claude-code
+
+      # One task per run invocation, each with its own standing PR. The task
+      # list, budget, model, and salvage policy come from the committed
+      # policy; a non-clean outcome fails THIS step so the job is red with
+      # the ledger in the summary — a truthful failure, never a silent skip.
+      - name: Run the remediation lane
+        env:
+          GH_TOKEN: ${{ github.token }}
+__DXKIT_REMEDIATE_CREDENTIAL_ENV__
+        run: |
+          if [ -x ./node_modules/.bin/vyuh-dxkit ]; then DXKIT=./node_modules/.bin/vyuh-dxkit; else DXKIT=vyuh-dxkit; fi
+          # One policy reader everywhere (JSONC-aware) — never a hand-rolled parse.
+          TASKS=$("$DXKIT" policy get remediate.tasks --default '["fix-vulns"]' | tr -d '[]",' )
+          FAILED=0
+          for T in $TASKS; do
+            echo "── remediate: $T ──"
+            if "$DXKIT" remediate --task "$T" --land pr --json > "remediate-$T.json"; then
+              node -e "const r=require('./remediate-$T.json');console.log('outcome:',r.outcome, r.prUrl||'')"
+            else
+              FAILED=1
+              node -e "const r=require('./remediate-$T.json');console.log('outcome:',r.outcome, r.note||'')" || true
+            fi
+            node -e "const r=require('./remediate-$T.json');require('fs').appendFileSync(process.env.GITHUB_STEP_SUMMARY, r.ledger + '\n\n')" || true
+          done
+          exit $FAILED

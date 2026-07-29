@@ -42,6 +42,7 @@ const ALL_OFF: ManifestInstallFlags = {
   withExtensionsRefresh: false,
   withCommentDefer: false,
   withDepBump: false,
+  withRemediate: false,
 };
 
 const SENTINEL_ARTIFACT = '.dxkit-synthetic-surface-sentinel';

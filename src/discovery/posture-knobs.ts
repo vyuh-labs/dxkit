@@ -154,6 +154,17 @@ export const POSTURE_KNOBS: readonly PostureKnob[] = [
       'the committed baseline carries grandfathered dependency vulnerabilities.',
   },
   {
+    path: 'remediate.enabled',
+    command: 'remediate',
+    requiresPlan: false,
+    requiresRecommend: true,
+    note:
+      'enabling installs the dxkit-remediate managed workflow (runs an agent, spends money), ' +
+      "which configure's policy-only merge-write cannot place and must never silently enable — " +
+      'so no planConfig; recommendRemediate surfaces the lane when the baseline carries debt ' +
+      'the deterministic lanes cannot close.',
+  },
+  {
     path: 'licenses.prohibited',
     command: 'licenses',
     requiresPlan: false,
