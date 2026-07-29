@@ -311,6 +311,10 @@ async function runFinishingArc(
           version: VERSION,
         });
         if (writeNewPolicyFile(cwd, text)) {
+          // Repos that already use .vscode/ get the JSONC association, so
+          // the scaffold's comments render clean, not as JSON errors.
+          const { ensurePolicyJsoncAssociation } = await import('./editor-assoc');
+          ensurePolicyJsoncAssociation(cwd);
           scaffold.succeed('.dxkit/policy.json — commented scaffold (uncomment to activate)');
         } else {
           scaffold.succeed('existing policy kept');

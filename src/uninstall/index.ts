@@ -15,6 +15,7 @@ import * as path from 'path';
 import { execFileSync } from 'child_process';
 
 import { sha256, serializePreservingJson } from '../files';
+import { stripPolicyJsoncAssociation, wouldStripPolicyJsoncAssociation } from '../editor-assoc';
 import { detectInstallFlags, type InstallFlags } from '../update';
 import { managedGatedArtifacts } from '../managed-artifacts';
 import { ALLOWLIST_FILENAME, ALLOWLIST_REASONS_FILENAME } from '../allowlist/file';
@@ -32,6 +33,7 @@ export type ActionKind =
   | 'revert-gitignore'
   | 'revert-claude'
   | 'revert-settings'
+  | 'revert-vscode-assoc'
   | 'revert-package'
   | 'git-config-unset';
 
@@ -197,6 +199,14 @@ export function planUninstall(cwd: string, opts: UninstallOptions = {}): Uninsta
         status: 'pending',
       });
     }
+  }
+  if (wouldStripPolicyJsoncAssociation(cwd)) {
+    actions.push({
+      kind: 'revert-vscode-assoc',
+      target: '.vscode/settings.json',
+      detail: 'remove the .dxkit/policy.json JSONC file association',
+      status: 'pending',
+    });
   }
   if (opts.removeDevDependency && exists(cwd, 'package.json')) {
     const parsed = tryJson(read(cwd, 'package.json'));
@@ -374,6 +384,11 @@ export function executeUninstall(
         } else {
           fs.writeFileSync(abs, serializePreservingJson(original, result), 'utf-8');
         }
+        reverted.push(a.target);
+        break;
+      }
+      case 'revert-vscode-assoc': {
+        stripPolicyJsoncAssociation(cwd);
         reverted.push(a.target);
         break;
       }

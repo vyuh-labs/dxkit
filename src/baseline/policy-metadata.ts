@@ -86,10 +86,12 @@ export const POLICY_PARAMS: readonly PolicyParamMeta[] = [
     enumValues: ['committed-full', 'committed-sanitized', 'ref-based'],
   },
   {
+    // Deliberately NOT an enum: the knob also accepts a 5-field cron line,
+    // so a closed value set would lie in the comment, the hover, and the
+    // schema all at once.
     path: 'baseline.refreshCadence',
-    summary: 'how often the refresh workflow runs',
+    summary: 'refresh workflow cadence: weekly, daily, or a 5-field cron line',
     anchor: 'refresh-cadence',
-    enumValues: ['weekly', 'daily'],
   },
   {
     path: 'baseline.anchor',
