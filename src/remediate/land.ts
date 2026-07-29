@@ -11,12 +11,14 @@
  * `draft-pr` policy lands as a DRAFT; `discard` never reaches this module.
  */
 import {
+  BOT_IDENTITY,
   makeExec,
   openOrUpdateStandingPr,
   type Exec,
   type LandRefreshResult,
 } from '../land-refresh';
 import { internalGitPushArgs } from '../git-internal-push';
+import * as logger from '../logger';
 
 export function remediateBranchFor(taskId: string): string {
   return `dxkit/remediate-${taskId}`;
@@ -41,9 +43,32 @@ export function landRemediateHead(opts: LandRemediateOptions): LandRefreshResult
   const branch = remediateBranchFor(opts.taskId);
   if (opts.ledgerPath) {
     exec('git', ['add', opts.ledgerPath]);
-    exec('git', ['commit', '-m', 'chore: record the remediation delivery (dxkit lane ledger)'], {
+    // Explicit bot identity: a CI runner has none ambient, and a machine
+    // commit should carry machine provenance locally too.
+    exec(
+      'git',
+      [
+        '-c',
+        `user.name=${BOT_IDENTITY.name}`,
+        '-c',
+        `user.email=${BOT_IDENTITY.email}`,
+        'commit',
+        '-m',
+        'chore: record the remediation delivery (dxkit lane ledger)',
+      ],
+      { allowFail: true },
+    );
+    // A bookkeeping failure must not block landing verified work, but a
+    // silently lost event undercounts Delivered — say so (X-3).
+    const dirty = exec('git', ['status', '--porcelain', '--', opts.ledgerPath], {
       allowFail: true,
-    });
+    }).trim();
+    if (dirty !== '') {
+      logger.warn(
+        'the delivery-ledger event could not be committed — this landing will be missing ' +
+          "from `vyuh-dxkit metrics`' Delivered count",
+      );
+    }
   }
   // Internal machine push, force: the standing branch is rebuilt per run,
   // never a pile; --no-verify so the repo's own pre-push hook does not fire

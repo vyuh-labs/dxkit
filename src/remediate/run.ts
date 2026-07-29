@@ -33,6 +33,7 @@ import {
 import { detectActiveLanguages } from '../languages';
 import { renderFloorVerification, renderGuardrailVerdict } from '../lanes/verification-render';
 import { guardrailVerdictFor, toFloorBaseChecks, type GuardrailGateResult } from '../lanes/verify';
+import { BOT_IDENTITY } from '../land-refresh';
 import { resolveModelSetting, type AgentDriver, type AgentRunResult } from './driver';
 import { AGENT_DRIVERS, knownDriverIds } from './registry';
 import { remediateTaskById, knownTaskIds, type RemediateTask } from './tasks';
@@ -120,7 +121,14 @@ function realGit(cwd: string): RemediateGit {
         } catch {
           // nothing staged from runtime paths — fine
         }
+        // Explicit bot identity (Rule 2: the one BOT_IDENTITY) — a CI
+        // runner has no ambient git identity, and the sweep must commit
+        // there or the whole lane reads as no-op.
         git([
+          '-c',
+          `user.name=${BOT_IDENTITY.name}`,
+          '-c',
+          `user.email=${BOT_IDENTITY.email}`,
           'commit',
           '-q',
           '-m',
