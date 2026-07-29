@@ -135,7 +135,10 @@ describe('claude-code driver (exec injected)', () => {
 
   it('strips ambient credentials unless explicitly injected, and arms the Stop-gate', async () => {
     const capture: { env?: Record<string, string | undefined> } = {};
-    process.env.ANTHROPIC_API_KEY = 'ambient-key-must-not-leak';
+    // Bracketed placeholder form: the fixture value carries no semantic weight
+    // (the assertions are absence and pass-through), and a key-shaped literal
+    // in a committed test is a secret finding under our own scanner.
+    process.env.ANTHROPIC_API_KEY = '<ambient-key-must-not-leak>';
     try {
       const d = runWith({ stdout: '{"num_turns": 2}' }, capture);
       await d.run({ cwd: '/tmp', prompt: 'p', budget, model: 'sonnet', env: {} });
@@ -147,9 +150,9 @@ describe('claude-code driver (exec injected)', () => {
         prompt: 'p',
         budget,
         model: 'sonnet',
-        env: { ANTHROPIC_API_KEY: 'explicit-ci-key' },
+        env: { ANTHROPIC_API_KEY: '<explicit-ci-key>' },
       });
-      expect(capture.env!.ANTHROPIC_API_KEY).toBe('explicit-ci-key');
+      expect(capture.env!.ANTHROPIC_API_KEY).toBe('<explicit-ci-key>');
     } finally {
       delete process.env.ANTHROPIC_API_KEY;
     }
