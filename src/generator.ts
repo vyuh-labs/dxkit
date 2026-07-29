@@ -206,6 +206,11 @@ export const DXKIT_SKILLS = [
   // plus what enabling dxkit costs — the honest pre-adoption answer, and
   // useful post-install for "would the gate have caught this range".
   'dxkit-evaluate',
+  // dxkit-remediate: the agentic remediation lane. Previews per-task model
+  // resolution (`remediate plan`), runs a task inside the verified frame,
+  // enables the scheduled workflow, and reads the outcome ledger. Drives
+  // `vyuh-dxkit remediate` + the policy.json:remediate config.
+  'dxkit-remediate',
 ] as const;
 
 interface GenerateResult {

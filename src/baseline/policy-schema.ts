@@ -19,6 +19,7 @@
  * (`./node_modules/@vyuhlabs/dxkit/policy.schema.json`) points.
  */
 import { POLICY_GUIDE_URL, paramMetaFor } from './policy-metadata';
+import { knownTaskIds } from '../remediate/tasks';
 
 type Schema = Record<string, unknown>;
 
@@ -228,6 +229,41 @@ export function buildPolicySchema(version: string): Schema {
           },
         },
         'Autonomous-loop Stop-gate.',
+      ),
+      remediate: obj(
+        {
+          enabled: boolProp('remediate.enabled'),
+          tasks: {
+            type: 'array',
+            // Derived from the task registry — never a hand-copied list.
+            items: { type: 'string', enum: [...knownTaskIds()] },
+            description: desc('remediate.tasks'),
+          },
+          schedule: stringProp('remediate.schedule'),
+          salvage: stringProp('remediate.salvage'),
+          agent: obj(
+            {
+              driver: stringProp('remediate.agent.driver'),
+              model: stringProp('remediate.agent.model'),
+              budget: obj(
+                {
+                  maxTurns: {
+                    type: 'number',
+                    description: desc('remediate.agent.budget.maxTurns'),
+                  },
+                  maxMinutes: {
+                    type: 'number',
+                    description: desc('remediate.agent.budget.maxMinutes'),
+                  },
+                  maxUsd: { type: 'number', description: desc('remediate.agent.budget.maxUsd') },
+                },
+                "Hard caps, all enforced by the runner (never the agent's self-report).",
+              ),
+            },
+            'Which agent runs, at which capability tier, under which caps.',
+          ),
+        },
+        'Agentic remediation: a scheduled agent inside the verified frame.',
       ),
       graph: obj(
         {
