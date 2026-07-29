@@ -20,7 +20,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { applyEdits, modify } from 'jsonc-parser';
-import { policyPathFor, readPolicyRoot } from './policy-text';
+import { policyPathFor, readPolicyRoot, JSONC_EDIT_FORMAT } from './policy-text';
 
 export interface PolicyMergeOutcome {
   readonly changed: boolean;
@@ -104,7 +104,7 @@ function collectLeafEdits(
   }
 }
 
-const JSONC_FORMAT = { insertSpaces: true, tabSize: 2, eol: '\n' } as const;
+const JSONC_FORMAT = JSONC_EDIT_FORMAT;
 
 /**
  * Deep-merge `patch` into `.dxkit/policy.json`, preserving every existing key,

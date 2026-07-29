@@ -19,6 +19,7 @@
  * arm without a real `claude` binary.
  */
 import { execFileSync } from 'child_process';
+import { commandExists } from '../analyzers/tools/runner';
 import type { AgentDriver, AgentRunOptions, AgentRunResult, ModelTier } from './driver';
 
 export interface AgentExecOutcome {
@@ -40,8 +41,18 @@ export type AgentExec = (
 
 const MAX_CAPTURE = 16 * 1024 * 1024;
 
-/** Real spawn. A timeout kill surfaces as `timedOut`, distinct from a
- *  non-zero exit; captured output rides the error object either way. */
+/**
+ * Real spawn. A timeout kill surfaces as `timedOut`, distinct from a
+ * non-zero exit; captured output rides the error object either way.
+ *
+ * DECLARED EXCEPTION to the bounded-exec seam (Rule 2 discipline: an
+ * exception is stated, never silent): `makeCommandExec` merges stdout and
+ * stderr into one stream, but this driver's never-ran taxonomy REQUIRES
+ * them separated — a non-zero exit is classified by whether stderr names a
+ * pre-run failure (auth, bad flag) while stdout carries the JSON result
+ * envelope. Folding the streams would destroy that classification, so the
+ * agent spawn keeps its own exec with the same timeout-kill semantics.
+ */
 export const realAgentExec: AgentExec = (bin, args, opts) => {
   try {
     const stdout = execFileSync(bin, args as string[], {
@@ -99,14 +110,10 @@ export function makeClaudeCodeDriver(exec: AgentExec = realAgentExec): AgentDriv
     },
 
     available(cwd: string) {
-      try {
-        execFileSync('claude', ['--version'], {
-          cwd,
-          stdio: ['ignore', 'pipe', 'pipe'],
-          timeout: 15_000,
-        });
-        return { ok: true };
-      } catch {
+      // Detection via the ONE cross-platform PATH resolver (Rule 2) — a raw
+      // execFileSync probe throws EINVAL on Windows' `claude.cmd` shim and
+      // would report an INSTALLED CLI as missing (the create-dxkit class).
+      if (!commandExists('claude', cwd)) {
         return {
           ok: false,
           reason:
@@ -114,6 +121,19 @@ export function makeClaudeCodeDriver(exec: AgentExec = realAgentExec): AgentDriv
             '(https://claude.com/claude-code) or run with a driver that is installed',
         };
       }
+      if (process.platform === 'win32') {
+        // exec-host-ok: a DISCLOSED v1 limitation, not host dispatch — the
+        // spawn path cannot run a .cmd shim without a shell, and a shell
+        // must never see the prompt argv. The managed workflow (ubuntu) is
+        // the supported path; say so rather than fail confusingly mid-run.
+        return {
+          ok: false,
+          reason:
+            'local remediate runs are not supported on Windows in this version — ' +
+            'the scheduled dxkit-remediate workflow (ubuntu) is the supported path',
+        };
+      }
+      return { ok: true };
     },
 
     async run(opts: AgentRunOptions): Promise<AgentRunResult> {

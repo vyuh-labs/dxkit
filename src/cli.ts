@@ -3003,9 +3003,22 @@ export async function run(argv: string[]): Promise<void> {
     }
 
     case 'remediate': {
-      const { runRemediate, runRemediatePlan, remediateUsage } = await import('./remediate/cli');
+      const { runRemediate, runRemediatePlan, runRemediateConfigured, remediateUsage } =
+        await import('./remediate/cli');
       if (positionals[1] === 'plan') {
         runRemediatePlan(resolveRepoPath(positionals[2]), { json: !!values.json });
+        break;
+      }
+      if (positionals[1] === 'configured') {
+        const landRawC = values.land as string | undefined;
+        if (landRawC !== undefined && landRawC !== 'pr' && landRawC !== 'none') {
+          logger.fail(`Unknown --land value: ${landRawC}. Expected one of: pr, none.`);
+          process.exit(1);
+        }
+        await runRemediateConfigured(resolveRepoPath(positionals[2]), {
+          land: landRawC === 'pr' ? 'pr' : 'none',
+          json: !!values.json,
+        });
         break;
       }
       const taskId = values.task as string | undefined;

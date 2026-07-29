@@ -82,27 +82,15 @@ __DXKIT_CI_RUNTIME_SETUP__
       - name: Install the agent CLI
         run: npm install -g @anthropic-ai/claude-code
 
-      # One task per run invocation, each with its own standing PR. The task
-      # list, budget, model, and salvage policy come from the committed
-      # policy; a non-clean outcome fails THIS step so the job is red with
-      # the ledger in the summary — a truthful failure, never a silent skip.
+      # ONE invocation runs every policy-configured task: the CLI reads the
+      # task list through the one config reader (never a shell parse of
+      # policy JSON), opens one standing PR per task, writes each ledger to
+      # the step summary itself, and exits non-zero when any task did not
+      # end clean — a truthful failure, never a silent skip.
       - name: Run the remediation lane
         env:
           GH_TOKEN: ${{ github.token }}
 __DXKIT_REMEDIATE_CREDENTIAL_ENV__
         run: |
           if [ -x ./node_modules/.bin/vyuh-dxkit ]; then DXKIT=./node_modules/.bin/vyuh-dxkit; else DXKIT=vyuh-dxkit; fi
-          # One policy reader everywhere (JSONC-aware) — never a hand-rolled parse.
-          TASKS=$("$DXKIT" policy get remediate.tasks --default '["fix-vulns"]' | tr -d '[]",' )
-          FAILED=0
-          for T in $TASKS; do
-            echo "── remediate: $T ──"
-            if "$DXKIT" remediate --task "$T" --land pr --json > "remediate-$T.json"; then
-              node -e "const r=require('./remediate-$T.json');console.log('outcome:',r.outcome, r.prUrl||'')"
-            else
-              FAILED=1
-              node -e "const r=require('./remediate-$T.json');console.log('outcome:',r.outcome, r.note||'')" || true
-            fi
-            node -e "const r=require('./remediate-$T.json');require('fs').appendFileSync(process.env.GITHUB_STEP_SUMMARY, r.ledger + '\n\n')" || true
-          done
-          exit $FAILED
+          "$DXKIT" remediate configured --land pr

@@ -100,7 +100,7 @@ function base(driver: AgentDriver, extra: Partial<Parameters<typeof runRemediate
     drivers: [driver],
     git: fakeGit({ diff: true }),
     runFloor: () => GREEN_FLOOR,
-    runGuardrail: async () => 'PASSED',
+    runGuardrail: async () => ({ verdict: 'PASSED', ran: true, passesGate: true }),
     ...extra,
   };
 }
@@ -189,6 +189,41 @@ describe('the verified frame (the agent is never trusted)', () => {
     const r = await runRemediateTask(base(fakeDriver({}), { runFloor: () => RED_FLOOR }));
     expect(r.outcome).toBe('verified');
     expect(r.ledger).toContain('Pre-existing floor debt');
+  });
+
+  it('guardrail-red: a BLOCKED guardrail lands nothing, even on a clean floor', async () => {
+    const r = await runRemediateTask(
+      base(fakeDriver({ completed: true }), {
+        runGuardrail: async () => ({ verdict: 'BLOCKED', ran: true, passesGate: false }),
+      }),
+    );
+    expect(r.outcome).toBe('guardrail-red');
+    expect(r.note).toContain('BLOCKED');
+    expect(r.note).toContain('nothing lands');
+  });
+
+  it('guardrail-red: an UNRUNNABLE guardrail fails closed for the agent lane', async () => {
+    const r = await runRemediateTask(
+      base(fakeDriver({}), {
+        runGuardrail: async () => ({
+          verdict: 'unavailable (boom)',
+          ran: false,
+          passesGate: false,
+        }),
+      }),
+    );
+    expect(r.outcome).toBe('guardrail-red');
+    expect(r.note).toContain('never pushed unverified');
+  });
+
+  it('guardrail-red outranks budget-exhausted: a partial diff that fails the gate never salvages', async () => {
+    const r = await runRemediateTask(
+      base(fakeDriver({ completed: false, timedOut: true }), {
+        runGuardrail: async () => ({ verdict: 'BLOCKED', ran: true, passesGate: false }),
+        config: { ...config(), salvage: 'draft-pr' },
+      }),
+    );
+    expect(r.outcome).toBe('guardrail-red');
   });
 });
 

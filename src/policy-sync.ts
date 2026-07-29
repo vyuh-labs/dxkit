@@ -91,7 +91,11 @@ export function applyPolicySync(
 
   const abs = policyPathFor(cwd);
   const text = fs.readFileSync(abs, 'utf8');
-  const closeAt = text.lastIndexOf('}');
+  // The root close is the last CODE `}` — found by token walk, never by
+  // lastIndexOf: a trailing comment containing `}` (observed shape:
+  // `// reviewed by ops { done }`) would otherwise be mistaken for the
+  // close and the guard below would reject a file sync handles fine.
+  const closeAt = lastCodeCloseBrace(text);
   if (closeAt < 0) return { written: false, created: false };
 
   // The uncomment-to-activate promise must hold on a SYNCED file too (E3):
@@ -106,10 +110,25 @@ export function applyPolicySync(
   const head = body.replace(/\s*$/, '\n\n');
   const next = `${head}${blocks}\n${text.slice(closeAt)}`;
 
-  // The append must never break the file — parse before writing, refuse after.
-  parsePolicyText(next);
+  // The append must never break the file — parse before writing, and an
+  // unexpected failure is a clean refusal (written: false), never a crash.
+  try {
+    parsePolicyText(next);
+  } catch {
+    return { written: false, created: false };
+  }
   fs.writeFileSync(abs, next.endsWith('\n') ? next : next + '\n', 'utf8');
   return { written: true, created: false };
+}
+
+/** Offset of the last CODE close-brace token (the root close), or -1. */
+function lastCodeCloseBrace(text: string): number {
+  const scanner = createScanner(text, false);
+  let at = -1;
+  for (let t = scanner.scan(); t !== SyntaxKind.EOF; t = scanner.scan()) {
+    if (t === SyntaxKind.CloseBraceToken) at = scanner.getTokenOffset();
+  }
+  return at;
 }
 
 /** Append a comma after the last CODE token of `body` (everything before the

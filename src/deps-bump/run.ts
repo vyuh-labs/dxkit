@@ -43,6 +43,7 @@ import {
 import { buildBumpPlan, type BumpPlan, type PlannedBump } from './plan';
 import { renderFloorVerification, renderGuardrailVerdict } from '../lanes/verification-render';
 import { appendLaneEvent, LANE_LEDGER_SCHEMA_VERSION } from '../lanes/ledger';
+import { guardrailVerdictFor, toFloorBaseChecks } from '../lanes/verify';
 import { landRefreshPaths, type LandRefreshResult } from '../land-refresh';
 import { detectDefaultBranch } from '../ship-installers';
 
@@ -297,14 +298,10 @@ export async function runDepsBump(opts: DepsBumpOptions): Promise<DepsBumpResult
   }
 
   // Verify: the floor at FULL scope (a dependency change alters resolution
-  // for every file), attributed against the entry snapshot.
+  // for every file), attributed against the entry snapshot through the ONE
+  // base-check projection (shared with the remediate lane).
   const floor = runFloor();
-  const baseChecks: FloorBaseCheck[] = entryFloor.checks.map((c) => ({
-    pack: c.pack,
-    label: c.label,
-    status: c.status === 'pass' ? 'pass' : c.status === 'fail' ? 'fail' : 'skipped',
-    ...(c.findings !== undefined ? { findings: c.findings } : {}),
-  }));
+  const baseChecks: FloorBaseCheck[] = toFloorBaseChecks(entryFloor);
   const floorAttribution = attributeFloorFailures(floor, baseChecks, {
     // The entry floor always ran (just above), so an absent base check means
     // the check itself is NEW post-bump — treat as net-new (conservative).
@@ -312,20 +309,16 @@ export async function runDepsBump(opts: DepsBumpOptions): Promise<DepsBumpResult
   });
   const netNewFloorRed = floorAttribution.some((a) => a.attribution === 'net-new');
 
+  // Guardrail via the one lane helper. This lane deliberately keeps its
+  // shipped fail-OPEN posture on an unrunnable check (`ran: false` still
+  // lands): the diff is manifest+lockfile only, and the PR's own required
+  // dxkit-guardrails check is the backstop. The agent lane fails CLOSED —
+  // the declared policy difference lives at each consumer.
   let guardrailVerdict: string | undefined;
   if (opts.runGuardrail) {
     guardrailVerdict = await opts.runGuardrail();
   } else {
-    try {
-      // Late import: the check module is heavy and the dry-run path must not
-      // pay for it.
-      const { runGuardrailCheck } = await import('../baseline/check');
-      const { verdictCounts } = await import('../baseline/check-renderers');
-      const check = await runGuardrailCheck({ cwd, trust: opts.trust });
-      guardrailVerdict = verdictCounts(check).verdict;
-    } catch (e) {
-      guardrailVerdict = `unavailable (${e instanceof Error ? e.message : String(e)})`;
-    }
+    guardrailVerdict = (await guardrailVerdictFor(cwd, opts.trust)).verdict;
   }
 
   if (netNewFloorRed) {
