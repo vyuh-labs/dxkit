@@ -64,6 +64,10 @@ default branch only, with dxkit-authored prompts only.
 - `no-op` — the agent ran and committed nothing; the job summary says so.
 - `floor-red` — the agent's change introduced a net-new floor failure; no
   PR was opened, on purpose. The ledger names the failing checks.
+- `guardrail-red` — the guardrail blocked, refused to gate, or could not
+  run. Nothing lands (the agent lane fails CLOSED on verification: an
+  agent-authored diff is never pushed unverified); the change stays local
+  for inspection and the ledger says which case it was.
 - `budget-exhausted` — a cap hit (wall-clock, turns, or spend). Under the
   default `salvage: "discard"` nothing lands; with `"draft-pr"` the
   verified partial work lands as a DRAFT marked budget-bounded.

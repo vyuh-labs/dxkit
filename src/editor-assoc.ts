@@ -15,24 +15,27 @@
  */
 import * as fs from 'fs';
 import * as path from 'path';
-import { applyEdits, modify, parse as jsoncParse, type ParseError } from 'jsonc-parser';
+import { applyEdits, modify } from 'jsonc-parser';
+import { parseJsoncText, JSONC_EDIT_FORMAT } from './baseline/policy-text';
 
 const ASSOCIATIONS_KEY = 'files.associations';
 const POLICY_KEY = '.dxkit/policy.json';
-const FORMAT = { insertSpaces: true, tabSize: 2, eol: '\n' } as const;
+const FORMAT = JSONC_EDIT_FORMAT;
 
 function settingsPath(cwd: string): string {
   return path.join(cwd, '.vscode', 'settings.json');
 }
 
-/** Parse VS Code settings text (JSONC). Null on malformed/non-object. */
+/** Parse VS Code settings text through the ONE strict-JSONC primitive.
+ *  Null on malformed/non-object (this surface is fail-open by contract). */
 function parseSettings(text: string): Record<string, unknown> | null {
-  const errors: ParseError[] = [];
-  const parsed: unknown = jsoncParse(text, errors, { allowTrailingComma: true });
-  if (errors.length > 0 || !parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+  try {
+    const parsed = parseJsoncText(text);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+    return parsed as Record<string, unknown>;
+  } catch {
     return null;
   }
-  return parsed as Record<string, unknown>;
 }
 
 /**

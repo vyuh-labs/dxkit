@@ -32,15 +32,17 @@ import {
 } from '../analyzers/correctness/attribution';
 import { detectActiveLanguages } from '../languages';
 import { renderFloorVerification, renderGuardrailVerdict } from '../lanes/verification-render';
+import { guardrailVerdictFor, toFloorBaseChecks, type GuardrailGateResult } from '../lanes/verify';
 import { resolveModelSetting, type AgentDriver, type AgentRunResult } from './driver';
 import { AGENT_DRIVERS, knownDriverIds } from './registry';
 import { remediateTaskById, knownTaskIds, type RemediateTask } from './tasks';
 import type { RemediateConfig } from './config';
 
 export type RemediateOutcome =
-  | 'verified' // diff produced, floor net-new-clean, guardrail ran — ready to land
+  | 'verified' // diff produced, floor net-new-clean, guardrail PASSED — ready to land
   | 'no-op' // agent ran, no diff (nothing to fix)
   | 'floor-red' // diff breaks the net-new floor — never lands
+  | 'guardrail-red' // guardrail blocked, refused, or could not run — never lands
   | 'budget-exhausted' // a cap hit; partial diff (salvage policy decides its fate)
   | 'agent-never-ran' // CLI/auth/env failure — infra, not a code outcome
   | 'refused'; // trust/config refusal, disclosed
@@ -146,7 +148,7 @@ export interface RemediateRunOptions {
   readonly drivers?: readonly AgentDriver[];
   readonly git?: RemediateGit;
   readonly runFloor?: () => CorrectnessFloorResult;
-  readonly runGuardrail?: () => Promise<string>;
+  readonly runGuardrail?: () => Promise<GuardrailGateResult>;
 }
 
 /** The remediate verification ledger — deterministic, identifier-free. */
@@ -343,14 +345,10 @@ export async function runRemediateTask(opts: RemediateRunOptions): Promise<Remed
     });
   }
 
-  // Verify: floor at full scope attributed vs entry, then the guardrail.
+  // Verify: floor at full scope attributed vs entry (through the ONE
+  // base-check projection, shared with the bump lane), then the guardrail.
   const floor = runFloor();
-  const baseChecks: FloorBaseCheck[] = entryFloor.checks.map((c) => ({
-    pack: c.pack,
-    label: c.label,
-    status: c.status === 'pass' ? 'pass' : c.status === 'fail' ? 'fail' : 'skipped',
-    ...(c.findings !== undefined ? { findings: c.findings } : {}),
-  }));
+  const baseChecks: FloorBaseCheck[] = toFloorBaseChecks(entryFloor);
   const floorAttribution = attributeFloorFailures(floor, baseChecks, {
     // The entry floor always ran (just above): an absent base check is a
     // check the agent's change introduced — net-new (conservative).
@@ -358,26 +356,16 @@ export async function runRemediateTask(opts: RemediateRunOptions): Promise<Remed
   });
   const netNewFloorRed = floorAttribution.some((a) => a.attribution === 'net-new');
 
-  let guardrailVerdict: string;
-  if (opts.runGuardrail) {
-    guardrailVerdict = await opts.runGuardrail();
-  } else {
-    try {
-      const { runGuardrailCheck } = await import('../baseline/check');
-      const { verdictCounts } = await import('../baseline/check-renderers');
-      const check = await runGuardrailCheck({ cwd: opts.cwd, trust: opts.trust });
-      guardrailVerdict = verdictCounts(check).verdict;
-    } catch (e) {
-      guardrailVerdict = `unavailable (${e instanceof Error ? e.message : String(e)})`;
-    }
-  }
+  const guardrail = opts.runGuardrail
+    ? await opts.runGuardrail()
+    : await guardrailVerdictFor(opts.cwd, opts.trust);
 
   const common = {
     task: task.id,
     envelope,
     floor,
     floorAttribution,
-    guardrailVerdict,
+    guardrailVerdict: guardrail.verdict,
     baseHead,
     head: git.head(),
     ...(partial ? { partial } : {}),
@@ -391,6 +379,23 @@ export async function runRemediateTask(opts: RemediateRunOptions): Promise<Remed
         'the correctness floor has NET-NEW failures after the agent ran (the entry floor ' +
         'did not have them) — nothing lands. An agent that breaks the build gets a truthful ' +
         'failure, never a PR.',
+    });
+  }
+
+  // The agent lane fails CLOSED on the guardrail (unlike the bump lane's
+  // declared fail-open): an agent-authored diff — including whatever the
+  // leftover sweep committed — must never reach the remote unverified. A
+  // BLOCKED verdict, the CANNOT-GATE refusal tier, and an unrunnable check
+  // all land nothing; the ledger says which it was.
+  if (!guardrail.ran || !guardrail.passesGate) {
+    return finish({
+      outcome: 'guardrail-red',
+      ...common,
+      note: guardrail.ran
+        ? `the guardrail did not pass (${guardrail.verdict}) — nothing lands. The agent's ` +
+          'change (including any swept working state) stays local for inspection.'
+        : `the guardrail could not run (${guardrail.verdict}) — nothing lands. An ` +
+          'agent-authored diff is never pushed unverified.',
     });
   }
 

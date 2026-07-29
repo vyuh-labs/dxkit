@@ -161,6 +161,24 @@ describe('applyPolicySync', () => {
     });
   });
 
+  it('finds the ROOT close by token, not lastIndexOf: a trailing comment containing } is handled', () => {
+    // The mirror-validation follow-up class: the last '}' in the FILE lives
+    // inside a comment; the append must target the real root close and
+    // succeed — and any unexpected failure must be a clean refusal, never a
+    // crash.
+    writePolicy(`{
+  "baseline": { "mode": "committed-full" }
+}
+// reviewed by ops { done }
+`);
+    const { written } = applyPolicySync(repo, computePolicySync(repo, CTX), CTX, '4.3.0-test');
+    expect(written).toBe(true);
+    const after = readFileSync(policyFile(), 'utf8');
+    expect(after).toContain('// reviewed by ops { done }');
+    expect(after).toContain('// ── Paired-change rules');
+    expect(parsePolicyText(after)).toMatchObject({ baseline: { mode: 'committed-full' } });
+  });
+
   it('never writes to a malformed file', () => {
     writePolicy('{ broken');
     const plan = computePolicySync(repo, CTX);

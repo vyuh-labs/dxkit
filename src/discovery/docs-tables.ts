@@ -51,14 +51,29 @@ export function renderDocsCommandTable(
  * malformed — a silently-skipped rewrite is the drift this exists to stop.
  */
 export function replaceDocsCommandTable(content: string, tableLines: string[]): string {
-  const begin = content.indexOf(DOCS_TABLE_BEGIN);
-  const end = content.indexOf(DOCS_TABLE_END);
+  return replaceMarkedRegion(content, DOCS_TABLE_BEGIN, DOCS_TABLE_END, tableLines.join('\n'));
+}
+
+/**
+ * The ONE marked-region replacer every generated-docs surface uses (this
+ * command table AND the policy-guide registry tables). Throws loudly when
+ * the markers are missing or out of order — a silently-skipped rewrite is
+ * exactly the drift generated regions exist to stop.
+ */
+export function replaceMarkedRegion(
+  content: string,
+  beginMarker: string,
+  endMarker: string,
+  body: string,
+): string {
+  const begin = content.indexOf(beginMarker);
+  const end = content.indexOf(endMarker);
   if (begin === -1 || end === -1 || end < begin) {
     throw new Error(
-      `docs command-table markers not found or out of order (expected "${DOCS_TABLE_BEGIN}" before "${DOCS_TABLE_END}")`,
+      `generated-region markers not found or out of order (expected "${beginMarker}" before "${endMarker}")`,
     );
   }
   const before = content.slice(0, begin);
-  const after = content.slice(end + DOCS_TABLE_END.length);
-  return `${before}${DOCS_TABLE_BEGIN}\n\n${tableLines.join('\n')}\n\n${DOCS_TABLE_END}${after}`;
+  const after = content.slice(end + endMarker.length);
+  return `${before}${beginMarker}\n\n${body}\n\n${endMarker}${after}`;
 }

@@ -292,6 +292,7 @@ async function runFinishingArc(
   //    uncommenting IS activation. `--minimal-policy` opts out; an existing
   //    policy file is never touched (create-only write). Fail-soft.
   if (!opts.minimalPolicy) {
+    let scaffold: ReturnType<typeof logger.startSpinner> | undefined;
     try {
       const { policyPathFor } = await import('./baseline/policy-text');
       const fs = await import('fs');
@@ -301,7 +302,7 @@ async function runFinishingArc(
         const { renderPolicyScaffold } = await import('./baseline/policy-template');
         const { scaffoldCtxFor } = await import('./policy-sync');
         const { VERSION } = await import('./constants');
-        const scaffold = logger.startSpinner('Writing the policy scaffold');
+        scaffold = logger.startSpinner('Writing the policy scaffold');
         let active: Record<string, unknown> = {};
         for (const item of gatherConfigPlan(cwd)) active = deepMergePolicy(active, item.patch);
         const text = renderPolicyScaffold({
@@ -319,9 +320,11 @@ async function runFinishingArc(
           scaffold.succeed('existing policy kept');
         }
       }
-    } catch {
+    } catch (err) {
       // Fail-soft: a scaffold miss must never abort init — configure below
-      // still merge-writes the plan into a plain policy file.
+      // still merge-writes the plan into a plain policy file. But fail-open
+      // always says why (the GateFailure discipline), never silently.
+      scaffold?.warn(`scaffold skipped — ${(err as Error).message}`);
     }
   }
 

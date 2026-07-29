@@ -18,6 +18,7 @@
  */
 import * as fs from 'fs';
 import * as path from 'path';
+import { readJsonlFile } from '../jsonl';
 
 export const LANES_DIR = path.join('.dxkit', 'lanes');
 
@@ -79,27 +80,18 @@ export function readLaneEvents(cwd: string): LaneEvent[] {
   }
   const events: LaneEvent[] = [];
   for (const file of files) {
-    let text: string;
-    try {
-      text = fs.readFileSync(path.join(dir, file), 'utf8');
-    } catch {
-      continue;
-    }
-    for (const line of text.split('\n')) {
-      if (!line.trim()) continue;
-      try {
-        const parsed = JSON.parse(line) as LaneEvent;
-        if (
-          typeof parsed.schema_version === 'number' &&
-          parsed.schema_version <= LANE_LEDGER_SCHEMA_VERSION &&
-          typeof parsed.timestamp === 'string' &&
-          typeof parsed.lane === 'string' &&
-          parsed.outcome === 'landed'
-        ) {
-          events.push(parsed);
-        }
-      } catch {
-        // corrupt line — skipped, never fatal
+    // Line mechanics via the ONE fail-open JSONL reader; event VALIDATION
+    // (schema ceiling, required fields) stays here where the shape lives.
+    for (const raw of readJsonlFile(path.join(dir, file))) {
+      const parsed = raw as LaneEvent;
+      if (
+        typeof parsed?.schema_version === 'number' &&
+        parsed.schema_version <= LANE_LEDGER_SCHEMA_VERSION &&
+        typeof parsed.timestamp === 'string' &&
+        typeof parsed.lane === 'string' &&
+        parsed.outcome === 'landed'
+      ) {
+        events.push(parsed);
       }
     }
   }
