@@ -25,10 +25,4 @@ export const INTERNAL_COMMANDS = [
     group: 'internal',
     summary: 'Correctness-floor plumbing (snapshot / check) for the loop + hooks',
   },
-  {
-    id: 'policy',
-    audience: 'internal',
-    group: 'internal',
-    summary: 'Policy-file plumbing (get) — the one policy reader for scripts + shipped workflows',
-  },
 ] as const satisfies readonly CapabilityDescriptor[];

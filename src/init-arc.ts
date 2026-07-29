@@ -299,15 +299,14 @@ async function runFinishingArc(
         const { gatherConfigPlan } = await import('./discovery/commands');
         const { deepMergePolicy, writeNewPolicyFile } = await import('./baseline/policy-write');
         const { renderPolicyScaffold } = await import('./baseline/policy-template');
-        const { detectActiveLanguages } = await import('./languages');
+        const { scaffoldCtxFor } = await import('./policy-sync');
         const { VERSION } = await import('./constants');
         const scaffold = logger.startSpinner('Writing the policy scaffold');
         let active: Record<string, unknown> = {};
         for (const item of gatherConfigPlan(cwd)) active = deepMergePolicy(active, item.patch);
-        const packs = detectActiveLanguages(cwd);
         const text = renderPolicyScaffold({
           active,
-          ctx: { packIds: packs.map((p) => p.id), lintCapable: packs.some((p) => p.lintGate) },
+          ctx: scaffoldCtxFor(cwd),
           version: VERSION,
         });
         if (writeNewPolicyFile(cwd, text)) {

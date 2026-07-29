@@ -90,6 +90,7 @@ construction; commands with a linked page have a full reference under
 | `demo`                                                           | Offline, no-API demonstration walkthroughs                                        | 1-2 min (interactive walkthrough)                        |
 | [`init`](commands/init.md)                                       | Install dxkit agent DX in this repo                                               | 5-30 sec                                                 |
 | [`update`](commands/update.md)                                   | Re-generate managed files (preserves your edits)                                  | 5-30 sec                                                 |
+| `policy`                                                         | Read policy values (get) and adopt newly shipped knobs (sync)                     | < 5 sec                                                  |
 | `uninstall`                                                      | Remove dxkit, restoring the exact pre-dxkit state                                 | < 30 sec                                                 |
 | [`doctor`](commands/doctor.md)                                   | Verify setup — and recommend capabilities you are not using                       | < 5 sec                                                  |
 | `configure`                                                      | Compute + apply a deterministic config plan for this repo                         | < 30 sec                                                 |

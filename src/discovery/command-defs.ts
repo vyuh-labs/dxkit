@@ -39,6 +39,17 @@ export const COMMANDS = [
     skill: 'dxkit-update',
   },
   {
+    id: 'policy',
+    audience: 'user',
+    group: 'setup',
+    summary: 'Read policy values (get) and adopt newly shipped knobs (sync)',
+    typicalRuntime: '< 5 sec',
+    docsBlurb:
+      'policy get reads one value for scripts/CI; policy sync appends the commented stanzas ' +
+      'for knobs that shipped after your policy was scaffolded (dry-run by default).',
+    skill: 'dxkit-config',
+  },
+  {
     id: 'uninstall',
     audience: 'user',
     group: 'setup',
