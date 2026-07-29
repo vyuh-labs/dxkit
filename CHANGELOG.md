@@ -5,6 +5,84 @@ All notable changes to `@vyuhlabs/dxkit` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.3.0] - 2026-07-29
+
+The policy platform and the agentic remediation lane, in one release. The
+policy file becomes a surface that teaches — JSONC with comments dxkit's
+own tools preserve, a generated commented scaffold where uncommenting IS
+activation, editor autocomplete from a generated schema, and a per-knob
+teaching guide whose registry tables cannot drift. On top of that platform,
+a scheduled coding agent works the debt the deterministic lanes cannot
+close — inside the verified frame, with its claim of success never trusted
+and every dollar it spends capped and disclosed. Validated against real
+production-shaped repository mirrors before release, which caught a defect
+the unit fixtures could not see (the sync-then-uncomment comma class).
+
+### The policy file is now JSONC, and dxkit keeps its comments
+
+Comments and trailing commas are first-class in `.dxkit/policy.json`. One
+parse entry point serves every reader (eight formerly independent reader
+families now share it), and every dxkit edit — `configure --apply`, the
+anchor write-back, `policy sync` — preserves your comments and formatting
+byte-for-byte. Editors that mark comments red in `.json` get a
+`files.associations` entry merged into `.vscode/settings.json` when the
+repo already uses `.vscode/` (reverted by uninstall like every merge
+surface). Shipped workflows read policy through `vyuh-dxkit policy get
+<dotted.path> --default <v>` — the hand-rolled inline parsers are gone.
+
+### The scaffold teaches, and `policy sync` keeps it current
+
+`init` writes a generated policy scaffold: computed values active with a
+per-parameter trailing comment (meaning, value set, guide anchor), every
+dormant capability as a commented-out, syntactically complete stanza —
+uncommenting activates it, mechanically guaranteed by tests
+(`--minimal-policy` opts out). A generated `policy.schema.json` (shipped
+in the package, stamped as a local `$schema` path so it is offline and
+version-matched) gives autocomplete and hover docs from the same metadata
+table as the file comments. `vyuh-dxkit policy sync` appends the commented
+stanzas for knobs that shipped after your file was scaffolded — dry-run by
+default, additive-only, with an ignore marker for stanzas you deleted on
+purpose — and `update` reports the drift without writing anything. The new
+`docs/configuration/policy-guide.md` teaches every knob on a fixed
+template; its task/driver/index tables are emitted from the registries and
+pinned by parity tests.
+
+### `vyuh-dxkit remediate` — an agent inside the verified frame
+
+The scheduled agentic remediation lane closes what the deterministic
+dep-bump lane cannot: the grandfathered broken build and failing tests,
+advisories with no version-solvable fix, the lint backlog, missing tests.
+Four dxkit-authored tasks (`fix-build`, `fix-vulns`, `fix-lint`,
+`improve-tests`) run through a driver seam (claude-code ships; a second
+agent CLI is a registry entry, not a redesign) under a hard budget —
+turns, wall-clock, and spend, all enforced by the runner, never the
+agent's self-report. Model choice is a driver-neutral capability tier
+(`light`/`standard`/`deep`, `auto` per task by default) mapped to the
+driver's rolling aliases, never a dated model id, so a model-generation
+rollover needs no dxkit release; `vyuh-dxkit remediate plan` shows the
+exact per-task resolution with no key and no spend.
+
+Every run sits inside the frame the bump lane proved: entry-attributed
+correctness floor (net-new failures block; pre-existing debt is disclosed,
+never weaponized), the guardrail as final arbiter, one standing PR per
+task whose body is the verification ledger plus the agent envelope
+(model, turns, spend, outcome). Outcomes are truthful and distinct —
+`verified`, `no-op`, `floor-red`, `budget-exhausted` (salvage policy:
+discard by default, opt-in draft PR), `agent-never-ran`, `refused`. The
+managed workflow (`remediate.enabled: true` + `vyuh-dxkit update`)
+triggers on schedule and manual dispatch only, runs the default branch
+only, and derives its secret wiring from the driver's declaration.
+
+### The delivery ledger — merged robot work becomes a number
+
+`vyuh-dxkit metrics` grows a Delivered section beside interceptions:
+advisories the bump lane closed, remediations the agent lane landed, and
+total agent spend. The count is ungameable by construction — each lane
+appends its run event to `.dxkit/lanes/` as part of the standing PR's own
+diff, so an event reaches the default branch exactly when the PR merges.
+Delivered means merged, never "a PR was opened". `metrics --json` becomes
+`metrics.v2`, additively.
+
 ## [4.2.1] - 2026-07-28
 
 The operations release. Five features that improve life AROUND the gate —
