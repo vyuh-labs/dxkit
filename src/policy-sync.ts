@@ -117,7 +117,11 @@ export function applyPolicySync(
   } catch {
     return { written: false, created: false };
   }
-  fs.writeFileSync(abs, next.endsWith('\n') ? next : next + '\n', 'utf8');
+  // Append-only splice, never parse→stringify: everything above and after
+  // the root close is carried byte-identical (only a terminating comma is
+  // inserted), and the composed text is parse-verified just above, so the
+  // user's comments and formatting survive.
+  fs.writeFileSync(abs, next.endsWith('\n') ? next : next + '\n', 'utf8'); // policy-text-ok
   return { written: true, created: false };
 }
 
@@ -178,6 +182,13 @@ export function runPolicySync(
   const plan = computePolicySync(cwd, ctx);
 
   if (opts.json) {
+    // Apply BEFORE emitting: `applied` is a declared schema field, so it must
+    // report what happened on disk. Emitting first hardcoded it to false even
+    // on a successful `--apply` (applyPolicySync self-guards the malformed
+    // and nothing-missing cases, so the call is safe unconditionally).
+    const result = opts.apply
+      ? applyPolicySync(cwd, plan, ctx, version)
+      : { written: false, created: false };
     process.stdout.write(
       JSON.stringify(
         {
@@ -187,14 +198,19 @@ export function runPolicySync(
           missing: plan.missing.map((s) => s.key),
           ignored: plan.ignored,
           scaffoldedBy: plan.scaffoldedBy ?? null,
-          applied: false,
+          applied: result.written || result.created,
         },
         null,
         2,
       ) + '\n',
     );
+    // Same failure exits as the human path: a malformed policy, and an apply
+    // that had stanzas to write but could not locate the closing brace.
     if (plan.status === 'malformed') process.exitCode = 1;
-    if (!opts.apply) return;
+    if (opts.apply && plan.status === 'ok' && plan.missing.length > 0 && !result.written) {
+      process.exitCode = 1;
+    }
+    return;
   }
 
   if (plan.status === 'malformed') {

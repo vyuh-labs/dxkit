@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync, readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { computePolicySync, applyPolicySync } from '../src/policy-sync';
+import { computePolicySync, applyPolicySync, runPolicySync } from '../src/policy-sync';
 import { renderPolicyScaffold } from '../src/baseline/policy-template';
 import { parsePolicyText } from '../src/baseline/policy-text';
 import type { ScaffoldCtx } from '../src/baseline/policy-metadata';
@@ -185,5 +185,72 @@ describe('applyPolicySync', () => {
     const { written } = applyPolicySync(repo, plan, CTX, '4.3.0-test');
     expect(written).toBe(false);
     expect(readFileSync(policyFile(), 'utf8')).toBe('{ broken');
+  });
+});
+
+describe('runPolicySync --json (the policy-sync.v1 contract)', () => {
+  interface SyncJson {
+    status: string;
+    missing: string[];
+    applied: boolean;
+  }
+
+  function captureJson(opts: { apply?: boolean }): {
+    json: SyncJson;
+    exitCode: number | undefined;
+  } {
+    const chunks: string[] = [];
+    const write = process.stdout.write.bind(process.stdout);
+    const before = process.exitCode;
+    process.exitCode = undefined;
+    process.stdout.write = ((s: string) => {
+      chunks.push(s);
+      return true;
+    }) as typeof process.stdout.write;
+    try {
+      runPolicySync(repo, CTX, '4.3.0-test', { json: true, ...opts });
+    } finally {
+      process.stdout.write = write;
+    }
+    const exitCode = process.exitCode;
+    process.exitCode = before;
+    return { json: JSON.parse(chunks.join('')), exitCode };
+  }
+
+  it('`applied` reports what happened on disk, not a hardcoded false', () => {
+    writePolicy('{\n  "baseline": { "mode": "committed-full" }\n}\n');
+    const dry = captureJson({});
+    expect(dry.json.applied).toBe(false);
+    expect(dry.json.missing.length).toBeGreaterThan(0);
+    const before = readFileSync(policyFile(), 'utf8');
+
+    const applied = captureJson({ apply: true });
+    expect(applied.json.applied).toBe(true);
+    // and the file really moved
+    expect(readFileSync(policyFile(), 'utf8')).not.toBe(before);
+  });
+
+  it('a fully-covered policy applies nothing and says so', () => {
+    writePolicy(renderPolicyScaffold({ active: {}, ctx: CTX, version: '4.3.0-test' }));
+    const r = captureJson({ apply: true });
+    expect(r.json.missing).toEqual([]);
+    expect(r.json.applied).toBe(false);
+    expect(r.exitCode).toBeUndefined();
+  });
+
+  it('a malformed policy is applied:false with exit 1 — never a silent overwrite', () => {
+    writePolicy('{ broken');
+    const r = captureJson({ apply: true });
+    expect(r.json.status).toBe('malformed');
+    expect(r.json.applied).toBe(false);
+    expect(r.exitCode).toBe(1);
+    expect(readFileSync(policyFile(), 'utf8')).toBe('{ broken');
+  });
+
+  it('an absent policy is CREATED under --apply and reports applied', () => {
+    const r = captureJson({ apply: true });
+    expect(r.json.status).toBe('absent');
+    expect(r.json.applied).toBe(true);
+    expect(existsSync(policyFile())).toBe(true);
   });
 });

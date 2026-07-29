@@ -139,6 +139,26 @@ describe('landRemediateHead', () => {
     expect(create).toContain('--draft');
   });
 
+  it('the ledger commit is PATH-SCOPED — it never bundles other staged content', () => {
+    // The runner's leftover sweep stages with `git add -A`; if its commit
+    // failed, that content is still in the index when the lander runs. An
+    // unscoped `git commit` would push it under a bookkeeping message.
+    const { calls, exec } = captureExec();
+    landRemediateHead({
+      cwd: repo,
+      taskId: 'fix-vulns',
+      defaultBranch: 'main',
+      prTitle: 't',
+      prBody: 'b',
+      ledgerPath: '.dxkit/lane-ledger.jsonl',
+      exec,
+    });
+    const commit = calls.find((c) => c[0] === 'git' && c.includes('commit'))!;
+    expect(commit).toContain('--');
+    expect(commit.slice(commit.indexOf('--') + 1)).toEqual(['.dxkit/lane-ledger.jsonl']);
+    expect(commit.some((a) => a.includes(BOT_IDENTITY.email))).toBe(true);
+  });
+
   it('updates an existing standing PR in place (never a pile)', () => {
     const { calls, exec } = captureExec('[{"url": "https://github.com/o/r/pull/3"}]');
     const result = landRemediateHead({

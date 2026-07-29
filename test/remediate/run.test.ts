@@ -261,6 +261,57 @@ describe('the budget envelope (runner-enforced, disclosed)', () => {
     expect(r.envelope!.unenforceableCaps.join(' ')).toContain('maxUsd');
     expect(r.ledger).toContain('disclosed limitation');
   });
+
+  it('an UNENFORCEABLE turn cap is never claimed as HIT (the cost clause, applied to turns)', async () => {
+    // A driver may report turns informationally while lacking the flag to
+    // enforce them. Reaching maxTurns naturally is then a completion, not a
+    // cap hit — claiming otherwise contradicts the envelope's own disclosure
+    // and discards verified work under the default salvage policy.
+    const driver = fakeDriver(
+      { turns: DEFAULT_REMEDIATE_BUDGET.maxTurns },
+      { budgetSupport: { turns: false, cost: true } },
+    );
+    const r = await runRemediateTask(base(driver));
+    expect(r.outcome).toBe('verified');
+    expect(r.partial).toBeUndefined();
+    expect(r.envelope!.unenforceableCaps.join(' ')).toContain('maxTurns');
+    // the enforceable direction still bites
+    const enforcing = fakeDriver({ turns: DEFAULT_REMEDIATE_BUDGET.maxTurns });
+    const hit = await runRemediateTask(base(enforcing));
+    expect(hit.outcome).toBe('budget-exhausted');
+    expect(hit.note).toContain('maxTurns');
+  });
+});
+
+describe('the leftover sweep (staged work must never ride the landing commit)', () => {
+  it('a failed sweep blocks even when the agent DID commit work', async () => {
+    // sweepLeftovers ran `git add -A` before its commit failed, so the
+    // leftovers sit staged. Landing would commit them alongside the ledger
+    // and force-push them unreviewed — nothing lands, and the note says why.
+    const r = await runRemediateTask(
+      base(fakeDriver({}), {
+        git: fakeGit({ diff: true, sweepError: 'pre-commit hook rejected' }),
+      }),
+    );
+    expect(r.outcome).toBe('sweep-failed');
+    expect(r.note).toContain('pre-commit hook rejected');
+    expect(r.note).toContain('unreviewed');
+  });
+
+  it('a failed sweep with no committed work stays agent-never-ran', async () => {
+    const r = await runRemediateTask(
+      base(fakeDriver({}), {
+        git: fakeGit({ diff: false, sweepError: 'nothing to commit' }),
+      }),
+    );
+    expect(r.outcome).toBe('agent-never-ran');
+    expect(r.note).toContain('nothing to commit');
+  });
+
+  it('a clean sweep with committed work still verifies (no over-blocking)', async () => {
+    const r = await runRemediateTask(base(fakeDriver({}), { git: fakeGit({ diff: true }) }));
+    expect(r.outcome).toBe('verified');
+  });
 });
 
 describe('the synthetic-driver seam (tier routing + budget passthrough)', () => {

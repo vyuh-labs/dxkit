@@ -46,6 +46,7 @@ export type RemediateOutcome =
   | 'guardrail-red' // guardrail blocked, refused, or could not run — never lands
   | 'budget-exhausted' // a cap hit; partial diff (salvage policy decides its fate)
   | 'agent-never-ran' // CLI/auth/env failure — infra, not a code outcome
+  | 'sweep-failed' // agent committed work but leftovers could not be swept
   | 'refused'; // trust/config refusal, disclosed
 
 export interface AgentEnvelope {
@@ -328,13 +329,22 @@ export async function runRemediateTask(opts: RemediateRunOptions): Promise<Remed
     driver.budgetSupport.cost &&
     agentResult.costUsd !== undefined &&
     agentResult.costUsd > budget.maxUsd;
-  const partial =
-    agentResult.timedOut ||
-    overUsd ||
-    (agentResult.turns !== undefined && agentResult.turns >= budget.maxTurns);
+  // A cap dxkit cannot enforce is a cap dxkit may not claim was HIT — the
+  // same refusal the cost clause makes. A driver that reports turns without
+  // enforcing them would otherwise mislabel a natural completion as
+  // budget-exhausted while the envelope discloses the cap as unenforceable.
+  const overTurns =
+    driver.budgetSupport.turns &&
+    agentResult.turns !== undefined &&
+    agentResult.turns >= budget.maxTurns;
+  const partial = agentResult.timedOut || overUsd || overTurns;
 
-  if (!hasDiff) {
-    if (sweepError) {
+  // A failed sweep is a hard stop REGARDLESS of whether the agent committed
+  // work: `git add -A` already staged the leftovers, so proceeding would let
+  // the landing layer commit them alongside the ledger and push them
+  // unreviewed. Disclosed either way; nothing lands.
+  if (sweepError) {
+    if (!hasDiff) {
       return finish({
         outcome: 'agent-never-ran',
         task: task.id,
@@ -342,6 +352,21 @@ export async function runRemediateTask(opts: RemediateRunOptions): Promise<Remed
         note: `agent left uncommitted work the sweep could not commit: ${sweepError}`,
       });
     }
+    return finish({
+      outcome: 'sweep-failed',
+      task: task.id,
+      envelope,
+      ...(partial ? { partial } : {}),
+      note:
+        `the agent committed work, but the runner could not sweep its remaining uncommitted ` +
+        `state into a reviewable commit: ${sweepError}. Nothing lands — the staged leftovers ` +
+        `would otherwise ride the delivery commit unreviewed. The branch is left for inspection.`,
+      baseHead,
+      head: git.head(),
+    });
+  }
+
+  if (!hasDiff) {
     return finish({
       outcome: 'no-op',
       task: task.id,
