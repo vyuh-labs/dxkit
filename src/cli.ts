@@ -461,6 +461,8 @@ export async function run(argv: string[]): Promise<void> {
       correctness: { type: 'boolean' },
       'no-correctness': { type: 'boolean' },
       'no-floor': { type: 'boolean' },
+      // init: plan values only, no commented scaffold.
+      'minimal-policy': { type: 'boolean', default: false },
       'report-md': { type: 'string' },
       stored: { type: 'boolean' },
       'keep-baselines': { type: 'boolean', default: false },
@@ -950,6 +952,7 @@ export async function run(argv: string[]): Promise<void> {
             surfaces: gateSurfaces,
             force: !!values.force,
             noFloor: !!values['no-floor'],
+            minimalPolicy: !!values['minimal-policy'],
           })
         : {
             gated: baselineGates,
