@@ -18,6 +18,7 @@ import { REMEDIATE_TASKS } from '../remediate/tasks';
 import { AGENT_DRIVERS } from '../remediate/registry';
 import { MODEL_TIERS } from '../remediate/driver';
 import { POLICY_PARAMS } from '../baseline/policy-metadata';
+import { replaceMarkedRegion } from './docs-tables';
 
 const REGION = (name: string) => ({
   begin: `<!-- BEGIN GENERATED: ${name} (edit the registry, then: npm run build && npm run docs:policy-guide) -->`,
@@ -65,16 +66,11 @@ export function renderKnobIndexTable(): string {
   return lines.join('\n');
 }
 
-/** Replace one marked region's body; throws when the markers are missing
- *  (a silently-skipped region would read as "regenerated" when it wasn't). */
+/** Replace one named region through the ONE marked-region replacer (shared
+ *  with the docs command table — Rule 2). */
 function replaceRegion(text: string, name: string, body: string): string {
   const { begin, end } = REGION(name);
-  const beginAt = text.indexOf(begin);
-  const endAt = text.indexOf(end);
-  if (beginAt < 0 || endAt < 0 || endAt < beginAt) {
-    throw new Error(`policy-guide region '${name}' markers not found`);
-  }
-  return text.slice(0, beginAt + begin.length) + '\n\n' + body + '\n\n' + text.slice(endAt);
+  return replaceMarkedRegion(text, begin, end, body);
 }
 
 /** Rewrite every generated region of the guide from the registries. */

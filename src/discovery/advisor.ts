@@ -13,6 +13,7 @@ import { FLOW_CONFIG_SCHEMA_VERSION } from '../analyzers/flow/config';
 import { SCHEMA_CONFIG_SCHEMA_VERSION } from '../analyzers/model-schema/config';
 import { DUPLICATION_CONFIG_SCHEMA_VERSION } from '../analyzers/duplication/config';
 import { readPolicyObjectSafe } from '../baseline/policy-text';
+import { failingFloorDebt } from '../baseline/floor-debt';
 import {
   existsAt,
   readJsonSafe,
@@ -228,10 +229,12 @@ export function recommendRemediate(ctx: RecommendContext): Recommendation | null
   if (policy && policy.remediate !== undefined) return null;
   const parsed = readJsonSafe(path.join(ctx.cwd, '.dxkit', 'baselines', 'main.json')) as {
     findings?: Array<{ kind?: string }>;
-    floorDebt?: { checks?: unknown[] };
+    floorDebt?: { checks?: Array<{ status: string }> };
   } | null;
   if (!parsed) return null;
-  const floorDebt = (parsed.floorDebt?.checks ?? []).length;
+  // FAILING checks only, through the one canonical filter — a recorded
+  // all-green envelope is not debt and must not trigger the recommend.
+  const floorDebt = failingFloorDebt({ checks: parsed.floorDebt?.checks ?? [] }).length;
   const depVulns = (parsed.findings ?? []).filter((f) => f.kind === 'dep-vuln').length;
   const bumpLaneOn = policy?.depBump?.enabled === true;
   if (floorDebt === 0 && !(depVulns > 0 && bumpLaneOn)) return null;

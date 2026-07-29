@@ -63,8 +63,12 @@ export interface FloorDebt {
   readonly checks: ReadonlyArray<FloorDebtCheck>;
 }
 
-/** The failing subset — the debt itself. */
-export function failingFloorDebt(debt: FloorDebt): ReadonlyArray<FloorDebtCheck> {
+/** The failing subset — the debt itself. Generic over the check shape so
+ *  renderers holding a structural projection use the SAME filter (the one
+ *  canonical "is this floor broken" definition). */
+export function failingFloorDebt<T extends { readonly status: string }>(debt: {
+  readonly checks: ReadonlyArray<T>;
+}): ReadonlyArray<T> {
   return debt.checks.filter((c) => c.status === 'fail');
 }
 

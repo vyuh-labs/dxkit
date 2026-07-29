@@ -38,6 +38,7 @@ import { recallDriftRemedy, describeRecallDrift } from './recall';
 import type { BrownfieldPolicy } from './policy';
 import type { FindingStatus, MatchReason } from './types';
 import { DEFER_ADVISORY_EXPIRY_DAYS } from '../allowlist/categories';
+import { failingFloorDebt } from './floor-debt';
 import { describeBrokenIntegration } from '../analyzers/flow/gate';
 import type { FlowGateOutcome } from './flow-gate-check';
 import { describeSchemaDrift } from '../analyzers/model-schema/gate';
@@ -776,7 +777,9 @@ function dupFingerprintLine(id: string): string {
 export function floorDebtNotice(baseline: {
   readonly floorDebt?: { readonly checks: ReadonlyArray<{ readonly status: string }> };
 }): string | null {
-  const failing = (baseline.floorDebt?.checks ?? []).filter((c) => c.status === 'fail').length;
+  // The one canonical failing filter (Rule 2) — shared with `debt` and the
+  // remediate recommend probe.
+  const failing = baseline.floorDebt ? failingFloorDebt(baseline.floorDebt).length : 0;
   if (failing === 0) return null;
   return `Floor debt:  ${failing} failing correctness check(s) grandfathered (build/tests) — \`vyuh-dxkit debt\` for the repair inventory`;
 }

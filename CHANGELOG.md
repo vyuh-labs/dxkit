@@ -30,6 +30,15 @@ repo already uses `.vscode/` (reverted by uninstall like every merge
 surface). Shipped workflows read policy through `vyuh-dxkit policy get
 <dotted.path> --default <v>` — the hand-rolled inline parsers are gone.
 
+Two compatibility notes. A policy file that carries comments needs dxkit
+4.3.0 everywhere that reads it: an older dxkit (for example, pinned in CI)
+refuses a commented policy loudly at the guardrail and falls back to
+defaults in the fail-open gate readers — upgrade all readers before adding
+comments. And `policy get` prints values raw, so a workflow comparing
+`depBump.allowMajor` against `true` now also matches the string `"true"`
+(the old inline parser required the boolean) — the intuitive reading of a
+committed value, noted here because it widens a major-bump opt-in.
+
 ### The scaffold teaches, and `policy sync` keeps it current
 
 `init` writes a generated policy scaffold: computed values active with a

@@ -32,12 +32,18 @@ export function policyPathFor(cwd: string): string {
   return path.join(cwd, POLICY_RELATIVE_PATH);
 }
 
+/** The ONE formatting-options value every dxkit JSONC edit uses (the policy
+ *  merge-writer, the `.vscode` association) — one home, never re-declared. */
+export const JSONC_EDIT_FORMAT = { insertSpaces: true, tabSize: 2, eol: '\n' } as const;
+
 /**
- * Parse policy text as JSONC (comments + trailing commas allowed; strict
- * JSON is a subset). Throws with a positional, human-readable message on
- * malformed input — callers that want fail-open semantics wrap it.
+ * Strict JSONC parse (comments + trailing commas allowed; strict JSON is a
+ * subset). Throws with a positional, human-readable message on malformed
+ * input. The generic primitive under `parsePolicyText`, shared with every
+ * other JSONC surface (the `.vscode` settings merge) — one parser, one
+ * leniency contract.
  */
-export function parsePolicyText(text: string): unknown {
+export function parseJsoncText(text: string): unknown {
   const errors: ParseError[] = [];
   const value: unknown = jsoncParse(text, errors, {
     allowTrailingComma: true,
@@ -52,6 +58,15 @@ export function parsePolicyText(text: string): unknown {
     );
   }
   return value;
+}
+
+/**
+ * Parse POLICY text as JSONC — callers that want fail-open semantics wrap it.
+ * (Alias of the generic primitive; kept as the policy-named entry point every
+ * policy reader routes through.)
+ */
+export function parsePolicyText(text: string): unknown {
+  return parseJsoncText(text);
 }
 
 /** 1-based line/column for a character offset (error messages only). */

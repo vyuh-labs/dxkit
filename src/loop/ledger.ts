@@ -16,6 +16,7 @@ import { execFileSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import type { LoopPreset } from './policy';
+import { readJsonlFile } from '../jsonl';
 
 /** Bump only on a breaking change to the event shape. */
 export const LEDGER_SCHEMA_VERSION = 1;
@@ -170,28 +171,10 @@ export function appendLedgerEvent(cwd: string, event: LedgerEvent): boolean {
   }
 }
 
-/** Read every ledger event. Returns [] when the ledger is absent. */
+/** Read every ledger event through the ONE fail-open JSONL reader.
+ *  Returns [] when the ledger is absent. */
 export function readLedger(cwd: string): LedgerEvent[] {
-  const file = path.join(cwd, LEDGER_FILE);
-  let raw: string;
-  try {
-    raw = fs.readFileSync(file, 'utf8');
-  } catch {
-    return [];
-  }
-  const out: LedgerEvent[] = [];
-  for (const line of raw.split('\n')) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    try {
-      out.push(JSON.parse(trimmed) as LedgerEvent);
-    } catch {
-      // Skip a corrupt line rather than failing the whole read — the
-      // ledger is append-only and a partial write shouldn't blind the
-      // summary to every other event.
-    }
-  }
-  return out;
+  return readJsonlFile(path.join(cwd, LEDGER_FILE)) as LedgerEvent[];
 }
 
 /** Remove the ledger file. Returns true when a file was deleted. */
