@@ -1092,15 +1092,27 @@ export async function run(argv: string[]): Promise<void> {
 
     case 'policy': {
       const sub = positionals[1];
-      if (sub !== 'get' || !positionals[2]) {
-        logger.fail('usage: vyuh-dxkit policy get <dotted.path> [--default <value>]');
-        process.exitCode = 1;
+      if (sub === 'get' && positionals[2]) {
+        const { runPolicyGet } = await import('./policy-cli');
+        runPolicyGet(process.cwd(), positionals[2], {
+          default: values.default as string | undefined,
+        });
         break;
       }
-      const { runPolicyGet } = await import('./policy-cli');
-      runPolicyGet(process.cwd(), positionals[2], {
-        default: values.default as string | undefined,
-      });
+      if (sub === 'sync') {
+        const { runPolicySync, scaffoldCtxFor } = await import('./policy-sync');
+        const { VERSION } = await import('./constants');
+        const syncCwd = resolveRepoPath(positionals[2]);
+        runPolicySync(syncCwd, scaffoldCtxFor(syncCwd), VERSION, {
+          apply: !!values.apply,
+          json: !!values.json,
+        });
+        break;
+      }
+      logger.fail(
+        'usage: vyuh-dxkit policy get <dotted.path> [--default <value>] | policy sync [--apply]',
+      );
+      process.exitCode = 1;
       break;
     }
 
