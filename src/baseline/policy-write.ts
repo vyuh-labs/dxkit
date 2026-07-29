@@ -62,6 +62,19 @@ export function readPolicyFileRaw(cwd: string): Record<string, unknown> | null {
   return read.status === 'ok' ? read.value : null;
 }
 
+/**
+ * Create-only write of a freshly rendered policy scaffold. Refuses when a
+ * policy file already exists — every mutation of an existing file goes through
+ * the comment-preserving merge-writer below, never a whole-file overwrite.
+ */
+export function writeNewPolicyFile(cwd: string, text: string): boolean {
+  const abs = policyPathFor(cwd);
+  if (fs.existsSync(abs)) return false;
+  fs.mkdirSync(path.dirname(abs), { recursive: true });
+  fs.writeFileSync(abs, text, 'utf8');
+  return true;
+}
+
 /** One leaf edit the deep-merge decomposes into: set `value` at `pathSegs`. */
 interface LeafEdit {
   readonly pathSegs: readonly string[];

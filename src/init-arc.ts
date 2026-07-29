@@ -229,6 +229,9 @@ export interface FinishSetupOptions {
    *  build + full-test-suite part of the first baseline, deferred to a later
    *  explicit capture or CI (4.2 evaluate-first onboarding). */
   readonly noFloor?: boolean;
+  /** Write a minimal policy (plan values only) instead of the full commented
+   *  scaffold (`--minimal-policy`). */
+  readonly minimalPolicy?: boolean;
 }
 
 /**
@@ -281,6 +284,42 @@ async function runFinishingArc(
       scan.succeed('nothing to install');
     }
     for (const f of tools.failed) scan.note(`could not install ${f.name}: ${f.reason}`);
+  }
+
+  // 1.5) Scaffold the policy file (fresh repos only). The file itself teaches:
+  //    the plan's computed values render ACTIVE with per-parameter comments,
+  //    and every dormant capability appears as a commented-out stanza whose
+  //    uncommenting IS activation. `--minimal-policy` opts out; an existing
+  //    policy file is never touched (create-only write). Fail-soft.
+  if (!opts.minimalPolicy) {
+    try {
+      const { policyPathFor } = await import('./baseline/policy-text');
+      const fs = await import('fs');
+      if (!fs.existsSync(policyPathFor(cwd))) {
+        const { gatherConfigPlan } = await import('./discovery/commands');
+        const { deepMergePolicy, writeNewPolicyFile } = await import('./baseline/policy-write');
+        const { renderPolicyScaffold } = await import('./baseline/policy-template');
+        const { detectActiveLanguages } = await import('./languages');
+        const { VERSION } = await import('./constants');
+        const scaffold = logger.startSpinner('Writing the policy scaffold');
+        let active: Record<string, unknown> = {};
+        for (const item of gatherConfigPlan(cwd)) active = deepMergePolicy(active, item.patch);
+        const packs = detectActiveLanguages(cwd);
+        const text = renderPolicyScaffold({
+          active,
+          ctx: { packIds: packs.map((p) => p.id), lintCapable: packs.some((p) => p.lintGate) },
+          version: VERSION,
+        });
+        if (writeNewPolicyFile(cwd, text)) {
+          scaffold.succeed('.dxkit/policy.json — commented scaffold (uncomment to activate)');
+        } else {
+          scaffold.succeed('existing policy kept');
+        }
+      }
+    } catch {
+      // Fail-soft: a scaffold miss must never abort init — configure below
+      // still merge-writes the plan into a plain policy file.
+    }
   }
 
   // 2) Optimize the config for THIS repo. `gatherConfigPlan` computes the
