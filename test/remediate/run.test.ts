@@ -22,11 +22,11 @@ import { tmpdir } from 'os';
 
 const TRUSTED: AnalysisTrustContext = {
   repoExecutionAllowed: true,
-  source: 'local',
+  source: 'local-workspace',
 } as AnalysisTrustContext;
 const UNTRUSTED: AnalysisTrustContext = {
   repoExecutionAllowed: false,
-  source: 'fork-pr',
+  source: 'untrusted-content',
 } as AnalysisTrustContext;
 
 const GREEN_FLOOR: CorrectnessFloorResult = { ran: true, checks: [], blocks: false };
