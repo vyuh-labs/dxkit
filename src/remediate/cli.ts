@@ -23,6 +23,7 @@ import { AGENT_DRIVERS, driverById } from './registry';
 import { REMEDIATE_TASKS, remediateTaskById } from './tasks';
 import { runRemediateTask, type RemediateResult } from './run';
 import { landRemediateHead, remediateBranchFor } from './land';
+import { appendLaneEvent, LANE_LEDGER_SCHEMA_VERSION } from '../lanes/ledger';
 
 export interface RemediatePlanOptions {
   readonly json?: boolean;
@@ -143,6 +144,21 @@ export async function runRemediate(cwd: string, opts: RemediateOptions): Promise
   const wantLand = opts.land === 'pr';
   const draftSalvage = result.outcome === 'budget-exhausted' && config.salvage === 'draft-pr';
   if (wantLand && (result.outcome === 'verified' || draftSalvage)) {
+    // The delivery-ledger event rides the PR's own diff (committed here,
+    // pushed by the lander) — delivered means MERGED, never "PR opened".
+    const ledgerPath = appendLaneEvent(cwd, {
+      schema_version: LANE_LEDGER_SCHEMA_VERSION,
+      timestamp: new Date().toISOString(),
+      lane: 'remediate',
+      task: opts.taskId,
+      outcome: 'landed',
+      ...(draftSalvage ? { partial: true } : {}),
+      ...(result.envelope?.costUsd !== undefined ? { costUsd: result.envelope.costUsd } : {}),
+      ...(result.envelope?.resolvedModelId
+        ? { resolvedModelId: result.envelope.resolvedModelId }
+        : {}),
+      ...(result.envelope ? { driver: result.envelope.driver } : {}),
+    });
     const land = landRemediateHead({
       cwd,
       taskId: opts.taskId,
@@ -150,6 +166,7 @@ export async function runRemediate(cwd: string, opts: RemediateOptions): Promise
       prTitle: `dxkit remediate: ${opts.taskId}${draftSalvage ? ' (partial, budget-bounded)' : ''}`,
       prBody: result.ledger,
       draft: draftSalvage,
+      ledgerPath,
     });
     landed = { ...result, ...(land.prUrl ? { prUrl: land.prUrl } : {}) };
   }

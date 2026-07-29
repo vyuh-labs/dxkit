@@ -42,6 +42,7 @@ import {
 } from '../package-manager';
 import { buildBumpPlan, type BumpPlan, type PlannedBump } from './plan';
 import { renderFloorVerification, renderGuardrailVerdict } from '../lanes/verification-render';
+import { appendLaneEvent, LANE_LEDGER_SCHEMA_VERSION } from '../lanes/ledger';
 import { landRefreshPaths, type LandRefreshResult } from '../land-refresh';
 import { detectDefaultBranch } from '../ship-installers';
 
@@ -361,10 +362,23 @@ export async function runDepsBump(opts: DepsBumpOptions): Promise<DepsBumpResult
     floorAttribution,
     ...(guardrailVerdict !== undefined ? { guardrailVerdict } : {}),
   };
+  // The delivery-ledger event rides the SAME PR diff as the bumps, so it
+  // reaches the default branch exactly when the PR merges — delivered means
+  // MERGED, never "a PR was opened" (design §10; the ungameable-count rule).
+  const advisoriesClosed = applied
+    .filter((b) => b.applied)
+    .reduce((n, b) => n + b.advisories.length, 0);
+  const ledgerRel = appendLaneEvent(cwd, {
+    schema_version: LANE_LEDGER_SCHEMA_VERSION,
+    timestamp: new Date().toISOString(),
+    lane: 'dep-bump',
+    outcome: 'landed',
+    findingsClosed: [{ kind: 'dep-vuln', count: advisoriesClosed }],
+  });
   const land = (opts.landPaths ?? landRefreshPaths)({
     cwd,
     mode: 'pr',
-    paths: bumpArtifactPaths(pm),
+    paths: [...bumpArtifactPaths(pm), ledgerRel],
     branchName: DEP_BUMP_BRANCH,
     defaultBranch: detectDefaultBranch(cwd),
     commitTitle: 'chore(deps): security bumps (dxkit)',

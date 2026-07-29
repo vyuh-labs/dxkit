@@ -20,6 +20,7 @@ import { readReportHistory } from './reports/snapshot';
 import { renderTrendText } from './reports/render';
 import { latestDeltas, type ReportHistoryEntry } from './reports/history';
 import { loadPolicyFromCwd } from './baseline/policy';
+import { computeDelivered, readLaneEvents, type DeliveredReport } from './lanes/ledger';
 
 export interface MetricsOptions {
   /** A git ref (resolved to its commit date) or an ISO date; scopes the window. */
@@ -31,6 +32,13 @@ export async function runMetrics(cwd: string, opts: MetricsOptions = {}): Promis
   const events = readLedger(cwd);
   const since = resolveSince(cwd, opts.since);
   const report = computeMetrics(events, { sinceMs: since.ms });
+  // DELIVERED is the third leg of ROI (design §10): what the scheduled robot
+  // lanes actually landed — advisories the bump lane closed, remediations the
+  // agent lane merged, and the agent spend. Its ledger entries ride each
+  // standing PR's own diff, so the count means MERGED, never "PR opened".
+  const delivered = computeDelivered(readLaneEvents(cwd), {
+    ...(since.ms !== undefined ? { sinceMs: since.ms } : {}),
+  });
   // The score-over-time trend (published on merge to the dxkit-reports ref) is
   // the OUTCOME half of ROI — what the gate blocked (ledger) plus how the score
   // actually moved. Only read it when the repo has a `reports` policy: the read
@@ -43,9 +51,11 @@ export async function runMetrics(cwd: string, opts: MetricsOptions = {}): Promis
     process.stdout.write(
       JSON.stringify(
         {
-          schema: 'metrics.v1',
+          // v2 is additive over v1: the `delivered` block joined; nothing moved.
+          schema: 'metrics.v2',
           since: since.label ?? null,
           ...report,
+          delivered,
           trend: trendJson(trend),
         },
         null,
@@ -56,7 +66,29 @@ export async function runMetrics(cwd: string, opts: MetricsOptions = {}): Promis
   }
 
   render(report, since);
+  renderDelivered(delivered);
   renderTrend(trend);
+}
+
+/** The Delivered section — omitted entirely until a lane has landed a merge. */
+function renderDelivered(d: DeliveredReport): void {
+  if (d.events === 0) return;
+  gap();
+  logger.header('Delivered by the scheduled lanes (merged, not just opened)');
+  for (const lane of d.lanes) {
+    const closed = Object.entries(lane.findingsClosed)
+      .map(([kind, count]) => `${count} ${kind}${count === 1 ? '' : 's'} closed`)
+      .join(', ');
+    logger.info(
+      `  ${lane.lane}: ${lane.landed} landed` +
+        (lane.partial > 0 ? ` (${lane.partial} partial)` : '') +
+        (closed ? ` · ${closed}` : '') +
+        (lane.costUsd !== undefined ? ` · $${lane.costUsd.toFixed(2)} agent spend` : ''),
+    );
+  }
+  if (d.totalCostUsd !== undefined) {
+    logger.dim(`  total agent spend: $${d.totalCostUsd.toFixed(2)}`);
+  }
 }
 
 /** Compact JSON view of the trend: the full series plus the latest merge's

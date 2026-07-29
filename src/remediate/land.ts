@@ -29,12 +29,22 @@ export interface LandRemediateOptions {
   readonly prTitle: string;
   readonly prBody: string;
   readonly draft?: boolean;
+  /** Repo-relative delivery-ledger file to commit ON TOP of the agent's
+   *  work before the push — the event then rides the PR's own diff, so
+   *  "delivered" means MERGED (design §10). */
+  readonly ledgerPath?: string;
   readonly exec?: Exec;
 }
 
 export function landRemediateHead(opts: LandRemediateOptions): LandRefreshResult {
   const exec = opts.exec ?? makeExec(opts.cwd);
   const branch = remediateBranchFor(opts.taskId);
+  if (opts.ledgerPath) {
+    exec('git', ['add', opts.ledgerPath]);
+    exec('git', ['commit', '-m', 'chore: record the remediation delivery (dxkit lane ledger)'], {
+      allowFail: true,
+    });
+  }
   // Internal machine push, force: the standing branch is rebuilt per run,
   // never a pile; --no-verify so the repo's own pre-push hook does not fire
   // against a bot push (gh #156 class).

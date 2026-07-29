@@ -118,7 +118,13 @@ describe('runDepsBump', () => {
       expect(calls).toEqual([['npm', 'install', 'axios@1.8.2', '--save-dev']]);
       expect(landed).toHaveLength(1);
       expect(landed[0].branchName).toBe('dxkit/dep-bump');
-      expect(landed[0].paths).toEqual(['package.json', 'package-lock.json']);
+      // Manifest + lockfile + the delivery-ledger event, which rides the SAME
+      // PR so "delivered" means merged (design §10).
+      expect(landed[0].paths).toEqual([
+        'package.json',
+        'package-lock.json',
+        '.dxkit/lanes/dep-bump.jsonl',
+      ]);
       expect(String(landed[0].prBody)).toContain('Correctness floor');
       expect(r.guardrailVerdict).toBe('PASSED');
       expect(r.ledger).toContain('axios');
