@@ -46,19 +46,12 @@ import {
   installCiBaselineRefresh,
   installCiDeepSastRefresh,
   installCiGraphRefresh,
-  graphRefreshEnabled,
   installCiReportsRefresh,
-  reportsRefreshEnabled,
   installCiFlowRefresh,
   installCiExtensionsRefresh,
   installCiCommentDefer,
-  commentCommandsEnabled,
   installCiDepBump,
-  depBumpEnabled,
   installCiRemediate,
-  remediateEnabled,
-  extensionsRefreshEnabled,
-  flowRefreshEnabled,
   installCiGuardrails,
   installCiHostGates,
   installDevcontainer,
@@ -142,7 +135,8 @@ export interface ManagedShipSurface {
   readonly detectPresent?: (cwd: string) => boolean;
 }
 
-function existsRel(cwd: string, rel: string): boolean {
+/** Exported for the legacy flag-detection sibling — one existence helper. */
+export function existsRel(cwd: string, rel: string): boolean {
   return fs.existsSync(path.join(cwd, rel));
 }
 
@@ -393,64 +387,10 @@ export const MANAGED_SHIP_SURFACES: readonly ManagedShipSurface[] = [
   },
 ];
 
-/** Whether an already-installed guardrails workflow carries the opt-in `push:`
- *  trigger, so update's workspace-fallback path preserves it. */
-function guardrailsHasPushTrigger(cwd: string): boolean {
-  try {
-    const wf = fs.readFileSync(
-      path.join(cwd, '.github', 'workflows', 'dxkit-guardrails.yml'),
-      'utf8',
-    );
-    return /^\s*push:/m.test(wf);
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Workspace-derived flag detection — the fallback when a manifest doesn't carry
- * `installFlags` (pre-2.5.2 manifests) or is partial. The gated ship surfaces
- * are inferred from the registry (`detectPresent`); the non-surface flags
- * (`withDxkitAgents` is generator-driven, `withPrecommit` / `withCiPushTrigger`
- * are modifiers) are probed directly.
- *
- * False-positive risk is bounded — the installers are idempotent and emit
- * sidecars on conflict, so spurious detection can't clobber user state.
- */
-export function detectInstallFlags(cwd: string): ManifestInstallFlags {
-  const flags: ManifestInstallFlags = {
-    withDxkitAgents: existsRel(cwd, path.join('.claude', 'skills', 'dxkit-learn')),
-    withHooks: false,
-    withPrecommit: existsRel(cwd, path.join('.githooks', 'pre-commit')),
-    withDevcontainer: false,
-    withCiGuardrails: false,
-    withBaselineRefresh: false,
-    withPrReview: false,
-    withClaudeLoop: false,
-    withCiPushTrigger: guardrailsHasPushTrigger(cwd),
-    withDeepSastRefresh: false,
-    withGraphRefresh: false,
-    withReportsRefresh: false,
-    withFlowRefresh: false,
-    withExtensionsRefresh: false,
-  };
-  for (const surface of MANAGED_SHIP_SURFACES) {
-    if (surface.gate.kind === 'flag' && surface.detectPresent) {
-      flags[surface.gate.flag] = surface.detectPresent(cwd);
-    }
-  }
-  // Graph-refresh is opt-in via policy, so a repo that set `graph.refresh:
-  // "cache"` but hasn't installed the workflow yet must still be treated as
-  // enabled — otherwise `update` would never lay it down. Presence OR policy.
-  flags.withGraphRefresh = flags.withGraphRefresh || graphRefreshEnabled(cwd);
-  flags.withReportsRefresh = flags.withReportsRefresh || reportsRefreshEnabled(cwd);
-  flags.withFlowRefresh = flags.withFlowRefresh || flowRefreshEnabled(cwd);
-  flags.withExtensionsRefresh = flags.withExtensionsRefresh || extensionsRefreshEnabled(cwd);
-  flags.withCommentDefer = flags.withCommentDefer || commentCommandsEnabled(cwd);
-  flags.withDepBump = flags.withDepBump || depBumpEnabled(cwd);
-  flags.withRemediate = flags.withRemediate || remediateEnabled(cwd);
-  return flags;
-}
+// The legacy workspace-derived flag fallback lives in the sibling
+// `managed-artifacts-detect.ts` (this file stays the registry). Re-exported so
+// existing consumers keep one import site.
+export { detectInstallFlags } from './managed-artifacts-detect';
 
 /** Whether a surface is active for the given flags. */
 export function surfaceEnabled(surface: ManagedShipSurface, flags: ManifestInstallFlags): boolean {
