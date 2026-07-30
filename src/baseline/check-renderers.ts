@@ -34,6 +34,12 @@ import type {
 } from './check';
 import { ATTRIBUTION_GAP_REMEDY, describeAttributionGap } from './attribution-gap';
 import type { AttributionGap } from './attribution-gap';
+import {
+  EXPIRY_PROJECTION_REMEDY,
+  describeExpiryProjection,
+  describeLapsingSuppression,
+} from './expiry-projection';
+import type { ExpiryProjection } from './expiry-projection';
 import { recallDriftRemedy, describeRecallDrift } from './recall';
 import type { BrownfieldPolicy } from './policy';
 import type { FindingStatus, MatchReason } from './types';
@@ -247,7 +253,11 @@ export function renderConsole(result: GuardrailCheckResult): string {
   // Provenance: what was compared against what. Inline so the user
   // can verify they're checking against the intended baseline.
   lines.push(logger.bold('Baseline'));
-  lines.push(`  Path:        ${result.baselinePath}`);
+  // Ref-based mode has no on-disk baseline; say so rather than stringifying the
+  // absent field into the literal word "undefined".
+  lines.push(
+    `  Path:        ${result.baselinePath ?? `(none — gathered from ${result.mode.ref ?? 'a git ref'})`}`,
+  );
   lines.push(`  Name:        ${result.baseline.name}`);
   lines.push(`  Captured:    ${result.baseline.createdAt}`);
   lines.push(
@@ -317,6 +327,9 @@ export function renderConsole(result: GuardrailCheckResult): string {
     for (const p of suppressed) lines.push(...formatPairLines(p, '  '));
     lines.push('');
   }
+  // The lapse projection, immediately after the list it is the consequence of.
+  // Silent when nothing expires inside the horizon, which is almost every run.
+  lines.push(...formatExpiryProjection(result.suppressionExpiry));
   if (warning.length > 0) {
     lines.push(logger.bold(`Warnings (${warning.length})`));
     // Collapse the envelope-drift wall (gh #157): after a dxkit upgrade or a
@@ -359,6 +372,15 @@ export function renderConsole(result: GuardrailCheckResult): string {
       `warning: ${warning.length}, persisted: ${persisted.length}, ` +
       `resolved: ${removed.length})`,
   );
+  // The lapse line belongs in the footer too: a reader who skims to the summary
+  // and stops must still see that today's PASS has an expiry date on it.
+  if (result.suppressionExpiry.lapsing.length > 0) {
+    const p = result.suppressionExpiry;
+    lines.push(
+      `  Expiring:    ${p.lapsing.length} suppression(s) within ${p.horizonDays}d ` +
+        `(next in ${p.nextLapseDays}d; ${p.willBlock} would block, ${p.willWarn} would warn)`,
+    );
+  }
   // A flow-gate line so the verdict banner's total (which counts flow findings)
   // reconciles with the summary. Without it, a repo whose only regressions are
   // flow breakages read "BLOCKED — 3 new regressions" over "Pairs: blocking: 0"
@@ -459,6 +481,32 @@ function formatGateFailure(
     '  (fail-open: this did not block the check; set DXKIT_DEBUG=1 for the stack)',
     '',
   ];
+}
+
+/**
+ * The lapse projection section. Prints nothing when no active suppression
+ * expires inside the horizon — the state of almost every run, and an empty
+ * "nothing expiring" section would be noise that trains readers to skip the
+ * area where the real warning eventually appears.
+ *
+ * Where the delivery gap was: the horizon computation has existed since the
+ * allowlist shipped, reachable only from `doctor` and `allowlist audit`. Every
+ * author and reviewer reads THIS output instead, which is why the warning goes
+ * here (see `src/baseline/expiry-projection.ts`).
+ */
+function formatExpiryProjection(projection: ExpiryProjection): string[] {
+  const headline = describeExpiryProjection(projection);
+  if (!headline) return [];
+  const out = [
+    logger.bold(
+      `${projection.willBlock > 0 ? '⚠ ' : ''}Suppressions expiring (${projection.lapsing.length})`,
+    ),
+    `  ${headline}`,
+  ];
+  for (const l of projection.lapsing) out.push(`  · ${describeLapsingSuppression(l)}`);
+  out.push(`  → ${EXPIRY_PROJECTION_REMEDY}`);
+  out.push('');
+  return out;
 }
 
 /**
@@ -1070,6 +1118,13 @@ export interface GuardrailJsonPayload {
    *  disarmed, how many findings, and which recall input moved. Empty on a
    *  healthy run. */
   readonly attributionGaps: ReadonlyArray<AttributionGap>;
+  /** What this run's ACTIVE allowlist suppressions will do when their windows
+   *  close: how many would block, how many would warn, and how soon. ALWAYS
+   *  present (`lapsing: []` when nothing expires inside the horizon), so an
+   *  agent can read it without probing for the field. Never affects
+   *  `verdict` — a lapse that has not happened yet is not a regression, and
+   *  the finding is re-classified on the run after it lapses. */
+  readonly suppressionExpiry: ExpiryProjection;
   /** Present when the dependency-vuln scan was requested but could not run —
    *  a pass is then NOT a clean bill of dependency health. */
   readonly depVulnsUnmeasured?: { readonly reason: string };
@@ -1305,6 +1360,7 @@ export function renderJson(result: GuardrailCheckResult): GuardrailJsonPayload {
       exitCode: counts.exitCode,
     },
     attributionGaps: result.attributionGaps,
+    suppressionExpiry: result.suppressionExpiry,
     ...(result.depVulnsUnmeasured ? { depVulnsUnmeasured: result.depVulnsUnmeasured } : {}),
     ...(result.deferredCapture && result.deferredCapture.length > 0
       ? { deferredCapture: result.deferredCapture }
@@ -1630,6 +1686,8 @@ export function renderMarkdown(result: GuardrailCheckResult): string {
     lines.push('');
   }
 
+  lines.push(...markdownExpiryProjection(result.suppressionExpiry));
+
   if (warning.length > 0) {
     // Collapse the envelope-drift wall (gh #157): the drift group becomes one
     // summary line above the table, and only the specific warnings are tabled.
@@ -1754,6 +1812,42 @@ export function renderMarkdown(result: GuardrailCheckResult): string {
  * top-level table (they fail the PR); warnings collapse into a `<details>`.
  * Silent when the gate produced no findings.
  */
+/**
+ * The lapse projection for the PR comment — the surface that actually closes
+ * the delivery gap, since a reviewer reads this and nobody runs `doctor`.
+ *
+ * A lapse that will BLOCK gets a warning callout (it is about to become
+ * somebody's problem, and the somebody is whoever opens the next PR); a
+ * warn-only lapse gets an informational one. Detail collapses into `<details>`
+ * so a 21-entry deferral does not bury the findings above it. Silent when
+ * nothing expires inside the horizon.
+ */
+function markdownExpiryProjection(projection: ExpiryProjection): string[] {
+  const headline = describeExpiryProjection(projection);
+  if (!headline) return [];
+  const lines: string[] = [];
+  const icon = projection.willBlock > 0 ? '⚠️' : 'ℹ️';
+  lines.push(`> ${icon} **${escapeMd(headline)}**`);
+  lines.push(`> - Remedy: ${escapeMd(EXPIRY_PROJECTION_REMEDY)}`);
+  lines.push('');
+  lines.push('<details>');
+  lines.push(`<summary>Suppressions expiring (${projection.lapsing.length})</summary>`);
+  lines.push('');
+  lines.push('| Source | Finding | Category | Expires | In | On lapse |');
+  lines.push('|---|---|---|---|---|---|');
+  for (const l of projection.lapsing) {
+    const effect = l.consequence === 'block' ? '**blocks**' : l.consequence;
+    lines.push(
+      `| ${escapeMd(l.source)} | ${escapeMd(l.subject)} | ${escapeMd(l.category)} | ` +
+        `${escapeMd(l.expiresAt)} | ${l.daysRemaining}d | ${effect} |`,
+    );
+  }
+  lines.push('');
+  lines.push('</details>');
+  lines.push('');
+  return lines;
+}
+
 /** A markdown line for a fail-open gate that errored — the PR-comment mirror of
  *  `formatGateFailure`. Never silent on an error; empty otherwise. */
 function markdownGateFailure(

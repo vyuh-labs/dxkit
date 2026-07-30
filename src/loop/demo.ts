@@ -20,6 +20,7 @@ import * as readline from 'readline';
 import { execFileSync, spawnSync } from 'child_process';
 import type { GuardrailJsonPayload } from '../baseline/check-renderers';
 import { GUARDRAIL_JSON_SCHEMA } from '../baseline/check-renderers';
+import { SOON_TO_EXPIRE_DAYS } from '../allowlist/file';
 import { buildRepairMessage } from './stop-gate';
 import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
 import { dxkitCli, dxkitOneShotCli } from '../self-invocation';
@@ -51,6 +52,15 @@ function illustrativePayload(blocked: boolean): GuardrailJsonPayload {
     schema: GUARDRAIL_JSON_SCHEMA,
     verdict: { blocks: blocked, warns: false, refused: false, exitCode: blocked ? 1 : 0 },
     attributionGaps: [],
+    // The illustration has no allowlist, so nothing is deferred and nothing can
+    // lapse. Spelled out rather than omitted — the field is required so a real
+    // payload can never quietly lack it.
+    suppressionExpiry: {
+      horizonDays: SOON_TO_EXPIRE_DAYS,
+      lapsing: [],
+      willBlock: 0,
+      willWarn: 0,
+    },
     baseline: {
       name: 'main',
       createdAt: '2026-01-01T00:00:00.000Z',
