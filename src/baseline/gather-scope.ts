@@ -40,6 +40,7 @@
  * scope contract test pins this.
  */
 import type { BrownfieldPolicy, BrownfieldBlockRules } from './policy';
+import type { BaselineEntry } from './types';
 
 /**
  * One boolean per skippable analyzer. `true` = run it. The names mirror the
@@ -142,11 +143,78 @@ export function scopeSignature(s: GatherScope): string {
     .join('+');
 }
 
+/**
+ * Which scope flags a finding KIND's observation depends on — the ONE mapping
+ * from "this gather was skipped" to "these baseline kinds were not observed"
+ * (Rule 19's REMOVED direction, 4.3.2 — the coverage-parity net's spine).
+ *
+ * The class this closes: a committed-mode run with a partial scope produced
+ * zero findings of a scoped-out kind, so every baseline entry of that kind
+ * minted `removed` ("resolved") with no disclosure — the same lie the
+ * untrusted custom-check skip told, one seam over. The check consults this
+ * table to reclassify those pairs `not_observed` instead.
+ *
+ * Typed `Record` over the full kind union, so a NEW kind cannot land without
+ * declaring its observation dependencies (compile error — the
+ * `BLOCK_RULE_EVIDENCE` discipline). An empty array means the kind is
+ * observed on every run: Layer-0 metrics (`large-file` reads the unscoped
+ * generic gather), intrinsic scans (`config`), plain file reads
+ * (`stale-allow`), gate-minted kinds whose own gates carry their disclosure
+ * (`flow-binding`, `model-schema-drift`, `paired-change`,
+ * `code-reimplementation`), and kinds no producer contributes yet
+ * (`DEFERRED_KINDS`). `custom-check` is deliberately `[]` here too: the seam
+ * records its own observation (`CustomChecksUnobserved`, which also carries
+ * per-check runtime skips this table cannot see) — a second scope-derived
+ * answer for it would be the two-projections drift class.
+ */
+export const KIND_OBSERVATION_SCOPE: Record<
+  BaselineEntry['kind'],
+  ReadonlyArray<keyof GatherScope>
+> = Object.freeze({
+  secret: ['secrets'],
+  // Companion of the located `secret` — same gather, same observation.
+  'secret-hmac': ['secrets'],
+  // Partial on purpose: the cheap intrinsic scans (tls-bypass, file findings)
+  // always run, so some `code` findings survive a skipped semgrep. Marking the
+  // whole kind unobserved when semgrep is off withholds resolution claims —
+  // the safe direction (never suppress a real finding; suppressing a
+  // resolution CLAIM is the bias this platform prefers).
+  code: ['codePatterns'],
+  config: [],
+  'dep-vuln': ['depVulns'],
+  duplication: ['duplication'],
+  'coverage-gap': [],
+  'test-gap': ['testGaps'],
+  hygiene: [],
+  'test-file-degradation': ['testGaps'],
+  'god-file': [],
+  'stale-file': ['hygiene'],
+  'large-file': [],
+  'stale-allow': [],
+  'flow-binding': [],
+  'model-schema-drift': [],
+  'code-reimplementation': [],
+  'custom-check': [],
+  'paired-change': [],
+  license: ['licenses'],
+});
+
 /** The finding kinds a ref-based diff structurally excludes, mapped to the
  *  scope flags of the analyzers that produce them. `secret-hmac` is absent
  *  deliberately: it is a companion output of the secrets analyzer, which
  *  must still run for the located `secret` kind. */
 export type RefSkippableKind = 'duplication' | 'test-gap' | 'custom-check' | 'license';
+
+/** The gathers each ref-skippable kind rides on. `custom-check` names its
+ *  flag here (not in `KIND_OBSERVATION_SCOPE`, where the seam's own record
+ *  answers observation) because this map's job is turning OFF gathers, not
+ *  attributing observation. */
+const REF_SKIPPABLE_FLAGS: Record<RefSkippableKind, keyof GatherScope> = Object.freeze({
+  duplication: 'duplication',
+  'test-gap': 'testGaps',
+  'custom-check': 'customChecks',
+  license: 'licenses',
+});
 
 /**
  * Drop the analyzers whose finding kinds a ref-based diff throws away
@@ -169,21 +237,12 @@ export function scopeForRefBasedDiff(scope: GatherScope): {
 } {
   const skipped: RefSkippableKind[] = [];
   const next = { ...scope };
-  if (next.duplication) {
-    next.duplication = false;
-    skipped.push('duplication');
-  }
-  if (next.testGaps) {
-    next.testGaps = false;
-    skipped.push('test-gap');
-  }
-  if (next.customChecks) {
-    next.customChecks = false;
-    skipped.push('custom-check');
-  }
-  if (next.licenses) {
-    next.licenses = false;
-    skipped.push('license');
+  for (const kind of Object.keys(REF_SKIPPABLE_FLAGS) as RefSkippableKind[]) {
+    const flag = REF_SKIPPABLE_FLAGS[kind];
+    if (next[flag]) {
+      next[flag] = false;
+      skipped.push(kind);
+    }
   }
   if (skipped.length === 0) return { scope, skippedKinds: skipped };
   return { scope: Object.freeze(next), skippedKinds: skipped };

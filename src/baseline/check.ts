@@ -65,7 +65,13 @@ import type { BrownfieldPolicy, BaselineSection } from './policy';
 import type { ClassifyContext, ClassifyResult } from './classify';
 import { hydrateAnchorFromBranch, loadAnchorFromBranch } from './anchor';
 import { gatherFromRef } from './ref-baseline';
-import { type GatherScope, FULL_SCOPE, scopeForPolicy, scopeForRefBasedDiff } from './gather-scope';
+import {
+  type GatherScope,
+  FULL_SCOPE,
+  KIND_OBSERVATION_SCOPE,
+  scopeForPolicy,
+  scopeForRefBasedDiff,
+} from './gather-scope';
 import { computeChangedFiles, createChangedLineIndex } from './changed-files';
 import { changedFilesTouchDependencyManifest, detectActiveLanguages } from '../languages';
 import { describeRecallDrift, diffRecall } from './recall';
@@ -310,6 +316,47 @@ export interface NotObservedDisclosure {
   readonly reason: string;
   /** Baseline findings not re-verified under this reason. */
   readonly count: number;
+}
+
+/**
+ * Was a NON-custom-check kind observed by this run? Pure — the ONE answer the
+ * removed-direction attribution reads for scope- and scanner-level causes
+ * (`custom-check` has its own richer record at the seam, `CustomChecksUnobserved`).
+ *
+ * Committed modes only: a ref-based diff gathers BOTH sides in this same
+ * environment, so an un-run scanner produces zero findings on each and no
+ * removed pair exists to mislabel (and the structurally-excluded kinds carry
+ * their own `refExcludedKinds` disclosure).
+ *
+ * Two causes, in order:
+ *   1. the kind's gather was scoped out (`KIND_OBSERVATION_SCOPE`);
+ *   2. the gather was requested but its scanner did not run — read from the
+ *      aggregate's per-source provenance, the same signal `depVulnsUnmeasured`
+ *      trusts (never a kind↔tool table; provenance says what actually ran).
+ */
+export function kindNotObservedReason(
+  kind: BaselineEntry['kind'],
+  ctx: {
+    readonly mode: ResolvedMode['mode'];
+    readonly scope: GatherScope;
+    readonly provenance: SecurityAggregate['provenance'];
+  },
+): string | undefined {
+  if (ctx.mode === 'ref-based') return undefined;
+  const offFlag = KIND_OBSERVATION_SCOPE[kind].find((flag) => !ctx.scope[flag]);
+  if (offFlag !== undefined) {
+    return `not gathered this run (the ${offFlag} gather is outside this run's scope)`;
+  }
+  if ((kind === 'secret' || kind === 'secret-hmac') && !ctx.provenance.secrets.ran) {
+    return 'not observed this run (no secret scanner ran)';
+  }
+  if (kind === 'code' && !ctx.provenance.codePatterns.ran) {
+    return 'not observed this run (the code-pattern scanner did not run)';
+  }
+  if (kind === 'dep-vuln' && !ctx.provenance.depVulns.available) {
+    return 'not observed this run (the dependency scanner could not run)';
+  }
+  return undefined;
 }
 
 /**
@@ -869,15 +916,23 @@ export async function runGuardrailCheck(
     ? new Map(ccUnobserved.checks.map((c) => [c.name, describeCheckSkip(c)]))
     : undefined;
   const notObservedReasonFor = (entry: BaselineEntry): string | undefined => {
-    if (entry.kind !== 'custom-check') return undefined;
-    if (!ccUnobserved.gathered) return ccUnobserved.reason;
-    // A sanitized entry carries no check name, and per-check skip attribution
-    // needs one — it stays `removed` (bias toward the false negative, the
-    // benign-module discipline: never suppress a real resolution claim we
-    // cannot disprove). The whole-gather branch above still covers it.
-    if (!('check' in entry)) return undefined;
-    const skip = unobservedByCheck!.get(entry.check);
-    return skip !== undefined ? `check "${entry.check}" ${skip}` : undefined;
+    if (entry.kind === 'custom-check') {
+      // The seam records its own observation (scope-skip AND per-check
+      // runtime skips) — the one source for this kind.
+      if (!ccUnobserved.gathered) return ccUnobserved.reason;
+      // A sanitized entry carries no check name, and per-check skip attribution
+      // needs one — it stays `removed` (bias toward the false negative, the
+      // benign-module discipline: never suppress a real resolution claim we
+      // cannot disprove). The whole-gather branch above still covers it.
+      if (!('check' in entry)) return undefined;
+      const skip = unobservedByCheck!.get(entry.check);
+      return skip !== undefined ? `check "${entry.check}" ${skip}` : undefined;
+    }
+    return kindNotObservedReason(entry.kind, {
+      mode: mode.mode,
+      scope,
+      provenance: current.aggregate.provenance,
+    });
   };
 
   const classifiedPairs: ClassifiedPair[] = [];
