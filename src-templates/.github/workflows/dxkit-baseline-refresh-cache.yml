@@ -23,7 +23,7 @@ on:
   workflow_dispatch: {}
 
 permissions:
-  contents: read
+__DXKIT_REFRESH_PERMISSIONS__
 
 jobs:
 __DXKIT_FRAGMENT_CAPTURE_JOBS__

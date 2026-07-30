@@ -167,6 +167,11 @@ export const POLICY_PARAMS: readonly PolicyParamMeta[] = [
     anchor: 'dep-bump',
   },
   {
+    path: 'expiryNotice.enabled',
+    summary: 'maintain one issue naming allowlist suppressions about to lapse',
+    anchor: 'expiry-notice',
+  },
+  {
     path: 'reports.onMerge',
     summary: 'publish report snapshots to the dxkit-reports ref on merge',
     anchor: 'reports-on-merge',
@@ -352,6 +357,23 @@ export const POLICY_STANZAS: readonly PolicyStanzaMeta[] = [
     anchor: 'dep-bump',
     example: () => ({ enabled: true }),
     followUp: ['Installs a managed workflow: run `vyuh-dxkit update` after enabling.'],
+  },
+  {
+    key: 'expiryNotice',
+    coversKnobs: ['expiryNotice.enabled'],
+    title: 'Expiring-suppression notice',
+    blurb: [
+      'A deferral is a promise with a date on it. The guardrail check already',
+      'warns every PR while the window is open — this covers the quiet week:',
+      'the scheduled refresh maintains ONE issue naming what lapses, who',
+      'accepted it, and when, and closes it once nothing is lapsing.',
+      'Never blocks; the expiry itself stays the forcing function.',
+    ],
+    anchor: 'expiry-notice',
+    example: () => ({ enabled: true }),
+    followUp: [
+      'Grants the refresh workflow `issues: write`: run `vyuh-dxkit update` after enabling.',
+    ],
   },
   {
     key: 'reports',
