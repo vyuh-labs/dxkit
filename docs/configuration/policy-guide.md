@@ -25,6 +25,7 @@ stanzas).
 | `depBump.allowMajor`                | [#dep-bump](#dep-bump)                       |
 | `depBump.enabled`                   | [#dep-bump](#dep-bump)                       |
 | `duplication.mode`                  | [#duplication-mode](#duplication-mode)       |
+| `expiryNotice.enabled`              | [#expiry-notice](#expiry-notice)             |
 | `flow.mode`                         | [#flow-mode](#flow-mode)                     |
 | `flow.sources`                      | [#flow-sources](#flow-sources)               |
 | `licenses.prohibited`               | [#prohibited-licenses](#prohibited-licenses) |
@@ -236,6 +237,39 @@ boring to merge.
 
 **Interactions.** What the bump lane cannot close (no fixed release,
 breaking-not-allowed) is exactly the [remediate lane's](#remediate) input.
+
+## Expiry notice
+
+**What it does.** While the scheduled baseline refresh is running anyway, it
+maintains ONE GitHub issue naming the allowlist suppressions whose windows
+close within the next 14 days: the finding, its kind, the severity the
+reviewer acknowledged, who accepted it (`addedBy`), the date, and the
+countdown. One issue, updated in place — and closed automatically once
+nothing is lapsing.
+
+**Default and why.** Off. `expiryNotice.enabled: true` + `vyuh-dxkit update`
+grants the refresh workflow `issues: write` and turns the lane on. It is the
+only dxkit lane that opens an issue on its own initiative, so it is never
+enabled for you.
+
+**When you would turn it on.** The [lapse projection](#new-advisories) already
+warns every author and reviewer on every guardrail check, which covers any
+week somebody opens a PR. Turn this on if your repo can go quiet for days at a
+time — that is the case where a deferral lapses with nobody watching and the
+next PR author inherits findings they never touched.
+
+**Tuning.** None. The horizon is the same 14 days
+[`allowlist audit`](../reference/cli.md) uses, so the issue and the check never
+disagree about which entries are in scope. If your
+[refresh cadence](#refresh-cadence) is slower than 14 days, the first notice
+can arrive late — the issue body says so rather than pretending otherwise.
+
+**Interactions.** It never gates: no verdict, no exit code, no block. The
+expiry remains the forcing function. Owners are NAMED from `addedBy`, never
+assigned — `addedBy` is an email address, and guessing a GitHub login from an
+email would put a stranger's name on someone else's deferral. If issues are
+disabled or the token lacks the permission, the refresh reports why and carries
+on; a notification that could not be posted must never fail a baseline capture.
 
 ## Reports on merge
 

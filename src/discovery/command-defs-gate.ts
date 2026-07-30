@@ -10,6 +10,7 @@ import {
   recommendChecks,
   recommendDebt,
   recommendDepBump,
+  recommendExpiryNotice,
   recommendRemediate,
   recommendExtensions,
   recommendLoopPreset,
@@ -80,6 +81,7 @@ export const GATE_COMMANDS = [
       'Accept a finding with a typed category + required reason + optional expiry; audit and prune ' +
       'entries. `defer` bulk-defers newly published dep-vuln advisories time-boxed (dep-vuln-only).',
     skill: 'dxkit-allowlist',
+    whenToRecommend: recommendExpiryNotice,
   },
   {
     id: 'ingest',

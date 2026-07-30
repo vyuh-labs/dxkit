@@ -214,6 +214,12 @@ export function buildPolicySchema(version: string): Schema {
         },
         'Scheduled deterministic dependency-bump PRs.',
       ),
+      expiryNotice: obj(
+        {
+          enabled: boolProp('expiryNotice.enabled'),
+        },
+        'One maintained issue naming allowlist suppressions about to lapse.',
+      ),
       reports: obj(
         {
           onMerge: boolProp('reports.onMerge'),

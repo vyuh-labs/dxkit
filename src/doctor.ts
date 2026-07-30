@@ -14,7 +14,7 @@ import { loadPolicyFromCwd } from './baseline/policy';
 import { detectEnforcement } from './enforcement';
 import { detectInstalledRefreshTransport, detectDefaultBranch } from './ship-installers';
 import { detectPackageManager, addDevCommand } from './package-manager';
-import { loadAllowlist, auditAllowlist } from './allowlist/file';
+import { auditAllowlist, tryLoadAllowlist } from './allowlist/file';
 import { snapshotEngines, readSnapshot } from './ingest/snapshot';
 import { EXTERNAL_SNAPSHOT_STALE_DAYS, snapshotAgeDays } from './ingest/engine-failure';
 import { diagnoseFlow, type FlowDiagnosis } from './analyzers/flow/diagnose';
@@ -121,19 +121,6 @@ function nodeMajorVersion(): number {
 function safeLoadPolicy(cwd: string): ReturnType<typeof loadPolicyFromCwd> | null {
   try {
     return loadPolicyFromCwd(cwd);
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Wrap `loadAllowlist` with a swallowing try/catch — a malformed
- * allowlist file must not break doctor. Returns null on absence or
- * parse failure; the expiry check simply doesn't emit in that case.
- */
-function safeLoadAllowlist(cwd: string): ReturnType<typeof loadAllowlist> {
-  try {
-    return loadAllowlist(cwd);
   } catch {
     return null;
   }
@@ -902,7 +889,7 @@ function runOperationalChecks(cwd: string, hasManifest: boolean): CheckResult[] 
   // nearing expiry needs a decision before it lapses. Surface both so
   // a reviewed-and-accepted finding doesn't silently turn back into a
   // blocker mid-sprint. Only emits when an allowlist actually exists.
-  const allowlistFile = safeLoadAllowlist(cwd);
+  const allowlistFile = tryLoadAllowlist(cwd);
   if (allowlistFile && allowlistFile.entries.length > 0) {
     const audit = auditAllowlist(allowlistFile);
     if (audit.expired.length > 0) {
