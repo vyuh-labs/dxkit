@@ -219,6 +219,17 @@ describe('describeExpiryProjection', () => {
     expect(EXPIRY_PROJECTION_REMEDY).toContain('allowlist audit');
   });
 
+  it('agrees with itself at n=1 (singular verb, singular pronoun)', () => {
+    const out = collectExpiryProjection({
+      pairs: [pair({ kind: 'dep-vuln', blocks: true, expiresAt: '2026-08-03', fingerprint: 'a' })],
+      now: NOW,
+    });
+    expect(describeExpiryProjection(out)).toBe(
+      '1 allowlist suppression expires within 14 days (next in 5d); ' +
+        'when it lapses, 1 will BLOCK',
+    );
+  });
+
   it('says so plainly when nothing lapsing would block or warn', () => {
     const out = collectExpiryProjection({
       pairs: [],

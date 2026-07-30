@@ -292,8 +292,9 @@ export function describeExpiryProjection(p: ExpiryProjection): string | undefine
         ? `${p.willWarn} will warn`
         : 'none will block or warn';
   return (
-    `${n} allowlist suppression${n === 1 ? '' : 's'} expire within ${p.horizonDays} days ` +
-    `(next ${when}); when they lapse, ${consequence}`
+    `${n} allowlist suppression${n === 1 ? '' : 's'} expire${n === 1 ? 's' : ''} within ` +
+    `${p.horizonDays} days (next ${when}); when ${n === 1 ? 'it lapses' : 'they lapse'}, ` +
+    consequence
   );
 }
 
