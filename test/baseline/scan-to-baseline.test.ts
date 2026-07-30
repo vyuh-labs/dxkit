@@ -44,6 +44,10 @@ function fixtureScan(): CurrentScan {
     deferred: [
       { id: 'semgrep', label: 'SAST', reason: 'mirror', cause: 'scanner-missing' },
     ] as CurrentScan['deferred'],
+    // Run property (which checks THIS run observed), deliberately not
+    // persisted to the baseline file — capture-side unobservation is carried
+    // by absent recall + `deferred`.
+    customChecksUnobserved: { gathered: true, checks: [] },
     analysisMeta: {
       dxkitVersion: '3.8.0',
       toolchainHash: 'abc',

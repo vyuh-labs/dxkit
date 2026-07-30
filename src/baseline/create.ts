@@ -42,10 +42,9 @@ import { assessCaptureDeferral, type DeferredCaptureClass } from './deferral';
 import { resolveBaselineMode } from './modes';
 import type { ResolvedMode } from './modes';
 import { loadPolicyFromCwd, prohibitedLicensePatterns } from './policy';
-import {
-  customCheckRecallInputs,
-  gatherCustomCheckFindings,
-} from '../analyzers/custom-checks/gather';
+import { customCheckRecallInputs, gatherCustomChecks } from '../analyzers/custom-checks/gather';
+import type { CustomChecksUnobserved } from '../analyzers/custom-checks/gather';
+export type { CustomChecksUnobserved };
 import { PRODUCERS, runProducers, runRecallContexts } from './producers';
 import type { ProducerContext } from './producers';
 import { recallInputsUnion } from './recall';
@@ -148,6 +147,13 @@ export interface CurrentScan {
   /** Finding classes this environment could NOT observe (Rule 20 — see
    *  `deferral.ts`). Non-empty ⇒ partial capture; persisted for the arming banner. */
   readonly deferred: ReadonlyArray<DeferredCaptureClass>;
+  /** What the custom-check seam could NOT observe on THIS run (Rule 19's
+   *  REMOVED direction — see `CustomChecksUnobserved` in the seam's
+   *  `gather.ts`). The guardrail reclassifies the unobserved checks' baseline
+   *  findings `not_observed` instead of minting `removed` ("resolved"). A run
+   *  property, never persisted (capture-side unobservation is carried by
+   *  absent recall + `deferred`). */
+  readonly customChecksUnobserved: CustomChecksUnobserved;
   /** Envelope metadata for the run. `toolchainHash` is already
    *  resolved from `tools`. */
   readonly analysisMeta: BaselineAnalysisMeta;
@@ -299,9 +305,16 @@ export async function gatherCurrentScan(options: {
   // policy can't block on (the loop Stop-gate's fast path), matching the other
   // producer inputs.
   const policy = loadPolicyFromCwd(cwd);
-  const customCheckFindings = scope.customChecks
-    ? gatherCustomCheckFindings({ cwd, policy, trust: options.trust })
-    : [];
+  const customCheckGather = scope.customChecks
+    ? gatherCustomChecks({ cwd, policy, trust: options.trust })
+    : undefined;
+  const customCheckFindings = customCheckGather?.findings ?? [];
+  const customChecksUnobserved: CustomChecksUnobserved = customCheckGather
+    ? { gathered: true, checks: customCheckGather.unobserved }
+    : {
+        gathered: false,
+        reason: 'custom checks were not gathered this run (outside the gather scope)',
+      };
   // Recall inputs are resolved even when the scope skipped the RUN: the kind's
   // context describes what the checks WOULD see, and a scope that can't block
   // on custom checks still records honest metadata. Pure string work + a
@@ -362,6 +375,7 @@ export async function gatherCurrentScan(options: {
     recall,
     coverage,
     deferred,
+    customChecksUnobserved,
     analysisMeta,
     producerCtx,
   };

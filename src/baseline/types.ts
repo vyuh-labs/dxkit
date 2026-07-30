@@ -887,6 +887,16 @@ export type FindingStatus =
    *  `added` for policy membership and block rules), it just stops blaming the
    *  PR and names the defer lane. */
   | 'newly_published_advisory'
+  /** A matcher-`removed` pair whose kind the CURRENT side never actually
+   *  observed (its check skipped: untrusted tree / unmet environment /
+   *  unavailable tool / timeout / scoped out). Rule 19 in the REMOVED
+   *  direction: "you fixed this" is an attribution claim too, and cause #2
+   *  (dxkit did not fully observe the current side) has not been ruled out —
+   *  so the pair is neither "resolved" nor a regression, it is UNKNOWN.
+   *  Epistemic status: never blocks, never warns, never counted as resolved;
+   *  renderers disclose it in aggregate ("N baseline findings not re-verified
+   *  this run"), never as 18k table rows. */
+  | 'not_observed'
   | 'probable_existing'
   | 'uncertain';
 

@@ -171,6 +171,43 @@ export interface CustomCheckResult {
   readonly reason?: string;
 }
 
+/**
+ * A check the current run did NOT observe: it was configured, but its command
+ * never produced a finding set (any `skipped-*` status). The guardrail check
+ * consumes this to keep Rule 19's law in the REMOVED direction — an unobserved
+ * check's baseline findings reclassify `not_observed`, never `removed`
+ * ("resolved"): absence of observation is UNKNOWN, not absence.
+ */
+export interface UnobservedCheck {
+  readonly name: string;
+  readonly status: CustomCheckStatus;
+  /** The runner's structured reason, when it carries one (environment /
+   *  unavailable skips). */
+  readonly reason?: string;
+}
+
+/**
+ * The ONE human phrasing of a check skip, shared by the classifier's reason
+ * chain and every renderer's disclosure line (Rule 2 — two phrasings of one
+ * skip would drift).
+ */
+export function describeCheckSkip(check: UnobservedCheck): string {
+  switch (check.status) {
+    case 'skipped-untrusted':
+      return 'skipped (untrusted tree — repo-declared commands do not execute on third-party content)';
+    case 'skipped-environment':
+      return `skipped (environment: ${check.reason ?? 'declared execution requirement unmet here'})`;
+    case 'skipped-unavailable':
+      return `skipped (unavailable: ${check.reason ?? 'its tool did not resolve'})`;
+    case 'skipped-timeout':
+      return 'skipped (timed out)';
+    case 'skipped-overflow':
+      return 'skipped (output outran the capture buffer)';
+    default:
+      return `skipped (${check.status})`;
+  }
+}
+
 /** Aggregate result across every configured check. */
 export interface CustomChecksRunResult {
   /** True when at least one check actually executed (not all skipped). */
