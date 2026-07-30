@@ -49,6 +49,7 @@ import { dxkitCli } from '../self-invocation';
 import { isMaliciousAdvisory } from '../analyzers/security/malicious';
 import { gatherCurrentScan, scanToBaselineFile } from './create';
 import type { CurrentScan } from './create';
+import { describeCheckSkip } from '../analyzers/custom-checks/types';
 import { DEFAULT_BASELINE_NAME, pathForBaseline, readBaselineFile } from './baseline-file';
 import type { BaselineFile, DeferredCaptureClass } from './baseline-file';
 import { diffCoverage } from './coverage';
@@ -295,6 +296,49 @@ export interface AnchorSourceDisclosure {
   readonly note: string;
 }
 
+/**
+ * One unobserved slice of the baseline: a check (or a scoped-out gather) the
+ * current run never executed, with how many committed baseline findings that
+ * leaves un-re-verified. The aggregate the renderers print INSTEAD of listing
+ * the pairs — see `GuardrailCheckResult.notObserved`.
+ */
+export interface NotObservedDisclosure {
+  /** Finding kind of the unobserved entries (today always `custom-check`). */
+  readonly kind: BaselineEntry['kind'];
+  /** The shared human phrasing of why (embeds the check name), identical to
+   *  the per-pair reason detail — one phrasing, both surfaces. */
+  readonly reason: string;
+  /** Baseline findings not re-verified under this reason. */
+  readonly count: number;
+}
+
+/**
+ * Group `not_observed` pairs by their reason. Pure; reads the prior-side entry
+ * through the SAME reason function the classifier consumed, so a disclosure
+ * can never disagree with the pair statuses it summarizes. Sorted by count
+ * (largest first) for stable rendering.
+ */
+export function collectNotObservedDisclosures(
+  pairs: ReadonlyArray<ClassifiedPair>,
+  priorById: ReadonlyMap<FindingId, BaselineEntry>,
+  reasonFor: (entry: BaselineEntry) => string | undefined,
+): NotObservedDisclosure[] {
+  const byReason = new Map<string, { kind: BaselineEntry['kind']; count: number }>();
+  for (const p of pairs) {
+    if (p.classification.status !== 'not_observed' || p.pair.priorId === undefined) continue;
+    const entry = priorById.get(p.pair.priorId);
+    if (!entry) continue;
+    const reason = reasonFor(entry);
+    if (reason === undefined) continue;
+    const agg = byReason.get(reason) ?? { kind: entry.kind, count: 0 };
+    agg.count += 1;
+    byReason.set(reason, agg);
+  }
+  return [...byReason.entries()]
+    .map(([reason, { kind, count }]) => ({ kind, reason, count }))
+    .sort((a, b) => b.count - a.count || a.reason.localeCompare(b.reason));
+}
+
 export interface GuardrailCheckResult {
   /** Pre-resolved baseline mode (which path produced `baseline`).
    *  Carries the audit trail (CLI / policy / auto-detect) so the
@@ -339,6 +383,18 @@ export interface GuardrailCheckResult {
    * which case renderers print nothing. See `src/baseline/expiry-projection.ts`.
    */
   readonly suppressionExpiry: ExpiryProjection;
+  /**
+   * Baseline findings the CURRENT side never re-verified, aggregated per
+   * unobserved check (Rule 19's REMOVED direction, 4.3.2). Their pairs are
+   * classified `not_observed` — excluded from the resolved tally and from
+   * per-finding tables — and every renderer prints one disclosure line per
+   * entry here ("check X skipped (untrusted tree) — N baseline findings not
+   * re-verified this run"). REQUIRED so a renderer cannot be written without
+   * deciding what to do with it; empty on the overwhelming majority of runs.
+   * Never affects the verdict: an unobserved backlog is neither the
+   * developer's regression nor their fix.
+   */
+  readonly notObserved: ReadonlyArray<NotObservedDisclosure>;
   /** Allowlist entries added / removed between the baseline's
    *  commit SHA and the current working tree. Renderers (the PR
    *  comment markdown in particular) surface this so reviewers
@@ -800,6 +856,30 @@ export async function runGuardrailCheck(
   });
   const now = new Date();
 
+  // Removed-direction attribution (Rule 19, 4.3.2): the ONE answer to "did the
+  // current side actually observe this prior entry's check?". A `removed` pair
+  // whose check the run never observed (skipped: untrusted tree / unmet
+  // environment / unavailable tool / timeout — or the whole gather scoped out)
+  // reclassifies `not_observed` instead of rendering "resolved". The shipped
+  // class: an --untrusted PR check skipped lint, diffed a baseline holding the
+  // repo's 18,406-finding lint backlog against a current side holding zero,
+  // and reported all of it as Resolved with no disclosure.
+  const ccUnobserved = current.customChecksUnobserved;
+  const unobservedByCheck = ccUnobserved.gathered
+    ? new Map(ccUnobserved.checks.map((c) => [c.name, describeCheckSkip(c)]))
+    : undefined;
+  const notObservedReasonFor = (entry: BaselineEntry): string | undefined => {
+    if (entry.kind !== 'custom-check') return undefined;
+    if (!ccUnobserved.gathered) return ccUnobserved.reason;
+    // A sanitized entry carries no check name, and per-check skip attribution
+    // needs one — it stays `removed` (bias toward the false negative, the
+    // benign-module discipline: never suppress a real resolution claim we
+    // cannot disprove). The whole-gather branch above still covers it.
+    if (!('check' in entry)) return undefined;
+    const skip = unobservedByCheck!.get(entry.check);
+    return skip !== undefined ? `check "${entry.check}" ${skip}` : undefined;
+  };
+
   const classifiedPairs: ClassifiedPair[] = [];
   let blocks = false;
   let warns = false;
@@ -847,6 +927,10 @@ export async function runGuardrailCheck(
     const reachable =
       pair.currentId !== undefined && reachableByCurrentId.has(pair.currentId) ? true : undefined;
 
+    // Only a `removed` pair can be a not-observed candidate: an unobserved
+    // check produces no current findings, so no other pair status exists.
+    const notObserved = pair.status === 'removed' ? notObservedReasonFor(anchorEntry) : undefined;
+
     const context: ClassifyContext = {
       severity,
       kind: anchorEntry.kind,
@@ -859,6 +943,7 @@ export async function runGuardrailCheck(
       ...(overlapsChangedLines !== undefined ? { overlapsChangedLines } : {}),
       ...(malicious ? { malicious } : {}),
       ...(reachable ? { reachable } : {}),
+      ...(notObserved !== undefined ? { notObserved } : {}),
       // Only asked for added dep-vuln pairs, so a run with none never pays the
       // git diff (and other kinds never see the flag).
       ...(anchorEntry.kind === 'dep-vuln' && pair.status === 'added' && manifestUntouched()
@@ -1001,6 +1086,20 @@ export async function runGuardrailCheck(
   // while one exists the run cannot render PASSED.
   const attributionGaps = collectAttributionGaps(filteredPairs, envelopeDrift.recallDrift);
 
+  // Aggregate the not-observed pairs into per-reason disclosures for the
+  // renderers. Aggregate ON PURPOSE: a repo-scale lint backlog is tens of
+  // thousands of entries, and listing them (the "Resolved (18406)" table this
+  // fixes) is both a lie and a comment-size failure — the honest output is one
+  // line per unobserved check with its count. Computed from the SAME pair set
+  // the verdict reads (post --changed-only filter), through the same reason
+  // function the classifier consumed, so the counts and phrasing agree by
+  // construction.
+  const notObservedDisclosures = collectNotObservedDisclosures(
+    filteredPairs,
+    priorById,
+    notObservedReasonFor,
+  );
+
   // The lapse projection: what today's active suppressions will cost when their
   // windows close. Reads the same pair set the verdict reads (post
   // --changed-only filter) and the same `now` the suppression decision used, so
@@ -1035,6 +1134,7 @@ export async function runGuardrailCheck(
       baseWarns || flowGate.warns || schemaDriftGate.warns || dupGate.warns || pairedGate.warns,
     attributionGaps,
     suppressionExpiry,
+    notObserved: notObservedDisclosures,
     allowlistDelta,
     refExcludedKinds,
     // Capture-deferral (Rule 20): classes the committed baseline could not

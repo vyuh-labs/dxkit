@@ -77,6 +77,18 @@ export interface ClassifyContext {
   readonly manifestUntouched?: boolean;
   /** True when an `added` dep-vuln is on a reachable code path. */
   readonly reachable?: boolean;
+  /**
+   * Set (to the human-phrased cause) when the CURRENT side never observed
+   * this finding's check/kind — its command skipped (untrusted tree, unmet
+   * environment, unavailable tool, timeout) or its gather was scoped out.
+   * Reclassifies a matcher-`removed` pair as `not_observed` instead of
+   * letting it render "resolved": Rule 19's law applied to the REMOVED
+   * direction — a delta may be attributed (even a flattering attribution)
+   * only when every other cause is ruled out, and "dxkit did not look" is
+   * cause #2. Only read for `removed` pairs; an unobserved kind produces no
+   * current findings, so no other status can carry it.
+   */
+  readonly notObserved?: string;
   /** True when an `added` dep-vuln's advisory reports the package itself
    *  as malicious code (OSV `MAL-*`, CWE-506 family, malware-titled
    *  advisory) — see `src/analyzers/security/malicious.ts`. */
@@ -139,6 +151,19 @@ export function classify(
   let status: FindingStatus = pair.status;
   const reasons: MatchReason[] = [...pair.reasons];
   let unattributableBlockRule: string | undefined;
+
+  // Removed-direction attribution (Rule 19, 4.3.2): a `removed` pair whose
+  // check/kind the current side never observed is UNKNOWN, not "resolved".
+  // Epistemic status with a fixed verdict — it can never block or warn, no
+  // matter what a policy's block/warn lists say (a policy cannot make
+  // "dxkit did not look" gate), so it returns before the membership steps.
+  if (status === 'removed' && context.notObserved !== undefined) {
+    reasons.push({
+      code: 'not-observed',
+      detail: `${context.notObserved} — this baseline finding was not re-verified this run; not observed is not resolved`,
+    });
+    return { status: 'not_observed', blocks: false, warns: false, reasons };
+  }
 
   // Step 2: drift context can reclassify 'added'.
   if (status === 'added') {

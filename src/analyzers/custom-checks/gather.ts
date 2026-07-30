@@ -24,7 +24,7 @@ import {
   extensionRecallInputs,
   gatherExtensionFindings,
 } from '../../extensions/extension-findings';
-import type { CustomCheckFinding, CustomCheckSpec } from './types';
+import type { CustomCheckFinding, CustomCheckSpec, UnobservedCheck } from './types';
 import type { AnalysisTrustContext } from '../../analysis-trust';
 
 export interface GatherCustomChecksOptions {
@@ -207,11 +207,38 @@ function hashText(text: string): string {
 export function gatherCustomCheckFindings(
   opts: GatherCustomChecksOptions,
 ): readonly CustomCheckFinding[] {
+  return gatherCustomChecks(opts).findings;
+}
+
+/** Findings PLUS what the run could not observe. The findings side is exactly
+ *  `gatherCustomCheckFindings`; `unobserved` carries every configured check
+ *  whose command produced no finding set this run (a `skipped-*` status). The
+ *  guardrail check reads it to keep the removed-direction attribution honest
+ *  (an unobserved check's baseline findings are `not_observed`, not
+ *  "resolved") — before this, the runner's skip statuses died right here and
+ *  no downstream surface could tell "clean" from "never looked". */
+export interface CustomCheckGatherResult {
+  readonly findings: readonly CustomCheckFinding[];
+  readonly unobserved: readonly UnobservedCheck[];
+}
+
+/**
+ * The seam's observation record for one run, as the guardrail consumes it.
+ * `gathered: false` means the gather never ran at all (scoped out), so NO
+ * configured check was observed; `gathered: true` carries the individual
+ * checks whose commands skipped. Both shapes answer the question the
+ * removed-direction attribution asks: "did this run actually look?"
+ */
+export type CustomChecksUnobserved =
+  | { readonly gathered: false; readonly reason: string }
+  | { readonly gathered: true; readonly checks: readonly UnobservedCheck[] };
+
+export function gatherCustomChecks(opts: GatherCustomChecksOptions): CustomCheckGatherResult {
   const all = resolveCustomCheckSpecs(opts);
   const specs = opts.onlyChecks ? all.filter((s) => opts.onlyChecks!.includes(s.name)) : all;
-  const commandFindings =
+  const run =
     specs.length === 0
-      ? []
+      ? undefined
       : runCustomChecks({
           cwd: opts.cwd,
           trust: opts.trust,
@@ -219,13 +246,24 @@ export function gatherCustomCheckFindings(
           ...(opts.timeoutMs !== undefined ? { timeoutMs: opts.timeoutMs } : {}),
           ...(opts.exec !== undefined ? { exec: opts.exec } : {}),
           ...(opts.env !== undefined ? { env: opts.env } : {}),
-        }).findings;
-  if (opts.onlyChecks) return commandFindings;
+        });
+  const commandFindings = run?.findings ?? [];
+  const unobserved = (run?.results ?? [])
+    .filter((r) => r.status !== 'pass' && r.status !== 'fail')
+    .map((r) => ({
+      name: r.name,
+      status: r.status,
+      ...(r.reason !== undefined ? { reason: r.reason } : {}),
+    }));
+  if (opts.onlyChecks) return { findings: commandFindings, unobserved };
   // The seam's third consumer (after user checks + pack lint): findings
   // committed by findings-kind EXTENSIONS. Snapshot reads only — nothing
   // executes here (extensions run at refresh time; gates stay offline) —
   // and both the baseline producer and the guardrail current scan reach
   // extension findings through THIS one entry point, so the two sides
   // always see the identical set (Rule 2).
-  return [...commandFindings, ...gatherExtensionFindings(opts.cwd)];
+  return {
+    findings: [...commandFindings, ...gatherExtensionFindings(opts.cwd)],
+    unobserved,
+  };
 }

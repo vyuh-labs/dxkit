@@ -52,6 +52,7 @@ function illustrativePayload(blocked: boolean): GuardrailJsonPayload {
     schema: GUARDRAIL_JSON_SCHEMA,
     verdict: { blocks: blocked, warns: false, refused: false, exitCode: blocked ? 1 : 0 },
     attributionGaps: [],
+    notObserved: [],
     // The illustration has no allowlist, so nothing is deferred and nothing can
     // lapse. Spelled out rather than omitted — the field is required so a real
     // payload can never quietly lack it.
@@ -111,6 +112,7 @@ function illustrativePayload(blocked: boolean): GuardrailJsonPayload {
       warning: 0,
       persisted: 184,
       resolved: 0,
+      notObserved: 0,
     },
     pairs,
   };

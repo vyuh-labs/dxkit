@@ -31,6 +31,7 @@ import type {
   ClassifiedPair,
   EnvelopeDrift,
   GuardrailCheckResult,
+  NotObservedDisclosure,
 } from './check';
 import { ATTRIBUTION_GAP_REMEDY, describeAttributionGap } from './attribution-gap';
 import type { AttributionGap } from './attribution-gap';
@@ -356,6 +357,11 @@ export function renderConsole(result: GuardrailCheckResult): string {
     for (const p of removed) lines.push(...formatPairLines(p, '  '));
     lines.push('');
   }
+  // Not-observed disclosure (Rule 19's REMOVED direction): baseline findings
+  // the current side never re-verified. One aggregate line per unobserved
+  // check — never a per-finding table (the whole point is that a repo-scale
+  // backlog must not render as 18k "resolved" rows or 18k anything-rows).
+  lines.push(...formatNotObserved(result.notObserved));
 
   lines.push(...formatFlowGate(result.flowGate));
   lines.push(...formatSchemaDriftGate(result.schemaDriftGate));
@@ -370,7 +376,9 @@ export function renderConsole(result: GuardrailCheckResult): string {
       `suppressed: ${suppressed.length}, ` +
       (unattributable.length > 0 ? `unattributable: ${unattributable.length}, ` : '') +
       `warning: ${warning.length}, persisted: ${persisted.length}, ` +
-      `resolved: ${removed.length})`,
+      `resolved: ${removed.length}` +
+      (notObservedPairCount(result) > 0 ? `, not observed: ${notObservedPairCount(result)}` : '') +
+      `)`,
   );
   // The lapse line belongs in the footer too: a reader who skims to the summary
   // and stops must still see that today's PASS has an expiry date on it.
@@ -494,6 +502,33 @@ function formatGateFailure(
  * author and reviewer reads THIS output instead, which is why the warning goes
  * here (see `src/baseline/expiry-projection.ts`).
  */
+/** Total pairs classified `not_observed` — the summary-footer count. Derived
+ *  from the disclosures (which the check computed from the same pair set), so
+ *  the footer and the section agree by construction. */
+function notObservedPairCount(result: GuardrailCheckResult): number {
+  return result.notObserved.reduce((n, d) => n + d.count, 0);
+}
+
+/**
+ * The not-observed disclosure block, shared in structure by the console and
+ * markdown renderers: one line per unobserved check, aggregate counts only.
+ * A silent skip is the class this section exists to kill — but so is a 18k-row
+ * table, so it deliberately never enumerates findings.
+ */
+function formatNotObserved(disclosures: ReadonlyArray<NotObservedDisclosure>): string[] {
+  if (disclosures.length === 0) return [];
+  const total = disclosures.reduce((n, d) => n + d.count, 0);
+  const out = [logger.bold(`⚠ Not re-verified this run (${total})`)];
+  for (const d of disclosures) {
+    out.push(
+      `  ${d.kind} ${d.reason} — ${d.count} baseline finding${d.count === 1 ? '' : 's'} ` +
+        `not re-verified this run (reported as not observed, never as resolved)`,
+    );
+  }
+  out.push('');
+  return out;
+}
+
 function formatExpiryProjection(projection: ExpiryProjection): string[] {
   const headline = describeExpiryProjection(projection);
   if (!headline) return [];
@@ -1031,6 +1066,8 @@ function statusLabel(status: FindingStatus): string {
       return 'UNCERTAIN';
     case 'fixed':
       return 'FIXED';
+    case 'not_observed':
+      return 'NOT-OBSERVED';
   }
 }
 
@@ -1091,6 +1128,12 @@ function formatDrift(drift: EnvelopeDrift): string[] {
   return out;
 }
 
+/** Markdown Resolved-table row cap. The count in the summary line is exact;
+ *  the table shows a sample so a batch cleanup cannot push the comment past
+ *  GitHub's 65,536-byte limit (a real PR comment hit 60,143 bytes of mostly
+ *  this table). */
+const MAX_RESOLVED_ROWS = 100;
+
 // ─── JSON renderer ────────────────────────────────────────────────────────
 
 export const GUARDRAIL_JSON_SCHEMA = 'dxkit.guardrail-check.v1' as const;
@@ -1125,6 +1168,12 @@ export interface GuardrailJsonPayload {
    *  `verdict` — a lapse that has not happened yet is not a regression, and
    *  the finding is re-classified on the run after it lapses. */
   readonly suppressionExpiry: ExpiryProjection;
+  /** Baseline findings the current side never re-verified, per unobserved
+   *  check (aggregate counts, never per-finding rows). ALWAYS present
+   *  (`[]` when everything was observed) so an agent can tell "nothing
+   *  unobserved" from "nobody said". Their pairs carry status
+   *  `not_observed` — excluded from `summary.resolved`. */
+  readonly notObserved: ReadonlyArray<NotObservedDisclosure>;
   /** Present when the dependency-vuln scan was requested but could not run —
    *  a pass is then NOT a clean bill of dependency health. */
   readonly depVulnsUnmeasured?: { readonly reason: string };
@@ -1186,6 +1235,8 @@ export interface GuardrailJsonPayload {
     readonly warning: number;
     readonly persisted: number;
     readonly resolved: number;
+    /** Pairs classified `not_observed` — see the top-level `notObserved`. */
+    readonly notObserved: number;
   };
   readonly pairs: ReadonlyArray<{
     readonly status: FindingStatus;
@@ -1361,6 +1412,10 @@ export function renderJson(result: GuardrailCheckResult): GuardrailJsonPayload {
     },
     attributionGaps: result.attributionGaps,
     suppressionExpiry: result.suppressionExpiry,
+    // Baseline findings the current side never re-verified (per unobserved
+    // check, aggregate counts). Always present — an agent reading the JSON
+    // must be able to tell "nothing unobserved" from "nobody said".
+    notObserved: result.notObserved,
     ...(result.depVulnsUnmeasured ? { depVulnsUnmeasured: result.depVulnsUnmeasured } : {}),
     ...(result.deferredCapture && result.deferredCapture.length > 0
       ? { deferredCapture: result.deferredCapture }
@@ -1406,6 +1461,7 @@ export function renderJson(result: GuardrailCheckResult): GuardrailJsonPayload {
       warning,
       persisted,
       resolved,
+      notObserved: notObservedPairCount(result),
     },
     pairs: result.pairs.map((p) => ({
       status: p.classification.status,
@@ -1629,6 +1685,27 @@ export function renderMarkdown(result: GuardrailCheckResult): string {
     lines.push('');
   }
 
+  // Rule 19's REMOVED direction: what this run never looked at, said loudly in
+  // the PR comment — one aggregate line per unobserved check. The class this
+  // kills: an untrusted run skipped lint and the comment reported the repo's
+  // entire 18,406-finding backlog as "Resolved".
+  if (result.notObserved.length > 0) {
+    const total = result.notObserved.reduce((n, d) => n + d.count, 0);
+    lines.push(
+      `> ⚠️ **${total} baseline finding${total === 1 ? '' : 's'} not re-verified this run** — ` +
+        `their check did not execute here, so they are reported as *not observed*, ` +
+        `never as resolved. A pass does **not** re-verify them; trusted surfaces ` +
+        `(the default-branch refresh, pre-push, a local run) remain the backstop.`,
+    );
+    for (const d of result.notObserved) {
+      lines.push(
+        `> - ${escapeMd(d.kind)} ${escapeMd(d.reason)} — ${d.count} ` +
+          `finding${d.count === 1 ? '' : 's'}`,
+      );
+    }
+    lines.push('');
+  }
+
   if (result.refExcludedKinds.length > 0) {
     const detail = result.refExcludedKinds.map((e) => `${e.currentCount} ${e.kind}`).join(', ');
     lines.push(
@@ -1763,8 +1840,16 @@ export function renderMarkdown(result: GuardrailCheckResult): string {
     lines.push('');
     lines.push('| Kind | Location |');
     lines.push('|---|---|');
-    for (const p of resolved) {
+    // Row cap: GitHub truncates comments at 65,536 bytes, and a large resolved
+    // set (a batch cleanup, a re-baseline) once produced a 60k-byte table that
+    // crowded out the verdict. The count above is exact; the rows are a sample.
+    for (const p of resolved.slice(0, MAX_RESOLVED_ROWS)) {
       lines.push(`| ${escapeMd(p.kind)} | ${escapeMd(locatorProse(p) || '—')} |`);
+    }
+    if (resolved.length > MAX_RESOLVED_ROWS) {
+      lines.push(
+        `| … | ${resolved.length - MAX_RESOLVED_ROWS} more — full list in the job log or \`--json\` |`,
+      );
     }
     lines.push('');
     lines.push('</details>');
