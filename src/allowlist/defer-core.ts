@@ -15,6 +15,7 @@ import { dxkitCli } from '../self-invocation';
 import { readVerdictForTree } from '../baseline/verdict-cache';
 import {
   addEntry,
+  daysUntilDate,
   emptyAllowlistFile,
   findEntry,
   loadAllowlist,
@@ -23,7 +24,8 @@ import {
   type AllowlistEntry,
   type AllowlistMode,
 } from './file';
-import { deferAdvisoryExpiryDate } from './categories';
+import { DEFER_ADVISORY_EXPIRY_DAYS, deferAdvisoryExpiryDate } from './categories';
+import { deferAdvisories } from './defer-guard';
 
 export interface DeferRequest {
   /** Explicit fingerprints (deduped by the core). */
@@ -44,6 +46,12 @@ export interface DeferOutcome {
   readonly ok: true;
   readonly added: readonly string[];
   readonly alreadyPresent: readonly string[];
+  /** Creation-time advisories about the window just chosen (how many findings
+   *  share it, whether any lane could close them, whether it shuts before the
+   *  lane's next run). Facts, never a veto — see `defer-guard.ts`. Empty when
+   *  there is nothing worth saying, and empty when nothing was written. BOTH
+   *  front-ends render these; a new front-end inherits them from the core. */
+  readonly advisories: readonly string[];
   /** Non-dep-vuln blockers `--from-last-check` refused to touch, as
    *  `"<kind> <locator>"` strings. */
   readonly leftBlocking: readonly string[];
@@ -91,6 +99,18 @@ export function executeDefer(cwd: string, req: DeferRequest, now = new Date()): 
   if (expiresAt === null) {
     return refuse(
       `--expires must be ISO date YYYY-MM-DD or relative +Nd; got ${JSON.stringify(req.expires)}`,
+    );
+  }
+  // A window that already closed writes an entry that suppresses NOTHING: the
+  // matcher skips an expired entry, so the finding keeps blocking while the
+  // allowlist claims it was accepted. Refusing is the honest answer — silently
+  // writing a dead entry fails the caller's actual intent.
+  const windowDays = daysUntilDate(expiresAt, now);
+  if (windowDays < 0) {
+    return refuse(
+      `--expires ${expiresAt} is already in the past (${-windowDays} day(s) ago), so the entry ` +
+        `would suppress nothing and the findings would keep blocking. Pass a future date, ` +
+        `or \`--expires +${DEFER_ADVISORY_EXPIRY_DAYS}d\`.`,
     );
   }
 
@@ -194,5 +214,10 @@ export function executeDefer(cwd: string, req: DeferRequest, now = new Date()): 
 
   if (added.length > 0) saveAllowlist(cwd, { ...file, mode: req.mode });
 
-  return { ok: true, added, alreadyPresent, leftBlocking, expiresAt, reason, targets };
+  // Advisories describe the window that was just written, so they are computed
+  // only when something WAS written — an all-already-present run chose no window.
+  const advisories =
+    added.length > 0 ? deferAdvisories(cwd, { count: added.length, expiresAt, now }) : [];
+
+  return { ok: true, added, alreadyPresent, leftBlocking, expiresAt, reason, targets, advisories };
 }
