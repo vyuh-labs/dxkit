@@ -355,16 +355,47 @@ export function isEntryActive(entry: AllowlistEntry, now: Date = new Date()): bo
 }
 
 /**
+ * Days remaining until an ISO `YYYY-MM-DD` expiry date, counted in whole
+ * UTC days from today. Negative means already expired by that many days.
+ *
+ * THE one home for expiry day arithmetic (CLAUDE.md 2.30). Two consumers
+ * hold different shapes of the same concept — the audit path holds a full
+ * `AllowlistEntry`, while the guardrail's per-pair suppression holds only
+ * the `expiresAt` STRING (a lossy projection of the entry) — which is the
+ * exact setup where a second consumer re-derives the arithmetic slightly
+ * differently and the two surfaces disagree about the same date. Both route
+ * here: `daysUntilExpiry` for entries, this function directly for the
+ * projection. Pinned by `test/allowlist-expiry-parity.test.ts`.
+ */
+export function daysUntilDate(expiresAt: string, now: Date = new Date()): number {
+  const expiry = new Date(expiresAt + 'T00:00:00Z');
+  const today = new Date(now.toISOString().slice(0, 10) + 'T00:00:00Z');
+  const msPerDay = 24 * 60 * 60 * 1000;
+  return Math.round((expiry.getTime() - today.getTime()) / msPerDay);
+}
+
+/**
  * Days remaining until an entry expires, or `null` when it has no
  * expiry. Negative values mean already expired by that many days.
  */
 export function daysUntilExpiry(entry: AllowlistEntry, now: Date = new Date()): number | null {
   if (!entry.expiresAt) return null;
-  const expiry = new Date(entry.expiresAt + 'T00:00:00Z');
-  const today = new Date(now.toISOString().slice(0, 10) + 'T00:00:00Z');
-  const msPerDay = 24 * 60 * 60 * 1000;
-  return Math.round((expiry.getTime() - today.getTime()) / msPerDay);
+  return daysUntilDate(entry.expiresAt, now);
 }
+
+/**
+ * The window within which an expiry counts as "soon" — the default for BOTH
+ * the audit buckets (`auditAllowlist`) and the guardrail's lapse projection,
+ * so `doctor`'s "expiring soon" label and the check's warning can never
+ * disagree about which entries are in scope. 14 days: a typical sprint, long
+ * enough that a deferral's owner still has room to act.
+ *
+ * Callers may override per-invocation (`allowlist audit --soon-days`). That
+ * override is guardrail TUNING, not a posture knob — it refines a surface the
+ * repo already has, so it carries no discovery contract (same carve-out as
+ * `confidence` / `largeFileThreshold`).
+ */
+export const SOON_TO_EXPIRE_DAYS = 14;
 
 /** One entry in a soon-to-expire audit bucket, with the days
  *  remaining so callers can render time-to-expiry context. */
@@ -382,7 +413,7 @@ export interface SoonToExpire {
  *   The underlying suppression no longer applies on the next
  *   guardrail run.
  * - `soonToExpire` — entries whose `expiresAt` is within
- *   `soonToExpireDays` (default 14). Customer should review whether
+ *   `soonToExpireDays` (default `SOON_TO_EXPIRE_DAYS`). Customer should review whether
  *   the deferred work is still in plan and either fix the finding,
  *   extend the expiry, or remove the entry.
  * - `missingRationale` — entries with empty / whitespace-only
@@ -411,7 +442,8 @@ export interface AuditReport {
 export interface AuditOptions {
   readonly now?: Date;
   /** Window in days within which `expiresAt` is considered "soon."
-   *  Default 14 — chosen to match a typical sprint cadence. */
+   *  Defaults to `SOON_TO_EXPIRE_DAYS` (the shared constant, so this
+   *  bucket and the guardrail's lapse projection share one horizon). */
   readonly soonToExpireDays?: number;
   /** Set of fingerprints present in the current finding set (the
    *  union of every baseline entry's `id` plus its
@@ -423,7 +455,7 @@ export interface AuditOptions {
 
 export function auditAllowlist(file: AllowlistFile, options: AuditOptions = {}): AuditReport {
   const now = options.now ?? new Date();
-  const horizon = options.soonToExpireDays ?? 14;
+  const horizon = options.soonToExpireDays ?? SOON_TO_EXPIRE_DAYS;
   const expired: AllowlistEntry[] = [];
   const soonToExpire: SoonToExpire[] = [];
   const missingRationale: AllowlistEntry[] = [];
