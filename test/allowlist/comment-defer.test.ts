@@ -9,8 +9,10 @@
  *   - end-to-end: a well-formed command writes the same deferred entries the
  *     local `allowlist defer` writes (one core), attributed to the commenter,
  *     and the payload carries a postable reply on every handled path;
- *   - the dep-vuln-only restriction survives the lane (a fingerprint the
- *     warmed verdict cache shows as another kind refuses).
+ *   - any blocking kind defers by explicit fingerprint, kind-stamped from the
+ *     warmed verdict cache so the entry suppresses exactly the finding it
+ *     names (4.3.2 — the repo's owners hold the policy; the lane keeps the
+ *     honesty mechanics: time-boxed, attributed, kind-exact).
  */
 
 import { describe, it, expect } from 'vitest';
@@ -173,7 +175,7 @@ describe('runCommentDeferCore — end to end over the one defer core', () => {
     }
   });
 
-  it('the dep-vuln-only restriction survives the lane: a cached non-dep-vuln kind refuses', () => {
+  it('a cached non-dep-vuln kind defers by explicit fingerprint, kind-stamped exactly', () => {
     const dir = mkRepo();
     try {
       const secretFinding: CachedBlockingFinding = {
@@ -194,12 +196,20 @@ describe('runCommentDeferCore — end to end over the one defer core', () => {
         blockingFindings: [secretFinding],
       });
       const payload = runCommentDeferCore(dir, {
-        DXKIT_COMMENT_BODY: `/dxkit defer ${FP_A}`,
+        DXKIT_COMMENT_BODY: `/dxkit defer ${FP_A} --reason="rotating the credential in INFRA-42"`,
         DXKIT_COMMENT_AUTHOR: 'reviewer-login',
       });
-      expect(payload.action).toBe('refused');
-      expect(payload.replyMarkdown).toContain('dep-vuln-only');
-      expect(existsSync(path.join(dir, '.dxkit', 'allowlist.json'))).toBe(false);
+      expect(payload.action).toBe('deferred');
+      // The reply names the kind so the thread sees exactly what was waived.
+      expect(payload.replyMarkdown).toContain('secret');
+      expect(payload.replyMarkdown).toContain('src/config.ts:12');
+      const file = JSON.parse(readFileSync(path.join(dir, '.dxkit', 'allowlist.json'), 'utf8')) as {
+        entries: Array<{ fingerprint: string; kind: string; category: string }>;
+      };
+      const entry = file.entries.find((e) => e.fingerprint === FP_A);
+      // Kind-stamped from the cache: the entry suppresses exactly the secret
+      // it names — never a cross-kind waiver.
+      expect(entry).toMatchObject({ kind: 'secret', category: 'deferred' });
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

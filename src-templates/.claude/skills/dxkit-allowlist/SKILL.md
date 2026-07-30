@@ -60,7 +60,7 @@ npx vyuh-dxkit allowlist audit --against-baseline   # ALSO flag orphaned entries
 
 So treat the orphaned bucket as a **review queue**: confirm each finding is truly gone (re-run the analyzer and check the fingerprint is absent), *then* remove. Never script a bulk-remove of the orphaned set.
 
-## Defer newly published advisories — bulk, dep-vuln-only, time-boxed
+## Defer blocking findings — time-boxed (bulk for advisories, by fingerprint for anything)
 
 ```bash
 npx vyuh-dxkit allowlist defer --from-last-check --reason="advisory batch YYYY-MM-DD, PR is time-sensitive"
@@ -72,17 +72,18 @@ The scenario: a PR that touches **no dependency manifest** goes red because new 
 - change is **not** time-sensitive → **fix the vulnerabilities** (upgrade/patch); that is what unblocks;
 - change **is** time-sensitive → `allowlist defer` clears the gate now with short-dated `deferred` entries (default expiry **7 days**, not the 90-day accepted-risk default). The expiry is the forcing function: the findings re-block when it lapses, so plan the dependency fix immediately.
 
-`--from-last-check` pulls the blocking dep-vulns from the last guardrail run on this exact tree (run `npx vyuh-dxkit guardrail check` locally first). Structural guarantees — this can never become a bulk bypass:
+**Any blocking finding is deferrable by explicit fingerprint** — the repo's owners hold the policy, and a write-access reviewer could land the same allowlist entry by hand; what the platform keeps is the honesty mechanics (time-boxed always, attributed, kind-stamped from the last verdict so the entry suppresses exactly the finding it names, visible in the PR's allowlist delta).
 
-- entries are minted `kind=dep-vuln`; suppression matches on kind, so a deferred fingerprint can never waive a secret, SAST, or any other finding;
-- non-dep-vuln blocking findings are refused and named, never deferred;
-- explicit fingerprints the last run reports as non-dep-vuln findings are refused loudly.
+`--from-last-check` pulls the blocking dep-vulns from the last guardrail run on this exact tree (run `npx vyuh-dxkit guardrail check` locally first). The **bulk sweep** stays advisory-scoped — this is what keeps it from becoming a bulk bypass:
+
+- the sweep collects only dependency advisories (the one class that arrives in batches through no fault of the diff); every other blocking finding is named and left alone, so a bulk defer can never silently absorb a net-new secret standing next to the advisories — defer those one fingerprint at a time, deliberately;
+- entries are kind-stamped; suppression matches on kind, so a deferred fingerprint waives exactly the finding it names.
 
 Commit the updated `.dxkit/allowlist.json` **via the blocked PR itself** (or a dedicated PR when the base branch is push-protected) — once merged to the base, every other open PR clears on a check re-run, and remediation sweeps inherit the entries on their next clone. Do **not** refresh the baseline for this: the allowlist is the time-boxed instrument; a refresh would grandfather the advisories with no expiry pressure.
 
 **Base-branch-first (the well-configured path):** on repos with the scheduled refresh installed, `vyuh-dxkit baseline refresh` detects new advisories itself, holds them out of the baseline, and raises one standing decision PR (`dxkit/advisory-decision`) carrying exactly these deferred entries — merging it IS the defer lane, executed by the dependency owners before feature PRs ever fight the findings. The per-PR `defer` command above is the fallback for repos without the scheduled lane (or for an advisory batch that lands mid-decision).
 
-**From the PR conversation (opt-in):** with `.dxkit/policy.json:newAdvisories.commentCommands: true` (plus `vyuh-dxkit update` to install the `dxkit-comment-defer` workflow), a reviewer with write access can run the defer without leaving GitHub — comment `/dxkit defer --new-advisories` (or explicit fingerprints from the guardrail report, optionally `--expires=+7d --reason="…"`) on the blocked PR. The workflow validates the commenter's permission, re-runs the guardrail on the PR head, applies the identical dep-vuln-only time-boxed deferral, commits the allowlist to the PR branch attributed to the commenter, and replies with the outcome. The grammar is strict by design — anything but fingerprints and the known flags refuses; same-repo PRs only (fork PRs get a reply pointing at the local command).
+**From the PR conversation (opt-in):** with `.dxkit/policy.json:newAdvisories.commentCommands: true` (plus `vyuh-dxkit update` to install the `dxkit-comment-defer` workflow), a reviewer with write access can run the defer without leaving GitHub — comment `/dxkit defer --new-advisories` (or explicit fingerprints from the guardrail report, optionally `--expires=+7d --reason="…"`) on the blocked PR. The workflow validates the commenter's permission, re-runs the guardrail on the PR head, applies the identical time-boxed deferral, commits the allowlist to the PR branch attributed to the commenter, and replies with the outcome. The grammar is strict by design — anything but fingerprints and the known flags refuses; same-repo PRs only (fork PRs get a reply pointing at the local command).
 
 ## Remove a single entry
 

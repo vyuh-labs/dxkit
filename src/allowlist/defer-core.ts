@@ -1,9 +1,22 @@
 /**
  * The ONE defer implementation (Rule 2). `allowlist defer` (the local CLI)
  * and `allowlist comment-defer` (the PR-comment lane) are two front-ends over
- * this core: parse/render differ, but what a deferral IS — dep-vuln-only,
- * category=deferred, short shared expiry, kind cross-checked against the last
- * verdict, idempotent — is decided here once.
+ * this core: parse/render differ, but what a deferral IS — category=deferred,
+ * short shared expiry, kind read from the last verdict, idempotent — is
+ * decided here once.
+ *
+ * ANY blocking finding is deferrable by explicit fingerprint (4.3.2). The
+ * repo's owners hold the policy: a write-access reviewer could already land
+ * the same entry by editing the allowlist file, so restricting the
+ * convenience lane was friction, not a boundary. What the platform keeps is
+ * the honesty mechanics — every deferral is time-boxed (expiry is the forcing
+ * function), attributed, kind-stamped from the verdict cache so suppression
+ * matches exactly one finding, and surfaced in the PR's allowlist delta.
+ * `--from-last-check` stays scoped to dependency advisories: it is the bulk
+ * lane for the one class that arrives in batches through no fault of the
+ * diff (a feed publish), and a bulk sweep must not silently absorb a net-new
+ * secret standing next to them — those are deferred one fingerprint at a
+ * time, deliberately.
  *
  * Non-exiting by design: every refusal is a RETURNED value so the comment
  * lane can turn it into a reply instead of a dead process. The CLI wrapper
@@ -52,13 +65,17 @@ export interface DeferOutcome {
    *  there is nothing worth saying, and empty when nothing was written. BOTH
    *  front-ends render these; a new front-end inherits them from the core. */
   readonly advisories: readonly string[];
-  /** Non-dep-vuln blockers `--from-last-check` refused to touch, as
+  /** Non-dep-vuln blockers `--from-last-check` left alone (the bulk lane is
+   *  advisory-scoped; defer them explicitly by fingerprint), as
    *  `"<kind> <locator>"` strings. */
   readonly leftBlocking: readonly string[];
   readonly expiresAt: string;
   readonly reason: string;
-  /** Locator/severity display metadata for the added fingerprints. */
-  readonly targets: ReadonlyMap<string, { locator?: string; severity?: string }>;
+  /** Kind/locator/severity display metadata for the added fingerprints. */
+  readonly targets: ReadonlyMap<
+    string,
+    { kind?: AllowlistEntry['kind']; locator?: string; severity?: string }
+  >;
 }
 
 export interface DeferRefusal {
@@ -127,7 +144,10 @@ export function executeDefer(cwd: string, req: DeferRequest, now = new Date()): 
   const cached = readVerdictForTree(cwd);
   const cachedBlocking = cached?.blockingFindings;
 
-  const targets = new Map<string, { locator?: string; severity?: string }>();
+  const targets = new Map<
+    string,
+    { kind?: AllowlistEntry['kind']; locator?: string; severity?: string }
+  >();
   const leftBlocking: string[] = [];
   if (req.fromLastCheck) {
     if (!cachedBlocking) {
@@ -140,8 +160,12 @@ export function executeDefer(cwd: string, req: DeferRequest, now = new Date()): 
       );
     }
     for (const f of cachedBlocking) {
+      // The bulk lane is advisory-scoped: a sweep for a feed publish must not
+      // silently absorb a net-new secret standing next to the advisories.
+      // Anything else stays listed, deferable explicitly by fingerprint.
       if (f.kind === 'dep-vuln') {
         targets.set(f.fingerprint, {
+          kind: 'dep-vuln',
           ...(f.locator !== undefined ? { locator: f.locator } : {}),
           ...(f.severity !== undefined ? { severity: f.severity } : {}),
         });
@@ -152,26 +176,24 @@ export function executeDefer(cwd: string, req: DeferRequest, now = new Date()): 
     if (targets.size === 0 && explicit.length === 0) {
       return refuse(
         leftBlocking.length > 0
-          ? `The last run's blocking findings are not dep-vulns — defer refuses to touch them ` +
-              `(${leftBlocking.join('; ')}). Fix them, or review each with ` +
-              `\`${dxkitCli('allowlist add')}\` individually.`
+          ? `The last run's blocking findings are not dependency advisories, and the bulk lane ` +
+              `sweeps only those (${leftBlocking.join('; ')}). Defer them explicitly by ` +
+              `fingerprint (\`${dxkitCli('allowlist defer <fingerprint>')}\`), or review each ` +
+              `with \`${dxkitCli('allowlist add')}\`.`
           : 'The last guardrail run had no blocking findings — nothing to defer.',
       );
     }
   }
   for (const fp of explicit) {
-    // Cross-check against the cache when we have it: a fingerprint the last
-    // run shows as a NON-dep-vuln finding must not be bulk-deferred.
+    // Kind-stamp from the cache when we have it, so the entry suppresses
+    // exactly the finding it names (suppression matches fingerprint AND
+    // kind). An unknown fingerprint keeps the historical dep-vuln default —
+    // the advisory workflows defer against a warm cache, and a cold-cache
+    // explicit defer predates kinds here.
     const known = cachedBlocking?.find((f) => f.fingerprint === fp);
-    if (known && known.kind !== 'dep-vuln') {
-      return refuse(
-        `Refusing to defer ${fp}: the last guardrail run reports it as a ${known.kind} finding ` +
-          `(${known.locator ?? 'no locator'}), and \`allowlist defer\` is dep-vuln-only. ` +
-          `Review it individually with \`${dxkitCli('allowlist add')}\`.`,
-      );
-    }
     if (!targets.has(fp)) {
       targets.set(fp, {
+        ...(known?.kind !== undefined ? { kind: known.kind as AllowlistEntry['kind'] } : {}),
         ...(known?.locator !== undefined ? { locator: known.locator } : {}),
         ...(known?.severity !== undefined ? { severity: known.severity } : {}),
       });
@@ -194,7 +216,7 @@ export function executeDefer(cwd: string, req: DeferRequest, now = new Date()): 
     }
     const entry: AllowlistEntry = {
       fingerprint,
-      kind: 'dep-vuln',
+      kind: targets.get(fingerprint)?.kind ?? 'dep-vuln',
       category: 'deferred',
       reason,
       addedBy,

@@ -44,20 +44,19 @@ describe('markdownCommentDeferHint (unit)', () => {
     const hint = lines.join('\n');
     expect(hint).toContain(`/dxkit defer ${FP_A} ${FP_B} --reason="…"`);
     expect(hint).toContain('/dxkit defer --new-advisories');
-    expect(hint).toContain('Dependency advisories only');
+    expect(hint).toContain('the expiry is the forcing function');
   });
 
   it('is silent without the workflow — a dead hint teaches commands that do nothing', () => {
     expect(markdownCommentDeferHint({}, [blockingPair('dep-vuln', FP_A)])).toEqual([]);
   });
 
-  it('is silent when the blocks are not dependency advisories (the lane never allowlists those)', () => {
-    expect(
-      markdownCommentDeferHint({ commentDeferInstalled: true }, [
-        blockingPair('secret', FP_A),
-        blockingPair('code', FP_B),
-      ]),
-    ).toEqual([]);
+  it('covers every blocking kind — any blocking finding is deferrable (4.3.2)', () => {
+    const hint = markdownCommentDeferHint({ commentDeferInstalled: true }, [
+      blockingPair('secret', FP_A),
+      blockingPair('code', FP_B),
+    ]).join('\n');
+    expect(hint).toContain(`/dxkit defer ${FP_A} ${FP_B} --reason="…"`);
   });
 
   it('caps the spelled-out fingerprints and points at the table for the rest', () => {

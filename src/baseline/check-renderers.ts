@@ -1048,30 +1048,28 @@ const COMMENT_DEFER_HINT_MAX_FPS = 8;
 
 /**
  * The PR-comment reply hint under the blocking table: when this repo has the
- * `/dxkit defer` comment workflow installed AND blocking dependency
- * advisories exist, print the exact reply a maintainer can post — with the
- * real fingerprints filled in, copy-paste ready. The lane exists precisely
- * for this moment; a reviewer staring at a blocked PR should not need to
- * know the grammar by heart or leave the conversation.
+ * `/dxkit defer` comment workflow installed, print the exact reply a
+ * maintainer can post to time-box the blocking findings — real fingerprints
+ * filled in, copy-paste ready. The lane exists precisely for this moment; a
+ * reviewer staring at a blocked PR should not need to know the grammar by
+ * heart or leave the conversation.
  *
- * Deliberately scoped: the comment lane defers DEPENDENCY ADVISORIES only
- * (time-boxed, the expiry is the forcing function) — it never allowlists a
- * secret or a code finding from a comment, so the hint only appears when a
- * blocking dep-vuln is present, and never on a repo without the workflow (a
- * dead hint teaches commands that do nothing). Exported for unit testing.
+ * Any blocking finding is deferrable (the repo's owners hold the policy — a
+ * write-access reviewer could land the same allowlist entry by hand); what
+ * the platform keeps is the honesty mechanics: time-boxed always, commenter
+ * attributed, visible in the allowlist delta. The hint never appears on a
+ * repo without the workflow (a dead hint teaches commands that do nothing).
+ * Exported for unit testing.
  */
 export function markdownCommentDeferHint(
   result: Pick<GuardrailCheckResult, 'commentDeferInstalled'>,
   blocking: ReadonlyArray<ClassifiedPair>,
 ): string[] {
   if (!result.commentDeferInstalled) return [];
-  const fps = blocking
-    .filter((p) => p.kind === 'dep-vuln')
-    .map(pairFingerprint)
-    .filter((fp): fp is string => fp !== undefined);
+  const fps = blocking.map(pairFingerprint).filter((fp): fp is string => fp !== undefined);
   if (fps.length === 0) return [];
   const shown = fps.slice(0, COMMENT_DEFER_HINT_MAX_FPS);
-  const advisories = `dependency advisor${fps.length === 1 ? 'y' : 'ies'}`;
+  const findings = `finding${fps.length === 1 ? '' : 's'}`;
   const overflow =
     fps.length > shown.length
       ? ` (first ${shown.length} of ${fps.length} — every fingerprint is in the table above)`
@@ -1079,10 +1077,10 @@ export function markdownCommentDeferHint(
   return [
     `> 💬 **Defer from this conversation** — a maintainer can reply` +
       ` \`/dxkit defer ${shown.join(' ')} --reason="…"\`` +
-      ` to time-box the ${fps.length === 1 ? '' : `${fps.length} `}blocking ${advisories}${overflow}, ` +
-      `or \`/dxkit defer --new-advisories\` for every advisory published since the baseline. ` +
-      `Expires in ${DEFER_ADVISORY_EXPIRY_DAYS} days by default — the expiry forces the fix lane. ` +
-      `Dependency advisories only; fixing the dependency is what actually unblocks.`,
+      ` to time-box the ${fps.length === 1 ? '' : `${fps.length} `}blocking ${findings}${overflow}, ` +
+      `or \`/dxkit defer --new-advisories\` for every dependency advisory published since ` +
+      `the baseline. Expires in ${DEFER_ADVISORY_EXPIRY_DAYS} days by default — the expiry is ` +
+      `the forcing function; fixing the findings is what actually unblocks.`,
     '',
   ];
 }
