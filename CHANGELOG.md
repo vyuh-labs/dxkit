@@ -5,6 +5,27 @@ All notable changes to `@vyuhlabs/dxkit` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.3.3] - 2026-07-30
+
+### Fixed
+
+- **The pre-push floor no longer blocks on pre-existing phantom imports.**
+  A branch that touches a dependency manifest escalates the floor's
+  import-resolution check to the whole tree — correct, since a lockfile
+  change alters module resolution everywhere. But the pre-push surface had
+  no way to tell a failure the change caused from debt the repository
+  already carried, so a chore branch bumping one unrelated lockfile entry
+  could hard-block on imports that were never declared in any manifest at
+  the merge base either. Pre-push now checks each unresolved specifier
+  against the base's own manifests and source: one that was provably
+  already unresolvable there (absent from every base manifest, already
+  imported in base source) is disclosed as pre-existing and warns. Every
+  uncertain case still blocks — a specifier the base lockfile provided
+  transitively (the genuine un-hoisting class), a newly added import, or
+  an unreadable base.
+- Drift lines no longer render an empty recorded value as a truncated
+  arrow ("… → "); it now reads `(empty)`, distinct from `(absent)`.
+
 ## [4.3.2] - 2026-07-30
 
 The honesty patch. Three fixes that share one shape: a correct mechanism was
