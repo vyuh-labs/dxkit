@@ -71,6 +71,8 @@ import { describeRecallDrift, diffRecall } from './recall';
 import type { RecallDrift } from './recall';
 import { collectAttributionGaps } from './attribution-gap';
 import type { AttributionGap } from './attribution-gap';
+import { collectExpiryProjection } from './expiry-projection';
+import type { ExpiryProjection } from './expiry-projection';
 import { evaluateFlowGateForGuardrail } from './flow-gate-check';
 import type { FlowGateOutcome } from './flow-gate-check';
 import { evaluateSchemaDriftGateForGuardrail } from './schema-drift-gate-check';
@@ -327,6 +329,16 @@ export interface GuardrailCheckResult {
    * mismatch gets. Empty on a healthy run. See `src/baseline/attribution-gap.ts`.
    */
   readonly attributionGaps: ReadonlyArray<AttributionGap>;
+  /**
+   * What this run's ACTIVE allowlist suppressions will do when their windows
+   * expire — how many will block, how many will warn, and how soon. REQUIRED so
+   * a new surface cannot render the check without the projection existing; it
+   * never affects the verdict or the exit code (expiry is already the forcing
+   * function, and blaming an author for someone else's lapsing deferral would be
+   * a false block). Empty `lapsing` on the overwhelming majority of runs, in
+   * which case renderers print nothing. See `src/baseline/expiry-projection.ts`.
+   */
+  readonly suppressionExpiry: ExpiryProjection;
   /** Allowlist entries added / removed between the baseline's
    *  commit SHA and the current working tree. Renderers (the PR
    *  comment markdown in particular) surface this so reviewers
@@ -989,6 +1001,20 @@ export async function runGuardrailCheck(
   // while one exists the run cannot render PASSED.
   const attributionGaps = collectAttributionGaps(filteredPairs, envelopeDrift.recallDrift);
 
+  // The lapse projection: what today's active suppressions will cost when their
+  // windows close. Reads the same pair set the verdict reads (post
+  // --changed-only filter) and the same `now` the suppression decision used, so
+  // a pair cannot be treated as suppressed here and lapsing on a different day.
+  // Disclosure only — it is deliberately absent from `blocks` / `warns` below.
+  const suppressionExpiry = collectExpiryProjection({
+    pairs: filteredPairs,
+    flowGate,
+    schemaDriftGate,
+    dupGate,
+    pairedGate,
+    now,
+  });
+
   return {
     mode,
     ...(baselinePath !== undefined ? { baselinePath } : {}),
@@ -1008,6 +1034,7 @@ export async function runGuardrailCheck(
     warns:
       baseWarns || flowGate.warns || schemaDriftGate.warns || dupGate.warns || pairedGate.warns,
     attributionGaps,
+    suppressionExpiry,
     allowlistDelta,
     refExcludedKinds,
     // Capture-deferral (Rule 20): classes the committed baseline could not

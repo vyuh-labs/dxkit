@@ -79,8 +79,10 @@ import { runCommentDefer } from './comment-defer';
 import {
   ALLOWLIST_FILENAME,
   ALL_MODES,
+  SOON_TO_EXPIRE_DAYS,
   addEntry,
   auditAllowlist,
+  daysUntilDate,
   emptyAllowlistFile,
   findEntry,
   isEntryActive,
@@ -506,10 +508,11 @@ export async function runAllowlistDefer(cwd: string, opts: AllowlistDeferOpts): 
   }
 }
 
-/** Whole days from today (UTC) to an ISO date — for the defer summary line. */
+/** Whole days from today (UTC) to an ISO date — for the defer summary line.
+ *  Delegates to the ONE day-math home; the clamp is display-only (a defer
+ *  window is always in the future, so it never fires in practice). */
 function daysUntil(iso: string): number {
-  const ms = new Date(`${iso}T00:00:00Z`).getTime() - Date.now();
-  return Math.max(0, Math.round(ms / 86_400_000));
+  return Math.max(0, daysUntilDate(iso));
 }
 
 // ─── list ─────────────────────────────────────────────────────────────────
@@ -619,7 +622,7 @@ export async function runAllowlistAudit(cwd: string, opts: AllowlistAuditOpts): 
   }
 
   const total = file.entries.length;
-  const horizon = opts.soonToExpireDays ?? 14;
+  const horizon = opts.soonToExpireDays ?? SOON_TO_EXPIRE_DAYS;
   logger.info(
     `Allowlist audit: ${total} entr${total === 1 ? 'y' : 'ies'} ` +
       `(mode=${file.mode}); soon-to-expire window=${horizon} days`,

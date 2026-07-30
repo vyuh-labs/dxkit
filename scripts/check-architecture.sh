@@ -1094,6 +1094,30 @@ if [ -n "$ROGUE_COMMENT_FALLBACK" ]; then
   ERRORS=$((ERRORS + 1))
 fi
 
+# Rule 3: expiry day arithmetic lives in src/allowlist/file.ts only.
+# The class (4.3.1, the expiry cliff): "how many days until this lapses" was
+# computed in THREE places — auditAllowlist's buckets, a private daysUntil() in
+# the defer summary (which clamped negatives and read Date.now() directly), and
+# the guardrail's new lapse projection. Two consumers holding different shapes of
+# one concept (a full entry vs the bare expiresAt string) is the 2.30 setup, and
+# a surface that disagrees with doctor about the same date destroys trust in
+# both. daysUntilDate / daysUntilExpiry / SOON_TO_EXPIRE_DAYS are the one home;
+# test/allowlist-expiry-parity.test.ts is the semantic net that grep cannot be.
+ROGUE_EXPIRY_MATH=$(grep -rnE "expiresAt[^;]*(new Date\(|getTime\(\))|(new Date\(|getTime\(\))[^;]*expiresAt" src/ 2>/dev/null \
+  | grep -v "^src/allowlist/file.ts:" \
+  | grep -v "// expiry-daymath-ok" \
+  | grep -v -E ':[[:space:]]*(//|\*)')
+if [ -n "$ROGUE_EXPIRY_MATH" ]; then
+  echo "❌ Expiry day arithmetic outside the one home:"
+  echo "$ROGUE_EXPIRY_MATH"
+  echo "   → Use daysUntilDate(expiresAt, now) / daysUntilExpiry(entry, now) and"
+  echo "     SOON_TO_EXPIRE_DAYS from src/allowlist/file.ts, so every surface"
+  echo "     (doctor, allowlist audit, the guardrail lapse projection) reports"
+  echo "     the same countdown for the same date."
+  echo "   → Annotate '// expiry-daymath-ok' for justified exceptions (rare)."
+  ERRORS=$((ERRORS + 1))
+fi
+
 # =============================================================================
 # Rule 12: Repo-explore graph queries flow through canonical entry points
 # (added 2026-05-26 with the 2.7 graph foundation).
