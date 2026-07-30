@@ -100,6 +100,20 @@ ${path}` keys, which discards catch-all structure — so it did exact membership
   `test/baseline/changed-files.test.ts` (a file the file-level sibling
   reports changed must carry line attribution). Attribution failure reads
   as UNKNOWN (no demotion), never as "nothing changed".
+- whether the CURRENT side of a guardrail diff actually OBSERVED a kind
+  (Rule 19's REMOVED direction, 4.3.2 — "you fixed 18,406 findings" is an
+  attribution claim too, and an unobserved current side cannot back it) →
+  for `custom-check`, the seam's own record (`CustomChecksUnobserved` from
+  `gatherCustomChecks`, which sees per-check runtime skips); for every other
+  kind, `kindNotObservedReason` in `check.ts`, reading the typed
+  `KIND_OBSERVATION_SCOPE` table (`gather-scope.ts` — a new kind without an
+  observation declaration fails to COMPILE) + the aggregate's per-source
+  provenance (what actually RAN — never a kind↔tool table). Unobserved ⇒ the
+  pair classifies `not_observed` (fixed verdict, never "resolved"), and the
+  REQUIRED `GuardrailCheckResult.notObserved` disclosures reach all three
+  renderers. The matrix net `test/baseline/coverage-parity.test.ts` pins the
+  invariant per kind × surface: observed, or the output says why not —
+  injection-guarded so the net itself is proven to bite.
 - a block rule's required EVIDENCE (which analyzers must gather for it to
   fire) → `BLOCK_RULE_EVIDENCE` in `src/baseline/gather-scope.ts`, typed
   `Record<keyof BrownfieldBlockRules, ...>` so a new rule without an
