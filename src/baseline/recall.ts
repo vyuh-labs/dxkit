@@ -292,8 +292,12 @@ export function describeRecallDrift(drift: RecallDrift): string {
     case 'epoch':
       return `${drift.kind}: dxkit changed what it observes for this kind since the baseline was captured`;
     case 'inputs': {
+      // An empty-string value is a real recorded value (an empty list knob),
+      // distinct from `(absent)` — rendered bare it reads as truncation.
+      const show = (v: string | undefined): string =>
+        v === undefined ? '(absent)' : v === '' ? '(empty)' : v;
       const detail = drift.changed
-        .map((c) => `${c.input} ${c.before ?? '(absent)'} -> ${c.after ?? '(absent)'}`)
+        .map((c) => `${c.input} ${show(c.before)} -> ${show(c.after)}`)
         .join(', ');
       // D4b disclosure: dep-vuln recall keys on the AMBIENT scanner version
       // (e.g. the npm bundled with the local node), so an identical tree can
