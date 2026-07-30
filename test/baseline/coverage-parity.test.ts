@@ -70,11 +70,15 @@ function observationViolations(result: GuardrailCheckResult): string[] {
     const lieState =
       pairs.length === 0 || pairs.every((p) => p.classification.status === 'removed');
     if (!lieState) continue;
+    // Valid channels only. `deferredCapture` is deliberately NOT one: it
+    // discloses what the BASELINE could not capture, and a kind with baseline
+    // entries was by definition captured — so it can never explain that
+    // kind's removed pairs. (Accepting it masked the injection test on the
+    // scanner-less CI job, where every capture defers some class.)
     const disclosed =
       result.notObserved.some((d) => d.kind === kind) ||
       result.refExcludedKinds.some((e) => e.kind === kind) ||
       (kind === 'dep-vuln' && result.depVulnsUnmeasured !== undefined) ||
-      (result.deferredCapture ?? []).length > 0 ||
       result.envelopeDrift.recallDrift.some((d) => d.kind === kind);
     if (!disclosed) violations.push(kind);
   }
