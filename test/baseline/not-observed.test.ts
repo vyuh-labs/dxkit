@@ -164,8 +164,10 @@ describe('an untrusted check over a custom-check baseline (integration)', () => 
     // scale.
     writeFileSync(
       join(dir, 'lint.cjs'),
-      'console.log("src/a.js:1: no-unused-vars broken");\n' +
-        'console.log("src/b.js:2: eqeqeq broken");\n' +
+      // Fixture CONTENT, not test logging: the fake linter's stdout IS the
+      // console.log output the regex parse extracts findings from.
+      'console.log("src/a.js:1: no-unused-vars broken");\n' + // slop-ok
+        'console.log("src/b.js:2: eqeqeq broken");\n' + // slop-ok
         'process.exit(1);\n',
     );
     mkdirSync(join(dir, '.dxkit'), { recursive: true });
