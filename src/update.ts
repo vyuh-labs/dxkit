@@ -5,6 +5,7 @@ import { detect } from './detect';
 import { generate } from './generator';
 import { ShipInstallResult } from './ship-installers';
 import { detectInstallFlags, refreshManagedSurfaces } from './managed-artifacts';
+import { applyPolicyDerivedFlags } from './managed-artifacts-detect';
 import * as logger from './logger';
 import { detectStaleRecall, detectStaleScheme, migrateIdentity } from './baseline/migrate';
 import { createBaseline, gatherScanCoverage } from './baseline/create';
@@ -42,7 +43,19 @@ export function resolveInstallFlags(
   cwd: string,
 ): { flags: InstallFlags; source: 'manifest' | 'workspace-derived' } {
   if (manifest.installFlags) {
-    return { flags: manifest.installFlags, source: 'manifest' };
+    // The manifest records what LANDED at install time; policy records what the
+    // repo has since opted INTO. Both are real, so both are read — the recorded
+    // flags are the base and the policy-derived enables are OR'd over them
+    // through the one derivation (`applyPolicyDerivedFlags`).
+    //
+    // Returning the record verbatim is what made a policy flip a silent no-op:
+    // a lane enabled after init has no entry in the record, `undefined` reads as
+    // off, and `update` skipped the surface forever. Copy first — the manifest
+    // object is not ours to mutate.
+    return {
+      flags: applyPolicyDerivedFlags(cwd, { ...manifest.installFlags }),
+      source: 'manifest',
+    };
   }
   return { flags: detectInstallFlags(cwd), source: 'workspace-derived' };
 }
