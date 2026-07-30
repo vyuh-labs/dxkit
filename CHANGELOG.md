@@ -5,6 +5,111 @@ All notable changes to `@vyuhlabs/dxkit` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.3.2] - 2026-07-30
+
+The honesty patch. Three fixes that share one shape: a correct mechanism was
+quietly switching off part of the guardrail's coverage, and nothing in the
+output said so. A gate that silently stops checking something is worse than
+a gate that never checked it, because everyone still believes it does. After
+this release, every claim the check makes — "this is net-new", "this was
+resolved", "this passed" — is backed by what dxkit actually observed, and
+anything it could not observe is named in the output.
+
+### Same-repo pull requests get their check gate back
+
+Since 4.2, the shipped guardrails workflow treated every pull request as
+untrusted content. That was the right call for fork heads — a repo-declared
+lint or check command must never execute code a stranger pushed — but it
+also disabled custom-check and lint gating on every same-repo pull request,
+silently. Net-new lint errors have not gated at PR time since then; they
+only gated at pre-push and in the loop Stop-gate, and nobody chose that.
+
+The trust boundary is now keyed on where the head lives, not on the event: a
+fork head stays fully untrusted, and a same-repo head — pushed by someone
+with write access, whose code already executes in the repository's other PR
+workflows — runs trusted, so lint and custom checks gate at PR time again.
+This is the same line GitHub's own secrets model draws. The decision is made
+once, in a dedicated workflow step both analysis steps read, and every edge
+fails closed: a deleted fork's missing head reads as untrusted, and the flow
+console skips rather than run without a trust decision. Existing installs
+pick up the new workflow on their next `vyuh-dxkit update`.
+
+### Not observed is never "resolved"
+
+When a check cannot execute — an untrusted tree, an unmet environment, a
+missing tool, a timeout — the current side of the diff holds none of its
+findings. The matcher then compared a baseline full of grandfathered
+findings against that empty side and reported every one of them as
+Resolved. On one real repository, a pull-request comment congratulated a PR
+for resolving a 18,406-finding lint backlog it had not touched, in a
+comment brushing GitHub's size limit, with no hint anything was skipped.
+
+"You fixed this" is an attribution claim, exactly like "you introduced
+this", and it now meets the same bar. A finding whose check did not execute
+this run is classified `not_observed`: it never blocks, never warns, never
+counts as resolved, and can never be made to gate by policy. All three
+surfaces disclose the aggregate — one line per skipped check, with the
+cause and the count ("check X skipped (untrusted tree) — N baseline
+findings not re-verified this run") — instead of listing thousands of rows.
+The markdown Resolved table is also capped at a 100-row sample regardless,
+with the exact count in the summary, so a large genuine cleanup can no
+longer push the PR comment past GitHub's 65,536-byte limit.
+
+### Every kind, every surface: observed, or the output says why not
+
+The same honesty now extends past the check runner to every finding kind on
+every surface. Two more silent seams were found and closed by the same
+mechanism:
+
+- A run with a narrowed analysis scope (the incremental fast path) gathered
+  nothing for the scoped-out kinds, so their whole baseline read as
+  resolved. Each kind now declares which gathers its observation depends
+  on, in one typed table a new kind cannot skip, and a scoped-out kind's
+  findings read `not_observed` with the scope named.
+- A run whose secret, code-pattern, or dependency scanner did not run read
+  that kind's baseline as resolved. Observation is now checked against the
+  scan's own per-source record of what actually ran.
+
+Behind it sits a coverage-parity test net that drives the real guardrail
+across surfaces (trusted, untrusted, scoped, ref-based) and asserts the one
+invariant for every kind: observed, or disclosed. The net is
+injection-proofed — it reconstructs the old dishonest output and proves it
+gets flagged — so the next silently-switched-off coverage path fails a test
+instead of reaching a user.
+
+### Any blocking finding is deferrable — and the PR comment says how
+
+The time-boxed defer lane (the local `allowlist defer` and the `/dxkit
+defer` PR-comment command, one core) was restricted to dependency
+advisories. That line was friction, not a boundary: a reviewer with write
+access could always land the identical allowlist entry by editing the file,
+so the restriction only pushed people to the clumsier path. Explicit-
+fingerprint deferral now accepts any blocking finding — the repository's
+owners hold the suppression policy; dxkit's job is the honesty mechanics,
+which are unchanged: every deferral is time-boxed with a short default
+expiry, attributed, visible in the pull request's allowlist delta, and now
+kind-stamped from the last verdict so an entry suppresses exactly the
+finding it names, never anything else.
+
+One scope is kept on purpose, and it is about bulk, not kinds:
+`--from-last-check` / `--new-advisories` still sweeps only dependency
+advisories — the one class that arrives in batches through no fault of the
+diff — and names everything it left alone. A bulk sweep must never silently
+absorb a net-new secret standing next to the advisories; those are deferred
+one explicit fingerprint at a time, deliberately.
+
+And the lane is now discoverable at the moment it matters: when a pull
+request is blocked and the comment-commands workflow is installed, the
+guardrail comment itself carries the copy-paste-ready reply —
+`/dxkit defer <fingerprints> --reason="…"` with the real fingerprints
+filled in. The hint never appears on repositories without the workflow.
+
+### Fixed
+
+- The lapse-projection headline now agrees with itself when exactly one
+  suppression is expiring ("1 allowlist suppression expires … when it
+  lapses").
+
 ## [4.3.1] - 2026-07-29
 
 The expiry cliff. An allowlist deferral is a promise with a date on it, and
