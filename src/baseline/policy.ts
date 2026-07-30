@@ -349,6 +349,21 @@ export interface BrownfieldPolicy {
    */
   readonly depBump?: { readonly enabled?: boolean; readonly allowMajor?: boolean };
   /**
+   * The expiry decision surface: while the scheduled refresh is running anyway,
+   * maintain ONE GitHub issue naming the allowlist suppressions whose windows
+   * close inside the shared horizon, who accepted each, and when. Opt-in,
+   * default OFF — it is the only dxkit lane that opens an issue on its own
+   * initiative, and enabling it grants the refresh workflow `issues: write`
+   * (run `vyuh-dxkit update` after flipping it so the workflow is re-rendered).
+   *
+   * The guardrail check already warns every author and reviewer during the
+   * window (the lapse projection). This closes the remaining hole: a repo where
+   * nobody opens a PR for a week gets no warning at all, and the person who
+   * accepted the deferral is never addressed. Never gates — the expiry itself
+   * remains the forcing function.
+   */
+  readonly expiryNotice?: { readonly enabled?: boolean };
+  /**
    * Recall-attribution tuning (Rule 19). Absent ⟹ `inputs: 'resolved'`.
    */
   readonly recall?: RecallPolicy;

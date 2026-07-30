@@ -144,6 +144,16 @@ export const POSTURE_KNOBS: readonly PostureKnob[] = [
       'a CI-performance transport (graph.json Actions-cache), not a gate/posture — rebuild-on-demand is the correct default and changes no finding, so there is no behavioral difference to recommend. Installed by init/update when set to "cache"; documented in policy.md.',
   },
   {
+    path: 'expiryNotice.enabled',
+    command: 'allowlist',
+    requiresPlan: false,
+    requiresRecommend: true,
+    note:
+      'enabling grants the managed refresh workflow `issues: write`, which configure’s ' +
+      'policy-only merge-write cannot place — so no planConfig; recommendExpiryNotice surfaces ' +
+      'the lane once the repo actually holds suppressions that expire.',
+  },
+  {
     path: 'depBump.enabled',
     command: 'deps',
     requiresPlan: false,

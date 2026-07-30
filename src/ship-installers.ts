@@ -901,6 +901,10 @@ export function installCiBaselineRefresh(
       // Policy-driven through the ONE normalizer; the 'tree' template has no
       // schedule (it refreshes per push), so the key is simply absent there.
       __DXKIT_REFRESH_CRON__: baselineRefreshCron({ baseline: readPolicyBaselineSection(cwd) }),
+      // The permission block, transport-derived + knob-derived (the expiry
+      // notice needs `issues: write`). Rendered from ONE helper so the workflow
+      // can never hold a permission the lane does not need, or lack one it does.
+      __DXKIT_REFRESH_PERMISSIONS__: refreshPermissionsBlock(cwd, plan.transport),
       [CI_RUNTIME_SETUP_KEY]: renderCiRuntimeSetup(cwd),
       // Multi-env capture (Rule 20 / design §3.4): per-host fragment jobs +
       // the merge before the commit. All three slots render empty on a repo
@@ -1103,6 +1107,33 @@ export function depBumpEnabled(cwd: string): boolean {
   } catch {
     return false;
   }
+}
+
+/** Whether the expiry decision surface is enabled in policy
+ *  (`expiryNotice.enabled: true`). Read here, beside its lane siblings, so the
+ *  refresh lane and the workflow's permission block resolve it from ONE place —
+ *  a lane that runs while the workflow lacks `issues: write` would fail-open
+ *  silently every week. */
+export function expiryNoticeEnabled(cwd: string): boolean {
+  try {
+    return loadPolicyFromCwd(cwd).expiryNotice?.enabled === true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The refresh workflow's `permissions:` block. `contents` is the transport's
+ * own requirement (a tree/branch push needs write; the cache transport writes
+ * no git object at all), and `issues: write` is added ONLY when the expiry
+ * notice is enabled — so a repo that never opts in keeps a workflow
+ * byte-identical to the one it has today.
+ */
+export function refreshPermissionsBlock(cwd: string, transport: BaselineAnchor): string {
+  const contents = transport === 'cache' ? 'read' : 'write';
+  const lines = [`  contents: ${contents}`];
+  if (expiryNoticeEnabled(cwd)) lines.push('  issues: write');
+  return lines.join('\n');
 }
 
 export function installCiCommentDefer(cwd: string, opts: InstallerOpts = {}): ShipInstallResult {
