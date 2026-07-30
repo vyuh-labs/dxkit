@@ -469,11 +469,15 @@ export async function runAllowlistDefer(cwd: string, opts: AllowlistDeferOpts): 
     logger.fail(result.message);
     process.exit(1);
   }
-  const { added, alreadyPresent, leftBlocking, expiresAt, reason, targets } = result;
+  const { added, alreadyPresent, leftBlocking, expiresAt, reason, targets, advisories } = result;
 
   if (opts.json) {
     process.stdout.write(
-      JSON.stringify({ added, alreadyPresent, leftBlocking, expiresAt, reason }, null, 2) + '\n',
+      JSON.stringify(
+        { added, alreadyPresent, leftBlocking, expiresAt, reason, advisories },
+        null,
+        2,
+      ) + '\n',
     );
     return;
   }
@@ -497,6 +501,9 @@ export async function runAllowlistDefer(cwd: string, opts: AllowlistDeferOpts): 
       `  Commit .dxkit/allowlist.json (via your PR) — the expiry re-blocks these in ` +
         `${daysUntil(expiresAt)} day(s), so plan the dependency fix now.`,
     );
+    // The creation guard: what this window will and will not get you. Warned
+    // rather than info'd — these are the facts a caller most needs to have read.
+    for (const a of advisories) logger.warn(`  ${a}`);
   }
   if (alreadyPresent.length > 0) {
     logger.info(`Skipped ${alreadyPresent.length} fingerprint(s) already allowlisted.`);

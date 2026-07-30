@@ -241,6 +241,14 @@ export function runCommentDeferCore(
       'The allowlist commit below re-runs the guardrail check. The expiry is the ' +
         'forcing function: these re-block when it lapses, so plan the dependency fix now.',
     );
+    // The creation guard, carried into the thread. The reviewers reading this PR
+    // are the people who will live with the deferral, and this is the only place
+    // they will see whether the window is keepable (Rule 2: the same advisories
+    // the local CLI prints, from the same core).
+    if (result.advisories.length > 0) {
+      lines.push('');
+      for (const a of result.advisories) lines.push(`> ⚠️ ${a}`);
+    }
   } else {
     lines.push(
       result.alreadyPresent.length > 0
