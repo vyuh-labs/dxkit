@@ -50,6 +50,7 @@ import { isMaliciousAdvisory } from '../analyzers/security/malicious';
 import { gatherCurrentScan, scanToBaselineFile } from './create';
 import type { CurrentScan } from './create';
 import { describeCheckSkip } from '../analyzers/custom-checks/types';
+import { MANAGED_SHIP_SURFACES } from '../managed-artifacts';
 import { DEFAULT_BASELINE_NAME, pathForBaseline, readBaselineFile } from './baseline-file';
 import type { BaselineFile, DeferredCaptureClass } from './baseline-file';
 import { diffCoverage } from './coverage';
@@ -500,6 +501,17 @@ export interface GuardrailCheckResult {
    *  untrusted PRs and in ref-based mode. Opt-in (default off — no rules);
    *  `undefined` when off or when no base commit is resolvable. */
   readonly pairedGate?: PairedGateOutcome;
+  /**
+   * Present when the repo has the PR-comment defer workflow installed
+   * (`/dxkit defer …` typed by a reviewer with write access). The markdown
+   * renderer reads it to print a copy-pasteable reply hint under blocking
+   * dependency advisories — the lane exists precisely for that moment, and a
+   * reviewer staring at a blocked PR should not have to know the grammar by
+   * heart. Detected through the ONE managed-surface registry (Rule 15), never
+   * a second workflow-path literal. Absent ⇒ no hint (a dead hint teaches
+   * people commands that do nothing).
+   */
+  readonly commentDeferInstalled?: true;
   /** Set when the CURRENT dependency-vulnerability scan could not run — the
    *  scanner was absent / timed out / failed — AND the scan was actually
    *  REQUESTED this run (not incrementally skipped because no manifest changed,
@@ -1192,6 +1204,9 @@ export async function runGuardrailCheck(
     notObserved: notObservedDisclosures,
     allowlistDelta,
     refExcludedKinds,
+    ...(MANAGED_SHIP_SURFACES.find((s) => s.id === 'ci-comment-defer')?.detectPresent?.(cwd)
+      ? { commentDeferInstalled: true as const }
+      : {}),
     // Capture-deferral (Rule 20): classes the committed baseline could not
     // observe at capture. Committed modes only — ref-based has no committed
     // baseline to complete, so the "completing on CI" framing does not apply.

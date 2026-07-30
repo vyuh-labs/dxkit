@@ -1,8 +1,10 @@
 /**
  * The PR-comment defer lane: `/dxkit defer …` typed by a reviewer on a
  * blocked PR, executed by the `dxkit-comment-defer` managed workflow, applied
- * through the ONE defer core (`executeDefer` — the same semantics, refusals,
- * and kind restriction as the local `allowlist defer`).
+ * through the ONE defer core (`executeDefer` — the same semantics and
+ * refusals as the local `allowlist defer`: any blocking finding by explicit
+ * fingerprint, dependency advisories in bulk via `--new-advisories`, always
+ * time-boxed and attributed).
  *
  * SECURITY (load-bearing). A comment body is UNTRUSTED TEXT, even from a
  * write-permission author:
@@ -122,7 +124,7 @@ export function parseCommentCommand(body: string): ParseOutcome {
       ok: false,
       refusal:
         'Nothing to defer — pass one or more fingerprints (from the guardrail report) ' +
-        'or `--new-advisories` to defer every blocking dep-vuln of the check that just ran.',
+        'or `--new-advisories` to defer every blocking dependency advisory of the check that just ran.',
     };
   }
   return {
@@ -228,18 +230,19 @@ export function runCommentDeferCore(
   const lines: string[] = [];
   if (result.added.length > 0) {
     lines.push(
-      `**dxkit:** deferred ${result.added.length} dep-vuln finding${result.added.length === 1 ? '' : 's'} ` +
+      `**dxkit:** deferred ${result.added.length} finding${result.added.length === 1 ? '' : 's'} ` +
         `(category=deferred, expires **${result.expiresAt}**), requested by @${author}.`,
       '',
     );
     for (const fp of result.added) {
       const meta = result.targets.get(fp);
-      lines.push(`- \`${fp}\`${meta?.locator ? ` — ${meta.locator}` : ''}`);
+      const kind = meta?.kind ? ` — ${meta.kind}` : '';
+      lines.push(`- \`${fp}\`${kind}${meta?.locator ? ` ${meta.locator}` : ''}`);
     }
     lines.push(
       '',
       'The allowlist commit below re-runs the guardrail check. The expiry is the ' +
-        'forcing function: these re-block when it lapses, so plan the dependency fix now.',
+        'forcing function: these re-block when it lapses, so plan the fix now.',
     );
     // The creation guard, carried into the thread. The reviewers reading this PR
     // are the people who will live with the deferral, and this is the only place
@@ -259,7 +262,8 @@ export function runCommentDeferCore(
   if (result.leftBlocking.length > 0) {
     lines.push(
       '',
-      `Left blocking (not dep-vulns — defer refuses to touch them): ${result.leftBlocking.join('; ')}.`,
+      `Left blocking (\`--new-advisories\` sweeps only dependency advisories — defer these ` +
+        `explicitly: \`/dxkit defer <fingerprint> --reason="…"\`): ${result.leftBlocking.join('; ')}.`,
     );
   }
 

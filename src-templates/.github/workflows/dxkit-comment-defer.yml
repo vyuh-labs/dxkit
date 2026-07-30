@@ -6,9 +6,9 @@ name: dxkit comment commands
 #   /dxkit defer <fingerprint> [<fingerprint>…] [--expires=+7d] [--reason="…"]
 #   /dxkit defer --new-advisories
 #
-# on a pull request (typically one the dxkit-guardrails check blocked for
-# newly published advisories), and this workflow applies the same time-boxed,
-# dep-vuln-only deferral `vyuh-dxkit allowlist defer` performs locally:
+# on a pull request (typically one the dxkit-guardrails check blocked), and
+# this workflow applies the same time-boxed deferral
+# `vyuh-dxkit allowlist defer` performs locally:
 # it re-runs the guardrail on the PR head to warm the verdict cache (so
 # fingerprints are validated against what is actually blocking), writes the
 # allowlist entries, commits `.dxkit/allowlist.json` to the PR branch, and
@@ -23,8 +23,12 @@ name: dxkit comment commands
 #     head is untrusted content);
 #   - the cache-warming guardrail run passes --untrusted, so no repo-declared
 #     command executes against the PR head here;
-#   - every entry is dep-vuln-only with a short default expiry — the same
-#     "expiry is the forcing function" model as the local command.
+#   - every entry is time-boxed with a short default expiry and attributed to
+#     the commenter — the same "expiry is the forcing function" model as the
+#     local command. Any blocking finding is deferrable by fingerprint (the
+#     commenter already holds write access; the allowlist commit is visible
+#     in the PR diff); `--new-advisories` bulk-sweeps dependency advisories
+#     only.
 
 on:
   issue_comment:

@@ -17,9 +17,9 @@
  * - `list` — print every entry across the file-level allowlist.
  * Reads only; no mutation. Honors `--json` for structured output.
  *
- * - `defer [<fp>…] [--from-last-check]` — bulk, dep-vuln-only,
- * time-boxed deferral of newly published advisories (D4). Short
- * default expiry; refuses every other finding kind.
+ * - `defer [<fp>…] [--from-last-check]` — time-boxed deferral of blocking
+ * findings (any kind by explicit fingerprint; `--from-last-check` bulk-sweeps
+ * dependency advisories only). Short default expiry.
  *
  * - `show <fingerprint>` — print one entry's full detail. Falls
  * back to a "no entry found" message when the fingerprint isn't
@@ -437,19 +437,20 @@ export interface AllowlistDeferOpts {
 }
 
 /**
- * `vyuh-dxkit allowlist defer` — bulk, dep-vuln-only, time-boxed deferral of
- * newly published advisories (D4). Productizes the incident bridge script:
- * one command adds `category=deferred` entries with a SHORT shared expiry for
- * either an explicit fingerprint list or the blocking dep-vulns of the last
- * same-tree guardrail run (`--from-last-check`).
+ * `vyuh-dxkit allowlist defer` — time-boxed deferral of blocking findings.
+ * One command adds `category=deferred` entries with a SHORT shared expiry for
+ * an explicit fingerprint list (any blocking kind — the repo's owners hold
+ * the policy; see the core's header for the boundary argument) or the
+ * blocking dep-vulns of the last same-tree guardrail run
+ * (`--from-last-check`, the advisory bulk lane).
  *
- * Deliberately narrow so it can never become a bulk bypass:
- *   - every entry is minted `kind=dep-vuln` — suppression matches on kind, so
- *     a deferred fingerprint can never waive a secret / SAST / any other
- *     finding even if someone pastes the wrong id;
- *   - `--from-last-check` defers ONLY dep-vuln findings and names anything it
- *     left blocking; an explicit fingerprint the cache shows as a non-dep-vuln
- *     finding is refused loudly;
+ * The honesty mechanics, kept regardless of kind:
+ *   - each entry is kind-stamped from the verdict cache — suppression matches
+ *     on kind, so a deferred fingerprint waives exactly the finding it names;
+ *   - `--from-last-check` sweeps ONLY dependency advisories (the one class
+ *     that arrives in batches through no fault of the diff) and names
+ *     anything it left blocking — a bulk sweep must not silently absorb a
+ *     net-new secret standing next to the advisories;
  *   - the expiry is required-by-category and defaults SHORT
  *     (`DEFER_ADVISORY_EXPIRY_DAYS` days) — the window is the forcing
  *     function back into the fix lane.
@@ -490,16 +491,17 @@ export async function runAllowlistDefer(cwd: string, opts: AllowlistDeferOpts): 
     );
   } else {
     logger.success(
-      `Deferred ${added.length} dep-vuln finding${added.length === 1 ? '' : 's'} ` +
+      `Deferred ${added.length} finding${added.length === 1 ? '' : 's'} ` +
         `(category=deferred, expires ${expiresAt}).`,
     );
     for (const fp of added) {
       const meta = targets.get(fp);
-      logger.info(`  ${fp}${meta?.locator ? `  ${meta.locator}` : ''}`);
+      const kind = meta?.kind ? `[${meta.kind}] ` : '';
+      logger.info(`  ${fp}  ${kind}${meta?.locator ?? ''}`.trimEnd());
     }
     logger.info(
       `  Commit .dxkit/allowlist.json (via your PR) — the expiry re-blocks these in ` +
-        `${daysUntil(expiresAt)} day(s), so plan the dependency fix now.`,
+        `${daysUntil(expiresAt)} day(s), so plan the fix now.`,
     );
     // The creation guard: what this window will and will not get you. Warned
     // rather than info'd — these are the facts a caller most needs to have read.
@@ -510,7 +512,8 @@ export async function runAllowlistDefer(cwd: string, opts: AllowlistDeferOpts): 
   }
   if (leftBlocking.length > 0) {
     logger.warn(
-      `Left blocking (not dep-vulns — defer refuses to touch them): ${leftBlocking.join('; ')}`,
+      `Left blocking (--from-last-check sweeps only dependency advisories; defer these ` +
+        `explicitly by fingerprint): ${leftBlocking.join('; ')}`,
     );
   }
 }

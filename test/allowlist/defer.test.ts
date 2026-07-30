@@ -172,15 +172,19 @@ describe('allowlist defer <fingerprint>…', () => {
     );
   });
 
-  it('refuses an explicit fingerprint the last run reports as a non-dep-vuln finding', async () => {
+  it('defers an explicit non-dep-vuln fingerprint, kind-stamped from the cache (4.3.2)', async () => {
     const d = mkRepo();
     seedVerdict(d, [SECRET]);
-    const exit = mockExit();
-    await expect(
-      runAllowlistDefer(d, { fingerprints: [SECRET.fingerprint], reason: 'x' }),
-    ).rejects.toThrow('process.exit(1)');
-    exit.mockRestore();
-    expect(loadAllowlist(d)).toBeNull();
+    await runAllowlistDefer(d, {
+      fingerprints: [SECRET.fingerprint],
+      reason: 'rotating the credential in INFRA-42',
+    });
+    const file = loadAllowlist(d);
+    const entry = file?.entries.find((e) => e.fingerprint === SECRET.fingerprint);
+    // Kind-stamped so suppression matches exactly the finding it names —
+    // never a cross-kind waiver even with the lane opened to every kind.
+    expect(entry).toMatchObject({ kind: 'secret', category: 'deferred' });
+    expect(entry?.expiresAt).toBeDefined();
   });
 
   it('requires a reason and at least one source', async () => {
