@@ -129,6 +129,38 @@ __DXKIT_CI_RUNTIME_SETUP__
           restore-keys: |
             dxkit-graph-
 
+      # Tree-trust decision, made ONCE and read by every step that analyzes
+      # the checked-out source (guardrail check, flow console).
+      #
+      # S-05 (4.0.4) keyed this on the pull_request event: every PR ran with
+      # the plugin-trust boundary active, which also disabled repo-declared
+      # custom-check/lint commands — so net-new lint errors silently stopped
+      # gating at PR time (4.3.2). The boundary is now keyed on FORK-ness,
+      # the same line GitHub's own secrets model draws:
+      #   - a FORK head is third-party input → --untrusted. Executable
+      #     flow/extension plugins and repo-declared check commands are
+      #     disabled (disclosed, not silent); plugin-derived routes still
+      #     reach the gate through the committed served.json snapshot,
+      #     produced by trusted default-branch runs.
+      #   - a SAME-REPO head was pushed by someone with write access, whose
+      #     code already executes in this repo's other PR workflows (test
+      #     jobs run the repo's own scripts). Running its committed check
+      #     commands here adds no new surface, and keeps lint/custom-check
+      #     gating LIVE at PR time.
+      # A missing head repo (deleted fork) compares unequal → untrusted.
+      # Fail closed.
+      - name: Resolve tree trust
+        id: trust
+        env:
+          DXKIT_PR_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+        run: |
+          UNTRUSTED=""
+          if [ "${GITHUB_EVENT_NAME}" = "pull_request" ] && [ "${DXKIT_PR_HEAD_REPO}" != "${GITHUB_REPOSITORY}" ]; then
+            echo "fork PR head (${DXKIT_PR_HEAD_REPO:-unknown}) — analyzing as untrusted content"
+            UNTRUSTED="--untrusted"
+          fi
+          echo "flag=$UNTRUSTED" >> "$GITHUB_OUTPUT"
+
       # Capture the markdown report regardless of exit code so we can
       # post it as a PR comment even when the guardrail blocks.
       - name: Run guardrail check
@@ -163,13 +195,8 @@ __DXKIT_CI_RUNTIME_SETUP__
             EXTRA="--mode ref-based --ref origin/${DXKIT_PR_BASE:-$DEFAULT_BRANCH}"
           fi
           set +e
-          # S-05 (4.0.4): a pull_request head is third-party input — run with
-          # the plugin-trust boundary ACTIVE. Executable flow/extension
-          # plugins are disabled (disclosed, not silent); plugin-derived
-          # routes still reach the gate through the committed served.json
-          # snapshot, which was produced from trusted default-branch runs.
-          UNTRUSTED=""
-          if [ "${GITHUB_EVENT_NAME}" = "pull_request" ]; then UNTRUSTED="--untrusted"; fi
+          # Trust boundary decided once in the 'Resolve tree trust' step above.
+          UNTRUSTED="${{ steps.trust.outputs.flag }}"
           "${DXKIT}" guardrail check $EXTRA $UNTRUSTED --markdown > guardrail-report.md
           code=$?
           echo "exit_code=$code" >> "$GITHUB_OUTPUT"
@@ -220,7 +247,11 @@ __DXKIT_CI_RUNTIME_SETUP__
       # Self-skips (produces nothing to upload) on a repo with no UI→API surface.
       - name: Generate flow console
         id: console
-        if: always()
+        # always() so the console still generates when the gate BLOCKED — but
+        # never without a resolved trust decision: if the trust step did not
+        # run (an earlier step failed), its empty output would read as
+        # trusted, which on a fork PR is fail-open. Skip instead.
+        if: always() && steps.trust.outcome == 'success'
         run: |
           if [ -x ./node_modules/.bin/vyuh-dxkit ]; then
             DXKIT=./node_modules/.bin/vyuh-dxkit
@@ -228,8 +259,8 @@ __DXKIT_CI_RUNTIME_SETUP__
             DXKIT=vyuh-dxkit
           fi
           set +e
-          UNTRUSTED=""
-          if [ "${GITHUB_EVENT_NAME}" = "pull_request" ]; then UNTRUSTED="--untrusted"; fi
+          # Trust boundary decided once in the 'Resolve tree trust' step above.
+          UNTRUSTED="${{ steps.trust.outputs.flag }}"
           "${DXKIT}" flow console $UNTRUSTED --diff "${{ github.event.pull_request.base.sha }}" \
             --out flow-console.html --json > console.json 2>/dev/null
           set -e
