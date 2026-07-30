@@ -5,6 +5,84 @@ All notable changes to `@vyuhlabs/dxkit` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.3.1] - 2026-07-29
+
+The expiry cliff. An allowlist deferral is a promise with a date on it, and
+dxkit already enforced the date — a lapsed suppression stops suppressing and
+the finding comes back. What it never did was tell anyone the date was
+coming. This release closes that end to end, and every part of it is
+disclosure: nothing here adds a new way to fail a build.
+
+### What went wrong
+
+Two individually-correct mechanisms compose into a cliff. An allowlist entry
+is deliberately held OUT of the baseline, so an accepted finding can never
+grandfather itself in and defeat its own expiry; the scheduled refresh is
+therefore forbidden from absorbing it. So when a batch of dependency
+advisories was deferred for six days with nothing available to fix them, all
+of them came back on the same morning — with no warning as the date
+approached, no decision surface at the lapse, and the cost landing on
+whoever opened the next pull request.
+
+The warning already existed, and was never delivered. `allowlist audit` has
+computed which entries expire soon, with days remaining, since the allowlist
+shipped. Its only consumers were `doctor` and the audit command itself — two
+things nobody runs on an ordinary day.
+
+### The guardrail check now says what a lapse will cost
+
+Every check reports the suppressions whose windows close within 14 days, how
+soon the nearest one is, and — because the check holds each finding's
+classification — how many will BLOCK versus warn when they lapse. It reads
+on all three surfaces: a console section, the pull-request comment, and a
+`suppressionExpiry` field in `--json` that is always present so an agent can
+read it without probing. All five suppression sources are covered, not just
+findings: the flow, schema-drift, seam-duplicate and paired-change gates
+each carry their own expiring suppressions.
+
+Nothing about it gates. A lapse that has not happened is not a regression,
+and blaming an author for somebody else's expiring deferral would be a false
+block. When nothing is expiring, every surface prints nothing at all.
+
+### Deferring now tells you whether the promise is keepable
+
+`allowlist defer` (and the `/dxkit defer` pull-request reply, from the same
+core) states the facts at the moment the window is chosen: that all N
+findings share one expiry and return together; that no automated remediation
+lane is enabled, so nothing in the repo will close them before the date;
+that a window shorter than the dep-bump lane's weekly cadence may shut
+before it runs once. Each fires only on its own condition. And an expiry
+already in the past is now refused outright rather than writing an entry
+that suppresses nothing while the finding keeps blocking.
+
+### Optional: one issue that reaches the owner when no PR is open
+
+New `expiryNotice.enabled` (default off). While the scheduled baseline
+refresh is running anyway, it maintains ONE GitHub issue naming the
+suppressions about to lapse, who accepted each, and when — and closes that
+issue once nothing is lapsing. It covers the case the per-check delivery
+cannot: a quiet week with no pull request open, where the lapse then
+surprises the next author.
+
+Enabling it grants the refresh workflow `issues: write`, so it is opt-in by
+construction; a repo that does not enable it keeps a byte-identical
+workflow. It never gates, it names owners without assigning anyone (an
+`addedBy` email is not a GitHub login, and a wrong assignment puts a
+stranger's name on someone else's deferral), and it fails open with a stated
+reason if issues are disabled or the token lacks the permission. Run
+`vyuh-dxkit policy sync --apply` to have the knob and its guide link appear
+in an existing policy file, then `vyuh-dxkit update` after enabling.
+
+### Internal
+
+Expiry day arithmetic and the 14-day horizon now have one home shared by
+every consumer, with a parity test asserting the audit buckets and the
+check's projection can never disagree about the same date, and an
+architecture rule keeping the arithmetic there. Three implementations of it
+existed before this release, one of which read the clock directly and
+clamped negatives. Also fixed: the console printed `Path: undefined` on
+every ref-based run.
+
 ## [4.3.0] - 2026-07-29
 
 The policy platform and the agentic remediation lane, in one release. The
