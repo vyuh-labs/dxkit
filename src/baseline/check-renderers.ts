@@ -1138,9 +1138,12 @@ function formatDrift(drift: EnvelopeDrift): string[] {
   if (drift.ignoreHashChanged) out.push('.dxkit-ignore changed');
   if (drift.configHashChanged) out.push('.vyuh-dxkit.json changed');
   for (const d of drift.toolVersionDiffs) {
-    out.push(
-      `tool drift: ${d.tool} ${d.baselineVersion ?? '(absent)'} → ${d.currentVersion ?? '(absent)'}`,
-    );
+    // An EMPTY-string value is a real recorded value (e.g. `licenses.prohibited`
+    // with an empty list), distinct from `(absent)` — but rendered bare it
+    // reads as a truncated line ("… → "). Name it.
+    const show = (v: string | undefined): string =>
+      v === undefined ? '(absent)' : v === '' ? '(empty)' : v;
+    out.push(`tool drift: ${d.tool} ${show(d.baselineVersion)} → ${show(d.currentVersion)}`);
   }
   // Recall drift (CLAUDE.md Rule 19) — the load-bearing disclosure. A drifted
   // kind's net-new findings are NOT attributable to the diff, so they warn

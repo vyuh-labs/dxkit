@@ -10,7 +10,13 @@
  *     keeps `git push` fast. Blocks the push when the affected tests don't pass.
  *     (It does not distinguish a pre-existing red test in a touched module from
  *     a newly-broken one — that distinction belongs to the two-sided surfaces.
- *     Bypass with `--no-verify`.)
+ *     Bypass with `--no-verify`. ONE exception, 4.3.3: import-resolution
+ *     failures ARE attributed here, because a sound base-side answer exists
+ *     without a base worktree run — see `refutedResolutionSpecifiers`. The
+ *     class this closes: a chore PR bumping an unrelated lockfile entry
+ *     escalated the floor to full scope and hard-blocked the push on the
+ *     repo's PRE-EXISTING phantom imports, debt the change cannot have
+ *     caused.)
  *   - `ci` — FULL scope, no timeout. DIFF-SCOPED (T2.3): when the current tree
  *     has failures and a merge-base is resolvable, the floor also runs at the
  *     base in a throwaway worktree and each failure is ATTRIBUTED through the
@@ -43,6 +49,8 @@ import {
   type CorrectnessFloorResult,
 } from './run';
 import { attributeFloorFailures, type AttributedFloorFailure } from './attribution';
+import { attributePrePushResolution } from './resolution-attribution';
+export { refutedResolutionSpecifiers } from './resolution-attribution';
 import { resolveCorrectnessSurface } from './surface';
 
 /** The surfaces this runner serves (the loop-stop surface has its own runner). */
@@ -165,12 +173,13 @@ export function runFloorForSurface(opts: RunFloorForSurfaceOptions): SurfaceFloo
   let scope: 'affected' | 'full' = 'full';
   let changedFiles: readonly string[] = [];
   let timeoutMs: number | undefined;
+  let prePushBase = '';
   if (surface === 'pre-push') {
     scope = 'affected';
-    const base = resolvePrePushBase(cwd, opts.base);
+    prePushBase = resolvePrePushBase(cwd, opts.base);
     // Empty changedFiles (base unresolved / diff undeterminable) → the packs
     // treat the scope as full, per the CorrectnessContext contract.
-    changedFiles = base ? (computeChangedFiles(cwd, base) ?? []) : [];
+    changedFiles = prePushBase ? (computeChangedFiles(cwd, prePushBase) ?? []) : [];
     timeoutMs = prePushTimeoutMs();
   }
   // ci: full scope, no timeout — the full suite runs to completion.
@@ -205,6 +214,22 @@ export function runFloorForSurface(opts: RunFloorForSurfaceOptions): SurfaceFloo
       summary: `correctness floor (${surface}): ${cause} — CI is the backstop${envSuffix}`,
       result,
     };
+  }
+  // Pre-push resolution attribution (4.3.3): a blocking import-resolution
+  // failure is tested against sound base-side evidence before it may block.
+  if (surface === 'pre-push' && result.blocks && prePushBase) {
+    const adjusted = attributePrePushResolution(cwd, prePushBase, packs, result);
+    if (adjusted) {
+      return {
+        surface,
+        enabled: true,
+        reason: res.reason,
+        ran: true,
+        blocks: adjusted.blocks,
+        summary: describeCorrectnessFloor(result) + envSuffix + adjusted.note,
+        result,
+      };
+    }
   }
   return {
     surface,
