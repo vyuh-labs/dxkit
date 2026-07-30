@@ -174,6 +174,53 @@ describe('resolveInstallFlags + writeInstallFlags: manifest persistence', () => 
     expect(out.flags).toEqual(flags);
   });
 
+  /**
+   * The silent-no-op class, found while dogfooding a fleet rollout: a lane is
+   * opted into via POLICY after init, so the manifest's recorded flags have no
+   * entry for it. Returning that record verbatim made `undefined` read as off,
+   * and `update` skipped the surface — the knob was on with no workflow behind
+   * it, forever. Both sources are real, so both are read; the policy-derived
+   * enables OR over the record through the one derivation.
+   */
+  it('resolveInstallFlags ORs policy-enabled lanes over the manifest record', () => {
+    const policyRepo = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-policy-lane-'));
+    try {
+      fs.mkdirSync(path.join(policyRepo, '.dxkit'), { recursive: true });
+      fs.writeFileSync(
+        path.join(policyRepo, '.dxkit', 'policy.json'),
+        JSON.stringify({ depBump: { enabled: true }, remediate: { enabled: true } }),
+      );
+      // A record written before either lane existed — no entry for them at all.
+      const manifest = { ...baseManifest, installFlags: { ...allOff, withCiGuardrails: true } };
+      const out = resolveInstallFlags(manifest, policyRepo);
+      expect(out.source).toBe('manifest');
+      expect(out.flags.withDepBump).toBe(true);
+      expect(out.flags.withRemediate).toBe(true);
+      // The record still wins for everything policy says nothing about.
+      expect(out.flags.withCiGuardrails).toBe(true);
+      expect(out.flags.withDevcontainer).toBe(false);
+    } finally {
+      fs.rmSync(policyRepo, { recursive: true, force: true });
+    }
+  });
+
+  it('leaves the manifest record untouched when policy enables nothing', () => {
+    // The other direction: no policy file at all must not invent surfaces, and
+    // the caller's manifest object must not be mutated in place.
+    const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-no-policy-'));
+    try {
+      const record = { ...allOff, withHooks: true };
+      const manifest = { ...baseManifest, installFlags: record };
+      const out = resolveInstallFlags(manifest, bare);
+      expect(out.flags.withDepBump).toBeFalsy();
+      expect(out.flags.withRemediate).toBeFalsy();
+      expect(out.flags.withHooks).toBe(true);
+      expect(manifest.installFlags).toEqual(record);
+    } finally {
+      fs.rmSync(bare, { recursive: true, force: true });
+    }
+  });
+
   it('resolveInstallFlags falls back to workspace detection on legacy manifests', () => {
     const legacy = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-legacy-manifest-'));
     try {

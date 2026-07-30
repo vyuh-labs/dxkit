@@ -70,15 +70,54 @@ export function detectInstallFlags(cwd: string): ManifestInstallFlags {
       flags[surface.gate.flag] = surface.detectPresent(cwd);
     }
   }
-  // Graph-refresh is opt-in via policy, so a repo that set `graph.refresh:
-  // "cache"` but hasn't installed the workflow yet must still be treated as
-  // enabled — otherwise `update` would never lay it down. Presence OR policy.
-  flags.withGraphRefresh = flags.withGraphRefresh || graphRefreshEnabled(cwd);
-  flags.withReportsRefresh = flags.withReportsRefresh || reportsRefreshEnabled(cwd);
-  flags.withFlowRefresh = flags.withFlowRefresh || flowRefreshEnabled(cwd);
-  flags.withExtensionsRefresh = flags.withExtensionsRefresh || extensionsRefreshEnabled(cwd);
-  flags.withCommentDefer = flags.withCommentDefer || commentCommandsEnabled(cwd);
-  flags.withDepBump = flags.withDepBump || depBumpEnabled(cwd);
-  flags.withRemediate = flags.withRemediate || remediateEnabled(cwd);
+  return applyPolicyDerivedFlags(cwd, flags);
+}
+
+/**
+ * OR the POLICY-DERIVED surface enables over whatever flags the caller already
+ * has. THE one home for "policy switched this surface on" (Rule 2), consumed by
+ * BOTH flag sources: `detectInstallFlags` (presence-derived) and `update`'s
+ * `resolveInstallFlags` (manifest-derived).
+ *
+ * # The class this closes
+ *
+ * These surfaces are opt-in through policy, so a repo that set
+ * `depBump.enabled: true` but has not installed the workflow yet MUST read as
+ * enabled — otherwise `update` never lays it down. That OR was applied only on
+ * the presence-derived path, and `resolveInstallFlags` returns the MANIFEST's
+ * recorded flags verbatim whenever it has them (every modern install), so the
+ * derivation was unreachable in the exact case it exists for: a flag absent
+ * from an older manifest's record reads as `undefined` → falsy → skipped.
+ *
+ * The shipped consequence, found while dogfooding a fleet rollout: enable a lane
+ * in policy, run `vyuh-dxkit update`, and the knob is ON with no workflow behind
+ * it — the silent no-op Rule 15's registry exists to prevent, reintroduced one
+ * layer up by a second source of truth for the same question. Two sources, the
+ * stale one winning, no error: CLAUDE.md 2.30's semantic-divergence shape.
+ *
+ * Deliberately one-directional (OR, never AND): policy can only turn a surface
+ * ON here. Turning one off is `uninstall`'s job, which reads provenance — an
+ * update must never delete a workflow because a knob flipped.
+ */
+export function applyPolicyDerivedFlags(
+  cwd: string,
+  flags: ManifestInstallFlags,
+): ManifestInstallFlags {
+  // Assign only where policy says YES, so a repo that enabled nothing gets a
+  // byte-identical flag set back. Writing `false` into every slot would work
+  // for update, but it would also silently rewrite the shape every other
+  // consumer (and the manifest self-migration) sees.
+  const enables: ReadonlyArray<[keyof ManifestInstallFlags, (cwd: string) => boolean]> = [
+    ['withGraphRefresh', graphRefreshEnabled],
+    ['withReportsRefresh', reportsRefreshEnabled],
+    ['withFlowRefresh', flowRefreshEnabled],
+    ['withExtensionsRefresh', extensionsRefreshEnabled],
+    ['withCommentDefer', commentCommandsEnabled],
+    ['withDepBump', depBumpEnabled],
+    ['withRemediate', remediateEnabled],
+  ];
+  for (const [flag, enabled] of enables) {
+    if (!flags[flag] && enabled(cwd)) flags[flag] = true;
+  }
   return flags;
 }
