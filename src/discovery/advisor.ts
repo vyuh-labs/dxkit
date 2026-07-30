@@ -13,6 +13,7 @@ import { FLOW_CONFIG_SCHEMA_VERSION } from '../analyzers/flow/config';
 import { SCHEMA_CONFIG_SCHEMA_VERSION } from '../analyzers/model-schema/config';
 import { DUPLICATION_CONFIG_SCHEMA_VERSION } from '../analyzers/duplication/config';
 import { readPolicyObjectSafe } from '../baseline/policy-text';
+import { tryLoadAllowlist } from '../allowlist/file';
 import { failingFloorDebt } from '../baseline/floor-debt';
 import {
   existsAt,
@@ -209,6 +210,36 @@ export function recommendDepBump(ctx: RecommendContext): Recommendation | null {
       `floor-verified PR (no agent involved). Preview with the command below; enable the ` +
       `scheduled lane with .dxkit/policy.json depBump.enabled: true + vyuh-dxkit update`,
     command: 'vyuh-dxkit deps bump',
+  };
+}
+
+/**
+ * Expiring-suppression notice: fires when the repo actually holds allowlist
+ * entries with expiry dates and the notice lane is not configured. Grounded in
+ * the committed allowlist — a repo with no time-boxed suppressions never hears
+ * about it, and one that decided (either way) stops hearing immediately.
+ *
+ * Deliberately keyed on "has expiring entries at all", not "has entries
+ * expiring within the horizon": the recommendation is about adopting a lane
+ * BEFORE the quiet week that needs it, and a probe that only fired inside the
+ * horizon would arrive at the same time as the problem.
+ */
+export function recommendExpiryNotice(ctx: RecommendContext): Recommendation | null {
+  const policy = readPolicyObjectSafe(ctx.cwd) as { expiryNotice?: unknown } | null;
+  if (policy && policy.expiryNotice !== undefined) return null;
+  // Through the ONE allowlist reader, not a raw JSON read: it validates the
+  // schema and merges the sanitized-mode reason sidecar, so a compliance-mode
+  // repo's entries are counted the same as a full-mode repo's.
+  const allowlist = tryLoadAllowlist(ctx.cwd);
+  const timeBoxed = (allowlist?.entries ?? []).filter((e) => e.expiresAt !== undefined).length;
+  if (timeBoxed === 0) return null;
+  return {
+    reason:
+      `${timeBoxed} allowlist suppression${timeBoxed === 1 ? ' is' : 's are'} time-boxed — the ` +
+      `guardrail check warns while a PR is open, but a quiet week ends with the lapse landing on ` +
+      `whoever pushes next. Set .dxkit/policy.json expiryNotice.enabled: true + vyuh-dxkit update ` +
+      `to have the scheduled refresh keep one issue naming what lapses and who accepted it`,
+    command: 'vyuh-dxkit allowlist audit',
   };
 }
 

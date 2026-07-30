@@ -72,7 +72,8 @@ import {
 import { loadAllowlist } from '../allowlist/file';
 import { makeExec, openOrUpdateStandingPr, type LandRefreshResult } from '../land-refresh';
 import { internalGitPushArgs } from '../git-internal-push';
-import { detectDefaultBranch } from '../ship-installers';
+import { detectDefaultBranch, expiryNoticeEnabled } from '../ship-installers';
+import { syncExpiryNotice, type ExpiryNoticeResult } from './expiry-notice';
 
 /** The standing decision branch. ONE branch, force-updated — never a pile. */
 export const ADVISORY_DECISION_BRANCH = 'dxkit/advisory-decision';
@@ -92,6 +93,9 @@ export interface BaselineRefreshResult {
   readonly heldOut: ReadonlyArray<HeldOutAdvisory>;
   /** The decision-PR landing outcome; absent when nothing was held out. */
   readonly decision?: LandRefreshResult;
+  /** The expiry decision surface's outcome; absent when the knob is off (the
+   *  default) — so a repo that never opted in cannot tell the difference. */
+  readonly expiryNotice?: ExpiryNoticeResult;
   /** Why the advisory lane did / could not run — always populated so a refresh
    *  log never leaves the reader guessing (the GateFailure discipline). */
   readonly note: string;
@@ -275,10 +279,38 @@ export function decisionPrBody(
 }
 
 /**
- * The refresh orchestration. See the module docs for semantics; the return's
- * `note` always says what the advisory lane did (or why it could not run).
+ * The refresh orchestration: the advisory decision lane, then the expiry
+ * decision surface.
+ *
+ * The two are INDEPENDENT and both ride this one scheduled run. A suppression
+ * can be about to lapse whether or not this refresh held any advisory out, so
+ * the notice is synced on every path the advisory lane can take — including its
+ * early returns (ref-based mode, first capture, no prior baseline). Wiring it
+ * inside the lane would have made the notice a silent function of whether an
+ * unrelated feed happened to move that week.
  */
 export async function runBaselineRefresh(
+  opts: BaselineRefreshOptions,
+): Promise<BaselineRefreshResult> {
+  const result = await runAdvisoryDecisionLane(opts);
+  const cwd = path.resolve(opts.cwd);
+  // Opt-in, default off: it is the only dxkit lane that opens an issue on its
+  // own initiative, and it needs a permission the workflow only holds when the
+  // repo asked for it (`refreshPermissionsBlock`).
+  if (!expiryNoticeEnabled(cwd)) return result;
+  const expiryNotice = syncExpiryNotice({
+    cwd,
+    exec: opts.exec ?? makeExec(cwd),
+    ...(opts.now !== undefined ? { now: opts.now } : {}),
+  });
+  return { ...result, expiryNotice };
+}
+
+/**
+ * The advisory decision lane. See the module docs for semantics; the return's
+ * `note` always says what it did (or why it could not run).
+ */
+async function runAdvisoryDecisionLane(
   opts: BaselineRefreshOptions,
 ): Promise<BaselineRefreshResult> {
   const cwd = path.resolve(opts.cwd);

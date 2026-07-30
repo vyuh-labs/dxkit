@@ -333,6 +333,24 @@ export function removeEntry(file: AllowlistFile, fingerprint: string): Allowlist
 }
 
 /**
+ * `loadAllowlist` with the throw swallowed — null on absence OR on a malformed
+ * file. The fail-open sibling for advisory READERS (`doctor`'s hygiene check,
+ * the discovery probes): a broken allowlist must not take down a surface whose
+ * job is telling you things. Naming mirrors `loadGraph` / `tryLoadGraph`.
+ *
+ * Enforcing paths (the guardrail's suppression resolution) keep using
+ * `loadAllowlist` directly — there, a malformed file must surface, not silently
+ * read as "nothing is suppressed".
+ */
+export function tryLoadAllowlist(cwd: string): AllowlistFile | null {
+  try {
+    return loadAllowlist(cwd);
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Whether the allowlist suppresses a given finding. Pure
  * fingerprint match. Expiry handling is layered on top by
  * `isEntryActive` (kept separate so the guardrail can distinguish
