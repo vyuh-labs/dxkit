@@ -64,6 +64,27 @@ import { detectEnforcement, type EnforcementState } from './enforcement';
  *      guess in a freshly-`git init`'d repo that hasn't been pushed
  *   5. Fallback to `'main'` — the GitHub default-branch default
  */
+/**
+ * The render-determining default branch: the manifest's PINNED value when
+ * present (environment-independent — the same answer on a laptop, a fresh
+ * clone, and a CI merge-ref checkout), else the live probe as bootstrap
+ * (fresh init, pre-4.3.5 manifests; `update` backfills the pin). Every
+ * renderer and metadata surface reads THIS, never the probe directly.
+ */
+export function resolveDefaultBranch(cwd: string): string {
+  try {
+    const m = JSON.parse(fs.readFileSync(path.join(cwd, '.vyuh-dxkit.json'), 'utf-8')) as {
+      defaultBranch?: unknown;
+    };
+    if (typeof m.defaultBranch === 'string' && m.defaultBranch.length > 0) {
+      return m.defaultBranch;
+    }
+  } catch {
+    /* no manifest — bootstrap via the live probe */
+  }
+  return detectDefaultBranch(cwd);
+}
+
 export function detectDefaultBranch(cwd: string): string {
   const viaGh = defaultBranchViaGh(cwd);
   if (viaGh) return viaGh;
@@ -557,7 +578,7 @@ export function installCiGuardrails(
   // its default branch (weaker than a blocking PR gate, but the coverage becomes
   // VISIBLE not silent). Off by default (redundant + noisy for PR-gated repos).
   const pushTrigger = opts.pushTrigger
-    ? `\n  push:\n    branches: [${detectDefaultBranch(cwd)}]`
+    ? `\n  push:\n    branches: [${resolveDefaultBranch(cwd)}]`
     : '';
   // Re-render when the detected stack's runtime-setup changed (a language was
   // added since install) even without --force — dxkit's own managed template.
@@ -573,7 +594,7 @@ export function installCiGuardrails(
       // runs only on push to it). The guardrail step compares `github.base_ref`
       // against this so a PR into a NON-default base is gated against its own
       // base via ref-based, not against the default-branch baseline (#118).
-      __DXKIT_DEFAULT_BRANCH__: detectDefaultBranch(cwd),
+      __DXKIT_DEFAULT_BRANCH__: resolveDefaultBranch(cwd),
     },
   );
   if (stale && result.installed.length > 0) {
@@ -879,7 +900,7 @@ export function installCiBaselineRefresh(
     return result;
   }
 
-  const defaultBranch = detectDefaultBranch(cwd);
+  const defaultBranch = resolveDefaultBranch(cwd);
   // Auto-migrate a dxkit-managed refresh workflow whose transport no longer
   // matches the resolved one — e.g. a 2.30 install whose 'tree' workflow now
   // deadlocks because the branch became protected (or an upgrade from a
@@ -989,7 +1010,7 @@ export function installCiBaselineRefresh(
 export function installCiGraphRefresh(cwd: string, opts: InstallerOpts = {}): ShipInstallResult {
   return installWorkflow(cwd, 'dxkit-graph-refresh.yml', opts, {
     [CI_RUNTIME_SETUP_KEY]: renderCiRuntimeSetup(cwd),
-    __DXKIT_DEFAULT_BRANCH__: detectDefaultBranch(cwd),
+    __DXKIT_DEFAULT_BRANCH__: resolveDefaultBranch(cwd),
   });
 }
 
@@ -1010,7 +1031,7 @@ export function graphRefreshEnabled(cwd: string): boolean {
 export function installCiReportsRefresh(cwd: string, opts: InstallerOpts = {}): ShipInstallResult {
   return installWorkflow(cwd, 'dxkit-reports-refresh.yml', opts, {
     [CI_RUNTIME_SETUP_KEY]: renderCiRuntimeSetup(cwd),
-    __DXKIT_DEFAULT_BRANCH__: detectDefaultBranch(cwd),
+    __DXKIT_DEFAULT_BRANCH__: resolveDefaultBranch(cwd),
   });
 }
 
@@ -1026,7 +1047,7 @@ export function reportsRefreshEnabled(cwd: string): boolean {
 export function installCiFlowRefresh(cwd: string, opts: InstallerOpts = {}): ShipInstallResult {
   const result = installWorkflow(cwd, 'dxkit-flow-refresh.yml', opts, {
     [CI_RUNTIME_SETUP_KEY]: renderCiRuntimeSetup(cwd),
-    __DXKIT_DEFAULT_BRANCH__: detectDefaultBranch(cwd),
+    __DXKIT_DEFAULT_BRANCH__: resolveDefaultBranch(cwd),
   });
   if (result.installed.length > 0) {
     result.notes.push(
@@ -1055,7 +1076,7 @@ export function installCiRemediate(cwd: string, opts: InstallerOpts = {}): ShipI
     .join('\n');
   const result = installWorkflow(cwd, 'dxkit-remediate.yml', opts, {
     [CI_RUNTIME_SETUP_KEY]: renderCiRuntimeSetup(cwd),
-    __DXKIT_DEFAULT_BRANCH__: detectDefaultBranch(cwd),
+    __DXKIT_DEFAULT_BRANCH__: resolveDefaultBranch(cwd),
     __DXKIT_REMEDIATE_CRON__: cronFromCadence(config.schedule),
     __DXKIT_REMEDIATE_CREDENTIAL_ENV__: credentialLines,
     __DXKIT_BOT_NAME__: BOT_IDENTITY.name,
@@ -1086,7 +1107,7 @@ export function remediateEnabled(cwd: string): boolean {
 export function installCiDepBump(cwd: string, opts: InstallerOpts = {}): ShipInstallResult {
   const result = installWorkflow(cwd, 'dxkit-dep-bump.yml', opts, {
     [CI_RUNTIME_SETUP_KEY]: renderCiRuntimeSetup(cwd),
-    __DXKIT_DEFAULT_BRANCH__: detectDefaultBranch(cwd),
+    __DXKIT_DEFAULT_BRANCH__: resolveDefaultBranch(cwd),
     // The one cadence grammar; the lane's own Mon 07:00 default when the knob
     // is absent (offset from the refresh/remediate 06:00 so lanes don't pile).
     __DXKIT_DEPBUMP_CRON__: cronFromCadence(
@@ -1173,7 +1194,7 @@ export function installCiExtensionsRefresh(
 ): ShipInstallResult {
   const result = installWorkflow(cwd, 'dxkit-extensions-refresh.yml', opts, {
     [CI_RUNTIME_SETUP_KEY]: renderCiRuntimeSetup(cwd),
-    __DXKIT_DEFAULT_BRANCH__: detectDefaultBranch(cwd),
+    __DXKIT_DEFAULT_BRANCH__: resolveDefaultBranch(cwd),
   });
   if (result.installed.length > 0) {
     result.notes.push(

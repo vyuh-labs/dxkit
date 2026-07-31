@@ -204,6 +204,16 @@ export interface Manifest {
    * Older manifests fall back to workspace detection in `update`.
    */
   installFlags?: ManifestInstallFlags;
+  /**
+   * The RENDER-DETERMINING default branch, pinned at install (4.3.5).
+   * Probing git/gh at render time differs between a developer clone and a CI
+   * merge-ref checkout (no origin/HEAD, unauthenticated gh), which made the
+   * parity gate false-drift on its first customer run — a rendered workflow
+   * must be byte-identical wherever it is re-rendered. `update` backfills
+   * older manifests; changing the branch is an explicit re-pin, never a
+   * side effect of where a command happened to run.
+   */
+  defaultBranch?: string;
 }
 
 export interface InitOptions {

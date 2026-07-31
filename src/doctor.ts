@@ -12,7 +12,7 @@ import { resolveBaselineMode } from './baseline/modes';
 import { anchorBranchStatus, anchorStalenessProblem } from './baseline/anchor';
 import { loadPolicyFromCwd } from './baseline/policy';
 import { detectEnforcement } from './enforcement';
-import { detectInstalledRefreshTransport, detectDefaultBranch } from './ship-installers';
+import { detectInstalledRefreshTransport, resolveDefaultBranch } from './ship-installers';
 import { detectPackageManager, addDevCommand } from './package-manager';
 import { auditAllowlist, tryLoadAllowlist } from './allowlist/file';
 import { snapshotEngines, readSnapshot } from './ingest/snapshot';
@@ -668,7 +668,7 @@ function runOperationalChecks(cwd: string, hasManifest: boolean): CheckResult[] 
       // ref-based (#118), so correctness is covered — but on a gitflow repo
       // where most PRs target a long-lived branch, pinning ref-based keeps the
       // LOCAL guardrail (which reads the committed file) agreeing with CI.
-      const gitflowBranch = detectGitflowBranch(cwd, detectDefaultBranch(cwd));
+      const gitflowBranch = detectGitflowBranch(cwd, resolveDefaultBranch(cwd));
       if (gitflowBranch) {
         checks.push({
           label:

@@ -3,7 +3,7 @@ import * as path from 'path';
 import { Manifest, ManifestInstallFlags } from './types';
 import { detect } from './detect';
 import { generate } from './generator';
-import { ShipInstallResult } from './ship-installers';
+import { ShipInstallResult, detectDefaultBranch } from './ship-installers';
 import { detectInstallFlags, refreshManagedSurfaces } from './managed-artifacts';
 import { applyPolicyDerivedFlags } from './managed-artifacts-detect';
 import * as logger from './logger';
@@ -75,6 +75,13 @@ export function writeInstallFlags(cwd: string, flags: InstallFlags): boolean {
   try {
     const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8')) as Manifest;
     manifest.installFlags = flags;
+    // Backfill the pinned render-determining default branch on manifests
+    // that predate it (4.3.5) — probed HERE, where update runs (a real
+    // clone), so every later re-render (CI parity check included) reads one
+    // environment-independent answer. Never re-probed once pinned.
+    if (typeof manifest.defaultBranch !== 'string' || manifest.defaultBranch.length === 0) {
+      manifest.defaultBranch = detectDefaultBranch(cwd);
+    }
     fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n');
     return true;
   } catch {
