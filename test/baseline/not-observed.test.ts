@@ -160,7 +160,7 @@ describe('an untrusted check over a custom-check baseline (integration)', () => 
     execFileSync('git', ['config', 'commit.gpgsign', 'false'], { cwd: dir });
     writeFileSync(join(dir, 'README.md'), '# fixture\n');
     // A miniature lint backlog: a check whose command always reports the same
-    // two located findings, parsed by regex — the web-client shape at 1/9203
+    // two located findings, parsed by regex — the incident shape at 1/9203
     // scale.
     writeFileSync(
       join(dir, 'lint.cjs'),
