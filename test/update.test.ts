@@ -8,7 +8,7 @@
  * These tests shell out to the built CLI so they observe the actual
  * end-to-end behavior the customer would see.
  */
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -318,5 +318,59 @@ describe('vyuh-dxkit update: end-to-end refresh', () => {
     const r = runCli(tmp, ['update']);
     expect(r.exitCode).toBe(0);
     expect(r.stdout).toContain('Update complete');
+  });
+});
+
+// ─── the pinned default branch lifecycle (4.3.5) ───────────────────────────
+
+const _exec = execFileSync;
+
+describe('writeInstallFlags — the defaultBranch pin lifecycle', () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-pin-'));
+    _exec('git', ['init', '-q', '-b', 'main'], { cwd: dir });
+    fs.writeFileSync(path.join(dir, 'a.txt'), 'x');
+    _exec('git', ['add', '.'], { cwd: dir });
+    _exec('git', ['-c', 'user.email=t@e.c', '-c', 'user.name=t', 'commit', '-qm', 'i'], {
+      cwd: dir,
+    });
+  });
+  afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+  const manifestWith = (defaultBranch?: string) => {
+    fs.writeFileSync(
+      path.join(dir, '.vyuh-dxkit.json'),
+      JSON.stringify({
+        generatedAt: 'x',
+        mode: 'full',
+        files: {},
+        ...(defaultBranch ? { defaultBranch } : {}),
+      }),
+    );
+  };
+  const readPin = () =>
+    (
+      JSON.parse(fs.readFileSync(path.join(dir, '.vyuh-dxkit.json'), 'utf8')) as {
+        defaultBranch?: string;
+      }
+    ).defaultBranch;
+
+  it('backfills an absent pin from the live probe', () => {
+    manifestWith();
+    writeInstallFlags(dir, {} as Parameters<typeof writeInstallFlags>[1]);
+    expect(readPin()).toBe('main');
+  });
+
+  it('a pin whose branch still exists is never second-guessed', () => {
+    manifestWith('main');
+    writeInstallFlags(dir, {} as Parameters<typeof writeInstallFlags>[1]);
+    expect(readPin()).toBe('main');
+  });
+
+  it('re-pins when the pinned branch no longer exists (a default-branch rename)', () => {
+    manifestWith('development');
+    writeInstallFlags(dir, {} as Parameters<typeof writeInstallFlags>[1]);
+    expect(readPin()).toBe('main');
   });
 });

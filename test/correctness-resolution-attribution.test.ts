@@ -1,7 +1,7 @@
 /**
  * Pre-push attribution for import-resolution failures (4.3.3).
  *
- * The class this closes, observed live on a customer re-roll: a chore branch
+ * The class this closes, observed live on a real repository: a chore branch
  * bumping one unrelated lockfile entry escalated the pre-push floor to full
  * scope, and the repo's PRE-EXISTING phantom imports (specifiers imported by
  * untouched files and declared in no manifest at the base either) hard-blocked
