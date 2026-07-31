@@ -42,7 +42,8 @@ export const COMMANDS = [
     id: 'policy',
     audience: 'user',
     group: 'setup',
-    summary: 'Read policy values (get) and adopt newly shipped knobs (sync)',
+    summary:
+      'Read policy values (get), change a knob + refresh its workflows (set), adopt newly shipped knobs (sync)',
     typicalRuntime: '< 5 sec',
     docsBlurb:
       'policy get reads one value for scripts/CI; policy sync appends the commented stanzas ' +
