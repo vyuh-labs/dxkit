@@ -984,6 +984,12 @@ export async function run(argv: string[]): Promise<void> {
       break;
     }
 
+    case 'jobs': {
+      const { runJobs } = await import('./jobs-cli');
+      runJobs(cwd, { json: !!values.json });
+      break;
+    }
+
     case 'capabilities': {
       const { runCapabilities } = await import('./discovery/capabilities-cli');
       runCapabilities(cwd, { json: !!values.json });

@@ -70,6 +70,17 @@ export const COMMANDS = [
       'Check that dxkit is wired correctly, and advise on unused capabilities that fit this repo.',
   },
   {
+    id: 'jobs',
+    audience: 'user',
+    group: 'setup',
+    summary: 'Show the installed dxkit jobs: triggers, schedules, next/last runs',
+    typicalRuntime: '< 5 sec',
+    docsBlurb:
+      'One view over the installed dxkit workflows — each trigger, the actual cron it runs on, ' +
+      'the computed next run (UTC), the last outcome (when the gh CLI is available), and the ' +
+      'run-it-now command for anything dispatchable.',
+  },
+  {
     id: 'configure',
     audience: 'user',
     group: 'setup',
