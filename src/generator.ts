@@ -1,4 +1,5 @@
 import * as fs from 'fs';
+import { resolveDefaultBranch } from './ship-installers';
 import * as path from 'path';
 import { ResolvedConfig, GenerationMode, Manifest } from './types';
 import { buildVariables, buildConditions, VERSION } from './constants';
@@ -242,6 +243,11 @@ export async function generate(
       generatedAt: new Date().toISOString(),
       config,
       files: {},
+      // Pin the render-determining default branch at install (4.3.5): a
+      // re-init preserves an existing pin (resolveDefaultBranch reads the
+      // prior manifest first); a fresh init probes once, here, in the
+      // developer's environment — never again at render time.
+      defaultBranch: resolveDefaultBranch(targetDir),
     },
   };
 

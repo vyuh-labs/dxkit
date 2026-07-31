@@ -17,6 +17,14 @@ permissions:
   contents: read
   pull-requests: write
 
+# One live run per ref: a push during a run cancels the superseded run, so a
+# stale report can never finish LAST and overwrite the current commit's PR
+# comment (observed live: a pre-fix run outlived the post-fix run by seconds
+# and posted its BLOCKED report over the newer PASSED one).
+concurrency:
+  group: dxkit-guardrails-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   guardrail:
     # The job `name:` IS the status-check context GitHub reports and that a

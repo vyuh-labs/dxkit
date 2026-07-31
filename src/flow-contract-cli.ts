@@ -20,7 +20,7 @@ import {
 } from './analyzers/flow/contract';
 import { publishFlow } from './analyzers/flow/publish';
 import { landFlowRefresh, type FlowLandMode } from './analyzers/flow/land';
-import { detectDefaultBranch } from './ship-installers';
+import { resolveDefaultBranch } from './ship-installers';
 import { emitJson, gatherRepoModel, splitPaths, type FlowViewOptions } from './flow-cli';
 
 /** Current HEAD commit SHA, or undefined outside a git repo (best-effort). */
@@ -148,7 +148,7 @@ export async function runFlowPublish(opts: FlowViewOptions & { land?: string }):
     mode,
     before,
     beforeConsumed,
-    defaultBranch: detectDefaultBranch(opts.cwd),
+    defaultBranch: resolveDefaultBranch(opts.cwd),
   });
   const deltaLine =
     `+${landed.delta.added.length} route(s), −${landed.delta.removed.length} removed` +

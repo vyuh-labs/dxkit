@@ -17,6 +17,7 @@ import {
   commentCommandsEnabled,
   installCiDepBump,
   depBumpEnabled,
+  resolveDefaultBranch,
   reportsRefreshEnabled,
   installPrReview,
   installIgnoreFiles,
@@ -899,5 +900,48 @@ describe('installDxkitDevDependency', () => {
     installDxkitDevDependency(tmp);
     const written = fs.readFileSync(path.join(tmp, 'package.json'), 'utf-8');
     expect(written.endsWith('\n')).toBe(true);
+  });
+});
+
+describe('resolveDefaultBranch — the pinned render input (4.3.5)', () => {
+  let tmp: string;
+  beforeEach(() => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-defbranch-'));
+  });
+  afterEach(() => fs.rmSync(tmp, { recursive: true, force: true }));
+
+  it('the manifest pin wins over any live git state', () => {
+    // A git state whose probe would answer differently (a local `main`).
+    execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: tmp });
+    fs.writeFileSync(
+      path.join(tmp, '.vyuh-dxkit.json'),
+      JSON.stringify({ generatedAt: 'x', mode: 'full', files: {}, defaultBranch: 'development' }),
+    );
+    expect(resolveDefaultBranch(tmp)).toBe('development');
+  });
+
+  it('renders workflows from the pin — byte-identical wherever re-rendered', () => {
+    execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: tmp });
+    fs.writeFileSync(
+      path.join(tmp, '.vyuh-dxkit.json'),
+      JSON.stringify({ generatedAt: 'x', mode: 'full', files: {}, defaultBranch: 'development' }),
+    );
+    installCiDepBump(tmp);
+    const content = fs.readFileSync(path.join(tmp, '.github/workflows/dxkit-dep-bump.yml'), 'utf8');
+    expect(content).toContain('ref: development');
+    expect(content).not.toContain('ref: main');
+  });
+
+  it('falls back to the live probe only when no pin exists (bootstrap)', () => {
+    execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: tmp });
+    expect(resolveDefaultBranch(tmp)).toBe('main');
+  });
+
+  it('the guardrails template carries the superseded-run concurrency group', () => {
+    const t = fs.readFileSync(
+      path.join(TEMPLATES_DIR, '.github', 'workflows', 'dxkit-guardrails.yml'),
+      'utf8',
+    );
+    expect(t).toContain('cancel-in-progress: true');
   });
 });

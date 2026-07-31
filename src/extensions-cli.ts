@@ -44,7 +44,7 @@ import { loadExclusions } from './analyzers/tools/exclusions';
 import { detectActiveLanguages } from './languages';
 import { landRefreshPaths, type LandMode } from './land-refresh';
 import { initExtension } from './extensions-init-cli';
-import { detectDefaultBranch } from './ship-installers';
+import { resolveDefaultBranch } from './ship-installers';
 import type {
   DxkitExtensionDefinition,
   VerifierFlowContext,
@@ -339,7 +339,7 @@ export async function runExtensionsCli(
           mode: opts.land as LandMode,
           paths: landable.map((e) => e.manifest.output),
           branchName: 'dxkit/extensions-refresh',
-          defaultBranch: detectDefaultBranch(cwd),
+          defaultBranch: resolveDefaultBranch(cwd),
           commitTitle: 'chore(extensions): refresh committed snapshots',
           prTitle: `chore(extensions): snapshot refresh (${refreshedNames.join(', ') || 'no-op'})`,
           prBody:
