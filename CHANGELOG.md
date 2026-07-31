@@ -5,6 +5,34 @@ All notable changes to `@vyuhlabs/dxkit` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.3.5] - 2026-07-31
+
+A determinism fix for the parity gate that shipped in 4.3.4, found on its
+first production run.
+
+### The default branch is pinned, never re-probed
+
+- **Rendered workflows are now environment-independent.** The guardrail
+  workflow templates embed the repo's default branch. Before this release,
+  every render re-probed git for it — and a local checkout and a CI
+  checkout can legitimately disagree (a shallow single-branch CI clone sees
+  only the PR's branches). So `policy render --check` could report drift on
+  a repository whose default branch is not `main`, purely because the two
+  environments answered the probe differently. The branch is now **pinned
+  in the manifest at install time** (`defaultBranch`), and every render
+  reads the pin — the same discipline the baseline's recall contexts apply
+  to attribution inputs, applied to rendering.
+- **`update` backfills and heals the pin.** A manifest that predates the
+  pin gets it backfilled on the next `update`. If the pinned branch no
+  longer exists (renamed, or the repo moved to a new main branch), `update`
+  re-detects and re-pins, and says so. A pin whose branch still exists is
+  never second-guessed — switching your own checkout to a feature branch
+  does not move it.
+- **Guardrail runs no longer race their own comments.** The guardrails
+  workflow declares a per-PR concurrency group with `cancel-in-progress`,
+  so a force-push cannot leave a stale BLOCKED comment from a superseded
+  run as the last word on the PR.
+
 ## [4.3.4] - 2026-07-31
 
 The operability release. Configuring dxkit's jobs used to take two commands
