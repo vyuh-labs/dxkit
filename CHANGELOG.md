@@ -5,6 +5,72 @@ All notable changes to `@vyuhlabs/dxkit` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.3.4] - 2026-07-31
+
+The operability release. Configuring dxkit's jobs used to take two commands
+and one piece of tribal knowledge — edit `.dxkit/policy.json`, then know to
+run `update` so the workflows re-render. After this release the whole
+configuration story fits in one sentence: **edit one file, or run one
+command; if the rendered workflows ever disagree with the file, the pull
+request fails with the exact diff.**
+
+### policy.json is the interface
+
+- **`policy set <dotted.path> <value>`** — one command that validates the
+  path against the knob registry (typos refuse with suggestions, declared
+  enums are enforced), merge-writes with the file's comments preserved,
+  verifies the read-back, and **re-renders the workflows the knob gates in
+  the same command**. Turning a whole lane on is one line:
+  `vyuh-dxkit policy set depBump.enabled true` writes the knob *and*
+  installs the workflow it gates.
+- **`configure --apply`** now runs the same post-write reconciliation, so
+  the onboarding path can never leave a knob on with nothing serving it.
+- **The parity gate.** `policy render --check` proves the rendered
+  workflows match the policy — snapshotting, rendering through update's own
+  lane, diffing, and restoring the tree byte-for-byte, so it is safe in
+  hooks, on dirty trees, and on fork PRs (rendering executes nothing from
+  the repo). The guardrail workflow runs it on every PR: on drift, the
+  per-file diff lands in the PR comment and the check fails — a policy
+  change without its re-render cannot merge. The pre-push hook mirrors the
+  check where the fix is cheapest, and `policy render --apply` is the
+  one-command fix. A hand-modified managed workflow is deliberate
+  divergence, never drift — the same provenance rule that keeps `update`
+  from clobbering it.
+
+### `vyuh-dxkit jobs` — which jobs run here, when, and did they work
+
+One read-only view over the installed dxkit workflows: each trigger, the
+actual cron it runs on (read from the workflow file — the truth of what
+executes), the computed next run in UTC, the last run's outcome when the
+`gh` CLI is available, and the run-it-now command for anything
+dispatchable. New lanes appear the day their workflow is installed.
+
+### Every scheduled lane is now policy-tunable
+
+`depBump.schedule` joins `baseline.refreshCadence` and `remediate.schedule`
+in the shared cadence grammar (`"weekly"`, `"daily"`, or a strict 5-field
+cron). The dep-bump lane keeps its Monday 07:00 UTC default when the knob
+is absent.
+
+### The write-docs remediation task — documentation verified by the score
+
+A fifth agent task, and the first with a **score hinge**: the agent's work
+lands only if the Documentation dimension's score ends strictly higher than
+the pristine-tree entry score while Quality (which carries the slop
+metrics) does not drop — evaluated inside the same verified frame as the
+floor and guardrail, with the before/after evidence in the PR ledger.
+Cosmetic churn is rejected, not shipped; the agent's own claim of "done"
+still counts for nothing.
+
+### Fixed
+
+- Ref-based guardrail runs no longer print the guaranteed-noise coverage
+  warning ("eslint was NOT available when the baseline was captured…") —
+  the ref-based prior side is gathered in a bare worktree, so that record
+  says nothing about any capture, and the categories involved were already
+  excluded and disclosed. Committed modes keep the warning, where it is
+  load-bearing.
+
 ## [4.3.3] - 2026-07-30
 
 ### Fixed
