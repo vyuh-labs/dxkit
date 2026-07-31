@@ -1110,6 +1110,14 @@ export async function run(argv: string[]): Promise<void> {
         });
         break;
       }
+      if (sub === 'render') {
+        const { runPolicyRender } = await import('./policy-render');
+        runPolicyRender(process.cwd(), {
+          mode: values.apply ? 'apply' : 'check',
+          json: !!values.json,
+        });
+        break;
+      }
       if (sub === 'sync') {
         const { runPolicySync, scaffoldCtxFor } = await import('./policy-sync');
         const { VERSION } = await import('./constants');
@@ -1122,7 +1130,7 @@ export async function run(argv: string[]): Promise<void> {
       }
       logger.fail(
         'usage: vyuh-dxkit policy get <dotted.path> [--default <value>] | ' +
-          'policy set <dotted.path> <value> | policy sync [--apply]',
+          'policy set <dotted.path> <value> | policy render [--apply] | policy sync [--apply]',
       );
       process.exitCode = 1;
       break;

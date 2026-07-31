@@ -67,6 +67,13 @@ fi
 # or bypass everything with: git push --no-verify
 "${DXKIT}" floor check --surface pre-push
 
+# Policy ⇄ rendered-workflow parity (4.3.4): a .dxkit/policy.json edit that
+# leaves the managed workflows un-rendered would fail the same check on the
+# PR — catch it here, where the fix is one command:
+#   vyuh-dxkit policy render --apply   (then commit the re-rendered files)
+# The check snapshots, renders, diffs, and restores — your tree is untouched.
+"${DXKIT}" policy render --check
+
 BASELINE_NAME="${DXKIT_BASELINE_NAME:-main}"
 BASELINE_FILE=".dxkit/baselines/${BASELINE_NAME}.json"
 

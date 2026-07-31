@@ -211,6 +211,39 @@ __DXKIT_CI_RUNTIME_SETUP__
             echo "✓ dxkit guardrail passed — no net-new findings vs the baseline"
           fi
 
+      # Policy ⇄ rendered-workflow parity (4.3.4). The managed workflows are
+      # rendered FROM .dxkit/policy.json; a policy edit that lands without a
+      # re-render leaves the repo running yesterday's schedule while the file
+      # claims today's. `policy render --check` snapshots the managed files,
+      # re-renders through update's own lane, diffs, and restores — the tree
+      # is byte-identical afterwards, and rendering executes nothing from the
+      # repo, so this is safe on every PR including forks. On drift the diff
+      # lands in the PR comment and the job fails; the fix is ONE command
+      # (`npx vyuh-dxkit policy render --apply`), or the opt-in render bot
+      # commits it for you.
+      - name: Policy render parity
+        id: parity
+        run: |
+          if [ -x ./node_modules/.bin/vyuh-dxkit ]; then DXKIT=./node_modules/.bin/vyuh-dxkit; else DXKIT=vyuh-dxkit; fi
+          set +e
+          "$DXKIT" policy render --check > parity.txt 2>&1
+          code=$?
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          if [ "$code" -ne 0 ]; then
+            {
+              printf '\n\n### Policy drift — managed workflows do not match .dxkit/policy.json\n\n'
+              printf 'A policy change is landing without the re-render of the workflows it gates. '
+              printf 'Run `npx vyuh-dxkit policy render --apply` and commit the result:\n\n'
+              printf '```diff\n'
+              cat parity.txt
+              printf '\n```\n'
+            } >> guardrail-report.md
+            echo "::error::policy drift: managed workflows do not match .dxkit/policy.json (diff in the PR comment)"
+            cat parity.txt
+          else
+            echo "managed workflows match the policy"
+          fi
+
       # Correctness floor (liveness) — full-scope: does the code compile + do
       # the tests pass? Runs after the finding gate. ADAPTIVE: if this repo
       # already runs its tests in its own CI workflow, this is a no-op here
@@ -351,4 +384,5 @@ __DXKIT_CI_RUNTIME_SETUP__
           fi
 
       - name: Fail if guardrail blocked
-        run: exit ${{ steps.guardrail.outputs.exit_code }}
+        # Either gate failing fails the job (sum is non-zero iff any is).
+        run: exit $(( ${{ steps.guardrail.outputs.exit_code }} + ${{ steps.parity.outputs.exit_code }} ))
