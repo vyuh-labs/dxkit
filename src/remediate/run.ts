@@ -37,6 +37,13 @@ import { BOT_IDENTITY } from '../land-refresh';
 import { resolveModelSetting, type AgentDriver, type AgentRunResult } from './driver';
 import { AGENT_DRIVERS, knownDriverIds } from './registry';
 import { remediateTaskById, knownTaskIds, type RemediateTask } from './tasks';
+import {
+  evaluateScoreHinge,
+  healthHingeScores,
+  renderScoreHinge,
+  type HingeEvidence,
+  type HingeScores,
+} from './score-hinge';
 import type { RemediateConfig } from './config';
 
 export type RemediateOutcome =
@@ -44,6 +51,7 @@ export type RemediateOutcome =
   | 'no-op' // agent ran, no diff (nothing to fix)
   | 'floor-red' // diff breaks the net-new floor — never lands
   | 'guardrail-red' // guardrail blocked, refused, or could not run — never lands
+  | 'score-red' // the task's score hinge did not hold (goal not met) — never lands
   | 'budget-exhausted' // a cap hit; partial diff (salvage policy decides its fate)
   | 'agent-never-ran' // CLI/auth/env failure — infra, not a code outcome
   | 'sweep-failed' // agent committed work but leftovers could not be swept
@@ -79,6 +87,10 @@ export interface RemediateResult {
   readonly floor?: CorrectnessFloorResult;
   readonly floorAttribution?: readonly AttributedFloorFailure[];
   readonly guardrailVerdict?: string;
+  /** Score-hinge evidence (tasks that declare one): the entry vs post-agent
+   *  dimension scores the land decision was made on. Present on success AND
+   *  failure — the ledger shows the delta either way. */
+  readonly scoreHinge?: HingeEvidence;
   /** HEAD before/after the agent — the commit range a lander pushes. */
   readonly baseHead?: string;
   readonly head?: string;
@@ -158,6 +170,9 @@ export interface RemediateRunOptions {
   readonly git?: RemediateGit;
   readonly runFloor?: () => CorrectnessFloorResult;
   readonly runGuardrail?: () => Promise<GuardrailGateResult>;
+  /** Injected for tests: replaces the health-score probe behind a task's
+   *  score hinge. */
+  readonly hingeScores?: (hinge: NonNullable<RemediateTask['scoreHinge']>) => Promise<HingeScores>;
 }
 
 /** The remediate verification ledger — deterministic, identifier-free. */
@@ -203,6 +218,7 @@ export function renderRemediateLedger(r: Omit<RemediateResult, 'ledger'>): strin
   lines.push('### Verification', '');
   lines.push(...renderFloorVerification(r.floor, r.floorAttribution, 'the pre-agent entry run'));
   lines.push(...renderGuardrailVerdict(r.guardrailVerdict));
+  if (r.scoreHinge) lines.push(renderScoreHinge(r.scoreHinge));
   lines.push(
     "_Agentic lane inside the verified frame: the agent's own claim of success is never " +
       'trusted — the entry-attributed floor and the guardrail ran before anything lands, ' +
@@ -293,6 +309,12 @@ export async function runRemediateTask(opts: RemediateRunOptions): Promise<Remed
   // comparator — a repo already red at entry keeps its debt disclosed, never
   // weaponized against the agent's change.
   const entryFloor = runFloor();
+  // Entry side of the task's score hinge (when it declares one) — computed on
+  // the same pristine tree the entry floor snapshots.
+  const hingeProbe =
+    opts.hingeScores ??
+    ((h: NonNullable<RemediateTask['scoreHinge']>) => healthHingeScores(opts.cwd, opts.trust, h));
+  const entryScores = task.scoreHinge ? await hingeProbe(task.scoreHinge) : undefined;
   const baseHead = git.head();
 
   const agentResult: AgentRunResult = await driver.run({
@@ -430,6 +452,26 @@ export async function runRemediateTask(opts: RemediateRunOptions): Promise<Remed
         : `the guardrail could not run (${guardrail.verdict}) — nothing lands. An ` +
           'agent-authored diff is never pushed unverified.',
     });
+  }
+
+  // The score hinge — the task's GOAL as a deterministic land condition. It
+  // gates salvage too: a partial docs diff that moves nothing is noise, not
+  // salvageable work.
+  if (task.scoreHinge && entryScores) {
+    const verdict = evaluateScoreHinge(
+      task.scoreHinge,
+      entryScores,
+      await hingeProbe(task.scoreHinge),
+    );
+    if (!verdict.ok) {
+      return finish({
+        outcome: 'score-red',
+        ...common,
+        scoreHinge: verdict.evidence,
+        note: verdict.note,
+      });
+    }
+    (common as { scoreHinge?: typeof verdict.evidence }).scoreHinge = verdict.evidence;
   }
 
   if (partial) {

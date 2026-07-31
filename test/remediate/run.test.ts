@@ -401,3 +401,69 @@ describe('resolveRemediateConfig (conservative normalization)', () => {
     }
   });
 });
+
+// ─── the score hinge (write-docs, 4.3.4) ────────────────────────────────────
+
+describe('the score hinge — the task goal as a land condition', () => {
+  const hingeBase = (
+    driver: AgentDriver,
+    scores: { entry: [number, number]; after: [number, number] },
+  ) => {
+    let call = 0;
+    return base(driver, {
+      taskId: 'write-docs',
+      config: { ...config(), tasks: ['write-docs' as const] },
+      hingeScores: async () => {
+        const [improve, hold] = call++ === 0 ? scores.entry : scores.after;
+        return { improve, holds: [hold] };
+      },
+    });
+  };
+
+  it('an improved dimension with holds intact lands, evidence in the ledger', async () => {
+    const r = await runRemediateTask(
+      hingeBase(fakeDriver({}), { entry: [42, 70], after: [55, 70] }),
+    );
+    expect(r.outcome).toBe('verified');
+    expect(r.scoreHinge).toEqual({
+      dimension: 'documentation',
+      before: 42,
+      after: 55,
+      holds: [{ dimension: 'quality', before: 70, after: 70 }],
+    });
+    expect(r.ledger).toContain('score hinge');
+    expect(r.ledger).toContain('42 -> 55');
+  });
+
+  it('a score that does not move is score-red — cosmetic churn never lands', async () => {
+    const r = await runRemediateTask(
+      hingeBase(fakeDriver({}), { entry: [42, 70], after: [42, 70] }),
+    );
+    expect(r.outcome).toBe('score-red');
+    expect(r.note).toContain('did not improve');
+    expect(r.note).toContain('42 -> 42');
+  });
+
+  it('improving the goal by degrading a held dimension is score-red', async () => {
+    const r = await runRemediateTask(
+      hingeBase(fakeDriver({}), { entry: [42, 70], after: [60, 61] }),
+    );
+    expect(r.outcome).toBe('score-red');
+    expect(r.note).toContain('quality 70 -> 61');
+  });
+
+  it('tasks without a hinge never pay the probe', async () => {
+    let probed = 0;
+    const r = await runRemediateTask(
+      base(fakeDriver({}), {
+        hingeScores: async () => {
+          probed++;
+          return { improve: 0, holds: [] };
+        },
+      }),
+    );
+    expect(r.outcome).toBe('verified');
+    expect(probed).toBe(0);
+    expect(r.scoreHinge).toBeUndefined();
+  });
+});

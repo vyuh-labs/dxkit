@@ -77,12 +77,13 @@ describe('resolveModelSetting (the three accepted shapes)', () => {
 });
 
 describe('task registry', () => {
-  it('declares four v1 tasks, each with a tier + rationale + verify signal', () => {
+  it('declares the task set, each with a tier + rationale + verify signal', () => {
     expect(REMEDIATE_TASKS.map((t) => t.id).sort()).toEqual([
       'fix-build',
       'fix-lint',
       'fix-vulns',
       'improve-tests',
+      'write-docs',
     ]);
     for (const t of REMEDIATE_TASKS) {
       expect(MODEL_TIERS).toContain(t.tier);
