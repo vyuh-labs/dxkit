@@ -356,6 +356,29 @@ describe('installCiGuardrails + installCiBaselineRefresh', () => {
     // Branch + PR mechanics live in the CLI (shared lander), never the YAML.
     expect(content).toContain('deps bump --apply --land pr');
     expect(content).not.toContain('git checkout -B');
+    // Absent knob → the lane's own default (Mon 07:00, offset from the
+    // refresh/remediate 06:00).
+    expect(content).toContain("cron: '0 7 * * 1'");
+  });
+
+  it('renders depBump.schedule through the one cadence grammar (4.3.4)', () => {
+    fs.mkdirSync(path.join(tmp, '.dxkit'), { recursive: true });
+    fs.writeFileSync(
+      path.join(tmp, '.dxkit', 'policy.json'),
+      JSON.stringify({ depBump: { enabled: true, schedule: 'daily' } }),
+    );
+    installCiDepBump(tmp, { force: true });
+    const content = fs.readFileSync(path.join(tmp, '.github/workflows/dxkit-dep-bump.yml'), 'utf8');
+    expect(content).toContain("cron: '0 6 * * *'");
+    // A malformed value falls back to the lane default, never an invalid YAML.
+    fs.writeFileSync(
+      path.join(tmp, '.dxkit', 'policy.json'),
+      JSON.stringify({ depBump: { enabled: true, schedule: 'whenever; rm -rf' } }),
+    );
+    installCiDepBump(tmp, { force: true });
+    const again = fs.readFileSync(path.join(tmp, '.github/workflows/dxkit-dep-bump.yml'), 'utf8');
+    expect(again).toContain("cron: '0 7 * * 1'");
+    expect(again).not.toContain('rm -rf');
   });
 
   it('renders the default weekly cron into a scheduled refresh transport', () => {

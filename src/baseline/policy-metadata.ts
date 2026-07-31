@@ -167,6 +167,13 @@ export const POLICY_PARAMS: readonly PolicyParamMeta[] = [
     anchor: 'dep-bump',
   },
   {
+    // Same open shape as baseline.refreshCadence / remediate.schedule: named
+    // cadences OR a cron. Absent = the lane's own Monday 07:00 UTC default.
+    path: 'depBump.schedule',
+    summary: 'cadence: weekly, daily, or a 5-field cron line',
+    anchor: 'dep-bump',
+  },
+  {
     path: 'expiryNotice.enabled',
     summary: 'maintain one issue naming allowlist suppressions about to lapse',
     anchor: 'expiry-notice',

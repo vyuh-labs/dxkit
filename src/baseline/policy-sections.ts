@@ -124,14 +124,24 @@ export function baselineRefreshCron(policy: {
  * 5-field cron, or the weekly default. One grammar, so "weekly" means the
  * same thing on every surface that schedules anything.
  */
-export function cronFromCadence(declared: string | undefined): string {
-  if (typeof declared !== 'string') return DEFAULT_BASELINE_REFRESH_CRON;
+export function cronFromCadence(
+  declared: string | undefined,
+  fallback: string = DEFAULT_BASELINE_REFRESH_CRON,
+): string {
+  if (typeof declared !== 'string') return fallback;
   const trimmed = declared.trim();
   const named = NAMED_REFRESH_CADENCES[trimmed];
   if (named) return named;
   if (CRON_RE.test(trimmed)) return trimmed;
-  return DEFAULT_BASELINE_REFRESH_CRON;
+  return fallback;
 }
+
+/** The dep-bump lane's default: weekly, Monday 07:00 UTC — an hour after the
+ *  refresh/remediate default so the lanes do not pile onto one runner window.
+ *  A declared `depBump.schedule` goes through the ONE cadence grammar above
+ *  (note "weekly" is the shared Mon 06:00 — the 07:00 offset is the ABSENT
+ *  default, not a named cadence). */
+export const DEFAULT_DEPBUMP_CRON = '0 7 * * 1';
 
 /** `licenses.*` block in `.dxkit/policy.json`. */
 export interface LicensesPolicy {
