@@ -1171,8 +1171,9 @@ export function installCiCommentDefer(cwd: string, opts: InstallerOpts = {}): Sh
   if (result.installed.length > 0) {
     result.notes.push(
       'comment-commands workflow installed: a reviewer with write access can defer ' +
-        'newly published advisories from the PR conversation (`/dxkit defer …`) — ' +
-        'time-boxed, dep-vuln-only, committed to the PR branch with the commenter attributed.',
+        'any blocking finding from the PR conversation (`/dxkit defer <fingerprint>…`; ' +
+        '`--new-advisories` bulk-defers newly published dependency advisories) — ' +
+        'time-boxed, committed to the PR branch with the commenter attributed.',
     );
   }
   return result;
