@@ -109,3 +109,69 @@ describe('template call sites use policy get (the de-inlining, both directions)'
     });
   }
 });
+
+// ─── policy set (4.3.4 — the incantation killer) ────────────────────────────
+
+import { resolvePolicySet } from '../src/policy-cli';
+import { installCiBaselineRefresh } from '../src/ship-installers';
+
+describe('resolvePolicySet', () => {
+  it('sets a cadence knob without quoting, comment-preserving, read-back verified', async () => {
+    writePolicy('{\n  // keep this comment\n  "remediate": { "enabled": true }\n}\n');
+    const out = await resolvePolicySet(repo, 'remediate.schedule', 'daily');
+    expect(out.ok).toBe(true);
+    expect(out.message).toContain('remediate.schedule = daily');
+    const text = readFileSync(join(repo, '.dxkit', 'policy.json'), 'utf8');
+    expect(text).toContain('// keep this comment');
+    expect(text).toContain('"schedule"');
+    // No install here: says so instead of silently touching nothing.
+    expect(out.notes.join(' ')).toContain('no dxkit install here');
+  });
+
+  it('parses JSON-shaped values (booleans, arrays) and leaves bare words as strings', async () => {
+    writePolicy('{"lint": {"enabled": true}}');
+    expect((await resolvePolicySet(repo, 'lint.blocking', 'true')).ok).toBe(true);
+    const read = resolvePolicyGet(repo, 'lint.blocking');
+    expect(read).toEqual({ ok: true, output: 'true' });
+    const arr = await resolvePolicySet(repo, 'newAdvisories.blockSeverities', '[]');
+    expect(arr.ok).toBe(true);
+    expect(resolvePolicyGet(repo, 'newAdvisories.blockSeverities')).toEqual({
+      ok: true,
+      output: '[]',
+    });
+  });
+
+  it('refuses an unknown path with suggestions — a typo never half-writes', async () => {
+    writePolicy('{}');
+    const out = await resolvePolicySet(repo, 'remediate.shedule', 'daily');
+    expect(out.ok).toBe(false);
+    expect(out.message).toContain('not a settable policy knob');
+    expect(out.message).toContain('remediate.schedule');
+    expect(readFileSync(join(repo, '.dxkit', 'policy.json'), 'utf8')).toBe('{}');
+  });
+
+  it('enforces enum values where the knob declares them', async () => {
+    writePolicy('{}');
+    const out = await resolvePolicySet(repo, 'remediate.salvage', 'keep-everything');
+    expect(out.ok).toBe(false);
+    expect(out.message).toContain('discard');
+    expect(out.message).toContain('draft-pr');
+  });
+
+  it('re-renders the workflows the knob gates — no second update command needed', async () => {
+    writePolicy('{"baseline": {"anchor": "branch"}}');
+    // An installed repo: manifest + the refresh workflow on disk.
+    writeFileSync(
+      join(repo, '.vyuh-dxkit.json'),
+      JSON.stringify({ generatedAt: 'x', mode: 'full', files: [] }),
+    );
+    installCiBaselineRefresh(repo, { policyAnchor: 'branch' });
+    const before = readFileSync(join(repo, '.github/workflows/dxkit-baseline-refresh.yml'), 'utf8');
+    expect(before).toContain("cron: '0 6 * * 1'");
+
+    const out = await resolvePolicySet(repo, 'baseline.refreshCadence', 'daily');
+    expect(out.ok).toBe(true);
+    const after = readFileSync(join(repo, '.github/workflows/dxkit-baseline-refresh.yml'), 'utf8');
+    expect(after).toContain("cron: '0 6 * * *'");
+  });
+});
