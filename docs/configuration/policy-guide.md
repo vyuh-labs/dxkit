@@ -339,6 +339,7 @@ declared capability tier.
 | `fix-vulns`     | `standard` | cross-file reasoning; majors can require real code changes    |
 | `fix-lint`      | `light`    | mechanical, pattern-per-finding work                          |
 | `improve-tests` | `standard` | design judgment about behavior worth pinning, not boilerplate |
+| `write-docs`    | `standard` | grounded technical writing over real code, not boilerplate    |
 
 <!-- END GENERATED: remediate-task-tiers -->
 

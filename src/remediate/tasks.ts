@@ -20,7 +20,21 @@ function dxkitInRepo(subcommand: string): string {
   return `\`./node_modules/.bin/vyuh-dxkit ${subcommand}\` (fall back to \`${dxkitCli(subcommand)}\`)`;
 }
 
-export type RemediateTaskId = 'fix-build' | 'fix-vulns' | 'fix-lint' | 'improve-tests';
+export type RemediateTaskId =
+  | 'fix-build'
+  | 'fix-vulns'
+  | 'fix-lint'
+  | 'improve-tests'
+  | 'write-docs';
+
+/** Health dimensions a score hinge may reference (the report's keys). */
+export type HingeDimension =
+  | 'testing'
+  | 'quality'
+  | 'documentation'
+  | 'security'
+  | 'maintainability'
+  | 'developerExperience';
 
 export interface RemediateTask {
   readonly id: RemediateTaskId;
@@ -35,6 +49,23 @@ export interface RemediateTask {
   /** Which verification the outcome hinges on (both always run; this names
    *  the primary signal for the ledger). */
   readonly verify: 'floor' | 'guardrail';
+  /**
+   * OPTIONAL deterministic score hinge (4.3.4). The lane's law is that a task
+   * ships only when "done" is re-verifiable without reading prose — and for
+   * work whose whole point is a dimension moving (docs), the floor and
+   * guardrail are necessary but prove nothing about the goal. A hinge makes
+   * the goal itself part of the verified frame: the `improve` dimension's
+   * score must END STRICTLY HIGHER than the pristine-tree entry score, and
+   * every `holdSteady` dimension must not drop — else the outcome is
+   * `score-red` and nothing lands. Both sides are computed by the same
+   * deterministic scorer in the same environment, so the delta is fair even
+   * where absolute scores are degraded (a missing scanner degrades both
+   * sides equally).
+   */
+  readonly scoreHinge?: {
+    readonly improve: HingeDimension;
+    readonly holdSteady: readonly HingeDimension[];
+  };
 }
 
 /** Ground rules appended to every task prompt — the non-negotiables. */
@@ -130,6 +161,27 @@ give the empty/broken suites real tests or delete them with the reason in the
 commit message. Every test you add must pass, and the suite must run clean
 before you finish (\`vyuh-dxkit debt\` floor section stays clean). Do NOT lower
 coverage thresholds or edit test configuration to inflate numbers.` + SHARED_RULES,
+  },
+  {
+    id: 'write-docs',
+    summary: 'write the documentation the repo is missing, verified by the score',
+    tier: 'standard',
+    tierWhy: 'grounded technical writing over real code, not boilerplate',
+    verify: 'guardrail',
+    scoreHinge: { improve: 'documentation', holdSteady: ['quality'] },
+    prompt:
+      `Run ${dxkitInRepo('health --json')} and read the Documentation dimension's
+deductions — they name exactly what is missing (README sections, docstring
+coverage, architecture notes). Work the largest deductions first. READ the
+real code before documenting it, then write documentation that is TRUE of
+this codebase: a README whose commands and layout match reality, docstrings
+that say what a function does and WHY it exists (never a restatement of the
+signature), architecture notes grounded in the actual module structure. No
+filler prose and no generated-sounding padding — the Quality dimension's
+slop metrics are part of your verification, and vague boilerplate fails it.
+Never document behavior you have not read. Verification is deterministic:
+the Documentation score must END HIGHER than it started while Quality does
+not drop — cosmetic edits that move nothing are rejected, not landed.` + SHARED_RULES,
   },
 ];
 
