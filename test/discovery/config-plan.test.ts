@@ -25,6 +25,7 @@ import {
   type ConfigContext,
 } from '../../src/discovery/commands';
 import { applyConfigPlan, runConfigure } from '../../src/configure-cli';
+import { installCiBaselineRefresh } from '../../src/ship-installers';
 
 const tmps: string[] = [];
 function mkTmp(): string {
@@ -279,5 +280,29 @@ describe('configure check — the enforceable drift detector', () => {
     process.exitCode = 0;
     runConfigure(d, { check: true, json: true, probes: privateProbes });
     expect(process.exitCode).toBe(0);
+  });
+});
+
+describe('configure --apply renders the workflows the plan gates (4.3.4)', () => {
+  it('a changed apply runs the post-write reconciliation — no second update command', () => {
+    const d = mkTmp();
+    // An installed repo rendered under the weekly default, whose POLICY then
+    // moved to daily without a re-render (the hand-edit shape the parity
+    // gate exists for). The apply must leave the workflows reconciled, not
+    // tell the user to run update.
+    fs.writeFileSync(
+      path.join(d, '.vyuh-dxkit.json'),
+      JSON.stringify({ generatedAt: 'x', mode: 'full', files: [] }),
+    );
+    writePolicy(d, { baseline: { anchor: 'branch' } });
+    installCiBaselineRefresh(d, { policyAnchor: 'branch' });
+    const wf = path.join(d, '.github/workflows/dxkit-baseline-refresh.yml');
+    expect(fs.readFileSync(wf, 'utf8')).toContain("cron: '0 6 * * 1'");
+    // Policy edited by hand, workflows not re-rendered:
+    writePolicy(d, { baseline: { anchor: 'branch', refreshCadence: 'daily' } });
+
+    runConfigure(d, { apply: true, json: true, probes: privateProbes });
+
+    expect(fs.readFileSync(wf, 'utf8')).toContain("cron: '0 6 * * *'");
   });
 });

@@ -26,6 +26,7 @@
 import * as logger from './logger';
 import { gatherConfigPlan, type ConfigPlanItem, type ConfigContext } from './discovery/commands';
 import { deepMergePolicy, mergeIntoPolicyFile } from './baseline/policy-write';
+import { resolvePolicyRender } from './policy-render';
 
 export interface ConfigureOptions {
   /** Write the plan into policy.json (default is plan-only, no write). */
@@ -121,10 +122,24 @@ function applyAndReport(
 ): void {
   const result = applyConfigPlan(cwd, plan);
 
+  // The knobs the plan just enabled may gate managed workflows. Rendering is
+  // the SAME post-write reconciliation `policy set` performs (Rule 2 — one
+  // renderer, update's own lane via `policy render`), so `configure --apply`
+  // never leaves a knob on with nothing serving it — the class the parity
+  // gate exists to catch must not be manufactured by dxkit's own onboarding
+  // path. No-op on repos without a dxkit install.
+  const render = result.changed ? resolvePolicyRender(cwd, 'apply') : undefined;
+
   if (opts.json) {
     process.stdout.write(
       JSON.stringify(
-        { schema: 'configure-apply.v1', changed: result.changed, sections: result.sections, plan },
+        {
+          schema: 'configure-apply.v1',
+          changed: result.changed,
+          sections: result.sections,
+          rendered: render?.drifted ?? [],
+          plan,
+        },
         null,
         2,
       ) + '\n',
@@ -146,6 +161,7 @@ function applyAndReport(
   for (const item of plan) logger.info(`  ✓ ${item.section} → ${item.summary}`);
   console.log(''); // slop-ok
   logger.info(`Wrote ${result.sections.length} section(s) into .dxkit/policy.json.`);
+  for (const rel of render?.drifted ?? []) logger.info(`  rendered ${rel}`);
   logger.dim('Commit it so every developer + CI share the same posture.');
 }
 
