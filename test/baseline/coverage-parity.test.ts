@@ -203,6 +203,11 @@ describe('coverage-parity matrix — every kind × surface observes or discloses
   it('ref-based: custom-check answers via refExcludedKinds; large-file diffs normally', () => {
     const r = cells.refBased;
     expect(r.refExcludedKinds.some((e) => e.kind === 'custom-check')).toBe(true);
+    // The synthetic prior side's "coverage" is a property of the bare
+    // worktree, not of any capture — never diffed in ref-based mode (the
+    // guaranteed-noise "eslint was NOT available at baseline" class; the
+    // excluded kinds already carry their own disclosure above).
+    expect(r.envelopeDrift.coverageDrift).toEqual([]);
     expect(r.pairs.filter((p) => p.kind === 'custom-check')).toEqual([]);
     const lf = r.pairs.filter((p) => p.kind === 'large-file');
     expect(lf.length).toBeGreaterThan(0);

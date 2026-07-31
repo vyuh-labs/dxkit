@@ -857,7 +857,7 @@ export async function runGuardrailCheck(
   const severityByCurrentId = buildSeverityIndex(current.aggregate);
   const maliciousByCurrentId = buildMaliciousIndex(current.aggregate);
   const reachableByCurrentId = buildReachableIndex(current.aggregate);
-  const envelopeDrift = diffEnvelopes(baseline, current);
+  const envelopeDrift = diffEnvelopes(baseline, current, mode.mode);
 
   // Per-kind recall attribution (Rule 19) drives the per-pair `recallDrifted`
   // signal. A pair is in drift only when the inputs that determine ITS kind
@@ -1319,7 +1319,11 @@ export function buildReachableIndex(aggregate: SecurityAggregate): Set<FindingId
   return out;
 }
 
-function diffEnvelopes(baseline: BaselineFile, current: CurrentScan): EnvelopeDrift {
+function diffEnvelopes(
+  baseline: BaselineFile,
+  current: CurrentScan,
+  mode: ResolvedMode['mode'],
+): EnvelopeDrift {
   const toolVersionDiffs: Array<{
     tool: string;
     baselineVersion: string | undefined;
@@ -1355,7 +1359,16 @@ function diffEnvelopes(baseline: BaselineFile, current: CurrentScan): EnvelopeDr
     toolVersionDiffs,
     recallDrift,
     ...(baseline.capturedIn ? { baselineCapturedIn: baseline.capturedIn } : {}),
-    coverageDrift: diffCoverage(baseline.coverage, current.coverage),
+    // Ref-based mode: the prior side is a fresh gather in a bare worktree,
+    // so its "coverage" records artifact-dependent tools (a node_modules
+    // linter, the coverage report) as missing BY CONSTRUCTION — not as a
+    // fact about any capture. Diffing that against the real tree produced a
+    // guaranteed-noise warning ("eslint was NOT available at baseline …
+    // findings may surface as new") for categories the ref-based diff
+    // ALREADY excludes and discloses (REF_UNRELIABLE_KINDS). Committed
+    // modes keep the diff — there it is load-bearing (a baseline captured
+    // without gitleaks genuinely never baselined secrets).
+    coverageDrift: mode === 'ref-based' ? [] : diffCoverage(baseline.coverage, current.coverage),
   };
 }
 
