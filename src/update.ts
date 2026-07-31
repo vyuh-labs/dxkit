@@ -1,4 +1,5 @@
 import * as fs from 'fs';
+import { execFileSync } from 'child_process';
 import * as path from 'path';
 import { Manifest, ManifestInstallFlags } from './types';
 import { detect } from './detect';
@@ -69,18 +70,51 @@ export function resolveInstallFlags(
  * against a manifest file being deleted mid-flight (returns false in
  * that case rather than throwing).
  */
+/** Does neither `refs/remotes/origin/<b>` nor `refs/heads/<b>` resolve?
+ *  Unreadable git state keeps the pin (fail-safe: never re-pin on a probe
+ *  hiccup — only on positive evidence the branch is gone). */
+function branchIsGone(cwd: string, branch: string): boolean {
+  for (const ref of [`refs/remotes/origin/${branch}`, `refs/heads/${branch}`]) {
+    try {
+      execFileSync('git', ['rev-parse', '--verify', '--quiet', ref], { cwd, stdio: 'ignore' });
+      return false;
+    } catch {
+      /* try next */
+    }
+  }
+  try {
+    execFileSync('git', ['rev-parse', '--git-dir'], { cwd, stdio: 'ignore' });
+  } catch {
+    return false; // not a usable git checkout — no evidence, keep the pin
+  }
+  return true;
+}
+
 export function writeInstallFlags(cwd: string, flags: InstallFlags): boolean {
   const manifestPath = path.join(cwd, '.vyuh-dxkit.json');
   if (!fs.existsSync(manifestPath)) return false;
   try {
     const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8')) as Manifest;
     manifest.installFlags = flags;
-    // Backfill the pinned render-determining default branch on manifests
-    // that predate it (4.3.5) — probed HERE, where update runs (a real
-    // clone), so every later re-render (CI parity check included) reads one
-    // environment-independent answer. Never re-probed once pinned.
-    if (typeof manifest.defaultBranch !== 'string' || manifest.defaultBranch.length === 0) {
+    // The pinned render-determining default branch (4.3.5): backfill it on
+    // manifests that predate it, and RE-PIN when the pinned branch no longer
+    // exists (a default-branch rename/migration) — probed HERE, where update
+    // runs (a real clone), so every later re-render (CI parity check
+    // included) reads one environment-independent answer. A pin whose branch
+    // still exists is never second-guessed: the repo's git state moving
+    // around it is exactly the noise the pin exists to shut out.
+    const pin = manifest.defaultBranch;
+    if (typeof pin !== 'string' || pin.length === 0) {
       manifest.defaultBranch = detectDefaultBranch(cwd);
+    } else if (branchIsGone(cwd, pin)) {
+      const repinned = detectDefaultBranch(cwd);
+      if (repinned !== pin) {
+        manifest.defaultBranch = repinned;
+        logger.info(
+          `pinned default branch '${pin}' no longer exists — re-pinned to '${repinned}' ` +
+            `(managed workflows re-render against it this update)`,
+        );
+      }
     }
     fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n');
     return true;
