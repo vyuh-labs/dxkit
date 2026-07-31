@@ -35,7 +35,7 @@ import {
   type BaselineAnchor,
 } from './baseline/modes';
 import { baselineRefreshCron, loadPolicyFromCwd } from './baseline/policy';
-import { cronFromCadence } from './baseline/policy-sections';
+import { cronFromCadence, DEFAULT_DEPBUMP_CRON } from './baseline/policy-sections';
 import { BOT_IDENTITY } from './land-refresh';
 import { resolveRemediateConfig } from './remediate/config';
 import { driverById } from './remediate/registry';
@@ -1087,13 +1087,20 @@ export function installCiDepBump(cwd: string, opts: InstallerOpts = {}): ShipIns
   const result = installWorkflow(cwd, 'dxkit-dep-bump.yml', opts, {
     [CI_RUNTIME_SETUP_KEY]: renderCiRuntimeSetup(cwd),
     __DXKIT_DEFAULT_BRANCH__: detectDefaultBranch(cwd),
+    // The one cadence grammar; the lane's own Mon 07:00 default when the knob
+    // is absent (offset from the refresh/remediate 06:00 so lanes don't pile).
+    __DXKIT_DEPBUMP_CRON__: cronFromCadence(
+      loadPolicyFromCwd(cwd).depBump?.schedule,
+      DEFAULT_DEPBUMP_CRON,
+    ),
   });
   if (result.installed.length > 0) {
     result.notes.push(
-      'dep-bump workflow installed: weekly, it turns the fixable subset of dependency ' +
-        'vulnerabilities into one standing PR (dxkit/dep-bump) — bumps from the scanners’ ' +
-        'own fix versions, verified by the correctness floor + guardrail before opening. ' +
-        'Majors are skipped unless depBump.allowMajor.',
+      'dep-bump workflow installed: on its schedule (depBump.schedule; default weekly, ' +
+        'Monday 07:00 UTC) it turns the fixable subset of dependency vulnerabilities into ' +
+        'one standing PR (dxkit/dep-bump) — bumps from the scanners’ own fix versions, ' +
+        'verified by the correctness floor + guardrail before opening. Majors are skipped ' +
+        'unless depBump.allowMajor.',
     );
   }
   return result;

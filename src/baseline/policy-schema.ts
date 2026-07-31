@@ -211,6 +211,7 @@ export function buildPolicySchema(version: string): Schema {
         {
           enabled: boolProp('depBump.enabled'),
           allowMajor: boolProp('depBump.allowMajor'),
+          schedule: stringProp('depBump.schedule'),
         },
         'Scheduled deterministic dependency-bump PRs.',
       ),

@@ -347,7 +347,14 @@ export interface BrownfieldPolicy {
    * major bumps (default false — majors stay a human decision, disclosed in
    * the skip list). Opt-in, default off.
    */
-  readonly depBump?: { readonly enabled?: boolean; readonly allowMajor?: boolean };
+  readonly depBump?: {
+    readonly enabled?: boolean;
+    readonly allowMajor?: boolean;
+    /** Cadence for the scheduled lane — the shared grammar (`weekly`, `daily`,
+     *  or a strict 5-field cron). Absent ⇒ the lane's own default (Monday
+     *  07:00 UTC, an hour after the refresh/remediate default). */
+    readonly schedule?: string;
+  };
   /**
    * The expiry decision surface: while the scheduled refresh is running anyway,
    * maintain ONE GitHub issue naming the allowlist suppressions whose windows

@@ -14,7 +14,10 @@ name: dxkit dep bump
 
 on:
   schedule:
-    - cron: '0 7 * * 1'
+    # Rendered from `.dxkit/policy.json:depBump.schedule` (weekly | daily | a
+    # 5-field cron). Absent = Monday 07:00 UTC. Change the policy knob and run
+    # `vyuh-dxkit update` — do not edit this line (update re-renders it).
+    - cron: '__DXKIT_DEPBUMP_CRON__'
   workflow_dispatch: {}
 
 permissions:

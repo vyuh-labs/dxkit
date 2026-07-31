@@ -24,6 +24,7 @@ stanzas).
 | `checks`                            | [#custom-checks](#custom-checks)             |
 | `depBump.allowMajor`                | [#dep-bump](#dep-bump)                       |
 | `depBump.enabled`                   | [#dep-bump](#dep-bump)                       |
+| `depBump.schedule`                  | [#dep-bump](#dep-bump)                       |
 | `duplication.mode`                  | [#duplication-mode](#duplication-mode)       |
 | `expiryNotice.enabled`              | [#expiry-notice](#expiry-notice)             |
 | `flow.mode`                         | [#flow-mode](#flow-mode)                     |
