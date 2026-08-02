@@ -79,7 +79,8 @@ export const GATE_COMMANDS = [
     typicalRuntime: '< 1 sec',
     docsBlurb:
       'Accept a finding with a typed category + required reason + optional expiry; audit and prune ' +
-      'entries. `defer` bulk-defers newly published dep-vuln advisories time-boxed (dep-vuln-only).',
+      'entries. `defer` time-boxes any blocking finding by fingerprint; its bulk form ' +
+      '(`--from-last-check`) is scoped to newly published dep-vuln advisories.',
     skill: 'dxkit-allowlist',
     whenToRecommend: recommendExpiryNotice,
   },

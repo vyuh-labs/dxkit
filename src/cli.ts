@@ -245,12 +245,14 @@ ${renderCommandIndex().join('\n')}
                                  form writes to .dxkit/allowlist.json.
     vyuh-dxkit allowlist defer [<fingerprint>…] [--from-last-check] --reason=<text>
                                [--expires=<YYYY-MM-DD|+Nd>]
-                                 Bulk, dep-vuln-only, time-boxed deferral of newly
-                                 published advisories (category=deferred, default
+                                 Time-boxed deferral (category=deferred, default
                                  expiry +7d — the expiry re-blocks, forcing the fix
-                                 lane). --from-last-check pulls the blocking dep-vulns
-                                 from the last same-tree guardrail run; other kinds are
-                                 refused, never bulk-deferred.
+                                 lane). Explicit fingerprints defer ANY blocking
+                                 finding, kind-stamped from the last verdict.
+                                 --from-last-check is the bulk form: it pulls only
+                                 the blocking dep-vulns of the last same-tree
+                                 guardrail run; other kinds are never bulk-deferred
+                                 (defer them one fingerprint at a time, on purpose).
     vyuh-dxkit allowlist list | show <fingerprint> | audit | prune [--dry-run] [--json]
                                  Review / audit / clean the allowlist. audit surfaces
                                  expired + soon-to-expire (within 14 days) + missing-
