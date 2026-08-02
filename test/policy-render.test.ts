@@ -105,9 +105,18 @@ describe('resolvePolicyRender', () => {
     // The user rewrote the workflow their way; provenance says never clobber.
     writeFileSync(join(repo, REFRESH_YML), 'name: my own refresh\non: {}\n');
     const out = resolvePolicyRender(repo, 'check');
-    expect(out.clean).toBe(true);
+    // The workflow itself is divergence, never drift: not flagged, not touched.
+    expect(out.drifted).not.toContain(REFRESH_YML);
     expect(readFileSync(join(repo, REFRESH_YML), 'utf8')).toContain('my own refresh');
     // Any sidecar the refresh emitted during the check was cleaned up.
     expect(existsSync(join(repo, `${REFRESH_YML}.dxkit`))).toBe(false);
+    // The DERIVED runbook reads the modified workflow as repo truth, so it
+    // legitimately drifts (its rendered content changed) until re-applied —
+    // the same "derived file catches up" semantics as a policy edit. The
+    // check itself still leaves the tree byte-identical.
+    expect(out.drifted).toEqual(['RUNBOOK.dxkit.md']);
+    resolvePolicyRender(repo, 'apply');
+    expect(resolvePolicyRender(repo, 'check').clean).toBe(true);
+    expect(readFileSync(join(repo, REFRESH_YML), 'utf8')).toContain('my own refresh');
   });
 });

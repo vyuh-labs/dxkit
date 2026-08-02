@@ -59,6 +59,7 @@ import {
   installHooks,
   installHooksPostinstall,
   installIgnoreFiles,
+  installRunbook,
   installPrReview,
   type ShipInstallResult,
 } from './ship-installers';
@@ -384,6 +385,20 @@ export const MANAGED_SHIP_SURFACES: readonly ManagedShipSurface[] = [
     uninstallDetection: 'flag',
     refreshOnUpdate: true,
     install: (cwd, { force }) => installIgnoreFiles(cwd, { force }),
+  },
+  {
+    // Per-repo runbook (issue #246): a generated, committed markdown page at
+    // the repo root, rendered from repo truth (policy + the workflows
+    // actually present). Always installed; LAST in registry order so an
+    // update's refresh sees the other surfaces' artifacts already refreshed.
+    // The installer preserves a marker-less (user-owned) file; the
+    // dxkit-suffixed name makes an uninstall collision implausible.
+    id: 'runbook',
+    gate: { kind: 'always' },
+    artifacts: () => ['RUNBOOK.dxkit.md'],
+    uninstallDetection: 'flag',
+    refreshOnUpdate: true,
+    install: (cwd, { force }) => installRunbook(cwd, { force }),
   },
 ];
 

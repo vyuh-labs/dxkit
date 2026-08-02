@@ -14,6 +14,7 @@
  * registered. It cannot drift.
  */
 import * as logger from '../logger';
+import { buildLearnBundle } from '../learn/bundle';
 import {
   userCommands,
   gatherRecommendations,
@@ -24,11 +25,57 @@ import {
 
 export interface CapabilitiesOptions {
   json?: boolean;
+  /** Pasteable markdown for org documentation systems (issue #246). */
+  markdown?: boolean;
+}
+
+/**
+ * `capabilities --markdown`: the capability/limits content as markdown an org
+ * can paste into a wiki. Rendered from the SAME learn bundle the learn page
+ * and assistant read (one content path, Rule 2.30) — the capability list is
+ * registry-generated and the limits statement is the curated
+ * capabilities-and-limits doc, verbatim.
+ */
+export function renderCapabilitiesMarkdown(): string {
+  const bundle = buildLearnBundle();
+  const lines: string[] = [];
+  lines.push(`# dxkit capabilities (v${bundle.version})`);
+  lines.push('');
+  lines.push('## Start here');
+  lines.push('');
+  for (const c of bundle.capabilities.filter((x) => x.tier === 'core')) {
+    lines.push(`- **\`${c.id}\`** — ${c.docsBlurb ?? c.summary}`);
+  }
+  const groups = [
+    ...new Set(bundle.capabilities.filter((c) => c.tier === 'more').map((c) => c.groupLabel)),
+  ];
+  for (const g of groups) {
+    lines.push('');
+    lines.push(`## ${g}`);
+    lines.push('');
+    for (const c of bundle.capabilities.filter((x) => x.tier === 'more' && x.groupLabel === g)) {
+      lines.push(`- **\`${c.id}\`** — ${c.docsBlurb ?? c.summary}`);
+    }
+  }
+  const limits = bundle.docs.find((d) => d.slug === 'capabilities-and-limits');
+  if (limits) {
+    lines.push('');
+    lines.push('---');
+    lines.push('');
+    lines.push(limits.markdown.trimEnd());
+  }
+  lines.push('');
+  return lines.join('\n');
 }
 
 export function runCapabilities(cwd: string, opts: CapabilitiesOptions = {}): void {
   const recommendations = gatherRecommendations(cwd);
   const recommendedIds = new Set(recommendations.map((r) => r.id));
+
+  if (opts.markdown) {
+    process.stdout.write(renderCapabilitiesMarkdown());
+    return;
+  }
 
   if (opts.json) {
     // Agent-queryable menu. Logger is already in stderr mode (cli.ts sets it
