@@ -63,24 +63,76 @@ export function isFixtureSupportPath(relPath: string): boolean {
   return FIXTURE_SUPPORT_DIR.test(relPath.replace(/\\/g, '/'));
 }
 
+/** Tool-recognized test-INFRASTRUCTURE basenames: files a test runner
+ *  collects by design that can never contain collected tests, so "contains
+ *  no tests" is their correct state, not degradation. `conftest.py` is
+ *  pytest's own support surface (gh #233 — it was flagged as a degraded
+ *  test file, closing a catch-22 around extracting shared test helpers).
+ *  Curated cross-ecosystem, like FIXTURE_SUPPORT_DIR above; grow it (or
+ *  promote to a pack-declared field) as new runners join. */
+const TEST_SUPPORT_BASENAMES = new Set(['conftest.py']);
+
+/** Escape a module name for embedding in a RegExp. */
+function escapeRe(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * A testless module in a tests tree that a SIBLING active test imports is
+ * shared test-support code (builders, fixtures-as-code), not a degraded
+ * test file (gh #233): "extract the duplicated builders to a helper" is
+ * the standard refactor the duplication gate itself pushes toward, and
+ * flagging the helper as degradation closed a catch-22 around it. The
+ * import evidence is a per-language module reference to the file's
+ * basename (python `from helpers import …` / JS `from './helpers'`).
+ */
+function isImportedByActiveSibling(modName: string, activeContents: readonly string[]): boolean {
+  const mod = escapeRe(modName);
+  // Python: `import helpers`, `from helpers import x`, `from tests.helpers import x`,
+  // `from .helpers import x`.
+  const py = new RegExp(`(^|\\n)\\s*(from|import)\\s+[\\w.]*\\b${mod}\\b`);
+  // JS/TS: `from './helpers'`, `require('../helpers')`, extension optional.
+  const js = new RegExp(`(from\\s+|require\\()\\s*['"][^'"]*[/.]${mod}(\\.[cm]?[jt]sx?)?['"]`);
+  return activeContents.some((c) => py.test(c) || js.test(c));
+}
+
 export function gatherTestFiles(cwd: string): TestFile[] {
   // Walker computes test-files as (includeTests:true SET) MINUS
   // (includeTests:false SET). Test-pattern derivation is pack-driven
   // via `allTestFilePatterns()`, so adding a new pack auto-extends.
   const allFiles = new Set(walkSourceFiles(cwd, { includeTests: true }));
   const nonTestFiles = new Set(walkSourceFiles(cwd));
-  const testFiles: TestFile[] = [];
+  const candidates: Array<TestFile & { readonly content: string }> = [];
   for (const p of allFiles) {
     if (nonTestFiles.has(p)) continue;
     if (isFixtureSupportPath(p)) continue; // fixtures/mocks/snapshots are support, not tests
+    if (TEST_SUPPORT_BASENAMES.has(path.basename(p))) continue; // runner infrastructure, not a test
     const fullPath = path.join(cwd, p);
-    testFiles.push({
+    let content = '';
+    try {
+      content = fs.readFileSync(fullPath, 'utf-8');
+    } catch {
+      // unreadable → classifyTestFile re-reads and degrades to 'empty'
+    }
+    candidates.push({
       path: p,
       status: classifyTestFile(fullPath),
       framework: detectTestFramework(fullPath),
+      content,
     });
   }
-  return testFiles;
+  // Second pass: a NON-active candidate imported by an active sibling is
+  // shared support code — excluded like the fixture dirs above, so it never
+  // mints a degradation finding (and never a new status value: exclusion,
+  // not reclassification, keeps finding identity untouched).
+  const activeContents = candidates.filter((c) => c.status === 'active').map((c) => c.content);
+  return candidates
+    .filter((c) => {
+      if (c.status === 'active') return true;
+      const modName = path.basename(c.path).replace(/\.[^.]+$/, '');
+      return !isImportedByActiveSibling(modName, activeContents);
+    })
+    .map(({ path: p, status, framework }) => ({ path: p, status, framework }));
 }
 
 function classifyTestFile(fullPath: string): TestFile['status'] {

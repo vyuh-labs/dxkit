@@ -220,3 +220,44 @@ describe('matchTestsToSource', () => {
     expect(sources[0].hasMatchingTest).toBe(false);
   });
 });
+
+describe('test-support exemptions (gh #233 — the extract-helpers catch-22)', () => {
+  it('conftest.py never appears as a (degraded) test file — pytest infrastructure', () => {
+    writeFile('tests/test_math.py', 'def test_add():\n  assert 1 + 1 == 2\n');
+    writeFile(
+      'tests/conftest.py',
+      'import pytest\n\n@pytest.fixture\ndef costs():\n    return {"a": 1}\n',
+    );
+    const files = gatherTestFiles(tmp);
+    expect(files.map((f) => f.path)).toEqual(['tests/test_math.py']);
+  });
+
+  it('a testless helpers module IMPORTED by a sibling active test is support, not degradation', () => {
+    writeFile(
+      'tests/test_policy.py',
+      'from helpers import make_costs\n\ndef test_policy():\n  assert make_costs()["a"] == 1\n',
+    );
+    writeFile('tests/helpers.py', 'def make_costs():\n    return {"a": 1}\n');
+    const files = gatherTestFiles(tmp);
+    expect(files.map((f) => f.path).sort()).toEqual(['tests/test_policy.py']);
+  });
+
+  it('a JS test-tree helper imported via a relative path is support too', () => {
+    writeFile(
+      'test/render.test.ts',
+      'import { build } from "./builders";\ndescribe("r", () => { it("x", () => { expect(build()).toBeTruthy(); }); });',
+    );
+    writeFile('test/builders.ts', 'export const build = () => ({ ok: true });\n');
+    const files = gatherTestFiles(tmp);
+    expect(files.map((f) => f.path)).toEqual(['test/render.test.ts']);
+  });
+
+  it('an UNREFERENCED testless file in the tests tree still reads as degraded (the over-skip guard)', () => {
+    writeFile('tests/test_math.py', 'def test_add():\n  assert 1 + 1 == 2\n');
+    writeFile('tests/test_orphan.py', 'def build():\n    return 1\n');
+    const files = gatherTestFiles(tmp);
+    const orphan = files.find((f) => f.path === 'tests/test_orphan.py');
+    expect(orphan).toBeDefined();
+    expect(orphan!.status).not.toBe('active');
+  });
+});
