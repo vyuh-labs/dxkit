@@ -321,7 +321,38 @@ vyuh-dxkit issue --type=bug --about="..."
 
 See [`vyuh-dxkit issue`](commands/issue.md) for full details.
 
-## 8. Common pitfalls
+## 8. Lane credentials
+
+The scheduled lanes (baseline refresh, dep bump, remediate) use up to
+three credentials. Only the first is automatic:
+
+- **`GITHUB_TOKEN`** — provided by Actions automatically. Enough for
+  pushes and commits, but PRs opened with it **trigger no workflow
+  runs** (GitHub's robot-loop rule), so lane PRs arrive with no checks
+  — unmergeable under branch protection. The lanes disclose this on
+  every run until you set the next one.
+
+- **`DXKIT_BOT_TOKEN`** (recommended) — a Personal Access Token with
+  `repo` scope, added as a repo secret. Lane pushes made with it count
+  as real pushes, so lane PRs get their checks like any human PR.
+  `vyuh-dxkit doctor` flags its absence when a PR-opening lane is
+  installed:
+
+  ```bash
+  gh secret set DXKIT_BOT_TOKEN
+  ```
+
+- **The agent key** (remediate only) — e.g. `ANTHROPIC_API_KEY`, from
+  repo secrets. Use a scoped workspace key with a spend limit, never a
+  personal key. The runner enforces the budget caps; the key's own
+  limit is the backstop.
+
+One GitHub _setting_ matters too: "Allow GitHub Actions to create and
+approve pull requests" (Settings → Actions → General → Workflow
+permissions). Off means lanes can push branches but not open their
+PRs — the run says exactly this when it happens.
+
+## 9. Common pitfalls
 
 A handful of first-run issues account for most onboarding friction.
 Each is a two-line fix:

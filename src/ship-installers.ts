@@ -1096,7 +1096,10 @@ export function installCiRemediate(cwd: string, opts: InstallerOpts = {}): ShipI
         'inside the verified frame (entry-attributed floor + guardrail before any PR) and ' +
         `lands one standing PR per task. Set the ${
           driver?.credentialEnv.join(', ') || 'driver credential'
-        } repo secret (a scoped key with a spend limit) before the first run.`,
+        } repo secret (a scoped key with a spend limit) before the first run. ` +
+        'Recommended: also set a DXKIT_BOT_TOKEN secret (a PAT with repo scope) — PRs ' +
+        'opened with the default GITHUB_TOKEN trigger no workflow runs, so they arrive ' +
+        'with no checks. See docs/getting-started.md "Lane credentials".',
     );
   }
   return result;
@@ -1129,7 +1132,9 @@ export function installCiDepBump(cwd: string, opts: InstallerOpts = {}): ShipIns
         'Monday 07:00 UTC) it turns the fixable subset of dependency vulnerabilities into ' +
         'one standing PR (dxkit/dep-bump) — bumps from the scanners’ own fix versions, ' +
         'verified by the correctness floor + guardrail before opening. Majors are skipped ' +
-        'unless depBump.allowMajor.',
+        'unless depBump.allowMajor. Recommended: set a DXKIT_BOT_TOKEN secret (a PAT with ' +
+        'repo scope) so the lane PR runs checks — default-token pushes trigger no ' +
+        'workflows. See docs/getting-started.md "Lane credentials".',
     );
   }
   return result;
