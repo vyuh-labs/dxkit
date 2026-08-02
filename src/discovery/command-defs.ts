@@ -349,6 +349,15 @@ export const COMMANDS = [
       'Query the graphify artifact: hot-files, entry-points, communities, api-surface, per-file/feature context.',
   },
   {
+    id: 'learn',
+    audience: 'user',
+    group: 'explore',
+    summary: 'One offline HTML page: capabilities, docs, this repo’s status + setup',
+    typicalRuntime: '< 10 sec',
+    docsBlurb:
+      'Generate a self-contained HTML guide: every capability by tier, the mental-model docs, what dxkit verifies and what it cannot, plus (in a repo) live doctor status and a read-only setup checklist. Works in an empty directory too.',
+  },
+  {
     id: 'context',
     audience: 'user',
     group: 'explore',
