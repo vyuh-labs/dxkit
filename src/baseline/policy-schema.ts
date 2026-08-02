@@ -284,6 +284,27 @@ export function buildPolicySchema(version: string): Schema {
             },
             'Which agent runs, at which capability tier, under which caps.',
           ),
+          taskBudgets: {
+            type: 'object',
+            description:
+              'Per-task budget overrides merged over agent.budget (e.g. give fix-build ' +
+              'more headroom than fix-lint). Keys are task ids; values are partial ' +
+              '{maxTurns, maxMinutes, maxUsd}.',
+            additionalProperties: {
+              type: 'object',
+              properties: {
+                maxTurns: { type: 'number' },
+                maxMinutes: { type: 'number' },
+                maxUsd: { type: 'number' },
+              },
+            },
+          },
+          maxSpendPerRun: {
+            type: 'number',
+            description:
+              'Run-level USD ceiling across the per-task matrix (0/absent = none). Tasks ' +
+              'beyond it are deferred to the next firing, in order, and disclosed.',
+          },
         },
         'Agentic remediation: a scheduled agent inside the verified frame.',
       ),

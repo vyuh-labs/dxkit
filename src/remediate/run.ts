@@ -31,7 +31,7 @@ import {
   type FloorBaseCheck,
 } from '../analyzers/correctness/attribution';
 import { detectActiveLanguages } from '../languages';
-import { renderFloorVerification, renderGuardrailVerdict } from '../lanes/verification-render';
+import { renderRemediateLedger } from './ledger-render';
 import { guardrailVerdictFor, toFloorBaseChecks, type GuardrailGateResult } from '../lanes/verify';
 import { BOT_IDENTITY } from '../land-refresh';
 import { resolveModelSetting, type AgentDriver, type AgentRunResult } from './driver';
@@ -40,7 +40,6 @@ import { remediateTaskById, knownTaskIds, type RemediateTask } from './tasks';
 import {
   evaluateScoreHinge,
   healthHingeScores,
-  renderScoreHinge,
   type HingeEvidence,
   type HingeScores,
 } from './score-hinge';
@@ -173,59 +172,24 @@ export interface RemediateRunOptions {
   /** Injected for tests: replaces the health-score probe behind a task's
    *  score hinge. */
   readonly hingeScores?: (hinge: NonNullable<RemediateTask['scoreHinge']>) => Promise<HingeScores>;
+  /** Progress hook — called as each phase begins so the CLI layer can emit
+   *  log groups + heartbeats (a 35-minute silent step is indistinguishable
+   *  from a hang; "working" must be observable from the job log). */
+  readonly onPhase?: (phase: RemediatePhase) => void;
 }
 
-/** The remediate verification ledger — deterministic, identifier-free. */
-export function renderRemediateLedger(r: Omit<RemediateResult, 'ledger'>): string {
-  const lines: string[] = ['## dxkit agentic remediation', ''];
-  lines.push(`Task: **${r.task ?? '(none)'}** — outcome: **${r.outcome}**`);
-  if (r.partial)
-    lines.push(
-      '',
-      'Budget-bounded, not finished: the work below is real and verified, but the task was cut short.',
-    );
-  if (r.note) lines.push('', r.note);
-  lines.push('');
+/** The runner's observable phases, in order. */
+export type RemediatePhase =
+  | 'entry-floor'
+  | 'agent'
+  | 'sweep'
+  | 'verify-floor'
+  | 'guardrail'
+  | 'score-hinge';
 
-  if (r.envelope) {
-    const e = r.envelope;
-    lines.push('### Agent envelope', '');
-    const modelWhy =
-      e.modelSource === 'auto-tier'
-        ? 'auto tier'
-        : e.modelSource === 'pinned-tier'
-          ? 'tier pinned by policy'
-          : 'pinned by policy';
-    lines.push(`- driver: \`${e.driver}\``);
-    lines.push(
-      `- model: \`${e.model}\` (${modelWhy})` +
-        (e.resolvedModelId
-          ? ` — ran as \`${e.resolvedModelId}\``
-          : ' — concrete id not reported by driver'),
-    );
-    if (e.modelWarning) lines.push(`- model warning: ${e.modelWarning}`);
-    lines.push(
-      `- spend: ${e.costUsd !== undefined ? `$${e.costUsd.toFixed(2)}` : 'not reported'} over ` +
-        `${e.turns !== undefined ? `${e.turns} turns` : 'an unreported turn count'} ` +
-        `(caps: ${e.budget.maxTurns} turns, ${e.budget.maxMinutes} min, $${e.budget.maxUsd})`,
-    );
-    for (const cap of e.unenforceableCaps) {
-      lines.push(`- disclosed limitation: ${cap}`);
-    }
-    lines.push('');
-  }
-
-  lines.push('### Verification', '');
-  lines.push(...renderFloorVerification(r.floor, r.floorAttribution, 'the pre-agent entry run'));
-  lines.push(...renderGuardrailVerdict(r.guardrailVerdict));
-  if (r.scoreHinge) lines.push(renderScoreHinge(r.scoreHinge));
-  lines.push(
-    "_Agentic lane inside the verified frame: the agent's own claim of success is never " +
-      'trusted — the entry-attributed floor and the guardrail ran before anything lands, ' +
-      'and everything not verified is named above._',
-  );
-  return lines.join('\n');
-}
+// The ledger renderer lives in `./ledger-render` (module-size split);
+// re-exported so consumers keep one import surface.
+export { renderRemediateLedger };
 
 export async function runRemediateTask(opts: RemediateRunOptions): Promise<RemediateResult> {
   const finish = (r: Omit<RemediateResult, 'ledger'>): RemediateResult => ({
@@ -308,7 +272,22 @@ export async function runRemediateTask(opts: RemediateRunOptions): Promise<Remed
   // Entry snapshot on the pristine tree: the base side of the attribution
   // comparator — a repo already red at entry keeps its debt disclosed, never
   // weaponized against the agent's change.
+  opts.onPhase?.('entry-floor');
   const entryFloor = runFloor();
+
+  // $0 deterministic fast-exit (per-task opt-in): a floor-goal task with a
+  // GREEN entry floor has nothing to fix — return no-op BEFORE any agent
+  // spawns, so a scheduled firing on a healthy repo costs nothing.
+  if (task.skipWhenEntryFloorGreen && !entryFloor.blocks) {
+    return finish({
+      outcome: 'no-op',
+      task: task.id,
+      floor: entryFloor,
+      note:
+        'nothing to do: the entry correctness floor is green, and this task exists to fix ' +
+        'floor debt — no agent was spawned ($0).',
+    });
+  }
   // Entry side of the task's score hinge (when it declares one) — computed on
   // the same pristine tree the entry floor snapshots.
   const hingeProbe =
@@ -317,6 +296,7 @@ export async function runRemediateTask(opts: RemediateRunOptions): Promise<Remed
   const entryScores = task.scoreHinge ? await hingeProbe(task.scoreHinge) : undefined;
   const baseHead = git.head();
 
+  opts.onPhase?.('agent');
   const agentResult: AgentRunResult = await driver.run({
     cwd: opts.cwd,
     prompt: task.prompt,
@@ -344,6 +324,7 @@ export async function runRemediateTask(opts: RemediateRunOptions): Promise<Remed
   // Sweep uncommitted leftovers into a loudly-labeled commit — work the
   // budget kill stranded mid-edit is still evidence, and a dirty tree must
   // never leak into the landing layer unreviewed.
+  opts.onPhase?.('sweep');
   const sweepError = git.sweepLeftovers();
   const hasDiff = git.hasDiff(baseHead);
 
@@ -402,6 +383,7 @@ export async function runRemediateTask(opts: RemediateRunOptions): Promise<Remed
 
   // Verify: floor at full scope attributed vs entry (through the ONE
   // base-check projection, shared with the bump lane), then the guardrail.
+  opts.onPhase?.('verify-floor');
   const floor = runFloor();
   const baseChecks: FloorBaseCheck[] = toFloorBaseChecks(entryFloor);
   const floorAttribution = attributeFloorFailures(floor, baseChecks, {
@@ -411,6 +393,7 @@ export async function runRemediateTask(opts: RemediateRunOptions): Promise<Remed
   });
   const netNewFloorRed = floorAttribution.some((a) => a.attribution === 'net-new');
 
+  opts.onPhase?.('guardrail');
   const guardrail = opts.runGuardrail
     ? await opts.runGuardrail()
     : await guardrailVerdictFor(opts.cwd, opts.trust);
@@ -443,14 +426,24 @@ export async function runRemediateTask(opts: RemediateRunOptions): Promise<Remed
   // BLOCKED verdict, the CANNOT-GATE refusal tier, and an unrunnable check
   // all land nothing; the ledger says which it was.
   if (!guardrail.ran || !guardrail.passesGate) {
+    // Name the blocking findings in the ledger: on an ephemeral runner the
+    // diff evaporates with the job, so "did not pass" with no evidence made
+    // a BLOCKED attempt uninspectable (the workflow additionally uploads the
+    // attempt diff as a run artifact).
+    const evidence =
+      guardrail.blocking && guardrail.blocking.length > 0
+        ? `\n\nBlocking findings:\n${guardrail.blocking.map((b) => `- ${b}`).join('\n')}`
+        : '';
     return finish({
       outcome: 'guardrail-red',
       ...common,
-      note: guardrail.ran
-        ? `the guardrail did not pass (${guardrail.verdict}) — nothing lands. The agent's ` +
-          'change (including any swept working state) stays local for inspection.'
-        : `the guardrail could not run (${guardrail.verdict}) — nothing lands. An ` +
-          'agent-authored diff is never pushed unverified.',
+      note:
+        (guardrail.ran
+          ? `the guardrail did not pass (${guardrail.verdict}) — nothing lands. The attempt ` +
+            'diff is uploaded as a run artifact when this ran under Actions; locally the ' +
+            'branch stays for inspection.'
+          : `the guardrail could not run (${guardrail.verdict}) — nothing lands. An ` +
+            'agent-authored diff is never pushed unverified.') + evidence,
     });
   }
 
