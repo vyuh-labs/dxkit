@@ -10,7 +10,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 The batch defect release: everything collected from the first production
 runs of the scheduled lanes plus the issue backlog, shipped as one cycle.
 Eight work packages, each landing its fix together with the regression net
-that keeps the class from recurring.
+that keeps the class from recurring — plus the learn surface below.
+
+### The learn surface (#243, #244, #245, #246)
+
+- **Tiered help.** The default `--help` screen shows the five core commands
+  (`init`, `guardrail`, `baseline`, `allowlist`, `doctor`) with the rest
+  collapsed one line per group; `--help --all` keeps the full reference.
+  Both views render from the one command registry.
+- **Narrative docs.** `docs/learn/`: the "How dxkit thinks" mental model
+  (baseline, gate, allowlist, lanes, and what BLOCKED / CANNOT GATE mean),
+  three persona quickstarts (developer, reviewer, admin), and a
+  capabilities-and-limits statement that says explicitly what dxkit
+  verifies and what it cannot.
+- **`vyuh-dxkit learn`.** One self-contained offline HTML page — zero CDN
+  loads, zero scripts — with capability cards rendered from the registries,
+  the docs above, and (inside a repo) live doctor status plus a strictly
+  read-only "Set up this repo" checklist with copy-paste remedies. Works in
+  an empty directory: `npx @vyuhlabs/dxkit learn` needs no repo at all.
+- **`learn --serve`.** A localhost-only assistant grounded hard in that same
+  content plus the repo's live status. Bring your own LLM key: auto-detected
+  from the environment (never sent to the browser) or entered in the page
+  (held in tab memory, relayed per request, never stored). Three providers:
+  Anthropic, OpenAI, and any OpenAI-compatible endpoint. Repo grounding
+  defaults to summaries and counts; finding-level detail sits behind a
+  visible toggle, and the page states exactly what is sent — generated from
+  the same assembly as the payload, so the disclosure cannot drift. The
+  assistant explains and produces exact commands; it executes nothing.
+- **Per-repo runbook.** Install/update generates `RUNBOOK.dxkit.md` at the
+  repo root: what dxkit actually runs in this repo (gates, lane schedules),
+  what to do when blocked, and the typed escape hatches — rendered from repo
+  truth, refreshed by `update`, removed by `uninstall`, and never
+  overwriting a user-owned file. `capabilities --markdown` exports the
+  catalog + limits statement for org wikis.
+- **doctor** additionally probes the GitHub "allow Actions to create pull
+  requests" setting when a PR-opening lane is installed (tri-state,
+  fail-open), the local sibling of the onboarding preflight.
 
 ### Python and uv workspaces (#219, #220, #223)
 
