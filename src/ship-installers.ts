@@ -39,6 +39,7 @@ import { cronFromCadence, DEFAULT_DEPBUMP_CRON } from './baseline/policy-section
 import { BOT_IDENTITY } from './land-refresh';
 import { resolveRemediateConfig } from './remediate/config';
 import { driverById } from './remediate/registry';
+import { knownTaskIds } from './remediate/tasks';
 import { readFlowConfig } from './analyzers/flow/config';
 import { discoverExtensions } from './extensions/manifest';
 import { mergeIntoPolicyFile } from './baseline/policy-write';
@@ -1074,11 +1075,18 @@ export function installCiRemediate(cwd: string, opts: InstallerOpts = {}): ShipI
   const credentialLines = (driver?.credentialEnv ?? [])
     .map((name) => `          ${name}: \${{ secrets.${name} }}`)
     .join('\n');
+  // The dispatch form's task choices are RENDERED from the registry — a
+  // hand-listed option set in the template would be the README-matrix drift
+  // class (`custom` is appended by the template itself).
+  const taskOptionLines = knownTaskIds()
+    .map((id) => `          - ${id}`)
+    .join('\n');
   const result = installWorkflow(cwd, 'dxkit-remediate.yml', opts, {
     [CI_RUNTIME_SETUP_KEY]: renderCiRuntimeSetup(cwd),
     __DXKIT_DEFAULT_BRANCH__: resolveDefaultBranch(cwd),
     __DXKIT_REMEDIATE_CRON__: cronFromCadence(config.schedule),
     __DXKIT_REMEDIATE_CREDENTIAL_ENV__: credentialLines,
+    __DXKIT_REMEDIATE_TASK_OPTIONS__: taskOptionLines,
     __DXKIT_BOT_NAME__: BOT_IDENTITY.name,
     __DXKIT_BOT_EMAIL__: BOT_IDENTITY.email,
   });

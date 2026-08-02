@@ -37,6 +37,7 @@ function cfg(partial: Partial<RemediateConfig>): RemediateConfig {
     agent: { driver: 'claude-code', model: 'auto', budget: DEFAULT_REMEDIATE_BUDGET },
     taskBudgets: {},
     maxSpendPerRun: 0,
+    maxDispatchBudget: 0,
     ...partial,
   };
 }

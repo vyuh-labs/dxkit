@@ -34,6 +34,7 @@ import {
   tasksWithinSpendCeiling,
   type RemediateConfig,
 } from './config';
+import { readDispatchOverrides } from './dispatch';
 import { driverById } from './registry';
 import { REMEDIATE_TASKS, remediateTaskById } from './tasks';
 import { runRemediateTask, type RemediateResult } from './run';
@@ -78,10 +79,19 @@ async function executeTask(
 ): Promise<TaskRun> {
   // Per-task budget: the override-merged budget rides a task-scoped config
   // copy, so the runner's enforcement + ledger see the effective caps.
+  // Dispatch-campaign overrides (env-transported, clamped) layer on top —
+  // the runner receives the disclosure and folds it into the ledger.
   const task = remediateTaskById(taskId);
-  const taskConfig: RemediateConfig = task
-    ? { ...config, agent: { ...config.agent, budget: budgetForTask(config, task.id) } }
-    : config;
+  const policyBudget = task ? budgetForTask(config, task.id) : config.agent.budget;
+  const dispatch = readDispatchOverrides(process.env, policyBudget, config);
+  const taskConfig: RemediateConfig = {
+    ...config,
+    agent: {
+      ...config.agent,
+      budget: dispatch.any ? dispatch.budget : policyBudget,
+      ...(dispatch.model !== undefined ? { model: dispatch.model } : {}),
+    },
+  };
   // Phase reporter: per-phase log groups + a 60s heartbeat so a long agent
   // or verify phase reads as "working", never as hung.
   const reporter = startPhaseReporter(`remediate:${taskId}`);
@@ -96,6 +106,7 @@ async function executeTask(
       // own default applies (claude-code: subscription mode).
       agentEnv: collectCredentialEnv(config.agent.driver),
       onPhase: (phase) => reporter.phase(phase),
+      dispatch,
     });
   } finally {
     reporter.stop();
