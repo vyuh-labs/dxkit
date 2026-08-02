@@ -94,6 +94,11 @@ export interface EnforcementReads {
   readonly rules: EffectiveRule[];
   /** Did the ruleset read succeed? */
   readonly rulesKnown: boolean;
+  /** The classic-protection read's failure, when it failed non-definitively.
+   *  Lets the classifier tell a Free-plan 403 ("Upgrade to Pro" on private
+   *  repos — the API refuses the read regardless of token scope) apart from
+   *  a missing/underscoped gh, so doctor names the true enforcement gap. */
+  readonly classicError?: { readonly httpStatus?: number; readonly message: string };
 }
 
 export interface EnforcementState {
@@ -121,6 +126,11 @@ export interface EnforcementState {
    *  true, `protect` must not create a conflicting classic rule — the guardrail
    *  belongs in the ruleset. */
   readonly rulesetGoverned: boolean;
+  /** Populated when `probed` is false: the specific reason no definitive
+   *  answer exists, phrased for doctor. Distinguishes the GitHub Free-plan
+   *  403 on private repos (protection unsupported/unreadable at this plan)
+   *  from "gh unavailable or lacks repo read access". */
+  readonly unverifiedReason?: string;
 }
 
 /** Rule types that reject a direct push (mirror of classic requiresChecks ||
@@ -184,6 +194,7 @@ export function classifyEnforcement(
       guardrailRequired: false,
       guardrailContextLegacyOnly: false,
       rulesetGoverned: false,
+      unverifiedReason: 'gh unavailable or lacks repo read access',
     };
   }
   const directPushBlocked =
@@ -197,6 +208,25 @@ export function classifyEnforcement(
   const bothRead = reads.classicKnown && reads.rulesKnown;
   const probed = sawProtection || bothRead;
 
+  // When no definitive answer exists, say WHY — the Free-plan 403 on a
+  // private repo means "this plan cannot have (or expose) required checks
+  // here", a materially different enforcement gap than a missing gh.
+  let unverifiedReason: string | undefined;
+  if (!probed) {
+    const err = reads.classicError;
+    if (err && err.httpStatus === 403 && /upgrade to/i.test(err.message)) {
+      unverifiedReason =
+        "GitHub returned 403 'Upgrade to Pro' — this plan does not support branch " +
+        'protection on private repos, so required checks cannot be verified (or enforced) here';
+    } else if (err) {
+      unverifiedReason = `branch-protection read failed${
+        err.httpStatus ? ` (HTTP ${err.httpStatus})` : ''
+      } — gh may lack repo read access`;
+    } else {
+      unverifiedReason = 'gh unavailable or lacks repo read access';
+    }
+  }
+
   return {
     branch,
     probed,
@@ -204,6 +234,7 @@ export function classifyEnforcement(
     guardrailRequired,
     guardrailContextLegacyOnly,
     rulesetGoverned,
+    ...(unverifiedReason !== undefined ? { unverifiedReason } : {}),
   };
 }
 
@@ -227,6 +258,7 @@ export function probeEnforcementReads(cwd: string, branch: string): EnforcementR
 
   let classic: ClassicProtection | null = null;
   let classicKnown = false;
+  let classicError: { httpStatus?: number; message: string } | undefined;
   try {
     classic = ghApi(`repos/{owner}/{repo}/branches/${branch}/protection`, {
       cwd,
@@ -235,8 +267,15 @@ export function probeEnforcementReads(cwd: string, branch: string): EnforcementR
     classicKnown = true;
   } catch (e) {
     // 404 = no classic protection rule (definitive). Anything else (403 without
-    // admin scope, network) leaves classic unknown.
+    // admin scope, the Free-plan private-repo refusal, network) leaves classic
+    // unknown — captured so the classifier can name the reason.
     if (e instanceof GhError && e.httpStatus === 404) classicKnown = true;
+    else if (e instanceof GhError) {
+      classicError = {
+        ...(e.httpStatus !== undefined ? { httpStatus: e.httpStatus } : {}),
+        message: e.message,
+      };
+    }
   }
 
   let rules: EffectiveRule[] = [];
@@ -257,7 +296,13 @@ export function probeEnforcementReads(cwd: string, branch: string): EnforcementR
   if (!classicKnown && !rulesKnown) {
     throw new GhError('could not read branch protection (classic or ruleset)');
   }
-  return { classic, classicKnown, rules, rulesKnown };
+  return {
+    classic,
+    classicKnown,
+    rules,
+    rulesKnown,
+    ...(classicError !== undefined ? { classicError } : {}),
+  };
 }
 
 /**

@@ -2684,6 +2684,20 @@ export async function run(argv: string[]): Promise<void> {
               logger.warn(`  ${result.decision.note}`);
             }
           }
+          // The expiry-notice lane's outcome is part of the refresh's contract
+          // ("fail-open, always disclosed") — an `unavailable` that never
+          // reaches the log is how a granted-permission/no-token workflow
+          // miss stayed invisible for a full horizon. `note` is always
+          // populated, whichever way it went.
+          if (result.expiryNotice && result.expiryNotice.outcome !== 'disabled') {
+            const n = result.expiryNotice;
+            const url = n.issueUrl ? ` — ${n.issueUrl}` : '';
+            if (n.outcome === 'unavailable') {
+              logger.warn(`  Expiry notice: ${n.note}`);
+            } else {
+              logger.info(`  Expiry notice: ${n.note}${url}`);
+            }
+          }
         } catch (err) {
           logger.fail((err as Error).message);
           process.exit(1);

@@ -10,6 +10,8 @@ import { dxkitCli } from './self-invocation';
 import * as logger from './logger';
 import { resolveBaselineMode } from './baseline/modes';
 import { anchorBranchStatus, anchorStalenessProblem } from './baseline/anchor';
+import { readBaselineFile } from './baseline/baseline-file';
+import { refreshWorkflowInstalled } from './baseline/provenance';
 import { loadPolicyFromCwd } from './baseline/policy';
 import { detectEnforcement } from './enforcement';
 import { detectInstalledRefreshTransport, resolveDefaultBranch } from './ship-installers';
@@ -562,6 +564,52 @@ function runOperationalChecks(cwd: string, hasManifest: boolean): CheckResult[] 
     }
   }
 
+  // 0c. Baseline capture provenance (#224). A committed baseline captured
+  // LOCALLY, with no CI refresh workflow installed, is the exact combination
+  // getting-started.md warns about: the anchor bakes the developer machine's
+  // scanner versions in, so every PR gate risks tooling-drift noise against
+  // CI's toolchain. Both facts are already recorded — the baseline's
+  // `capturedIn` and the workflow's presence — this check just reads them
+  // (the provenance module, one probe).
+  {
+    const baselineFile = path.join(cwd, '.dxkit', 'baselines', 'main.json');
+    if (fs.existsSync(baselineFile)) {
+      let capturedIn: 'ci' | 'local' | undefined;
+      try {
+        capturedIn = readBaselineFile(baselineFile).capturedIn;
+      } catch {
+        /* unreadable baseline is covered by other checks */
+      }
+      if (capturedIn === 'local') {
+        const laneInstalled = refreshWorkflowInstalled(cwd);
+        checks.push({
+          label: laneInstalled
+            ? 'committed baseline was captured locally (CI refresh lane installed — supersede it)'
+            : 'committed baseline was captured locally and no CI refresh workflow is installed',
+          ok: false,
+          tier: 'operational',
+          fix: laneInstalled
+            ? {
+                hint:
+                  'The committed anchor was captured on a developer machine; the CI refresh ' +
+                  'lane exists, so dispatch it (workflow_dispatch) or merge to the default ' +
+                  'branch — the CI capture supersedes the local anchor and retires the ' +
+                  'tooling-drift risk.',
+                skill: 'dxkit-fix',
+              }
+            : {
+                hint:
+                  "A locally captured anchor bakes this machine's scanner versions into the " +
+                  "committed baseline — expect TOOLING-DRIFT noise whenever CI's versions " +
+                  'differ. Install the CI refresh lane so captures happen where the gate runs.',
+                command: dxkitCli('init --with-baseline-refresh'),
+                skill: 'dxkit-fix',
+              },
+        });
+      }
+    }
+  }
+
   // 1. Hooks active. Two independent conditions must BOTH hold for the
   // pre-push guardrail to actually fire: `core.hooksPath` set to
   // `.githooks` AND the hook file carrying the executable bit. Git
@@ -813,7 +861,7 @@ function runOperationalChecks(cwd: string, hasManifest: boolean): CheckResult[] 
       // answer never fails the check — dxkit can't read protection when gh is
       // absent/unauthenticated or the token lacks repo read scope.
       checks.push({
-        label: `guardrail enforcement on '${enf.branch}' — not verified (gh unavailable or lacks repo read access)`,
+        label: `guardrail enforcement on '${enf.branch}' — not verified (${enf.unverifiedReason ?? 'gh unavailable or lacks repo read access'})`,
         ok: true,
         tier: 'operational',
       });
