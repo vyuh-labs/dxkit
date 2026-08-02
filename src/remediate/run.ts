@@ -36,6 +36,7 @@ import { resolveModelSetting, type AgentDriver, type AgentRunResult } from './dr
 import { AGENT_DRIVERS, knownDriverIds } from './registry';
 import type { RemediateTask } from './tasks';
 import { resolveDispatchedTask, type DispatchOverrides } from './dispatch';
+import { resumePromptNote } from './resume';
 import { realGit } from './git-ops';
 import {
   evaluateScoreHinge,
@@ -101,6 +102,9 @@ export interface RemediateResult {
     readonly prompt?: string;
     readonly clamped: readonly string[];
   };
+  /** Present when this run CONTINUED a prior budget-bounded attempt
+   *  (resume-from-salvage) — disclosed in the ledger/PR body. */
+  readonly resume?: { readonly attempt: number };
   /** The verification ledger — PR body / job summary markdown. */
   readonly ledger: string;
 }
@@ -139,6 +143,12 @@ export interface RemediateRunOptions {
    *  Carries the custom task's prompt, the clamp disclosures, and the
    *  dispatcher for the ledger. */
   readonly dispatch?: DispatchOverrides;
+  /** Pre-captured entry floor (resume path): the CLI snapshots the PRISTINE
+   *  default tree BEFORE checking out a salvage branch, so attribution stays
+   *  anchored to the original base — a broken partial reads NET-NEW. */
+  readonly entryFloor?: CorrectnessFloorResult;
+  /** Present when this run continues a prior budget-bounded attempt. */
+  readonly resume?: { readonly attempt: number };
 }
 
 /** The runner's observable phases, in order. */
@@ -158,8 +168,12 @@ export async function runRemediateTask(opts: RemediateRunOptions): Promise<Remed
   // Populated once the task resolves (a dispatch campaign's disclosure);
   // folded into EVERY exit so no outcome can drop it from the ledger.
   let dispatchDisclosure: Pick<RemediateResult, 'dispatch'> = {};
-  const finish = (r: Omit<RemediateResult, 'ledger' | 'dispatch'>): RemediateResult => {
-    const withDispatch = { ...dispatchDisclosure, ...r };
+  const finish = (r: Omit<RemediateResult, 'ledger' | 'dispatch' | 'resume'>): RemediateResult => {
+    const withDispatch = {
+      ...dispatchDisclosure,
+      ...(opts.resume ? { resume: opts.resume } : {}),
+      ...r,
+    };
     return { ...withDispatch, ledger: renderRemediateLedger(withDispatch) };
   };
 
@@ -241,7 +255,9 @@ export async function runRemediateTask(opts: RemediateRunOptions): Promise<Remed
   // comparator — a repo already red at entry keeps its debt disclosed, never
   // weaponized against the agent's change.
   opts.onPhase?.('entry-floor');
-  const entryFloor = runFloor();
+  // A resume passes the entry floor in (captured on the pristine tree before
+  // the salvage checkout); a fresh run captures it here.
+  const entryFloor = opts.entryFloor ?? runFloor();
 
   // $0 deterministic fast-exit (per-task opt-in): a floor-goal task with a
   // GREEN entry floor has nothing to fix — return no-op BEFORE any agent
@@ -276,9 +292,10 @@ export async function runRemediateTask(opts: RemediateRunOptions): Promise<Remed
     `reserve the final minutes to commit ALL remaining work and record where you stopped ` +
     `in docs/DXKIT-REMEDIATION-NOTES.md — work committed before the cap survives; ` +
     `uncommitted edits are swept into a single unlabeled-context commit.`;
+  const resumeNote = opts.resume ? resumePromptNote(opts.resume.attempt) : '';
   const agentResult: AgentRunResult = await driver.run({
     cwd: opts.cwd,
-    prompt: task.prompt + budgetNote,
+    prompt: task.prompt + budgetNote + resumeNote,
     budget: { maxTurns: budget.maxTurns, maxMinutes: budget.maxMinutes },
     model: choice.native,
     env: opts.agentEnv ?? {},

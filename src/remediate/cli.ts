@@ -28,6 +28,9 @@ import * as logger from '../logger';
 import { trustedLocalContext } from '../analysis-trust';
 import { detectDefaultBranch } from '../ship-installers';
 import { startPhaseReporter } from '../lanes/heartbeat';
+import { runCorrectnessFloor, type CorrectnessFloorResult } from '../analyzers/correctness/run';
+import { detectActiveLanguages } from '../languages';
+import { prepareResume, type ResumeDecision } from './resume';
 import {
   budgetForTask,
   resolveRemediateConfig,
@@ -92,8 +95,25 @@ async function executeTask(
       ...(dispatch.model !== undefined ? { model: dispatch.model } : {}),
     },
   };
-  // Phase reporter: per-phase log groups + a 60s heartbeat so a long agent
-  // or verify phase reads as "working", never as hung.
+  // Resume-from-salvage (opt-in, remediate.resume): the entry floor is
+  // captured FIRST on the pristine tree, THEN the salvage branch is checked
+  // out — attribution stays anchored to the original base, so a broken
+  // partial reads NET-NEW and can never grandfather its own breakage.
+  let entryFloor: CorrectnessFloorResult | undefined;
+  let resume: ResumeDecision = { resumed: false };
+  if (land === 'pr' && task && config.resume) {
+    entryFloor = runCorrectnessFloor({
+      cwd,
+      changedFiles: [],
+      scope: 'full',
+      packs: detectActiveLanguages(cwd),
+    });
+    resume = prepareResume(cwd, task.id, config);
+    if (resume.note) logger.warn(`resume: ${resume.note}`);
+    if (resume.resumed) {
+      logger.info(`resuming budget-bounded attempt #${resume.attempt} from the salvage branch`);
+    }
+  }
   const reporter = startPhaseReporter(`remediate:${taskId}`);
   let result: RemediateResult;
   try {
@@ -107,6 +127,10 @@ async function executeTask(
       agentEnv: collectCredentialEnv(config.agent.driver),
       onPhase: (phase) => reporter.phase(phase),
       dispatch,
+      ...(entryFloor !== undefined ? { entryFloor } : {}),
+      ...(resume.resumed && resume.attempt !== undefined
+        ? { resume: { attempt: resume.attempt } }
+        : {}),
     });
   } finally {
     reporter.stop();

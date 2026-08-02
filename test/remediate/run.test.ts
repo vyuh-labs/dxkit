@@ -91,6 +91,7 @@ function config(
     taskBudgets: {},
     maxSpendPerRun: 0,
     maxDispatchBudget: 0,
+    resume: false,
   };
 }
 

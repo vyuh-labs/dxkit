@@ -56,6 +56,15 @@ export function renderRemediateLedger(r: Omit<RemediateResult, 'ledger'>): strin
     lines.push('');
   }
 
+  if (r.resume) {
+    lines.push(
+      `Resumed budget-bounded attempt #${r.resume.attempt} — continuing the salvage branch; ` +
+        'the entry floor was captured on the pristine base, so a broken partial can never ' +
+        'grandfather its own breakage.',
+      '',
+    );
+  }
+
   if (r.dispatch) {
     lines.push('### Dispatch campaign', '');
     lines.push(
