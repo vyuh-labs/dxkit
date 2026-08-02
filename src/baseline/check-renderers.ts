@@ -33,7 +33,7 @@ import type {
   GuardrailCheckResult,
   NotObservedDisclosure,
 } from './check';
-import { ATTRIBUTION_GAP_REMEDY, describeAttributionGap } from './attribution-gap';
+import { attributionGapRemedy, describeAttributionGap } from './attribution-gap';
 import type { AttributionGap } from './attribution-gap';
 import {
   EXPIRY_PROJECTION_REMEDY,
@@ -44,6 +44,7 @@ import type { ExpiryProjection } from './expiry-projection';
 import { recallDriftRemedy, describeRecallDrift } from './recall';
 import type { BrownfieldPolicy } from './policy';
 import type { FindingStatus, MatchReason } from './types';
+import { describeBaselineSuspect } from './provenance';
 import { DEFER_ADVISORY_EXPIRY_DAYS } from '../allowlist/categories';
 import { failingFloorDebt } from './floor-debt';
 import { describeBrokenIntegration } from '../analyzers/flow/gate';
@@ -324,7 +325,7 @@ export function renderConsole(result: GuardrailCheckResult): string {
     for (const gap of result.attributionGaps) {
       lines.push(`  · ${describeAttributionGap(gap)}`);
     }
-    lines.push(`  · ${ATTRIBUTION_GAP_REMEDY}`);
+    lines.push(`  · ${attributionGapRemedy(result.envelopeDrift.refreshLaneInstalled)}`);
     lines.push('');
   }
   if (suppressed.length > 0) {
@@ -439,6 +440,12 @@ export function renderConsole(result: GuardrailCheckResult): string {
   const counts = verdictCounts(result);
   lines.push(`  Verdict:     ${counts.verdict}`);
   lines.push(`  Exit code:   ${counts.exitCode}`);
+  // The stale-anchor reframe (#222) — printed WITH the verdict so a reader
+  // never acts on a confident BLOCKED without seeing that the anchor, not the
+  // change, is the likely cause.
+  if (result.baselineSuspect) {
+    lines.push(`  ⚠ ${describeBaselineSuspect(result.baselineSuspect)}`);
+  }
   if (result.depVulnsUnmeasured) {
     lines.push('');
     lines.push(
@@ -1166,7 +1173,7 @@ function formatDrift(drift: EnvelopeDrift): string[] {
   }
   if (drift.recallDrift.length > 0) {
     out.push(
-      `${drift.recallDrift.length} kind(s) not attributable — ${recallDriftRemedy(drift.baselineCapturedIn)}`,
+      `${drift.recallDrift.length} kind(s) not attributable — ${recallDriftRemedy(drift.baselineCapturedIn, drift.refreshLaneInstalled)}`,
     );
   }
   for (const d of drift.coverageDrift) {
@@ -1700,6 +1707,12 @@ export function renderMarkdown(result: GuardrailCheckResult): string {
   const counts = verdictCounts(result);
   lines.push(`## Guardrail: ${counts.verdict}`);
   lines.push('');
+  if (result.baselineSuspect) {
+    // The stale-anchor reframe (#222), directly under the heading — a PR
+    // reader must see it before triaging the finding tables.
+    lines.push(`> ⚠️ ${escapeMd(describeBaselineSuspect(result.baselineSuspect))}`);
+    lines.push('');
+  }
   const extra = extraGateTallies(result);
   lines.push(
     summarySentence(
@@ -1720,7 +1733,9 @@ export function renderMarkdown(result: GuardrailCheckResult): string {
     for (const gap of result.attributionGaps) {
       lines.push(`> - ${escapeMd(describeAttributionGap(gap))}`);
     }
-    lines.push(`> - Remedy: ${escapeMd(ATTRIBUTION_GAP_REMEDY)}`);
+    lines.push(
+      `> - Remedy: ${escapeMd(attributionGapRemedy(result.envelopeDrift.refreshLaneInstalled))}`,
+    );
     lines.push('');
     if (unattributable.length > 0) {
       lines.push('### Unattributable findings');

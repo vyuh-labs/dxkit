@@ -112,8 +112,23 @@ export function describeAttributionGap(gap: AttributionGap): string {
   );
 }
 
-/** The remedy every gap shares — one string so the three renderers agree. The
- *  gate stays refused (exit 1, never PASSED) until attribution is restored. */
-export const ATTRIBUTION_GAP_REMEDY =
-  'run `vyuh-dxkit update` (migrates + re-baselines) or `vyuh-dxkit baseline create --force` ' +
-  'to restore attribution; the guardrail refuses to pass until then';
+/** The remedy every gap shares — one derivation so the three renderers agree.
+ *  The gate stays refused (exit 1, never PASSED) until attribution is
+ *  restored. Workflow-aware (the provenance discipline): a repo with the CI
+ *  refresh lane is pointed at it, never at the local `--force` anti-pattern. */
+export function attributionGapRemedy(refreshLaneInstalled?: boolean): string {
+  if (refreshLaneInstalled) {
+    return (
+      'dispatch the baseline-refresh workflow (workflow_dispatch) or merge to the default ' +
+      'branch to re-capture the anchor from CI and restore attribution; the guardrail ' +
+      'refuses to pass until then'
+    );
+  }
+  return (
+    'run `vyuh-dxkit update` (migrates + re-baselines) or `vyuh-dxkit baseline create --force` ' +
+    'to restore attribution; the guardrail refuses to pass until then'
+  );
+}
+
+/** Back-compat constant (no-refresh-lane wording). */
+export const ATTRIBUTION_GAP_REMEDY = attributionGapRemedy();

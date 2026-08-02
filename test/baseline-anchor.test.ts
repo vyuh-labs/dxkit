@@ -122,6 +122,46 @@ describe('classifyEnforcement', () => {
     expect(s.directPushBlocked).toBe(false);
     expect(s.guardrailRequired).toBe(false);
     expect(s.rulesetGoverned).toBe(false);
+    expect(s.unverifiedReason).toContain('gh unavailable');
+  });
+
+  it("the Free-plan 403 ('Upgrade to Pro') is named as a plan gap, not a gh problem", () => {
+    // A private repo on GitHub Free 403s the classic-protection read with an
+    // upgrade message regardless of token scope — the true enforcement gap is
+    // "this plan cannot require checks here", which doctor must say instead
+    // of the misleading "gh unavailable or lacks repo read access".
+    const s = classifyEnforcement(
+      'main',
+      reads({
+        classicKnown: false,
+        classicError: {
+          httpStatus: 403,
+          message: 'Upgrade to GitHub Pro or make this repository public to enable this feature.',
+        },
+      }),
+    );
+    expect(s.probed).toBe(false);
+    expect(s.unverifiedReason).toContain('Upgrade to Pro');
+    expect(s.unverifiedReason).toContain('plan');
+    expect(s.unverifiedReason).not.toContain('gh unavailable');
+  });
+
+  it('an other-403 read failure names the HTTP status and the scope hypothesis', () => {
+    const s = classifyEnforcement(
+      'main',
+      reads({
+        classicKnown: false,
+        classicError: { httpStatus: 403, message: 'Resource not accessible by integration' },
+      }),
+    );
+    expect(s.probed).toBe(false);
+    expect(s.unverifiedReason).toContain('HTTP 403');
+  });
+
+  it('a definitive answer carries no unverifiedReason', () => {
+    const s = classifyEnforcement('main', reads({}));
+    expect(s.probed).toBe(true);
+    expect(s.unverifiedReason).toBeUndefined();
   });
   it('both mechanisms read, neither protects → confidently unprotected', () => {
     const s = classifyEnforcement('main', reads({}));
