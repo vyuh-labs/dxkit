@@ -47,6 +47,10 @@ export interface DuplicateDetectOpts {
    *  set — the gate's diff-scoping ("what did THIS change duplicate?") pushed
    *  into the detector so a large repo never scores the full O(pairs) product. */
   readonly focusFiles?: ReadonlySet<string>;
+  /** Functions with fewer AST tokens than this never enter pairing (default 0 —
+   *  no floor). The trivial-delegator guard: a binding module's 2-4 line
+   *  wrappers pair at 1.00 by design and carry no consolidation opportunity. */
+  readonly minBodyTokens?: number;
 }
 
 /** Split a symbol name into lowercased identifier tokens (camelCase / snake /
@@ -123,9 +127,11 @@ export function duplicatePairs(
   const minScore = opts.minScore ?? DUP_DEFAULT_MIN_SCORE;
   const focus = opts.focusFiles;
 
+  const minBodyTokens = opts.minBodyTokens ?? 0;
   const feats: Feature[] = [];
   for (const sig of signatures) {
     if (sig.callees.size < minCallees) continue;
+    if (minBodyTokens > 0 && sig.tokens < minBodyTokens) continue;
     feats.push({ sig, callees: sig.callees, tokens: tokenize(sig.name) });
   }
   const n = feats.length;

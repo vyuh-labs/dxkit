@@ -122,6 +122,14 @@ export interface AllowlistAddOpts {
   readonly reason?: string;
   readonly kind?: string;
   readonly fingerprint?: string;
+  /** Batch form: comma-separated fingerprint list sharing one kind /
+   *  category / reason — one review decision covering a finding family
+   *  (e.g. N by-design parallels in one bindings module) lands in one
+   *  invocation. Each fingerprint still gets its own auditable entry. */
+  readonly fingerprints?: string;
+  /** Batch form: read fingerprints line-wise from stdin, so a guardrail
+   *  output pipe can feed the add directly. */
+  readonly fromStdin?: boolean;
   readonly expires?: string;
   readonly acknowledgedSeverity?: string;
   readonly addedBy?: string;
@@ -212,6 +220,8 @@ export async function runAllowlist(
         reason: args.values.reason as string | undefined,
         kind: args.values.kind as string | undefined,
         fingerprint: args.values.fingerprint as string | undefined,
+        fingerprints: args.values.fingerprints as string | undefined,
+        fromStdin: !!args.values['from-stdin'],
         expires: args.values.expires as string | undefined,
         acknowledgedSeverity: args.values['acknowledged-severity'] as string | undefined,
         addedBy: args.values['added-by'] as string | undefined,
@@ -347,6 +357,32 @@ async function runAddInline(args: {
   );
 }
 
+/** The add target set: `--fingerprint`, `--fingerprints=a,b,c`, and
+ *  `--from-stdin` (line-wise) combined and deduplicated. More than one =
+ *  batch semantics (one review decision covering a finding family — each
+ *  fingerprint still gets its own auditable entry). */
+function collectAddFingerprints(opts: AllowlistAddOpts): string[] {
+  const out: string[] = [];
+  if (opts.fingerprint?.trim()) out.push(opts.fingerprint.trim());
+  if (opts.fingerprints) {
+    for (const fp of opts.fingerprints.split(',')) {
+      if (fp.trim()) out.push(fp.trim());
+    }
+  }
+  if (opts.fromStdin) {
+    let raw = '';
+    try {
+      raw = fs.readFileSync(0, 'utf8');
+    } catch {
+      /* no stdin available — contributes nothing */
+    }
+    for (const line of raw.split('\n')) {
+      if (line.trim()) out.push(line.trim());
+    }
+  }
+  return [...new Set(out)];
+}
+
 async function runAddFileLevel(args: {
   cwd: string;
   opts: AllowlistAddOpts;
@@ -354,11 +390,12 @@ async function runAddFileLevel(args: {
   reason: string;
 }): Promise<void> {
   const { cwd, opts, category, reason } = args;
-  const fingerprint = opts.fingerprint?.trim();
+  const fingerprints = collectAddFingerprints(opts);
   const kindRaw = opts.kind?.trim();
-  if (!fingerprint || !kindRaw) {
+  if (fingerprints.length === 0 || !kindRaw) {
     logger.fail(
-      `file-level allowlist entry requires --fingerprint=<16-hex> and --kind=<kind> ` +
+      `file-level allowlist entry requires --fingerprint=<16-hex> (or --fingerprints=<id,id,…> ` +
+        `/ --from-stdin for a batch) and --kind=<kind> ` +
         `(or pass <file>:<line> for inline annotation when kind+category are inline-compatible)`,
     );
     process.exit(1);
@@ -379,8 +416,14 @@ async function runAddFileLevel(args: {
   }
   const addedAt = todayISO();
   const acknowledgedSeverity = parseSeverityOpt(opts.acknowledgedSeverity);
+  const batch = fingerprints.length > 1;
 
-  const entry: AllowlistEntry = {
+  // Resolve effective mode (CLI override → existing file mode → default 'full').
+  const mode = resolveMode(cwd, opts.mode);
+
+  // Build + validate EVERY entry before any write — a batch either passes
+  // validation whole or writes nothing.
+  const entries: AllowlistEntry[] = fingerprints.map((fingerprint) => ({
     fingerprint,
     kind,
     category,
@@ -389,34 +432,57 @@ async function runAddFileLevel(args: {
     addedAt,
     ...(expiresAt !== undefined ? { expiresAt } : {}),
     ...(acknowledgedSeverity !== undefined ? { acknowledgedSeverity } : {}),
-  };
-
-  // Resolve effective mode (CLI override → existing file mode → default 'full').
-  const mode = resolveMode(cwd, opts.mode);
-  const validationErrors = validateAllowlistEntry(entry, mode);
-  if (validationErrors.length > 0) {
-    logger.fail(`allowlist entry failed validation:`);
-    for (const e of validationErrors) {
-      logger.fail(` - ${e.field}: ${e.message}`);
+  }));
+  for (const entry of entries) {
+    const validationErrors = validateAllowlistEntry(entry, mode);
+    if (validationErrors.length > 0) {
+      logger.fail(`allowlist entry for fingerprint ${entry.fingerprint} failed validation:`);
+      for (const e of validationErrors) {
+        logger.fail(` - ${e.field}: ${e.message}`);
+      }
+      process.exit(1);
     }
-    process.exit(1);
   }
 
   const existing = loadAllowlist(cwd) ?? emptyAllowlistFile(mode);
-  if (findEntry(existing, fingerprint)) {
+  const alreadyPresent = entries.filter((e) => findEntry(existing, e.fingerprint));
+  if (alreadyPresent.length > 0 && !batch) {
+    // Single-fingerprint form keeps its hard failure — an accidental re-add
+    // should stop and point at the existing entry.
+    const fp = alreadyPresent[0].fingerprint;
     logger.fail(
-      `allowlist already contains entry for fingerprint ${fingerprint}. ` +
-        `Run \`vyuh-dxkit allowlist show ${fingerprint}\` to inspect, or remove first.`,
+      `allowlist already contains entry for fingerprint ${fp}. ` +
+        `Run \`vyuh-dxkit allowlist show ${fp}\` to inspect, or remove first.`,
     );
     process.exit(1);
   }
+  const presentSet = new Set(alreadyPresent.map((e) => e.fingerprint));
+  const toAdd = entries.filter((e) => !presentSet.has(e.fingerprint));
 
-  const updated: AllowlistFile = { ...addEntry(existing, entry), mode };
-  saveAllowlist(cwd, updated);
-  logger.info(
-    `Added allowlist entry for fingerprint ${fingerprint} (kind=${kind}, category=${category})` +
-      (expiresAt ? `, expires ${expiresAt}` : ''),
-  );
+  let updated: AllowlistFile = existing;
+  for (const entry of toAdd) updated = addEntry(updated, entry);
+  updated = { ...updated, mode };
+  if (toAdd.length > 0) saveAllowlist(cwd, updated);
+
+  if (!batch) {
+    logger.info(
+      `Added allowlist entry for fingerprint ${fingerprints[0]} (kind=${kind}, category=${category})` +
+        (expiresAt ? `, expires ${expiresAt}` : ''),
+    );
+    return;
+  }
+  if (toAdd.length > 0) {
+    logger.success(
+      `Added ${toAdd.length} allowlist entr${toAdd.length === 1 ? 'y' : 'ies'} ` +
+        `(kind=${kind}, category=${category}${expiresAt ? `, expires ${expiresAt}` : ''}).`,
+    );
+    for (const e of toAdd) logger.info(`  ${e.fingerprint}`);
+  } else {
+    logger.info('All fingerprints already have allowlist entries — nothing written.');
+  }
+  if (alreadyPresent.length > 0 && toAdd.length > 0) {
+    logger.info(`Skipped ${alreadyPresent.length} fingerprint(s) already allowlisted.`);
+  }
 }
 
 // ─── defer ────────────────────────────────────────────────────────────────

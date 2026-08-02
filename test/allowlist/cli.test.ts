@@ -248,6 +248,67 @@ describe('runAllowlistAdd — file-level path', () => {
     exit.mockRestore();
   });
 
+  it('batch --fingerprints adds every entry in one invocation (one shared reason)', async () => {
+    await runAllowlistAdd(tmp, {
+      fingerprints: 'a3f9c0e8b7d2e1f4,b4e8d1f2a9c03e57, c5d9e2a3b8f14d68 ',
+      kind: 'code-reimplementation',
+      category: 'false-positive',
+      reason: 'by-design parallels in the bindings module',
+      addedBy: 'alice@example.com',
+    });
+    const loaded = loadAllowlist(tmp);
+    expect(loaded!.entries).toHaveLength(3);
+    expect(loaded!.entries.map((e) => e.fingerprint).sort()).toEqual([
+      'a3f9c0e8b7d2e1f4',
+      'b4e8d1f2a9c03e57',
+      'c5d9e2a3b8f14d68',
+    ]);
+    // Each entry is individually auditable with the shared decision fields.
+    for (const e of loaded!.entries) {
+      expect(e.kind).toBe('code-reimplementation');
+      expect(e.reason).toBe('by-design parallels in the bindings module');
+    }
+  });
+
+  it('batch skips already-present fingerprints instead of aborting the whole set', async () => {
+    await runAllowlistAdd(tmp, {
+      fingerprint: 'a3f9c0e8b7d2e1f4',
+      kind: 'dep-vuln',
+      category: 'mitigated-externally',
+      reason: 'first',
+      addedBy: 'a@b.c',
+    });
+    await runAllowlistAdd(tmp, {
+      fingerprints: 'a3f9c0e8b7d2e1f4,b4e8d1f2a9c03e57',
+      kind: 'dep-vuln',
+      category: 'mitigated-externally',
+      reason: 'batch',
+      addedBy: 'a@b.c',
+    });
+    const loaded = loadAllowlist(tmp);
+    expect(loaded!.entries).toHaveLength(2);
+    // The pre-existing entry kept its original reason (not overwritten).
+    const first = loaded!.entries.find((e) => e.fingerprint === 'a3f9c0e8b7d2e1f4');
+    expect(first!.reason).toBe('first');
+  });
+
+  it('batch validates every entry before writing anything', async () => {
+    const exit = mockExit();
+    await expect(
+      runAllowlistAdd(tmp, {
+        // Second fingerprint is malformed → the whole batch must write nothing.
+        fingerprints: 'a3f9c0e8b7d2e1f4,not-a-fingerprint',
+        kind: 'dep-vuln',
+        category: 'mitigated-externally',
+        reason: 'r',
+        addedBy: 'a@b.c',
+      }),
+    ).rejects.toThrow(/process\.exit/);
+    expect(exit).toHaveBeenCalledWith(1);
+    expect(loadAllowlist(tmp)).toBeNull();
+    exit.mockRestore();
+  });
+
   it('honors --expires when provided', async () => {
     await runAllowlistAdd(tmp, {
       fingerprint: 'a3f9c0e8b7d2e1f4',

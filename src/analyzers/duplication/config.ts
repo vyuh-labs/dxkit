@@ -31,11 +31,26 @@ export interface DuplicationConfig {
    *  `DUP_DEFAULT_MIN_SCORE` — the proof's precision floor. Raising it trades
    *  recall for precision on a noisy repo. */
   readonly minScore: number;
+  /** Minimum function body size (AST tokens) for a function to enter seam
+   *  pairing. Default 0 (no floor — current behavior). A binding/adapter
+   *  module's 2-4 line delegating wrappers pair at 1.00 by design and carry no
+   *  consolidation opportunity; a repo with such layers opts in (e.g. 30). */
+  readonly minBodyTokens: number;
+  /** What a LONE net-new structural duplicate does under `mode: "block"`.
+   *  Default `warn` — the tier-3 precision floor (the anti-slop proof), where
+   *  block confidence comes only from seam convergence. `block` is the
+   *  explicit opt-in for repos that route ALL debt through the gate + typed
+   *  allowlist: a lone net-new seam fails the build, and the
+   *  `code-reimplementation` allowlist is the escape hatch. Guardrail-tuning
+   *  of an adopted gate (like `blockRules`), not a posture knob. */
+  readonly loneSeams: 'warn' | 'block';
 }
 
 const DEFAULTS: DuplicationConfig = {
   mode: 'off',
   minScore: DUP_DEFAULT_MIN_SCORE,
+  minBodyTokens: 0,
+  loneSeams: 'warn',
 };
 
 /** Current schema version of the committed `.dxkit/policy.json:duplication`
@@ -46,6 +61,8 @@ export const DUPLICATION_CONFIG_SCHEMA_VERSION = 1;
 interface RawDuplication {
   mode?: unknown;
   minScore?: unknown;
+  minBodyTokens?: unknown;
+  loneSeams?: unknown;
 }
 
 function isMode(v: unknown): v is DuplicationGateMode {
@@ -66,5 +83,12 @@ export function readDuplicationConfig(cwd: string): DuplicationConfig {
       typeof raw.minScore === 'number' && raw.minScore > 0 && raw.minScore <= 1
         ? raw.minScore
         : DEFAULTS.minScore,
+    minBodyTokens:
+      typeof raw.minBodyTokens === 'number' &&
+      Number.isFinite(raw.minBodyTokens) &&
+      raw.minBodyTokens >= 0
+        ? Math.floor(raw.minBodyTokens)
+        : DEFAULTS.minBodyTokens,
+    loneSeams: raw.loneSeams === 'block' ? 'block' : DEFAULTS.loneSeams,
   };
 }

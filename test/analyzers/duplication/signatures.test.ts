@@ -80,6 +80,31 @@ describe('gatherFunctionSignatures — AST callee extraction (TypeScript)', () =
     expect([...load!.callees].sort()).toEqual(['fetchThing', 'parseThing', 'renderThing']);
   });
 
+  it('records the function span (endLine) and a token-count size proxy', async () => {
+    const dir = repo({
+      'src/span.ts': `
+        export function big() {
+          alpha();
+          beta();
+          gamma();
+        }
+        export function tiny() { alpha(); }
+      `,
+    });
+    const sigs = await gatherFunctionSignatures(dir);
+    const big = byName(sigs, 'big');
+    const tiny = byName(sigs, 'tiny');
+    expect(big).toBeDefined();
+    expect(tiny).toBeDefined();
+    // Span: a multi-line function ends after it starts; the one-liner spans one line.
+    expect(big!.endLine).toBeGreaterThan(big!.line);
+    expect(tiny!.endLine).toBe(tiny!.line);
+    // Size: both counted, and the bigger body carries more tokens — the
+    // minBodyTokens floor's ordering assumption.
+    expect(tiny!.tokens).toBeGreaterThan(0);
+    expect(big!.tokens).toBeGreaterThan(tiny!.tokens);
+  });
+
   it('excludes test files by default', async () => {
     const dir = repo({
       'src/thing.test.ts': `export function shouldNotAppear() { a(); b(); c(); }`,
