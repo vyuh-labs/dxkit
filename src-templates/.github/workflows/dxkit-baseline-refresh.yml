@@ -35,6 +35,18 @@ __DXKIT_REFRESH_NEEDS__
           fetch-depth: 0
           # `persist-credentials: true` (the default) leaves the
           # token in .git/config so the final `git push` reuses it.
+          # Optional bot PAT (DXKIT_BOT_TOKEN): pushes made with the default
+          # GITHUB_TOKEN never trigger workflow runs, so the advisory decision
+          # PR this lane can open would show no checks. Falls back cleanly.
+          token: ${{ secrets.DXKIT_BOT_TOKEN || github.token }}
+
+      - name: Disclose token mode
+        env:
+          DXKIT_BOT_TOKEN_SET: ${{ secrets.DXKIT_BOT_TOKEN != '' }}
+        run: |
+          if [ "${DXKIT_BOT_TOKEN_SET}" != "true" ]; then
+            echo "::notice title=lane PRs run no checks::This lane pushes with the default GITHUB_TOKEN, and GitHub never triggers workflows for such pushes - a PR it opens will show no checks. Set the DXKIT_BOT_TOKEN secret (a PAT with repo scope) to lift this."
+          fi
 
       - uses: actions/setup-node@v6
         with:

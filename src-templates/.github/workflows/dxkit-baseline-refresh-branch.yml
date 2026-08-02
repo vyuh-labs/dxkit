@@ -87,6 +87,12 @@ __DXKIT_CI_RUNTIME_SETUP__
           done
 
       - name: Recompute baseline
+        # The refresh's own `gh` calls need auth: the advisory decision PR and
+        # the allowlist-expiry notice issue. Without GH_TOKEN here they run
+        # unauthenticated and fail silently (the per-template-drift class the
+        # lane-token parity test pins).
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           if [ -x ./node_modules/.bin/vyuh-dxkit ]; then
             DXKIT=./node_modules/.bin/vyuh-dxkit
