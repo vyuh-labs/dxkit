@@ -406,6 +406,9 @@ export async function run(argv: string[]): Promise<void> {
       xlsx: { type: 'boolean', default: false },
       filter: { type: 'string' },
       all: { type: 'boolean', default: false },
+      // learn: local assistant server + its port
+      serve: { type: 'boolean', default: false },
+      port: { type: 'string' },
       frontend: { type: 'string' },
       backend: { type: 'string' },
       specs: { type: 'string' },
@@ -3418,8 +3421,41 @@ export async function run(argv: string[]): Promise<void> {
 
     case 'learn': {
       const targetPath = resolveRepoPath(positionals[1]);
-      const { runLearn } = await import('./learn');
       logger.header('vyuh-dxkit learn');
+      if (values.serve) {
+        const { buildLearnBundle } = await import('./learn/bundle');
+        const { gatherLearnRepoStatus } = await import('./learn/repo-status');
+        const { startLearnServer } = await import('./learn/serve');
+        const { LLM_DRIVERS, envKeyFor } = await import('./learn/drivers');
+        const bundle = buildLearnBundle();
+        const status = await gatherLearnRepoStatus(targetPath);
+        const port = values.port ? parseInt(String(values.port), 10) : undefined;
+        const running = await startLearnServer(bundle, status, { port });
+        logger.success(`Learn assistant serving at ${running.url} (localhost only)`);
+        logger.dim(
+          status
+            ? 'Repo mode: live status + setup checklist + repo-grounded assistant.'
+            : 'Zero-context mode: the full guide + assistant, no repo needed.',
+        );
+        const withKey = LLM_DRIVERS.filter((d) => envKeyFor(d) !== null);
+        logger.dim(
+          withKey.length > 0
+            ? `API key detected in env for: ${withKey.map((d) => d.label).join(', ')}. It stays in this process.`
+            : 'No provider API key in the environment. Enter one in the page, or export e.g. ANTHROPIC_API_KEY and restart.',
+        );
+        logger.dim('Press Ctrl+C to stop.');
+        // Keep the process alive until interrupted.
+        await new Promise<void>((resolve) => {
+          process.once('SIGINT', () => {
+            void running.close().then(resolve);
+          });
+          process.once('SIGTERM', () => {
+            void running.close().then(resolve);
+          });
+        });
+        break;
+      }
+      const { runLearn } = await import('./learn');
       const result = await runLearn(targetPath, {
         out: values.output ? String(values.output) : undefined,
       });
@@ -3429,6 +3465,7 @@ export async function run(argv: string[]): Promise<void> {
           ? 'Includes live repo status + the read-only setup checklist. Open it in a browser.'
           : 'Capability guide (no repo detected here). Open it in a browser.',
       );
+      logger.dim('Add --serve for the local grounded assistant (BYO key).');
       break;
     }
 
