@@ -54,6 +54,42 @@ export function parseJsonStream(raw: string): unknown[] {
   return out;
 }
 
+/**
+ * Extract the first complete JSON document (`{...}` or `[...]`) from output
+ * that may carry a non-JSON prefix or suffix — the tool-banner class: a
+ * wrapper (uv's "The virtual environment ..." notice) prints on STDOUT ahead
+ * of the tool's JSON, and a byte-0 `JSON.parse` dies on the banner. Walks
+ * balanced brackets string-aware (same discipline as `parseJsonStream`, plus
+ * top-level arrays). Returns the JSON slice, or null when no balanced
+ * document exists — callers fall back to their existing parse-error path.
+ */
+export function extractJsonPayload(raw: string): string | null {
+  const start = raw.search(/[{[]/);
+  if (start < 0) return null;
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+  for (let i = start; i < raw.length; i++) {
+    const ch = raw[i];
+    if (escape) {
+      escape = false;
+      continue;
+    }
+    if (inString) {
+      if (ch === '\\') escape = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') inString = true;
+    else if (ch === '{' || ch === '[') depth++;
+    else if (ch === '}' || ch === ']') {
+      depth--;
+      if (depth === 0) return raw.slice(start, i + 1);
+    }
+  }
+  return null;
+}
+
 /** Run a command and return stdout. Returns empty string on failure. */
 export function run(cmd: string, cwd: string, timeoutMs = 30000): string {
   try {

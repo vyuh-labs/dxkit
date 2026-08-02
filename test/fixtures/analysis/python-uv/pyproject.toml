@@ -1,0 +1,11 @@
+[project]
+name = "example-workspace"
+version = "0.0.0"
+requires-python = ">=3.12"
+dependencies = ["acme-platform"]
+
+[tool.uv.workspace]
+members = ["packages/acme-platform"]
+
+[tool.uv.sources]
+acme-platform = { workspace = true }

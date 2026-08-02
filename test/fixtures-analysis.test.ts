@@ -86,6 +86,12 @@ const STACKS: Array<{ stack: string; flow?: { calls: number } }> = [
   { stack: 'csharp-svc', flow: { calls: 2 } },
   { stack: 'ruby-svc', flow: { calls: 2 } },
   { stack: 'rust-svc', flow: { calls: 2 } },
+  // No flow row: a uv-workspace monorepo (nested member with src/ layout,
+  // distribution name != import name, member-prefixed test basenames) — the
+  // environment shape the #219/#223 class was structurally blind to. The
+  // language-agnostic invariants run here like everywhere; the import-graph
+  // association is additionally pinned below.
+  { stack: 'python-uv' },
   // No flow row: the swift pack declares no httpFlow (iOS apps consume APIs
   // through URLSession wrappers a v1 descriptor can't resolve honestly).
   { stack: 'swift-app' },
@@ -261,6 +267,18 @@ describe('analysis fixtures — test-gap import-graph credits non-relative impor
     // Without `src/`-root awareness the absolute import would anchor at the
     // project root only, miss `src/authz/access.py`, and leave it a gap.
     expect([...reached]).toContain('src/authz/access.py');
+  });
+
+  it('python-uv: a workspace-member src-layout import from a member-prefixed test resolves', async () => {
+    // The #223 shape: `packages/acme-platform/tests/test_acme_platform_util.py`
+    // imports `acme.util` — the filename heuristic can never associate the
+    // prefixed basename with `util.py`, so without member-root awareness the
+    // module reads as untested and the phantom gap gets grandfathered.
+    const reached = await buildReachable(
+      ['packages/acme-platform/tests/test_acme_platform_util.py'],
+      staged['python-uv'],
+    );
+    expect([...reached]).toContain('packages/acme-platform/src/acme/util.py');
   });
 });
 

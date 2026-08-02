@@ -65,6 +65,52 @@ describe('pyResolutionCheck', () => {
     expect(pyResolutionCheck(ctx(cwd)).kind).toBe('clean');
   });
 
+  it('uv-workspace: a member package resolves via its own src root (dist name != import name)', () => {
+    // The #219 shape: distribution `acme-platform` provides package `acme` —
+    // derivable from NO manifest name, installed editable (no literal
+    // site-packages dir). Both the member's SELF-import and a cross-member
+    // consumer must resolve against the member's src root.
+    const cwd = repo({
+      [`${SITE}/`]: '',
+      'pyproject.toml':
+        '[project]\nname = "example-workspace"\ndependencies = ["acme-platform"]\n\n' +
+        '[tool.uv.workspace]\nmembers = ["packages/acme-platform"]\n',
+      'packages/acme-platform/pyproject.toml': '[project]\nname = "acme-platform"\n',
+      'packages/acme-platform/src/acme/__init__.py': 'from acme.util import answer\n',
+      'packages/acme-platform/src/acme/util.py': 'def answer():\n    return 42\n',
+      'consumer/__init__.py': '',
+      'consumer/app.py': 'import acme\n',
+    });
+    expect(pyResolutionCheck(ctx(cwd)).kind).toBe('clean');
+  });
+
+  it('uv-workspace: a flat-layout member (no src/) resolves via the member root', () => {
+    const cwd = repo({
+      [`${SITE}/`]: '',
+      'pyproject.toml': '[project]\nname = "ws"\n\n[tool.uv.workspace]\nmembers = ["libs/tool"]\n',
+      'libs/tool/pyproject.toml': '[project]\nname = "tool-dist"\n',
+      'libs/tool/toolpkg/__init__.py': '# package\n',
+      'consumer/__init__.py': '',
+      'consumer/app.py': 'import toolpkg\n',
+    });
+    expect(pyResolutionCheck(ctx(cwd)).kind).toBe('clean');
+  });
+
+  it('uv-workspace: a genuinely missing import still flags (member roots do not over-suppress)', () => {
+    const cwd = repo({
+      [`${SITE}/`]: '',
+      'pyproject.toml':
+        '[project]\nname = "ws"\n\n[tool.uv.workspace]\nmembers = ["packages/acme-platform"]\n',
+      'packages/acme-platform/pyproject.toml': '[project]\nname = "acme-platform"\n',
+      'packages/acme-platform/src/acme/__init__.py': 'import ghostpkg\n',
+    });
+    const r = pyResolutionCheck(ctx(cwd));
+    expect(r.kind).toBe('unresolved');
+    if (r.kind === 'unresolved') {
+      expect(r.unresolved.map((u) => u.specifier)).toEqual(['ghostpkg']);
+    }
+  });
+
   it('the known import↔dist aliases resolve on the declared side (yaml → pyyaml)', () => {
     const cwd = repo({
       [`${SITE}/`]: '',
