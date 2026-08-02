@@ -126,7 +126,12 @@ export const CATEGORIES_BY_KIND: Readonly<Record<IdentityKind, readonly Allowlis
   // only accepted-risk or deferred
   'coverage-gap': ['accepted-risk', 'deferred'],
   'test-gap': ['accepted-risk', 'deferred'],
-  'test-file-degradation': ['accepted-risk', 'deferred'],
+  // Degradation CAN be a scanner misfire (gh #233: a shared-helpers module
+  // in a tests tree misread as a degraded test). The heuristic exemptions
+  // reduce the class, but a kind whose detector can misfire must let the
+  // typed-suppression system say "not real" — the real-exposure categories
+  // carry expiry and score weight, which is the wrong shape for a misfire.
+  'test-file-degradation': ['false-positive', 'accepted-risk', 'deferred'],
 
   // Whole-file findings: false-positive (file IS not actually large /
   // stale / god when reviewed); otherwise accepted-risk or deferred
