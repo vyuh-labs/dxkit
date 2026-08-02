@@ -106,6 +106,42 @@ export const GROUP_ORDER: Array<Exclude<CommandGroup, 'internal'>> = [
 ];
 
 /**
+ * The core tier: the commands a new user meets first (issue #243). This is
+ * PRESENTATION metadata only — a display ordering over the registry, never a
+ * second registry. Every id here must resolve via `getCommand` (pinned by
+ * `test/discovery-playbook.test.ts`); the descriptors themselves are untouched.
+ */
+export const CORE_COMMAND_IDS = ['init', 'guardrail', 'baseline', 'allowlist', 'doctor'] as const;
+
+/**
+ * The tiered help index (issue #243): the five core commands with their
+ * summaries, then every remaining user-facing command collapsed to one line
+ * per group, so the first screen a new user sees is five commands, not ~40.
+ * The full grouped index stays available via `renderCommandIndex`
+ * (`vyuh-dxkit --help --all`).
+ */
+export function renderTieredIndex(): string[] {
+  const lines: string[] = [];
+  lines.push('  Start here');
+  for (const id of CORE_COMMAND_IDS) {
+    const c = getCommand(id);
+    if (!c) continue;
+    lines.push(`    ${c.id.padEnd(28)} ${c.summary}`);
+  }
+  lines.push('');
+  lines.push("  Everything else (run 'vyuh-dxkit --help --all' for the full reference)");
+  for (const group of GROUP_ORDER) {
+    const rest = userCommands().filter(
+      (c) => c.group === group && !(CORE_COMMAND_IDS as readonly string[]).includes(c.id),
+    );
+    if (rest.length === 0) continue;
+    lines.push(`    ${GROUP_LABELS[group].padEnd(12)} ${rest.map((c) => c.id).join(', ')}`);
+  }
+  lines.push('');
+  return lines;
+}
+
+/**
  * A grouped, one-line-per-command index of the user-facing commands.
  * Drives the unknown-command hint today; the top-level `--help` index next.
  */
