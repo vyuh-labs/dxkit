@@ -5,6 +5,103 @@ All notable changes to `@vyuhlabs/dxkit` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.3.6] - 2026-08-02
+
+The batch defect release: everything collected from the first production
+runs of the scheduled lanes plus the issue backlog, shipped as one cycle.
+Eight work packages, each landing its fix together with the regression net
+that keeps the class from recurring.
+
+### Python and uv workspaces (#219, #220, #223)
+
+- **Workspace members resolve.** Python source-root discovery now finds
+  nested project roots (any directory with its own `pyproject.toml` /
+  `setup.py` / `setup.cfg`, plus its `src/`), so the import-resolution
+  floor no longer flags a uv workspace member whose distribution name
+  differs from its import name, the import graph resolves member-crossing
+  edges, and test-gap analysis credits member-prefixed test files. One
+  definition, three consumers healed. A uv-workspace fixture row joined the
+  analysis matrix so the class stays visible.
+- **pip-audit parses through banners.** A wrapper's stdout notice ahead of
+  the JSON no longer reads as "dependency audit UNMEASURED: parse error" —
+  the adapter parses the first balanced JSON document.
+
+### Baseline provenance is consulted, not just recorded (#222, #224, #227)
+
+- **Stale-anchor disclosure.** When most net-new findings sit in files the
+  change never touched, the verdict is reframed as "baseline suspect" with
+  the stale-anchor explanation and a re-anchor remedy — a confident BLOCKED
+  over a stale baseline no longer reads as the developer's fault.
+- **Workflow-aware remedies.** The envelope-drift and attribution-gap
+  remediation copy points a repo with the CI baseline-refresh lane at a CI
+  re-capture (dispatch or merge), never at the local
+  `baseline create --force` the docs warn against.
+- **doctor flags a local anchor**, and distinguishes GitHub's Free-plan 403
+  on branch-protection reads from a missing `gh`.
+- **The expiry-notice lane is fully wired**: `baseline refresh` renders the
+  notice outcome, and the refresh workflow's recompute step now carries the
+  token its `gh` calls need. A template parity test pins every gh-shelling
+  step in every lane template to that token — on its first run it caught
+  the same gap in two more template variants.
+
+### The seam gate joins the canonical pairing discipline (#226, #228, #229, #230)
+
+- **Line shifts no longer re-litigate a file's history.** The structural-
+  duplicate gate matches base and head pairs in two passes (exact
+  fingerprint, then a line-independent endpoints key with multiset
+  counting), so editing one function no longer reports its untouched
+  siblings as "both added". Changed-marking is per function, not per file.
+- **`duplication.minBodyTokens`** excludes trivial delegating wrappers from
+  pairing (opt-in); **`duplication.loneSeams: "block"`** is the explicit
+  posture for repos that want a lone net-new seam to fail the build.
+- **`allowlist add` batch mode**: `--fingerprints=a,b,c` / `--from-stdin`,
+  one shared reason, per-fingerprint auditable entries.
+
+### Scheduled lanes tell the truth about delivery
+
+- The dep-bump lane's outcome derives from the land result: a branch push
+  whose PR creation was refused reports `branch-pushed-no-pr` with the
+  Actions-setting remedy, never "landed" with an empty URL.
+- Optional `DXKIT_BOT_TOKEN` secret on the PR-opening lanes: branches
+  pushed with the default `GITHUB_TOKEN` never trigger workflow runs, so
+  lane PRs showed no checks; a bot PAT retires that, and the default is
+  disclosed on every run.
+
+### The remediate lane, redesigned from its first production run
+
+- **One matrix job per task**, each on its own checkout — a failed task can
+  no longer starve its siblings, and per-task status/logs/summaries/retry
+  come free. A `$0` fast-exit skips the agent when a floor-goal task finds
+  a green entry floor.
+- **Observability**: per-phase log groups plus a heartbeat, so a
+  35-minute agent phase reads as working, never as hung; non-clean
+  outcomes annotate the run page.
+- **Evidence survives the runner**: a blocked attempt's ledger names the
+  blocking findings, and the workflow uploads the attempt diff as a run
+  artifact.
+- **Spend controls**: `remediate.maxSpendPerRun` (run ceiling, overflow
+  deferred and disclosed), `remediate.taskBudgets` (per-task overrides),
+  and honest turn-cap accounting.
+- **Dispatch campaigns**: typed `workflow_dispatch` inputs — task choice,
+  budget/model overrides, and a `custom` free-text prompt — running through
+  the identical verified frame, transported via env only, clamped to
+  `remediate.maxDispatchBudget`, with the dispatcher and verbatim prompt
+  disclosed in the PR body.
+
+### Test-support files are not degraded tests (#233)
+
+`conftest.py` and testless helper modules imported by sibling tests are
+support code, not `test-file-degradation` findings — closing the catch-22
+where extracting duplicated test builders was blocked from every
+direction. The kind also now admits the `false-positive` category.
+
+### CLI and docs (#49, #50, #51, #52, #225)
+
+`vyuh-dxkit version`; a helpful allowlist empty state; the agent context
+hook only fires on the clause that actually runs a search (no more symbol
+tables injected on `ls`); a "Common pitfalls" guide section; and a
+runnable `examples/hello-world` walkthrough.
+
 ## [4.3.5] - 2026-07-31
 
 A determinism fix for the parity gate that shipped in 4.3.4, found on its
