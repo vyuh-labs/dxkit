@@ -223,4 +223,20 @@ describe('recallDriftRemedy (4.2 CI-canonical capture)', () => {
       expect(recallDriftRemedy(p)).not.toContain('developer machine');
     }
   });
+
+  it('a repo WITH the CI refresh lane is pointed at the workflow, never at a local --force', async () => {
+    // The remediation copy IS the policy in an agent workflow — recommending a
+    // local `--force` in a repo whose baselines are CI-captured trains the
+    // loop to bake a developer toolchain into the anchor (the drift cause).
+    const { recallDriftRemedy } = await import('../../src/baseline/recall');
+    for (const p of ['ci', 'local', undefined] as const) {
+      const remedy = recallDriftRemedy(p, true);
+      expect(remedy).toContain('baseline-refresh');
+      expect(remedy).toContain('workflow_dispatch');
+      // --force may be NAMED only as the thing to avoid.
+      expect(remedy).toContain('Avoid a local');
+    }
+    // Without the lane, behavior is unchanged.
+    expect(recallDriftRemedy('ci', false)).toContain('baseline create --force');
+  });
 });

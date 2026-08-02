@@ -324,7 +324,24 @@ export function describeRecallDrift(drift: RecallDrift): string {
  * local `--force` (which would just stamp THIS machine's environment) is the
  * fallback, not the headline.
  */
-export function recallDriftRemedy(capturedIn?: 'ci' | 'local'): string {
+export function recallDriftRemedy(
+  capturedIn?: 'ci' | 'local',
+  refreshLaneInstalled?: boolean,
+): string {
+  // A repo WITH the CI refresh lane must be pointed at it, never at a local
+  // `--force`: baselines are captured CI-side by design (stable scanner
+  // versions), and a local force-capture bakes this machine's toolchain into
+  // the committed anchor — the exact cause of the NEXT round of envelope
+  // drift. In an agent-heavy workflow the remediation copy IS the policy, so
+  // recommending the anti-pattern trains the loop to reintroduce the problem.
+  if (refreshLaneInstalled) {
+    return (
+      'the CI baseline-refresh lane is installed — dispatch it (workflow_dispatch) or ' +
+      'merge to the default branch to re-capture the anchor canonically. Avoid a local ' +
+      "`vyuh-dxkit baseline create --force`: it bakes this machine's toolchain into the " +
+      'committed baseline. These findings warn instead of blocking until then'
+    );
+  }
   if (capturedIn === 'local') {
     return (
       'this baseline was captured on a developer machine — the CI refresh surface ' +

@@ -96,6 +96,12 @@ import type { FlowGateMode } from '../analyzers/flow/config';
 import { isSanitized } from './sanitize';
 import type { BaselineEntry, FindingId, FindingSeverity, MatchPair, MatchResult } from './types';
 import { CURRENT_IDENTITY_SCHEME } from './types';
+import {
+  refreshWorkflowInstalled,
+  detectBaselineSuspect,
+  readBaselineProvenance,
+} from './provenance';
+import type { BaselineSuspect } from './provenance';
 import type { SecurityAggregate } from '../analyzers/security/aggregator';
 import {
   computeAllowlistDelta,
@@ -281,6 +287,11 @@ export interface EnvelopeDrift {
    *  root fix is the CI-canonical re-capture; renderers lead there instead of
    *  a local `--force`. Absent on pre-4.2 baselines (unknown provenance). */
   readonly baselineCapturedIn?: 'ci' | 'local';
+  /** Whether the CI baseline-refresh workflow is installed (the provenance
+   *  module's one probe). Drives the drift/attribution-gap REMEDY: a repo
+   *  with the lane is pointed at a CI re-capture, never at the local
+   *  `--force` anti-pattern the docs warn about. */
+  readonly refreshLaneInstalled?: boolean;
   /** Scanners whose availability flipped between baseline capture and
    *  this check. A tool missing at baseline but present now means the
    *  baseline never covered that category — its findings surface as new
@@ -421,6 +432,11 @@ export interface GuardrailCheckResult {
    * mismatch gets. Empty on a healthy run. See `src/baseline/attribution-gap.ts`.
    */
   readonly attributionGaps: ReadonlyArray<AttributionGap>;
+  /** Present when the ADDED-finding pattern matches the stale-anchor
+   *  signature (most net-new findings in files the diff never touched —
+   *  #222). Disclosure only: reframes a mechanically-correct BLOCKED as
+   *  "baseline suspect" with the workflow-aware re-anchor remedy. */
+  readonly baselineSuspect?: BaselineSuspect;
   /**
    * What this run's ACTIVE allowlist suppressions will do when their windows
    * expire — how many will block, how many will warn, and how soon. REQUIRED so
@@ -857,7 +873,7 @@ export async function runGuardrailCheck(
   const severityByCurrentId = buildSeverityIndex(current.aggregate);
   const maliciousByCurrentId = buildMaliciousIndex(current.aggregate);
   const reachableByCurrentId = buildReachableIndex(current.aggregate);
-  const envelopeDrift = diffEnvelopes(baseline, current, mode.mode);
+  const envelopeDrift = diffEnvelopes(baseline, current, mode.mode, refreshWorkflowInstalled(cwd));
 
   // Per-kind recall attribution (Rule 19) drives the per-pair `recallDrifted`
   // signal. A pair is in drift only when the inputs that determine ITS kind
@@ -1153,6 +1169,26 @@ export async function runGuardrailCheck(
   // while one exists the run cannot render PASSED.
   const attributionGaps = collectAttributionGaps(filteredPairs, envelopeDrift.recallDrift);
 
+  // Baseline-suspect staleness disclosure (#222): a large share of ADDED
+  // findings in files the diff never touched is a stale-anchor signature (the
+  // baseline predates the base branch's recent history), not developer fault.
+  // Committed modes only — ref-based re-gathers the prior side at the PR's own
+  // base, so there is no stale-anchor concept. Disclosure only: the verdict is
+  // mechanically correct either way; this reframes it and names the honest
+  // remedy (workflow-aware via the provenance module).
+  const baselineSuspect =
+    mode.mode !== 'ref-based'
+      ? detectBaselineSuspect({
+          addedFiles: filteredPairs
+            .filter((p) => p.classification.status === 'added' && p.file !== undefined)
+            .map((p) => p.file!),
+          changedFiles: baseline.repo.commitSha
+            ? computeChangedFiles(cwd, baseline.repo.commitSha)
+            : null,
+          provenance: readBaselineProvenance(cwd, baseline),
+        })
+      : null;
+
   // Aggregate the not-observed pairs into per-reason disclosures for the
   // renderers. Aggregate ON PURPOSE: a repo-scale lint backlog is tens of
   // thousands of entries, and listing them (the "Resolved (18406)" table this
@@ -1200,6 +1236,7 @@ export async function runGuardrailCheck(
     warns:
       baseWarns || flowGate.warns || schemaDriftGate.warns || dupGate.warns || pairedGate.warns,
     attributionGaps,
+    ...(baselineSuspect ? { baselineSuspect } : {}),
     suppressionExpiry,
     notObserved: notObservedDisclosures,
     allowlistDelta,
@@ -1323,6 +1360,7 @@ function diffEnvelopes(
   baseline: BaselineFile,
   current: CurrentScan,
   mode: ResolvedMode['mode'],
+  refreshLaneInstalled?: boolean,
 ): EnvelopeDrift {
   const toolVersionDiffs: Array<{
     tool: string;
@@ -1359,6 +1397,7 @@ function diffEnvelopes(
     toolVersionDiffs,
     recallDrift,
     ...(baseline.capturedIn ? { baselineCapturedIn: baseline.capturedIn } : {}),
+    ...(refreshLaneInstalled !== undefined ? { refreshLaneInstalled } : {}),
     // Ref-based mode: the prior side is a fresh gather in a bare worktree,
     // so its "coverage" records artifact-dependent tools (a node_modules
     // linter, the coverage report) as missing BY CONSTRUCTION — not as a
