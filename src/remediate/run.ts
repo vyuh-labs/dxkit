@@ -265,9 +265,20 @@ export async function runRemediateTask(opts: RemediateRunOptions): Promise<Remed
   const baseHead = git.head();
 
   opts.onPhase?.('agent');
+  // Budget awareness: the agent is TOLD its caps so it lands work in
+  // mergeable increments instead of being surprised mid-edit by the kill —
+  // the difference between a salvageable 90% and a stranded one. Appended by
+  // the runner (the one place the effective budget is known), never baked
+  // into the task prompts.
+  const budgetNote =
+    `\nBudget for this run (runner-enforced): ~${budget.maxMinutes} minutes, ` +
+    `${budget.maxTurns} turns, $${budget.maxUsd}. Commit completed units as you go, and ` +
+    `reserve the final minutes to commit ALL remaining work and record where you stopped ` +
+    `in docs/DXKIT-REMEDIATION-NOTES.md — work committed before the cap survives; ` +
+    `uncommitted edits are swept into a single unlabeled-context commit.`;
   const agentResult: AgentRunResult = await driver.run({
     cwd: opts.cwd,
-    prompt: task.prompt,
+    prompt: task.prompt + budgetNote,
     budget: { maxTurns: budget.maxTurns, maxMinutes: budget.maxMinutes },
     model: choice.native,
     env: opts.agentEnv ?? {},
