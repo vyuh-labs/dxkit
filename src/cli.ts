@@ -237,6 +237,9 @@ ${renderCommandIndex().join('\n')}
                                  automatically. Safe to run by hand; always exits 0.
     vyuh-dxkit allowlist add <file:line> --category=<cat> --reason=<text>
     vyuh-dxkit allowlist add --fingerprint=<id> --kind=<kind> --category=<cat>
+                                 Batch: --fingerprints=<id,id,…> or --from-stdin
+                                 (line-wise) share one kind/category/reason;
+                                 each still gets its own auditable entry.
                              --reason=<text> [--expires=<YYYY-MM-DD>]
                                  Suppress an individual finding with a typed category
                                  (false-positive / test-fixture / mitigated-externally /
@@ -451,6 +454,8 @@ export async function run(argv: string[]): Promise<void> {
       category: { type: 'string' },
       reason: { type: 'string' },
       fingerprint: { type: 'string' },
+      fingerprints: { type: 'string' },
+      'from-stdin': { type: 'boolean', default: false },
       expires: { type: 'string' },
       'from-last-check': { type: 'boolean', default: false },
       'acknowledged-severity': { type: 'string' },

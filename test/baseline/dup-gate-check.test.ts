@@ -49,15 +49,22 @@ function provider(head: DuplicateFinding[], base: DuplicateFinding[], cwd: strin
 }
 
 /** A repo with the seam gate enabled, a source file touched by the HEAD change,
- *  committed on `main` as the base. */
-function makeRepo(mode: 'warn' | 'block' | 'off' = 'warn'): { dir: string; baseSha: string } {
+ *  committed on `main` as the base. `duplication` policy fields beyond `mode`
+ *  ride via `policyExtra` (loneSeams, minBodyTokens). */
+function makeRepo(
+  mode: 'warn' | 'block' | 'off' = 'warn',
+  policyExtra: Record<string, unknown> = {},
+): { dir: string; baseSha: string } {
   const dir = mkdtempSync(join(tmpdir(), 'dxkit-dupgate-'));
   dirs.push(dir);
   git(dir, ['init', '-q', '-b', 'main']);
   git(dir, ['config', 'user.email', 'test@example.com']);
   git(dir, ['config', 'user.name', 'test']);
   mkdirSync(join(dir, '.dxkit'), { recursive: true });
-  writeFileSync(join(dir, '.dxkit', 'policy.json'), JSON.stringify({ duplication: { mode } }));
+  writeFileSync(
+    join(dir, '.dxkit', 'policy.json'),
+    JSON.stringify({ duplication: { mode, ...policyExtra } }),
+  );
   mkdirSync(join(dir, 'src', 'api', 'cli'), { recursive: true });
   writeFileSync(join(dir, 'src', 'api', 'divisions.ts'), 'export const GET = () => {};\n');
   git(dir, ['add', '.']);
@@ -149,6 +156,126 @@ describe('evaluateDupGateForGuardrail — two-ref seam gate', () => {
     });
     expect(out.skipped).toBe('error');
     expect(out.blocks).toBe(false);
+  });
+
+  it('a line-SHIFTED pre-existing pair is grandfathered (the unchanged-sibling class)', async () => {
+    // The bindings-module shape: an edit elsewhere in the file moves the pair's
+    // line windows, so the line-window fingerprint re-mints — but the two
+    // (file, symbol) endpoints are the same structural relation and must stay
+    // grandfathered, not read as "both added".
+    const { dir, baseSha } = makeRepo('warn');
+    const a = { file: 'src/api/divisions.ts', symbol: '__init__', line: 80 };
+    const b = { file: 'src/api/divisions.ts', symbol: '__init__', line: 125 };
+    const head: DuplicateFinding = {
+      id: computeCodeReimplementationFingerprint(a, b),
+      anchors: [a, b],
+      score: 1,
+    };
+    const aOld = { ...a, line: 80 };
+    const bOld = { ...b, line: 118 }; // pre-edit position — different line window
+    const base: DuplicateFinding = {
+      id: computeCodeReimplementationFingerprint(aOld, bOld),
+      anchors: [aOld, bOld],
+      score: 1,
+    };
+    expect(base.id).not.toBe(head.id); // the re-mint that caused the false wave
+    const out = await evaluateDupGateForGuardrail({
+      cwd: dir,
+      baseRef: baseSha,
+      gatherDuplicates: provider([head], [base], dir),
+    });
+    expect(out.ran).toBe(true);
+    expect(out.findings).toHaveLength(0); // relocated, not added
+    expect(out.warns).toBe(false);
+  });
+
+  it('a genuinely NEW twin joining an existing parallel family still flags (multiset excess)', async () => {
+    const { dir, baseSha } = makeRepo('warn');
+    const mk = (l1: number, l2: number): DuplicateFinding => {
+      const a = { file: 'src/api/divisions.ts', symbol: '__init__', line: l1 };
+      const b = { file: 'src/api/divisions.ts', symbol: '__init__', line: l2 };
+      return { id: computeCodeReimplementationFingerprint(a, b), anchors: [a, b], score: 1 };
+    };
+    // Base: ONE pair among the family. Head: TWO pairs with the same endpoints
+    // key (an added wrapper created a second relation) — the excess must flag.
+    const out = await evaluateDupGateForGuardrail({
+      cwd: dir,
+      baseRef: baseSha,
+      gatherDuplicates: provider([mk(10, 50), mk(10, 90)], [mk(10, 48)], dir),
+    });
+    expect(out.ran).toBe(true);
+    expect(out.findings).toHaveLength(1);
+    expect(out.warns).toBe(true);
+  });
+
+  it('marks changed per FUNCTION, not per file: an untouched sibling in an edited file is not "added"', async () => {
+    const { dir, baseSha } = makeRepo('warn');
+    // Commit a multi-line source file at base, then edit ONE line in place so
+    // the changed-line index has line truth for a TRACKED file.
+    const lines = Array.from({ length: 12 }, (_, i) => `export const v${i} = ${i};`);
+    writeFileSync(join(dir, 'src', 'api', 'divisions.ts'), lines.join('\n') + '\n');
+    git(dir, ['add', '.']);
+    git(dir, ['commit', '-q', '-m', 'grow']);
+    const baseSha2 = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: dir }).toString().trim();
+    lines[7] = 'export const v7 = 700;'; // touch line 8 only
+    writeFileSync(join(dir, 'src', 'api', 'divisions.ts'), lines.join('\n') + '\n');
+
+    const a = { file: 'src/api/divisions.ts', symbol: 'sibling', line: 1 };
+    const b = { file: 'src/api/divisions.ts', symbol: 'edited', line: 7 };
+    const head: DuplicateFinding = {
+      id: computeCodeReimplementationFingerprint(a, b),
+      anchors: [a, b],
+      score: 1,
+      anchorEnds: [3, 9], // sibling spans 1-3 (untouched); edited spans 7-9 (line 8 changed)
+    };
+    const out = await evaluateDupGateForGuardrail({
+      cwd: dir,
+      baseRef: baseSha2,
+      gatherDuplicates: provider([head], [], dir),
+    });
+    expect(out.findings).toHaveLength(1);
+    // Pre-fix the file-level claim marked BOTH anchors changed ("both added").
+    expect(out.findings[0].changed).toEqual([false, true]);
+    void baseSha; // base of the first commit unused in this case
+  });
+
+  it('loneSeams: "block" (with mode block) escalates a lone net-new seam to a block', async () => {
+    const { dir, baseSha } = makeRepo('block', { loneSeams: 'block' });
+    const out = await evaluateDupGateForGuardrail({
+      cwd: dir,
+      baseRef: baseSha,
+      gatherDuplicates: provider([dupFinding()], [], dir),
+    });
+    expect(out.ran).toBe(true);
+    expect(out.blocks).toBe(true);
+    expect(out.warns).toBe(false); // counted once, in the block tier
+    expect(out.findings).toHaveLength(1);
+  });
+
+  it('mode block WITHOUT loneSeams keeps the precision floor: a lone duplicate warns', async () => {
+    const { dir, baseSha } = makeRepo('block');
+    const out = await evaluateDupGateForGuardrail({
+      cwd: dir,
+      baseRef: baseSha,
+      gatherDuplicates: provider([dupFinding()], [], dir),
+    });
+    expect(out.blocks).toBe(false);
+    expect(out.warns).toBe(true);
+  });
+
+  it('threads policy minBodyTokens into both gathers', async () => {
+    const { dir, baseSha } = makeRepo('warn', { minBodyTokens: 30 });
+    const seen: Array<number | undefined> = [];
+    const out = await evaluateDupGateForGuardrail({
+      cwd: dir,
+      baseRef: baseSha,
+      gatherDuplicates: async (_dir, o) => {
+        seen.push(o.minBodyTokens);
+        return [dupFinding()];
+      },
+    });
+    expect(out.ran).toBe(true);
+    expect(seen).toEqual([30, 30]); // HEAD gather + base gather
   });
 
   it('an active code-reimplementation allowlist entry waives the finding', async () => {

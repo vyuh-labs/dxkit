@@ -11,6 +11,8 @@ const sig = (file: string, name: string, line: number, callees: string[]): Funct
   file,
   name,
   line,
+  endLine: line + 5,
+  tokens: 100,
   callees: new Set(callees),
 });
 

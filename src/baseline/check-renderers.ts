@@ -154,17 +154,21 @@ function extraGateTallies(result: GuardrailCheckResult): { block: number; warn: 
     ...(result.flowGate?.findings ?? []),
     ...(result.schemaDriftGate?.findings ?? []),
   ];
-  // Seam-gate duplicates are always warn-tier (no per-finding verdict field);
-  // fold their count into the warn tally so the banner reconciles with the
-  // summary. Count GROUPS (one added function = one warning), not raw pairs, so
-  // an added function that copies N existing reads as one warning everywhere.
+  // Seam-gate duplicates fold into the tally the gate's posture assigns them:
+  // warn-tier by default; the `loneSeams: "block"` opt-in moves the whole set
+  // to the block tally (the gate carries one posture, not per-finding
+  // verdicts). Count GROUPS (one added function = one finding), not raw pairs,
+  // so an added function that copies N existing reads as one everywhere.
   const dupFindings = result.dupGate?.findings ?? [];
-  const dupWarns = dupFindings.length > 0 ? groupDuplicatesByAdded(dupFindings).length : 0;
+  const dupGroups = dupFindings.length > 0 ? groupDuplicatesByAdded(dupFindings).length : 0;
+  const dupBlocks = result.dupGate?.blocks ? dupGroups : 0;
+  const dupWarns = result.dupGate?.blocks ? 0 : dupGroups;
   // Paired-change findings carry their own rule-declared verdict.
   const paired = result.pairedGate?.findings ?? [];
   return {
     block:
       findings.filter((f) => f.verdict === 'block').length +
+      dupBlocks +
       paired.filter((f) => f.blocking).length,
     warn:
       findings.filter((f) => f.verdict === 'warn').length +
@@ -415,17 +419,19 @@ export function renderConsole(result: GuardrailCheckResult): string {
         `(blocking: ${sBlock}, warning: ${sWarn}, info: ${sInfo}, suppressed: ${schemaSuppressed.length})`,
     );
   }
-  // Same reconciliation line for the structural-duplicate (seam) gate. All
-  // warn-tier (a lone duplicate never blocks), so the count folds into warnings.
+  // Same reconciliation line for the structural-duplicate (seam) gate. Counts
+  // land in the tier the gate's posture assigns (warn by default; the whole
+  // set blocks under the `loneSeams: "block"` opt-in).
   const dupFindings = result.dupGate?.findings ?? [];
   const dupSuppressed = result.dupGate?.suppressed ?? [];
   if (dupFindings.length > 0 || dupSuppressed.length > 0) {
-    // Warning count is GROUPED (one added function = one warning), matching the
+    // Count is GROUPED (one added function = one finding), matching the
     // seam section; suppressed stay per-pair (each is individually waived).
     const dupGroups = dupFindings.length > 0 ? groupDuplicatesByAdded(dupFindings).length : 0;
+    const tier = result.dupGate?.blocks ? 'blocking' : 'warning';
     lines.push(
       `  Seam:        ${dupGroups + dupSuppressed.length} ` +
-        `(warning: ${dupGroups}, suppressed: ${dupSuppressed.length})`,
+        `(${tier}: ${dupGroups}, suppressed: ${dupSuppressed.length})`,
     );
   }
   // Verdict + exit code from the ONE derivation (consumes attribution gaps) —
@@ -702,8 +708,10 @@ function schemaFingerprintLine(id: string): string {
 
 /**
  * Console lines for the structural-duplicate (seam) gate. Silent unless the
- * gate produced findings. All warn-tier (a lone duplicate never blocks), so the
- * one section names the twin, the similarity score, and the accept command.
+ * gate produced findings. Warn-tier by default; under the `loneSeams: "block"`
+ * opt-in the section is labeled BLOCKING (with the allowlist escape hatch
+ * already in the per-group accept command). The section names the twin, the
+ * similarity score, and the accept command.
  */
 function formatDupGate(gate: DupGateOutcome | undefined): string[] {
   if (!gate) return [];
@@ -718,7 +726,10 @@ function formatDupGate(gate: DupGateOutcome | undefined): string[] {
     // Group net-new pairs by the function the change INTRODUCED, so an added
     // function that duplicates N existing reads as one finding, not N warns.
     const groups = groupDuplicatesByAdded(gate.findings);
-    out.push(logger.bold(`Structural duplicate — warning (${groups.length})`));
+    const label = gate.blocks
+      ? `Structural duplicate — BLOCKING (${groups.length}, loneSeams: block)`
+      : `Structural duplicate — warning (${groups.length})`;
+    out.push(logger.bold(label));
     for (const g of groups) out.push(...describeGroup(g));
     out.push('');
   }
