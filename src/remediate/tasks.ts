@@ -25,7 +25,12 @@ export type RemediateTaskId =
   | 'fix-vulns'
   | 'fix-lint'
   | 'improve-tests'
-  | 'write-docs';
+  | 'write-docs'
+  /** Dispatch-campaign only (E3): NOT in REMEDIATE_TASKS, so policy can
+   *  never schedule it — it exists solely for a write-gated
+   *  workflow_dispatch with an explicit prompt, built by
+   *  `customDispatchTask`. */
+  | 'custom';
 
 /** Health dimensions a score hinge may reference (the report's keys). */
 export type HingeDimension =
@@ -194,6 +199,26 @@ the Documentation score must END HIGHER than it started while Quality does
 not drop — cosmetic edits that move nothing are rejected, not landed.` + SHARED_RULES,
   },
 ];
+
+/**
+ * The dispatch-campaign task (E3): a one-time, write-gated run with a
+ * human-supplied prompt. The SHARED_RULES ground rules are appended exactly
+ * as for registry tasks (the baseline-refresh ban and the leave-the-tree-
+ * clean rule are non-negotiable regardless of who wrote the goal). No score
+ * hinge exists for an arbitrary goal — the runner's ledger disclosure says
+ * so, and verification is the floor + guardrail + the human reviewing the
+ * PR that carries the verbatim prompt.
+ */
+export function customDispatchTask(prompt: string): RemediateTask {
+  return {
+    id: 'custom',
+    summary: 'one-time dispatch campaign (custom prompt)',
+    tier: 'standard',
+    tierWhy: 'human-dispatched; pin agent.model (or the dispatch model input) to change',
+    verify: 'guardrail',
+    prompt: prompt + SHARED_RULES,
+  };
+}
 
 const byId = new Map(REMEDIATE_TASKS.map((t) => [t.id, t]));
 

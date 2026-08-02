@@ -59,8 +59,9 @@ describe('installCiRemediate (the managed workflow)', () => {
     expect(text).not.toContain('__DXKIT_BOT_NAME__');
     // the runner-side machine commits carry the same identity explicitly
     const land = readFileSync(join(__dirname, '../../src/remediate/land.ts'), 'utf8');
-    const run = readFileSync(join(__dirname, '../../src/remediate/run.ts'), 'utf8');
-    for (const src of [land, run]) {
+    // The runner's git ops live in git-ops.ts (module-size split from run.ts).
+    const gitOps = readFileSync(join(__dirname, '../../src/remediate/git-ops.ts'), 'utf8');
+    for (const src of [land, gitOps]) {
       expect(src).toContain('BOT_IDENTITY.name');
       expect(src).toContain('BOT_IDENTITY.email');
     }
