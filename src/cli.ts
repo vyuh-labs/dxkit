@@ -1,5 +1,5 @@
 import { parseArgs } from 'node:util';
-import { renderCommandIndex, suggestCommand } from './discovery/commands';
+import { renderCommandIndex, renderTieredIndex, suggestCommand } from './discovery/commands';
 import { suspectVendoredEntries } from './analyzers/tools/vendored-advisor';
 import { detect } from './detect';
 import { generate } from './generator';
@@ -145,7 +145,32 @@ function applyFailOnSeverity(
   }
 }
 
-function printUsage(): void {
+/**
+ * Tiered help (issue #243): the default screen shows the five core commands +
+ * a collapsed line per group; `--help --all` prints the full grouped index and
+ * the complete flag reference. Presentation only — both views render from the
+ * one command registry (CLAUDE.md Rule 16).
+ */
+function printUsage(all = false): void {
+  if (!all) {
+    // slop-ok — help output IS the product surface here, same as the full view below.
+    console.log(`
+  ${logger.bold('vyuh-dxkit')} v${VERSION} — a deterministic stop condition + code-graph context layer for AI coding agents
+
+${renderTieredIndex().join('\n')}
+  ${logger.bold('Learn:')}
+    docs/learn/how-dxkit-thinks.md         The mental model (baseline, gate, allowlist, lanes)
+    docs/learn/quickstart-developer.md     "The gate blocked my PR": what to do
+    docs/learn/quickstart-reviewer.md      Reading guardrail comments + lane PRs
+    docs/learn/quickstart-admin.md         Setup path: secrets, branch protection, policy
+
+  ${logger.bold('Examples:')}
+    ${dxkitCli('init')}                  # Interactive
+    ${dxkitCli('doctor')}                # Verify setup + get recommendations
+    ${dxkitCli('guardrail check')}       # Gate the current change
+`);
+    return;
+  }
   console.log(`
   ${logger.bold('vyuh-dxkit')} v${VERSION} — a deterministic stop condition + code-graph context layer for AI coding agents
 
@@ -534,7 +559,7 @@ export async function run(argv: string[]): Promise<void> {
   });
 
   if (values.help) {
-    printUsage();
+    printUsage(!!values.all);
     return;
   }
 
