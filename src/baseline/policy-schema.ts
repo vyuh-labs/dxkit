@@ -133,6 +133,21 @@ export function buildPolicySchema(version: string): Schema {
             type: 'number',
             description: 'Similarity score in (0, 1] a block pair must reach to count.',
           },
+          minBodyTokens: {
+            type: 'number',
+            description:
+              'Functions with fewer AST tokens never enter seam pairing (default 0 — ' +
+              'no floor). Opt-in for binding/adapter layers whose trivial delegating ' +
+              'wrappers pair at 1.00 by design.',
+          },
+          loneSeams: {
+            type: 'string',
+            enum: ['warn', 'block'],
+            description:
+              'What a LONE net-new structural duplicate does under mode "block": ' +
+              '"warn" (default — the precision floor) or "block" (opt-in: fail the ' +
+              'build; allowlist kind code-reimplementation is the typed escape hatch).',
+          },
         },
         'Copy-paste seam gate.',
       ),

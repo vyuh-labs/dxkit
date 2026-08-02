@@ -27,6 +27,15 @@ export interface FunctionSignature {
   readonly name: string;
   /** 1-based line of the definition. */
   readonly line: number;
+  /** 1-based last line of the definition — the function's SPAN together with
+   *  `line`. Lets the two-ref gate mark per-FUNCTION "did the diff touch this
+   *  anchor" (via the canonical changed-line index) instead of per-file, so an
+   *  untouched sibling in a modified file is never labeled added. */
+  readonly endLine: number;
+  /** AST leaf (token) count attributed to this function — the size proxy for
+   *  the `minBodyTokens` seam floor. A 3-line delegating wrapper counts a few
+   *  dozen; a substantive function counts hundreds. */
+  readonly tokens: number;
   /** Every distinct callee name in the function body — bare call names and
    *  member method names alike (`getDivisions`, `json`, `all`), attributed to
    *  the NEAREST enclosing named function so a nested declaration's calls do not
@@ -45,6 +54,8 @@ interface Building {
   file: string;
   name: string;
   line: number;
+  endLine: number;
+  tokens: number;
   callees: Set<string>;
 }
 
@@ -65,7 +76,14 @@ function collect(
   if (shape.functionNodes.includes(node.type)) {
     const name = node.childForFieldName('name')?.text ?? shape.functionName?.(node) ?? null;
     if (name) {
-      cur = { file, name, line: node.startPosition.row + 1, callees: new Set() };
+      cur = {
+        file,
+        name,
+        line: node.startPosition.row + 1,
+        endLine: node.endPosition.row + 1,
+        tokens: 0,
+        callees: new Set(),
+      };
       acc.push(cur);
     }
   }
@@ -73,6 +91,9 @@ function collect(
     const resolved = shape.resolveCall(node);
     if (resolved?.name) cur.callees.add(resolved.name);
   }
+  // A leaf is one AST token; attributed (like callees) to the nearest
+  // enclosing named function — the `minBodyTokens` size signal.
+  if (cur && node.childCount === 0) cur.tokens++;
   for (let i = 0; i < node.childCount; i++) {
     const child = node.child(i);
     if (child) collect(child, shape, file, cur, acc);

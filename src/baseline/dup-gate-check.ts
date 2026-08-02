@@ -32,8 +32,10 @@
  * (duplicate ∩ reliably-dead surface), computed downstream at the verdict stage.
  */
 
-import { computeChangedFiles } from './changed-files';
+import { computeChangedFiles, createChangedLineIndex } from './changed-files';
+import type { ChangedLineIndex } from './changed-files';
 import { withRefWorktree } from './ref-baseline';
+import type { DuplicateAnchor } from './types';
 import { gatherDuplicateFindings, type DuplicateFinding } from '../analyzers/duplication/findings';
 import { readDuplicationConfig, type DuplicationGateMode } from '../analyzers/duplication/config';
 import { allSourceExtensions } from '../languages';
@@ -74,14 +76,18 @@ export interface DupGateOutcome {
    *  dead. A lone duplicate is always warn-tier. */
   readonly mode: DuplicationGateMode;
   /** Net-new structural duplicates that count toward the verdict (active — NOT
-   *  waived by an allowlist entry). Always warn-tier here. */
+   *  waived by an allowlist entry). Warn-tier by default. */
   readonly findings: readonly DuplicateFinding[];
   /** Net-new duplicates an active allowlist entry accepted — surfaced for
    *  audit, excluded from `warns`. */
   readonly suppressed: readonly DupGateSuppression[];
-  /** Always false for a lone duplicate — the gate never blocks on its own. */
+  /** True ONLY under the explicit `duplication.loneSeams: "block"` opt-in
+   *  (with `mode: "block"`): a lone net-new duplicate fails the build, with
+   *  the `code-reimplementation` allowlist as the typed escape hatch. Default
+   *  posture keeps this false — the tier-3 precision floor. */
   readonly blocks: boolean;
-  /** True when at least one active net-new duplicate warns. */
+  /** True when at least one active net-new duplicate warns (and the gate is
+   *  not already blocking on them). */
   readonly warns: boolean;
 }
 
@@ -104,6 +110,38 @@ function skip(
     warns: false,
     ...(failure ? { error: failure } : {}),
   };
+}
+
+/** Line-independent pair key: the two (file, symbol) endpoints, sorted. The
+ *  same two functions remain the same structural relation wherever an edit
+ *  moved them in the file — the relocation half of pair identity that the
+ *  line-window fingerprint (kept stable for allowlist/baseline continuity)
+ *  cannot provide. */
+function pairEndpointsKey(f: Pick<DuplicateFinding, 'anchors'>): string {
+  const k = (a: DuplicateAnchor) => `${a.file}\0${a.symbol}`;
+  return [k(f.anchors[0]), k(f.anchors[1])].sort().join('\0\0');
+}
+
+/** Did the diff touch THIS anchor's function? Intersects the anchor's span
+ *  with the canonical changed-line index; falls back to the file-level claim
+ *  when line attribution is unavailable (unknown must never read as
+ *  "untouched" — but equally a merely-same-file sibling must not read as
+ *  added when line truth IS available). */
+function anchorTouched(
+  index: ChangedLineIndex | null,
+  focusFiles: ReadonlySet<string>,
+  anchor: DuplicateAnchor,
+  endLine: number | undefined,
+): boolean {
+  if (!focusFiles.has(anchor.file)) return false;
+  if (!index) return true; // no line attribution at all — file-level fallback
+  const lines = index.linesFor(anchor.file);
+  if (lines === 'all' || lines === null) return true;
+  const end = endLine ?? anchor.line;
+  for (const ln of lines) {
+    if (ln >= anchor.line && ln <= end) return true;
+  }
+  return false;
 }
 
 /**
@@ -164,7 +202,7 @@ export async function evaluateDupGateForGuardrail(opts: {
    *  base ref (`dir === the worktree`). */
   readonly gatherDuplicates?: (
     dir: string,
-    opts: { minScore: number; focusFiles?: ReadonlySet<string> },
+    opts: { minScore: number; focusFiles?: ReadonlySet<string>; minBodyTokens?: number },
   ) => Promise<DuplicateFinding[]>;
 }): Promise<DupGateOutcome> {
   const cwd = opts.cwd;
@@ -203,55 +241,89 @@ export async function evaluateDupGateForGuardrail(opts: {
     const headFindings = await gatherDuplicates(cwd, {
       minScore: config.minScore,
       ...(focusFiles ? { focusFiles } : {}),
+      ...(config.minBodyTokens > 0 ? { minBodyTokens: config.minBodyTokens } : {}),
     });
     // No diff-scoped duplicate on the HEAD side → nothing to gate. Skip WITHOUT
     // scanning the base ref — the primary cost guard (one scan, not two).
     if (headFindings.length === 0) return skip(gateMode, 'no-candidates');
 
-    // Base side — the duplicate-pair ID set at the base ref, gathered from a
+    // Base side — the duplicate-pair set at the base ref, gathered from a
     // detached worktree (Rule 11). A pair present here is grandfathered.
     step = 'base-worktree';
-    const baseIds = await withRefWorktree({ cwd, ref }, async (wt) => {
-      const baseFindings = await gatherDuplicates(wt, {
+    const baseFindings = await withRefWorktree({ cwd, ref }, async (wt) =>
+      gatherDuplicates(wt, {
         minScore: config.minScore,
         ...(focusFiles ? { focusFiles } : {}),
-      });
-      return new Set(baseFindings.map((f) => f.id));
-    });
+        ...(config.minBodyTokens > 0 ? { minBodyTokens: config.minBodyTokens } : {}),
+      }),
+    );
 
-    // Net-new = a HEAD duplicate whose identity is not present at base.
-    // Mark which anchor(s) the change INTRODUCED (file in the changed set) so the
-    // remediation is directional — "you added A, which duplicates existing B" —
-    // instead of a symmetric pair the agent must disambiguate itself.
-    const netNew = headFindings
-      .filter((f) => !baseIds.has(f.id))
-      .map((f) =>
+    // Net-new = a HEAD pair whose RELATION is new — matched in two passes, the
+    // matchAcrossRuns multiset discipline. Pass 1: exact fingerprint. Pass 2:
+    // the line-INDEPENDENT pair key (the two (file, symbol) endpoints). The
+    // fingerprint hashes each anchor's line window, so an edit that shifts
+    // lines re-mints every pre-existing pair in the file — the class that
+    // reported a bindings module's 7 untouched wrapper pairs as "both added"
+    // after one sibling gained a kwarg. A base pair with the same endpoints
+    // grandfathers ONE head pair (multiset-counted, so a genuinely-new twin
+    // joining an existing parallel family still exceeds the base count and is
+    // flagged).
+    const baseIds = new Set(baseFindings.map((f) => f.id));
+    const headIds = new Set(headFindings.map((f) => f.id));
+    const relocatable = new Map<string, number>();
+    for (const bf of baseFindings) {
+      if (headIds.has(bf.id)) continue; // consumed by an exact match in pass 1
+      const k = pairEndpointsKey(bf);
+      relocatable.set(k, (relocatable.get(k) ?? 0) + 1);
+    }
+
+    // Function-level "which side did the change introduce" — the canonical
+    // changed-LINE index intersected with each anchor's span, so an untouched
+    // sibling in a modified file is never labeled added. Falls back to the
+    // file-level claim when line attribution is unavailable (null = UNKNOWN,
+    // never "nothing changed").
+    const lineIndex = focusFiles ? createChangedLineIndex(cwd, ref) : null;
+
+    const netNew: DuplicateFinding[] = [];
+    for (const hf of headFindings) {
+      if (baseIds.has(hf.id)) continue; // pass 1: exact identity persisted
+      const k = pairEndpointsKey(hf);
+      const avail = relocatable.get(k) ?? 0;
+      if (avail > 0) {
+        relocatable.set(k, avail - 1); // pass 2: relocated by a line shift
+        continue;
+      }
+      netNew.push(
         focusFiles
           ? {
-              ...f,
+              ...hf,
               changed: [
-                focusFiles.has(f.anchors[0].file),
-                focusFiles.has(f.anchors[1].file),
+                anchorTouched(lineIndex, focusFiles, hf.anchors[0], hf.anchorEnds?.[0]),
+                anchorTouched(lineIndex, focusFiles, hf.anchors[1], hf.anchorEnds?.[1]),
               ] as const,
             }
-          : f,
+          : hf,
       );
+    }
 
     const { active, suppressed } = partitionByAllowlist(
       netNew,
       opts.allowlist,
       opts.now ?? new Date(),
     );
-    // A lone duplicate is ALWAYS warn-tier — the gate never blocks on its own.
-    // Block confidence is earned only by seam convergence, downstream.
-    const warns = active.length > 0;
+    // Default: a lone duplicate is warn-tier (block confidence comes only from
+    // seam convergence, downstream). The explicit `loneSeams: "block"` opt-in
+    // (under mode "block") escalates a lone net-new seam to a build failure —
+    // the allowlist is the typed escape hatch.
+    const blocks = gateMode === 'block' && config.loneSeams === 'block' && active.length > 0;
+    const warns = active.length > 0 && !blocks;
 
     if (opts.verbose && active.length > 0) {
       process.stderr.write(
-        `    [seam] ${active.length} net-new structural duplicate(s) — warning\n`,
+        `    [seam] ${active.length} net-new structural duplicate(s) — ${blocks ? 'blocking (loneSeams: block)' : 'warning'}\n`,
       );
     }
-    return { ran: true, mode: gateMode, findings: active, suppressed, blocks: false, warns };
+    return { ran: true, mode: gateMode, findings: active, suppressed, blocks, warns };
   } catch (err) {
     // Fail-open: a ref that can't be checked out, an unparseable tree, a
     // graphify error — none of these should fail the guardrail. The gate did

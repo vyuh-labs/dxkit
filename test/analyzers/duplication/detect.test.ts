@@ -17,8 +17,14 @@ import {
 } from '../../../src/analyzers/duplication/detect';
 import type { FunctionSignature } from '../../../src/analyzers/duplication/signatures';
 
-function sig(file: string, name: string, callees: string[], line = 1): FunctionSignature {
-  return { file, name, line, callees: new Set(callees) };
+function sig(
+  file: string,
+  name: string,
+  callees: string[],
+  line = 1,
+  tokens = 100,
+): FunctionSignature {
+  return { file, name, line, endLine: line + 5, tokens, callees: new Set(callees) };
 }
 
 describe('duplicatePairs — structural-duplicate scoring', () => {
@@ -44,6 +50,25 @@ describe('duplicatePairs — structural-duplicate scoring', () => {
     const pairs = duplicatePairs(sigs, { minScore: 0.75 });
     expect(pairs).toHaveLength(1);
     expect(pairs[0].score).toBeCloseTo(1, 5); // structural — name did not lower it
+  });
+
+  it('minBodyTokens floor: trivial delegating wrappers are excluded from pairing', () => {
+    // The adapter/costume pattern: 2-4 line wrappers whose entire body is one
+    // super() delegation pair at 1.00 by design. With the floor they never
+    // enter pairing; a substantive copy above the floor still does.
+    const tiny = [
+      sig('bindings.py', '__init__', ['super', 'init', 'register'], 10, 20),
+      sig('bindings.py', '__init__', ['super', 'init', 'register'], 20, 22),
+    ];
+    expect(duplicatePairs(tiny, { minScore: 0.75, minBodyTokens: 30 })).toHaveLength(0);
+    // Control: same shapes WITHOUT the floor still pair (default 0 unchanged).
+    expect(duplicatePairs(tiny, { minScore: 0.75 })).toHaveLength(1);
+    // Control: substantive functions pass the floor.
+    const real = [
+      sig('a.ts', 'load', ['fetchThing', 'parseThing', 'renderThing'], 1, 200),
+      sig('b.ts', 'load', ['fetchThing', 'parseThing', 'renderThing'], 1, 210),
+    ];
+    expect(duplicatePairs(real, { minScore: 0.75, minBodyTokens: 30 })).toHaveLength(1);
   });
 
   it('does NOT flag two functions with no shared callees', () => {
