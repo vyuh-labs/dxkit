@@ -88,6 +88,8 @@ function config(
       budget: DEFAULT_REMEDIATE_BUDGET,
       ...partial,
     },
+    taskBudgets: {},
+    maxSpendPerRun: 0,
   };
 }
 
@@ -465,5 +467,72 @@ describe('the score hinge — the task goal as a land condition', () => {
     expect(r.outcome).toBe('verified');
     expect(probed).toBe(0);
     expect(r.scoreHinge).toBeUndefined();
+  });
+});
+
+describe('WP5: fast-exit, phases, cap accounting, blocked evidence', () => {
+  it('fix-build with a GREEN entry floor is a $0 no-op — no agent spawns', async () => {
+    const driver = fakeDriver({});
+    let spawned = false;
+    driver.run = async () => {
+      spawned = true;
+      return { completed: true, timedOut: false, transcriptTail: '' };
+    };
+    const r = await runRemediateTask(
+      base(driver, { taskId: 'fix-build', runFloor: () => GREEN_FLOOR }),
+    );
+    expect(r.outcome).toBe('no-op');
+    expect(spawned).toBe(false);
+    expect(r.note).toContain('no agent was spawned');
+  });
+
+  it('fix-build with a RED entry floor still runs the agent (the over-skip guard)', async () => {
+    const driver = fakeDriver({});
+    let spawned = false;
+    const origRun = driver.run.bind(driver);
+    driver.run = async (o) => {
+      spawned = true;
+      return origRun(o);
+    };
+    const floors = [RED_FLOOR, RED_FLOOR];
+    const r = await runRemediateTask(
+      base(driver, { taskId: 'fix-build', runFloor: () => floors.shift() ?? RED_FLOOR }),
+    );
+    expect(spawned).toBe(true);
+    // Pre-existing failure on both sides — disclosed, not weaponized.
+    expect(r.outcome).toBe('verified');
+  });
+
+  it('reports phases in order through onPhase', async () => {
+    const phases: string[] = [];
+    const r = await runRemediateTask(base(fakeDriver({}), { onPhase: (p) => phases.push(p) }));
+    expect(r.outcome).toBe('verified');
+    expect(phases).toEqual(['entry-floor', 'agent', 'sweep', 'verify-floor', 'guardrail']);
+  });
+
+  it('a guardrail-red ledger names the blocking findings (evidence survives the runner)', async () => {
+    const r = await runRemediateTask(
+      base(fakeDriver({}), {
+        runGuardrail: async () => ({
+          verdict: 'BLOCKED',
+          ran: true,
+          passesGate: false,
+          blocking: ['[secret] src/config.ts:12', '[dep-vuln] axios@1.6.0 · GHSA-xxxx'],
+        }),
+      }),
+    );
+    expect(r.outcome).toBe('guardrail-red');
+    expect(r.note).toContain('Blocking findings:');
+    expect(r.note).toContain('[secret] src/config.ts:12');
+    expect(r.ledger).toContain('[dep-vuln] axios@1.6.0');
+  });
+
+  it('a driver turn count one over the cap is explained, not left reading as broken enforcement', async () => {
+    const r = await runRemediateTask(
+      base(fakeDriver({ turns: DEFAULT_REMEDIATE_BUDGET.maxTurns + 1, costUsd: 3.12 })),
+    );
+    expect(r.outcome).toBe('budget-exhausted');
+    expect(r.ledger).toContain("includes the run's closing turn");
+    expect(r.ledger).toContain('the cap did enforce');
   });
 });

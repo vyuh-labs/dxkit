@@ -22,108 +22,27 @@
  * The local CLI is the trusted boundary (bump-lane doctrine).
  */
 import * as fs from 'fs';
+import * as path from 'path';
 import { execFileSync } from 'child_process';
 import * as logger from '../logger';
 import { trustedLocalContext } from '../analysis-trust';
 import { detectDefaultBranch } from '../ship-installers';
-import { resolveRemediateConfig, type RemediateConfig } from './config';
-import { resolveModelSetting } from './driver';
-import { AGENT_DRIVERS, driverById } from './registry';
+import { startPhaseReporter } from '../lanes/heartbeat';
+import {
+  budgetForTask,
+  resolveRemediateConfig,
+  tasksWithinSpendCeiling,
+  type RemediateConfig,
+} from './config';
+import { driverById } from './registry';
 import { REMEDIATE_TASKS, remediateTaskById } from './tasks';
 import { runRemediateTask, type RemediateResult } from './run';
 import { landRemediateHead, remediateBranchFor } from './land';
 import { appendLaneEvent, LANE_LEDGER_SCHEMA_VERSION } from '../lanes/ledger';
 
-export interface RemediatePlanOptions {
-  readonly json?: boolean;
-}
-
-/** `remediate plan` — the resolution chain, computed not narrated. */
-export function runRemediatePlan(cwd: string, opts: RemediatePlanOptions = {}): void {
-  const config = resolveRemediateConfig(cwd);
-  const driver = driverById(config.agent.driver);
-
-  const rows = config.tasks.map((taskId) => {
-    const task = remediateTaskById(taskId)!;
-    const choice = driver ? resolveModelSetting(driver, config.agent.model, task.tier) : undefined;
-    return {
-      task: taskId,
-      tier: task.tier,
-      tierWhy: task.tierWhy,
-      model: choice?.native ?? null,
-      modelSource: choice?.source ?? null,
-      warning: choice?.warning ?? null,
-    };
-  });
-
-  const availability = driver ? driver.available(cwd) : undefined;
-
-  if (opts.json) {
-    process.stdout.write(
-      JSON.stringify(
-        {
-          schema: 'remediate-plan.v1',
-          enabled: config.enabled,
-          driver: config.agent.driver,
-          driverKnown: !!driver,
-          driverAvailable: availability ? availability.ok : null,
-          model: config.agent.model,
-          budget: config.agent.budget,
-          salvage: config.salvage,
-          schedule: config.schedule,
-          tasks: rows,
-          unknownTasks: config.unknownTasks,
-          unenforceableCaps: driver
-            ? [
-                ...(driver.budgetSupport.turns ? [] : ['maxTurns']),
-                ...(driver.budgetSupport.cost ? [] : ['maxUsd']),
-              ]
-            : [],
-        },
-        null,
-        2,
-      ) + '\n',
-    );
-    return;
-  }
-
-  logger.header('dxkit remediate plan');
-  if (!driver) {
-    logger.fail(
-      `unknown agent driver '${config.agent.driver}' — known drivers: ` +
-        AGENT_DRIVERS.map((d) => d.id).join(', '),
-    );
-    process.exitCode = 1;
-    return;
-  }
-  logger.info(
-    `driver: ${driver.id}` +
-      (availability && !availability.ok ? ` (NOT available here: ${availability.reason})` : ''),
-  );
-  logger.info(
-    `budget: ${config.agent.budget.maxTurns} turns, ${config.agent.budget.maxMinutes} min, ` +
-      `$${config.agent.budget.maxUsd} — salvage: ${config.salvage}`,
-  );
-  if (!driver.budgetSupport.turns) logger.warn(`maxTurns is not enforceable by ${driver.id}`);
-  if (!driver.budgetSupport.cost) logger.warn(`maxUsd is not enforceable by ${driver.id}`);
-  logger.info(`schedule (managed workflow): ${config.schedule}`);
-  if (!config.enabled) {
-    logger.dim('remediate.enabled is not set — the scheduled workflow is off; local runs work.');
-  }
-  for (const row of rows) {
-    const source =
-      row.modelSource === 'auto-tier'
-        ? `auto: ${row.tier} tier (${row.tierWhy})`
-        : row.modelSource === 'pinned-tier'
-          ? `tier pinned by policy`
-          : `pinned by policy`;
-    logger.info(`  ${row.task} → ${row.model} (${source})`);
-    if (row.warning) logger.warn(`    ${row.warning}`);
-  }
-  for (const unknown of config.unknownTasks) {
-    logger.warn(`  unknown task in policy (ignored): '${unknown}'`);
-  }
-}
+// `remediate plan` lives in `./plan-cli` (module-size split); re-exported so
+// consumers keep one import surface.
+export { runRemediatePlan, type RemediatePlanOptions } from './plan-cli';
 
 export interface TaskRun {
   readonly result: RemediateResult;
@@ -157,24 +76,39 @@ async function executeTask(
   taskId: string,
   land: 'pr' | 'none',
 ): Promise<TaskRun> {
-  const result = await runRemediateTask({
-    cwd,
-    trust: trustedLocalContext(),
-    taskId,
-    config,
-    // CI injects the driver's credential env explicitly; locally the driver's
-    // own default applies (claude-code: subscription mode).
-    agentEnv: collectCredentialEnv(config.agent.driver),
-  });
+  // Per-task budget: the override-merged budget rides a task-scoped config
+  // copy, so the runner's enforcement + ledger see the effective caps.
+  const task = remediateTaskById(taskId);
+  const taskConfig: RemediateConfig = task
+    ? { ...config, agent: { ...config.agent, budget: budgetForTask(config, task.id) } }
+    : config;
+  // Phase reporter: per-phase log groups + a 60s heartbeat so a long agent
+  // or verify phase reads as "working", never as hung.
+  const reporter = startPhaseReporter(`remediate:${taskId}`);
+  let result: RemediateResult;
+  try {
+    result = await runRemediateTask({
+      cwd,
+      trust: trustedLocalContext(),
+      taskId,
+      config: taskConfig,
+      // CI injects the driver's credential env explicitly; locally the driver's
+      // own default applies (claude-code: subscription mode).
+      agentEnv: collectCredentialEnv(config.agent.driver),
+      onPhase: (phase) => reporter.phase(phase),
+    });
+  } finally {
+    reporter.stop();
+  }
 
   const draftSalvage = result.outcome === 'budget-exhausted' && config.salvage === 'draft-pr';
   const landEligible = result.outcome === 'verified' || draftSalvage;
   if (land !== 'pr' || !landEligible) {
-    return {
+    return finalizeTaskRun(cwd, taskId, {
       result,
       landed: false,
       clean: result.outcome === 'verified' || result.outcome === 'no-op',
-    };
+    });
   }
 
   // Landing guard (the standing branch is built from HEAD): a named
@@ -182,7 +116,7 @@ async function executeTask(
   const defaultBranch = detectDefaultBranch(cwd);
   const branch = currentBranch(cwd);
   if (branch !== 'HEAD' && branch !== defaultBranch) {
-    return {
+    return finalizeTaskRun(cwd, taskId, {
       result,
       landed: false,
       clean: false,
@@ -190,7 +124,7 @@ async function executeTask(
         `not landed: HEAD is on '${branch}', not '${defaultBranch}' — landing pushes HEAD ` +
         `to the standing branch, so run from '${defaultBranch}' (or let the scheduled ` +
         `workflow land it).`,
-    };
+    });
   }
 
   // The delivery-ledger event rides the PR's own diff (committed by the
@@ -217,12 +151,40 @@ async function executeTask(
     draft: draftSalvage,
     ledgerPath,
   });
-  return {
+  return finalizeTaskRun(cwd, taskId, {
     result,
     ...(landResult.prUrl ? { prUrl: landResult.prUrl } : {}),
     landed: true,
     clean: result.outcome === 'verified' || draftSalvage,
-  };
+  });
+}
+
+/**
+ * Every executeTask exit funnels through here: write the machine-readable
+ * attempt record (the workflow's artifact step reads it to upload the diff
+ * of a blocked/failed attempt — evidence must survive the ephemeral runner)
+ * and, under Actions, annotate a not-landed attempt so it is visible from
+ * the run page without opening logs.
+ */
+function finalizeTaskRun(cwd: string, taskId: string, run: TaskRun): TaskRun {
+  try {
+    const dir = path.join(cwd, '.dxkit', 'cache');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, `remediate-${taskId}.json`),
+      JSON.stringify(taskRunJson(run), null, 2) + '\n',
+      'utf8',
+    );
+  } catch {
+    // the record is evidence plumbing, never a failure
+  }
+  if (process.env.GITHUB_ACTIONS === 'true' && !run.clean) {
+    const first = (run.result.note ?? run.result.outcome).split('\n')[0];
+    process.stdout.write(
+      `::warning title=remediate ${taskId} did not land::${run.result.outcome}: ${first}\n`,
+    );
+  }
+  return run;
 }
 
 /** Append a ledger to the GitHub Actions step summary when running in CI. */
@@ -258,6 +220,11 @@ function taskRunJson(run: TaskRun): Record<string, unknown> {
     branch: r.task ? remediateBranchFor(r.task) : null,
     prUrl: run.prUrl ?? null,
     landRefused: run.landRefused ?? null,
+    landed: run.landed,
+    // The commit range of the attempt — what the workflow's evidence step
+    // format-patches into a run artifact when nothing landed.
+    baseHead: r.baseHead ?? null,
+    head: r.head ?? null,
     ledger: r.ledger,
   };
 }
@@ -372,7 +339,17 @@ export async function runRemediateConfigured(
     logger.warn(`unknown task in policy (ignored): '${unknown}'`);
   }
 
-  const outcome = await runConfiguredLoop(config.tasks, {
+  // The same spend ceiling the matrix reads from `plan --json` — the serial
+  // path (local runs, pre-matrix installs) must not outspend the parallel one.
+  const ceiling = tasksWithinSpendCeiling(config);
+  if (ceiling.deferred.length > 0) {
+    logger.warn(
+      `spend ceiling ($${config.maxSpendPerRun}/run): deferring ${ceiling.deferred.join(', ')} ` +
+        'to the next firing.',
+    );
+  }
+
+  const outcome = await runConfiguredLoop(ceiling.run, {
     execute: (taskId) => executeTask(cwd, config, taskId, land),
     head: () => headCommit(cwd),
     resetTo: (head) => resetHardTo(cwd, head),
