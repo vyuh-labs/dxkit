@@ -133,6 +133,36 @@ describe('runDepsBump', () => {
     }
   });
 
+  it('a land that could NOT open its PR is never reported "landed" (branch-pushed-no-pr)', async () => {
+    // The false-"landed" class: the lander pushed the branch, PR creation was
+    // refused (Actions settings), yet the lane stamped outcome "landed" with
+    // an empty prUrl and the remedy buried in unread JSON. The outcome must
+    // derive from the land result — one derivation.
+    const dir = repoWithManifest({ dependencies: { axios: '^1.7.0' } });
+    try {
+      const r = await runDepsBump({
+        cwd: dir,
+        trust: trustedLocalContext(),
+        apply: true,
+        land: 'pr',
+        gather,
+        execBump: () => ({ ok: true, output: '' }),
+        runFloor: () => GREEN_FLOOR,
+        runGuardrail: async () => 'PASSED',
+        landPaths: () => ({
+          outcome: 'branch-pushed-no-pr',
+          mode: 'pr',
+          note: "Pushed 'dxkit/dep-bump' but could not open the PR",
+        }),
+      });
+      expect(r.outcome).toBe('branch-pushed-no-pr');
+      expect(r.note).toContain('could not open the PR');
+      expect(r.land?.prUrl).toBeUndefined();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('a NET-NEW floor failure (entry green → after red) lands NOTHING — outcome floor-red', async () => {
     const dir = repoWithManifest({ dependencies: { axios: '^1.7.0' } });
     const landed: unknown[] = [];

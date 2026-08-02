@@ -202,6 +202,9 @@ export function openOrUpdateStandingPr(
     mode: 'pr',
     note:
       `Pushed '${opts.branchName}' but could not open the PR (no gh CLI / not GitHub / ` +
-      `no permission). Open it manually: ${opts.branchName} → ${opts.defaultBranch}.`,
+      `no permission). Under GitHub Actions the usual cause is the repo/org setting ` +
+      `"Allow GitHub Actions to create and approve pull requests" being off ` +
+      `(Settings > Actions > General > Workflow permissions). Open the PR manually ` +
+      `meanwhile: ${opts.branchName} -> ${opts.defaultBranch}.`,
   };
 }
