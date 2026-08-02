@@ -88,6 +88,24 @@ that keeps the class from recurring.
   `remediate.maxDispatchBudget`, with the dispatcher and verbatim prompt
   disclosed in the PR body.
 
+### Budget-bounded work is guided, salvageable, and now resumable
+
+Agents are told their budget up front and instructed to land work in
+committed increments with a status note — so a run cut at 90% leaves
+mergeable commits, not stranded edits. And with the opt-in
+`remediate.resume: true` (requires `salvage: "draft-pr"`), the next run
+**continues** a budget-bounded attempt from its draft-PR branch instead of
+starting over: the entry snapshot still comes from the pristine base (a
+broken partial can never grandfather its own breakage), attempts are
+capped, and the PR body discloses each resumed attempt.
+
+### Lane credentials are discoverable, not discovered the hard way
+
+`doctor` flags a missing `DXKIT_BOT_TOKEN` secret when a PR-opening lane
+is installed (with the one-line fix), the install notes recommend it at
+setup time, and a new "Lane credentials" docs section explains all three
+lane credentials and the one GitHub setting in one place.
+
 ### Test-support files are not degraded tests (#233)
 
 `conftest.py` and testless helper modules imported by sibling tests are
