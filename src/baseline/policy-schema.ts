@@ -311,6 +311,13 @@ export function buildPolicySchema(version: string): Schema {
               'The most a workflow_dispatch campaign may raise maxUsd to (0/absent = ' +
               'dispatch can lower spend but never raise it beyond the policy cap).',
           },
+          resume: {
+            type: 'boolean',
+            description:
+              'Opt-in: continue a prior budget-bounded attempt from its draft-PR salvage ' +
+              'branch instead of starting over (requires salvage: "draft-pr"; capped ' +
+              'resumes; entry floor stays anchored to the pristine base).',
+          },
         },
         'Agentic remediation: a scheduled agent inside the verified frame.',
       ),
