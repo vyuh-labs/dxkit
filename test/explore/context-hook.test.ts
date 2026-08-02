@@ -249,6 +249,30 @@ describe('parseBashForTarget', () => {
     expect(parseBashForTarget('npm run build', graph, cwd)).toBeUndefined();
     expect(parseBashForTarget('ls -la src/', graph, cwd)).toBeUndefined();
   });
+
+  it('a navigation command piped INTO grep parses the grep clause, never the ls clause', () => {
+    // The shipped false-positive: `ls src | grep …` matched the whole-command
+    // regex, the head clause was parsed, and `ls` itself became a symbol
+    // pattern — injecting an unrelated symbol table on a trivial command.
+    expect(parseBashForTarget('ls -la src | grep -i readme', graph, cwd)).toEqual({
+      kind: 'pattern',
+      pattern: 'readme',
+    });
+    // A filter term too weak to resolve meaningfully stays a no-op.
+    expect(parseBashForTarget('ls | grep x', graph, cwd)).toBeUndefined();
+  });
+
+  it('parses the search clause wherever it sits in a compound command', () => {
+    expect(parseBashForTarget('echo start && grep sendFile src/', graph, cwd)).toEqual({
+      kind: 'pattern',
+      pattern: 'sendFile',
+    });
+  });
+
+  it('relevance floor: short or non-identifier patterns never fire', () => {
+    expect(parseBashForTarget('grep ls src/', graph, cwd)).toBeUndefined();
+    expect(parseBashForTarget('grep "a b c" src/', graph, cwd)).toBeUndefined();
+  });
 });
 
 describe('formatFileContext', () => {

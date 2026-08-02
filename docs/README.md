@@ -103,6 +103,7 @@ construction; commands with a linked page have a full reference under
 | [`setup-prebuild`](commands/setup-prebuild.md)                   | Set up the devcontainer prebuild workflow                                                               | < 5 sec                                                         |
 | [`upgrade`](commands/upgrade.md)                                 | Plan / apply a dxkit version upgrade                                                                    | 1-3 min                                                         |
 | [`issue`](commands/issue.md)                                     | Open a pre-filled GitHub issue against dxkit                                                            | < 5 sec                                                         |
+| `version`                                                        | Print the dxkit, Node, and platform versions                                                            | < 1 sec                                                         |
 | [`to-xlsx`](commands/to-xlsx.md)                                 | Convert a dxkit JSON report to XLSX                                                                     | < 5 sec                                                         |
 
 <!-- dxkit:command-table:end -->

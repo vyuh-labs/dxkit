@@ -157,6 +157,15 @@ export const COMMANDS = [
     docsBlurb:
       'Compose a typed feedback issue (false-positive / bug / feature-request / …); nothing submits until you confirm in the browser.',
   },
+  {
+    id: 'version',
+    audience: 'user',
+    group: 'setup',
+    summary: 'Print the dxkit, Node, and platform versions',
+    typicalRuntime: '< 1 sec',
+    docsBlurb:
+      'The `npm version`/`gh version` convention: dxkit version, Node version, and platform in one line each — the triage header for any report.',
+  },
   // ── Assess ─────────────────────────────────────────────────────────────
   {
     id: 'health',

@@ -601,7 +601,12 @@ export async function runAllowlistList(cwd: string, opts: AllowlistListOpts): Pr
   }
 
   if (!file || file.entries.length === 0) {
-    logger.info(`No allowlist entries. Run \`${dxkitCli('allowlist add')}\` to create one.`);
+    logger.info('No allowlist entries yet.');
+    logger.info(
+      'When a guardrail check blocks a finding you want to accept, its block message ' +
+        `gives you the exact \`${dxkitCli('allowlist add')}\` command to paste.`,
+    );
+    logger.dim('Guide: https://github.com/vyuh-labs/dxkit/blob/main/docs/commands/allowlist.md');
     return;
   }
   logger.info(

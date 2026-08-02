@@ -1,0 +1,10 @@
+{
+  "name": "dxkit-hello-world",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Minimal end-to-end dxkit walkthrough: score, baseline, gate.",
+  "scripts": {
+    "test": "node --test"
+  }
+}

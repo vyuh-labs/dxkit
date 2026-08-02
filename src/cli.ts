@@ -3342,6 +3342,15 @@ export async function run(argv: string[]): Promise<void> {
       break;
     }
 
+    case 'version': {
+      // The `npm version` / `gh version` convention (#51): the triage header
+      // for any report. Mirrors what `issue` collects for diagnostics.
+      console.log(`vyuh-dxkit ${VERSION}`); // slop-ok — version output
+      console.log(`node ${process.version}`); // slop-ok — version output
+      console.log(`${process.platform} ${process.arch}`); // slop-ok — version output
+      break;
+    }
+
     case 'issue': {
       const { runIssueSubmit } = await import('./issue-cli');
       await runIssueSubmit(cwd, {
