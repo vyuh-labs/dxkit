@@ -14,6 +14,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { execFileSync } from 'child_process';
 import { makeExecutable, serializePreservingJson } from './files';
+import { RUNBOOK_FILENAME, RUNBOOK_MARKER, renderRunbook } from './learn/runbook';
 import { activateHooks } from './hooks-cli';
 import { detect } from './detect';
 import { defaultBranchViaGh } from './setup-gh';
@@ -1326,6 +1327,40 @@ export function installIgnoreFiles(cwd: string, opts: InstallerOpts = {}): ShipI
     result.installed.push('.dxkit-ignore');
   }
 
+  return result;
+}
+
+/**
+ * The per-repo runbook (issue #246) — a generated, committed markdown page at
+ * the repo root telling developers what dxkit runs HERE and what to do when
+ * blocked. Ownership contract mirrors installWorkflow: the marker line means
+ * dxkit-owned (refreshed on update, identical content is a no-op); a file
+ * without the marker belongs to the user and is preserved unless --force.
+ * The dxkit-suffixed filename keeps a user-owned collision implausible (the
+ * same rationale as the dxkit-* workflow names) so uninstall can safely
+ * remove it via the managed-surface registry.
+ */
+export function installRunbook(cwd: string, opts: InstallerOpts = {}): ShipInstallResult {
+  const result = emptyResult();
+  const destAbs = path.join(cwd, RUNBOOK_FILENAME);
+  const content = renderRunbook(cwd);
+
+  if (fs.existsSync(destAbs)) {
+    const existing = fs.readFileSync(destAbs, 'utf8');
+    if (existing === content) {
+      result.skipped.push(RUNBOOK_FILENAME);
+      return result;
+    }
+    if (!existing.includes(RUNBOOK_MARKER) && !opts.force) {
+      result.skipped.push(RUNBOOK_FILENAME);
+      result.notes.push(
+        `${RUNBOOK_FILENAME} exists without the dxkit marker — treated as user-owned and left alone (re-run with --force to overwrite).`,
+      );
+      return result;
+    }
+  }
+  fs.writeFileSync(destAbs, content, 'utf8');
+  result.installed.push(RUNBOOK_FILENAME);
   return result;
 }
 
