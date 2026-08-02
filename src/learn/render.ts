@@ -78,6 +78,18 @@ h2.section { font-size:20px; color:var(--text-primary); margin:36px 0 6px; paddi
   border-radius:14px; padding:4px 12px; color:var(--text-secondary); }
 .note { font-size:12.5px; color:var(--text-muted); background:var(--bg-card);
   border:1px solid var(--border); border-radius:8px; padding:10px 14px; margin:10px 0; line-height:1.6; }
+.ask-row { display:flex; gap:12px; align-items:center; margin:8px 0; flex-wrap:wrap; }
+.ask-row label { font-size:12.5px; color:var(--text-muted); display:flex; gap:6px; align-items:center; }
+.ask-row input, .ask-row select, .ask-row textarea { background:var(--bg-primary); color:var(--text-primary);
+  border:1px solid var(--border); border-radius:6px; padding:6px 9px; font-size:12.5px; font-family:inherit; }
+.ask-row textarea { flex:1; min-width:260px; }
+.ask-row button { background:var(--accent-blue); color:#fff; border:none; border-radius:6px;
+  padding:8px 18px; font-size:13px; cursor:pointer; }
+#chat { margin:12px 0; display:flex; flex-direction:column; gap:8px; }
+.chat-msg { padding:9px 12px; border-radius:8px; font-size:13px; line-height:1.6; white-space:pre-wrap; }
+.chat-user { background:var(--bg-tertiary); align-self:flex-end; max-width:85%; }
+.chat-assistant { background:var(--bg-primary); border:1px solid var(--border); max-width:95%; }
+#ask-error { font-size:12.5px; margin-top:6px; }
 `;
 
 function capCard(c: LearnCapability, knobs: LearnBundle['knobs']): string {
@@ -171,6 +183,139 @@ function statusSection(status: LearnRepoStatus): string {
 export interface RenderLearnOptions {
   /** ISO timestamp shown in the footer; omit for a deterministic page. */
   generatedAt?: string;
+  /**
+   * Serve mode (`learn --serve`): adds the assistant panel + its inline
+   * script, which talks ONLY to same-origin localhost endpoints. The static
+   * file mode stays entirely script-free — that page must open from file://
+   * offline, and its tests pin the absence of any <script>.
+   */
+  serve?: boolean;
+}
+
+/** The assistant panel + inline JS for serve mode. No external loads; all
+ *  repo/provider strings are inserted via textContent, never innerHTML. */
+function assistantSection(): string {
+  return `<h2 class="section" id="assistant">Ask the assistant</h2>
+<p class="section-sub">Grounded in this page's content${''} and answered by YOUR provider with YOUR key (bring-your-own-key). dxkit relays your question from this machine directly to the provider; nothing is stored.</p>
+<div class="doc" id="assistant-panel">
+  <div class="ask-row">
+    <label>Provider <select id="drv"></select></label>
+    <label>Model <input id="model" list="model-suggestions" placeholder="model id"><datalist id="model-suggestions"></datalist></label>
+  </div>
+  <div class="ask-row" id="baseurl-row" hidden>
+    <label>Base URL <input id="baseurl" placeholder="https://your-endpoint/v1"></label>
+  </div>
+  <div class="ask-row" id="key-row">
+    <span id="key-env-note" hidden>Using the API key from your terminal environment (<code id="key-env-name"></code>). It never reaches this page.</span>
+    <label id="key-input-label">API key <input id="key" type="password" placeholder="pasted key stays in this tab's memory only"></label>
+  </div>
+  <div class="ask-row" id="detail-row" hidden>
+    <label><input type="checkbox" id="detail"> Include finding-level detail from this repo (off = summaries and counts only)</label>
+  </div>
+  <details class="note" id="sent-note"><summary>Exactly what is sent with each question</summary><ul id="disclosure"></ul></details>
+  <div id="chat"></div>
+  <div class="ask-row">
+    <textarea id="q" rows="3" placeholder="e.g. Why is my PR blocked? What should this repo adopt next?"></textarea>
+    <button id="ask">Ask</button>
+  </div>
+  <div id="ask-error" class="badge-fail"></div>
+</div>
+<script>
+(function () {
+  'use strict';
+  var state = { drivers: [] };
+  function el(id) { return document.getElementById(id); }
+  function refreshStatus() {
+    var detail = el('detail').checked ? '1' : '0';
+    return fetch('/api/status?detail=' + detail).then(function (r) { return r.json(); }).then(function (s) {
+      state.drivers = s.drivers;
+      if (s.repoMode) el('detail-row').hidden = false;
+      var drv = el('drv');
+      if (drv.options.length === 0) {
+        s.drivers.forEach(function (d) {
+          var o = document.createElement('option');
+          o.value = d.id; o.textContent = d.label + (d.envKeyPresent ? ' (key found in env)' : '');
+          drv.appendChild(o);
+        });
+      }
+      var ul = el('disclosure');
+      ul.replaceChildren();
+      s.disclosure.forEach(function (line) {
+        var li = document.createElement('li');
+        li.textContent = line;
+        ul.appendChild(li);
+      });
+      syncDriver();
+    });
+  }
+  function currentDriver() {
+    var id = el('drv').value;
+    for (var i = 0; i < state.drivers.length; i++) if (state.drivers[i].id === id) return state.drivers[i];
+    return null;
+  }
+  function syncDriver() {
+    var d = currentDriver();
+    if (!d) return;
+    el('baseurl-row').hidden = !d.needsBaseUrl;
+    var dl = el('model-suggestions');
+    dl.replaceChildren();
+    d.suggestedModels.forEach(function (m) {
+      var o = document.createElement('option');
+      o.value = m;
+      dl.appendChild(o);
+    });
+    if (!el('model').value) el('model').value = d.defaultModel;
+    el('key-env-note').hidden = !d.envKeyPresent;
+    el('key-input-label').hidden = d.envKeyPresent;
+    el('key-env-name').textContent = d.keyEnv;
+  }
+  function addMsg(role, text) {
+    var div = document.createElement('div');
+    div.className = 'chat-msg chat-' + role;
+    div.textContent = text;
+    el('chat').appendChild(div);
+    div.scrollIntoView();
+    return div;
+  }
+  var history = [];
+  function ask() {
+    var q = el('q').value.trim();
+    if (!q) return;
+    el('ask-error').textContent = '';
+    el('q').value = '';
+    addMsg('user', q);
+    var pending = addMsg('assistant', '…');
+    fetch('/api/ask', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        driverId: el('drv').value,
+        model: el('model').value.trim(),
+        baseUrl: el('baseurl').value.trim(),
+        browserKey: el('key').value,
+        detail: el('detail').checked,
+        question: q,
+        history: history
+      })
+    }).then(function (r) { return r.json().then(function (b) { return { ok: r.ok, body: b }; }); })
+      .then(function (res) {
+        if (!res.ok) {
+          pending.textContent = '';
+          el('ask-error').textContent = res.body.error || 'request failed';
+          return;
+        }
+        pending.textContent = res.body.answer;
+        history.push({ role: 'user', content: q });
+        history.push({ role: 'assistant', content: res.body.answer });
+      })
+      .catch(function (e) { pending.textContent = ''; el('ask-error').textContent = String(e); });
+  }
+  el('ask').addEventListener('click', ask);
+  el('drv').addEventListener('change', function () { el('model').value = ''; syncDriver(); });
+  el('detail').addEventListener('change', refreshStatus);
+  refreshStatus();
+})();
+</script>`;
 }
 
 export function renderLearnHtml(
@@ -208,6 +353,11 @@ export function renderLearnHtml(
       <div class="cards">${caps.map((c) => capCard(c, bundle.knobs)).join('\n')}</div>`);
   }
   if (status) body.push(statusSection(status));
+  if (opts.serve) {
+    nav.push(`<div class="nav-label">Assistant</div>`);
+    nav.push(`<a href="#assistant">Ask the assistant</a>`);
+    body.push(assistantSection());
+  }
 
   return `<!DOCTYPE html>
 <html lang="en">
