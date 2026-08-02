@@ -76,10 +76,17 @@ describe('allowlist categories', () => {
     expect(CATEGORIES_BY_KIND['stale-allow']).toEqual([]);
   });
 
-  it('coverage-gap / test-gap / test-file-degradation are accepted-risk + deferred only', () => {
+  it('coverage-gap / test-gap are accepted-risk + deferred only', () => {
     expect(CATEGORIES_BY_KIND['coverage-gap']).toEqual(['accepted-risk', 'deferred']);
     expect(CATEGORIES_BY_KIND['test-gap']).toEqual(['accepted-risk', 'deferred']);
-    expect(CATEGORIES_BY_KIND['test-file-degradation']).toEqual(['accepted-risk', 'deferred']);
+  });
+
+  it('test-file-degradation additionally permits false-positive (gh #233 — its detector can misfire)', () => {
+    expect(CATEGORIES_BY_KIND['test-file-degradation']).toEqual([
+      'false-positive',
+      'accepted-risk',
+      'deferred',
+    ]);
   });
 
   it('hygiene is accepted-risk + deferred only', () => {
