@@ -56,11 +56,20 @@ export interface AppliedBump extends PlannedBump {
 }
 
 export interface DepsBumpResult {
-  /** 'planned' — dry run; 'applied' — bumps executed; 'landed' — PR
-   *  opened/updated; 'nothing-to-do' — empty plan; 'refused' — trust or
+  /** 'planned' — dry run; 'applied' — bumps executed; 'landed' — the PR
+   *  actually opened/updated; 'branch-pushed-no-pr' — the branch pushed but
+   *  PR creation failed (repo settings / gh error; the manual remedy is in
+   *  `note`); 'nothing-to-do' — empty plan; 'refused' — trust or
    *  environment refusal (disclosed in `note`); 'floor-red' — bumps applied
    *  but the floor failed, so nothing landed. */
-  readonly outcome: 'planned' | 'applied' | 'landed' | 'nothing-to-do' | 'refused' | 'floor-red';
+  readonly outcome:
+    | 'planned'
+    | 'applied'
+    | 'landed'
+    | 'branch-pushed-no-pr'
+    | 'nothing-to-do'
+    | 'refused'
+    | 'floor-red';
   readonly plan: BumpPlan;
   readonly applied: readonly AppliedBump[];
   readonly floor?: CorrectnessFloorResult;
@@ -378,5 +387,31 @@ export async function runDepsBump(opts: DepsBumpOptions): Promise<DepsBumpResult
     prTitle: 'dxkit: dependency security bumps',
     prBody: renderLedger(partial),
   });
-  return finish({ ...partial, outcome: 'landed', land });
+  return finish({
+    ...partial,
+    outcome: outcomeFromLand(land),
+    land,
+    ...(land.note !== undefined ? { note: land.note } : {}),
+  });
+}
+
+/**
+ * The lane's top-level outcome derives from the LAND result — ONE derivation,
+ * so the surface can never say "landed" over a disclosed non-delivery (the
+ * false-"landed" class: branch pushed, PR creation refused by the repo's
+ * Actions settings, job green, prUrl empty, remedy buried in unread JSON).
+ */
+function outcomeFromLand(land: LandRefreshResult): DepsBumpResult['outcome'] {
+  switch (land.outcome) {
+    case 'pr-opened':
+    case 'pr-updated':
+    case 'pushed':
+      return 'landed';
+    case 'branch-pushed-no-pr':
+      return 'branch-pushed-no-pr';
+    case 'clean':
+      // Nothing to commit after an apply — defensively "applied", never a
+      // delivery claim.
+      return 'applied';
+  }
 }
