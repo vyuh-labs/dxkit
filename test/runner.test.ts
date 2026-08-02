@@ -1,5 +1,43 @@
 import { describe, it, expect } from 'vitest';
-import { parseJsonStream, runDetached, runWithExit } from '../src/analyzers/tools/runner';
+import {
+  extractJsonPayload,
+  parseJsonStream,
+  runDetached,
+  runWithExit,
+} from '../src/analyzers/tools/runner';
+
+describe('extractJsonPayload', () => {
+  it('strips a tool banner ahead of a JSON object (the uv stdout-notice class)', () => {
+    const raw = 'The virtual environment /repo/.venv is out of date\n{"dependencies": []}';
+    expect(extractJsonPayload(raw)).toBe('{"dependencies": []}');
+  });
+
+  it('strips a banner ahead of a top-level array', () => {
+    const raw = 'warning: something\n[{"name": "requests"}]';
+    expect(extractJsonPayload(raw)).toBe('[{"name": "requests"}]');
+  });
+
+  it('returns clean JSON unchanged', () => {
+    expect(extractJsonPayload('{"a": 1}')).toBe('{"a": 1}');
+  });
+
+  it('drops trailing noise after the document', () => {
+    expect(extractJsonPayload('{"a": 1}\nDone in 2.3s')).toBe('{"a": 1}');
+  });
+
+  it('honors brackets inside string literals', () => {
+    const raw = 'note\n{"msg": "a } brace and ] bracket", "n": 1}';
+    expect(JSON.parse(extractJsonPayload(raw)!)).toEqual({ msg: 'a } brace and ] bracket', n: 1 });
+  });
+
+  it('returns null when no JSON document exists (caller keeps its parse-error path)', () => {
+    expect(extractJsonPayload('The virtual environment is broken')).toBeNull();
+  });
+
+  it('returns null for an unterminated document rather than a truncated slice', () => {
+    expect(extractJsonPayload('{"a": [1, 2')).toBeNull();
+  });
+});
 
 describe('parseJsonStream', () => {
   it('parses concatenated single-line objects', () => {

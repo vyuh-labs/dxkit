@@ -3,7 +3,7 @@ import * as path from 'path';
 
 import { type Coverage, type FileCoverage, round1, toRelative } from '../analyzers/tools/coverage';
 import { enrichOsv, resolveCvssScores } from '../analyzers/tools/osv';
-import { commandExists, fileExists, run } from '../analyzers/tools/runner';
+import { commandExists, extractJsonPayload, fileExists, run } from '../analyzers/tools/runner';
 import { walkPaths } from '../analyzers/tools/walk-paths';
 import { UNIVERSAL_TEST_DIR_PATTERNS } from './test-dir-patterns';
 import { walkSourceFiles } from '../analyzers/tools/walk-source-files';
@@ -403,7 +403,12 @@ async function gatherPyDepVulnsResult(
   if (!raw) return { kind: 'unavailable', reason: 'pip-audit produced no output' };
 
   try {
-    const data = JSON.parse(raw) as PipAuditReport;
+    // pip-audit's JSON can arrive with a non-JSON stdout prefix when spawned
+    // through a wrapper (uv's virtual-environment notice) — parse the first
+    // balanced document, not byte 0. A payload-less output still lands in
+    // the catch below as a disclosed parse error (UNMEASURED), never a
+    // silent zero-vulns read.
+    const data = JSON.parse(extractJsonPayload(raw) ?? raw) as PipAuditReport;
     const vulnIds: string[] = [];
     for (const dep of data.dependencies || []) {
       for (const v of dep.vulns || []) {
@@ -767,6 +772,34 @@ export function pySourceRoots(cwd: string): string[] {
   const roots = [cwd];
   const srcDir = path.join(cwd, 'src');
   if (isDir(srcDir)) roots.push(srcDir);
+  // Nested project roots: a uv/poetry workspace member (or any nested
+  // sub-project) declares itself with its own pyproject.toml / setup.py /
+  // setup.cfg, and its packages live at the member root or its src/.
+  // Absolute imports of member packages must resolve against those roots —
+  // the uv-workspace class: `packages/acme-platform/src/acme` provides
+  // `acme`, whose name is derivable from NO manifest (distribution
+  // `acme-platform` != import `acme`). Discovery routes through the
+  // canonical walker: exclusion-aware (a .venv-internal pyproject never
+  // becomes a root) and depth-unlimited (G_v4_12).
+  const manifests = walkPaths(cwd, {
+    extensions: [],
+    basenames: ['pyproject.toml', 'setup.py', 'setup.cfg'],
+  });
+  const seen = new Set(roots);
+  for (const rel of manifests) {
+    const dir = path.dirname(rel);
+    if (dir === '.') continue; // repo root — already covered above
+    const abs = path.join(cwd, dir);
+    if (!seen.has(abs)) {
+      seen.add(abs);
+      roots.push(abs);
+    }
+    const memberSrc = path.join(abs, 'src');
+    if (!seen.has(memberSrc) && isDir(memberSrc)) {
+      seen.add(memberSrc);
+      roots.push(memberSrc);
+    }
+  }
   return roots;
 }
 
