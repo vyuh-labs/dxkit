@@ -38,6 +38,7 @@ import {
   extensionsRefreshEnabled,
   installPrReview,
   installIgnoreFiles,
+  installRunbook,
   installHooksPostinstall,
   installDxkitDevDependency,
 } from './ship-installers';
@@ -899,6 +900,14 @@ export async function run(argv: string[]): Promise<void> {
         result: installIgnoreFiles(cwd, { force: !!values.force }),
       });
 
+      // Per-repo runbook (RUNBOOK.dxkit.md): default-on, rendered from repo
+      // truth AFTER the surfaces above landed so it describes what actually
+      // shipped. User-owned (marker-less) files are preserved.
+      shipResults.push({
+        label: 'Runbook',
+        result: installRunbook(cwd, { force: !!values.force }),
+      });
+
       // The armed enforcement surfaces, as human labels — drives both the
       // recap step and the closing's `gated` state. Derived from the same
       // want* flags the installers keyed on (not re-parsed from labels).
@@ -1027,7 +1036,7 @@ export async function run(argv: string[]): Promise<void> {
 
     case 'capabilities': {
       const { runCapabilities } = await import('./discovery/capabilities-cli');
-      runCapabilities(cwd, { json: !!values.json });
+      runCapabilities(cwd, { json: !!values.json, markdown: !!values.markdown });
       break;
     }
 
