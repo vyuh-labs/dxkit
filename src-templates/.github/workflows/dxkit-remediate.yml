@@ -33,7 +33,43 @@ name: dxkit remediate
 on:
   schedule:
     - cron: '__DXKIT_REMEDIATE_CRON__'
-  workflow_dispatch: {}
+  # Dispatch campaigns (one-time runs with per-run overrides). The scheduled
+  # posture reads policy; a dispatch is an explicit, WRITE-GATED human action
+  # (GitHub only lets users with write access fire it), so it may select one
+  # task — including `custom` with a free-text prompt — and override budgets
+  # within the committed `remediate.maxDispatchBudget` ceiling. The prompt
+  # travels via ENV (never shell-interpolated) and is disclosed verbatim in
+  # the PR body; the work still lands only through the verified frame.
+  workflow_dispatch:
+    inputs:
+      task:
+        description: 'Run ONE task (blank = the scheduled set)'
+        type: choice
+        default: ''
+        options:
+          - ''
+__DXKIT_REMEDIATE_TASK_OPTIONS__
+          - custom
+      prompt:
+        description: 'Custom task prompt (task=custom only; disclosed verbatim in the PR)'
+        type: string
+        default: ''
+      max_usd:
+        description: 'Spend override in USD (blank = policy; clamped to remediate.maxDispatchBudget)'
+        type: string
+        default: ''
+      max_turns:
+        description: 'Turn-cap override (blank = policy)'
+        type: string
+        default: ''
+      max_minutes:
+        description: 'Wall-clock override in minutes (blank = policy)'
+        type: string
+        default: ''
+      model:
+        description: 'Model override (blank = policy)'
+        type: string
+        default: ''
 
 permissions:
   contents: write
@@ -75,17 +111,24 @@ jobs:
 
       - name: Compute the task matrix
         id: plan
+        env:
+          # A dispatch that names a task runs EXACTLY that task (its choice
+          # list is rendered from the registry, so the value is a known id or
+          # `custom`); blank falls through to the scheduled, spend-ceilinged
+          # set from the plan.
+          DISPATCH_TASK: ${{ github.event.inputs.task || '' }}
         run: |
           if [ -x ./node_modules/.bin/vyuh-dxkit ]; then DXKIT=./node_modules/.bin/vyuh-dxkit; else DXKIT=vyuh-dxkit; fi
           "$DXKIT" remediate plan --json > remediate-plan.json
           node - <<'EOF'
           const fs = require('fs');
           const p = JSON.parse(fs.readFileSync('remediate-plan.json', 'utf8'));
-          const tasks = p.matrixTasks ?? [];
+          const dispatchTask = (process.env.DISPATCH_TASK || '').trim();
+          const tasks = dispatchTask ? [dispatchTask] : (p.matrixTasks ?? []);
           const out = process.env.GITHUB_OUTPUT;
           fs.appendFileSync(out, `tasks=${JSON.stringify(tasks)}\n`);
           fs.appendFileSync(out, `any=${tasks.length > 0 ? 'true' : 'false'}\n`);
-          const deferred = p.deferredBySpendCeiling ?? [];
+          const deferred = dispatchTask ? [] : (p.deferredBySpendCeiling ?? []);
           if (deferred.length > 0) {
             console.log(`::notice title=remediate spend ceiling::deferred to the next firing: ${deferred.join(', ')}`);
           }
@@ -178,6 +221,15 @@ __DXKIT_CI_RUNTIME_SETUP__
       - name: Run task ${{ matrix.task }}
         env:
           GH_TOKEN: ${{ secrets.DXKIT_BOT_TOKEN || github.token }}
+          # Dispatch-campaign inputs, transported via ENV only (the
+          # comment-defer pattern — free text never touches a shell line).
+          # Blank on scheduled runs; the CLI clamps budget overrides to the
+          # committed remediate.maxDispatchBudget and discloses every clamp.
+          DXKIT_CUSTOM_PROMPT: ${{ github.event.inputs.prompt || '' }}
+          DXKIT_DISPATCH_MAX_USD: ${{ github.event.inputs.max_usd || '' }}
+          DXKIT_DISPATCH_MAX_TURNS: ${{ github.event.inputs.max_turns || '' }}
+          DXKIT_DISPATCH_MAX_MINUTES: ${{ github.event.inputs.max_minutes || '' }}
+          DXKIT_DISPATCH_MODEL: ${{ github.event.inputs.model || '' }}
 __DXKIT_REMEDIATE_CREDENTIAL_ENV__
         run: |
           if [ -x ./node_modules/.bin/vyuh-dxkit ]; then DXKIT=./node_modules/.bin/vyuh-dxkit; else DXKIT=vyuh-dxkit; fi

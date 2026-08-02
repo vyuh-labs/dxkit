@@ -22,7 +22,6 @@
  * dxkit-authored prompts only. Landing (the standing PR) is composed by the
  * CLI/workflow layer on top of this runner's outcome.
  */
-import { execFileSync } from 'child_process';
 import type { AnalysisTrustContext } from '../analysis-trust';
 import { runCorrectnessFloor, type CorrectnessFloorResult } from '../analyzers/correctness/run';
 import {
@@ -33,10 +32,11 @@ import {
 import { detectActiveLanguages } from '../languages';
 import { renderRemediateLedger } from './ledger-render';
 import { guardrailVerdictFor, toFloorBaseChecks, type GuardrailGateResult } from '../lanes/verify';
-import { BOT_IDENTITY } from '../land-refresh';
 import { resolveModelSetting, type AgentDriver, type AgentRunResult } from './driver';
 import { AGENT_DRIVERS, knownDriverIds } from './registry';
-import { remediateTaskById, knownTaskIds, type RemediateTask } from './tasks';
+import type { RemediateTask } from './tasks';
+import { resolveDispatchedTask, type DispatchOverrides } from './dispatch';
+import { realGit } from './git-ops';
 import {
   evaluateScoreHinge,
   healthHingeScores,
@@ -93,6 +93,14 @@ export interface RemediateResult {
   /** HEAD before/after the agent — the commit range a lander pushes. */
   readonly baseHead?: string;
   readonly head?: string;
+  /** Dispatch-campaign disclosure (E3): who fired it, the verbatim custom
+   *  prompt (when the `custom` task ran), and any clamped overrides. In the
+   *  ledger = in the PR body, so the reviewer sees exactly what was asked. */
+  readonly dispatch?: {
+    readonly actor?: string;
+    readonly prompt?: string;
+    readonly clamped: readonly string[];
+  };
   /** The verification ledger — PR body / job summary markdown. */
   readonly ledger: string;
 }
@@ -104,55 +112,6 @@ export interface RemediateGit {
   sweepLeftovers(): string | undefined;
   /** Any commits in base..HEAD? */
   hasDiff(baseHead: string): boolean;
-}
-
-/** Real git ops. The sweep NEVER names runtime paths in the add pathspec —
- *  git hard-errors on a pathspec matching only gitignored paths (the script's
- *  observed failure); stage everything, then un-stage runtime state. */
-function realGit(cwd: string): RemediateGit {
-  const git = (args: string[]): string =>
-    execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
-  return {
-    head: () => git(['rev-parse', 'HEAD']),
-    sweepLeftovers() {
-      const status = git(['status', '--porcelain']);
-      const leftovers = status
-        .split('\n')
-        .filter(
-          (l) =>
-            l.trim() &&
-            !l.includes('.dxkit/loop') &&
-            !l.includes('.dxkit/cache') &&
-            !l.includes('.dxkit/reports'),
-        );
-      if (leftovers.length === 0) return undefined;
-      try {
-        git(['add', '-A']);
-        try {
-          git(['restore', '--staged', '--', '.dxkit/loop', '.dxkit/cache', '.dxkit/reports']);
-        } catch {
-          // nothing staged from runtime paths — fine
-        }
-        // Explicit bot identity (Rule 2: the one BOT_IDENTITY) — a CI
-        // runner has no ambient git identity, and the sweep must commit
-        // there or the whole lane reads as no-op.
-        git([
-          '-c',
-          `user.name=${BOT_IDENTITY.name}`,
-          '-c',
-          `user.email=${BOT_IDENTITY.email}`,
-          'commit',
-          '-q',
-          '-m',
-          'chore: commit remaining agent working state (swept by the runner — review closely)',
-        ]);
-        return undefined;
-      } catch (e) {
-        return e instanceof Error ? e.message.split('\n').slice(-1)[0] : String(e);
-      }
-    },
-    hasDiff: (baseHead: string) => git(['rev-list', '--count', `${baseHead}..HEAD`]) !== '0',
-  };
 }
 
 export interface RemediateRunOptions {
@@ -176,6 +135,10 @@ export interface RemediateRunOptions {
    *  log groups + heartbeats (a 35-minute silent step is indistinguishable
    *  from a hang; "working" must be observable from the job log). */
   readonly onPhase?: (phase: RemediatePhase) => void;
+  /** Dispatch-campaign overrides (E2/E3), read from env by the CLI layer.
+   *  Carries the custom task's prompt, the clamp disclosures, and the
+   *  dispatcher for the ledger. */
+  readonly dispatch?: DispatchOverrides;
 }
 
 /** The runner's observable phases, in order. */
@@ -192,10 +155,13 @@ export type RemediatePhase =
 export { renderRemediateLedger };
 
 export async function runRemediateTask(opts: RemediateRunOptions): Promise<RemediateResult> {
-  const finish = (r: Omit<RemediateResult, 'ledger'>): RemediateResult => ({
-    ...r,
-    ledger: renderRemediateLedger(r),
-  });
+  // Populated once the task resolves (a dispatch campaign's disclosure);
+  // folded into EVERY exit so no outcome can drop it from the ledger.
+  let dispatchDisclosure: Pick<RemediateResult, 'dispatch'> = {};
+  const finish = (r: Omit<RemediateResult, 'ledger' | 'dispatch'>): RemediateResult => {
+    const withDispatch = { ...dispatchDisclosure, ...r };
+    return { ...withDispatch, ledger: renderRemediateLedger(withDispatch) };
+  };
 
   // Trust boundary first: this runner spawns an agent against the tree.
   if (!opts.trust.repoExecutionAllowed) {
@@ -207,13 +173,15 @@ export async function runRemediateTask(opts: RemediateRunOptions): Promise<Remed
     });
   }
 
-  const task = remediateTaskById(opts.taskId);
-  if (!task) {
-    return finish({
-      outcome: 'refused',
-      note: `refused: unknown task '${opts.taskId}' — known tasks: ${knownTaskIds().join(', ')}.`,
-    });
+  // Task resolution + dispatch disclosure — one dispatch-aware entry
+  // (`resolveDispatchedTask`); the disclosure rides every result from here
+  // on (finish() folds it into the ledger).
+  const resolved = resolveDispatchedTask(opts.taskId, opts.dispatch);
+  if (!resolved.task) {
+    return finish({ outcome: 'refused', note: resolved.refusalNote });
   }
+  const task = resolved.task;
+  if (resolved.disclosure) dispatchDisclosure = { dispatch: resolved.disclosure };
 
   const drivers = opts.drivers ?? AGENT_DRIVERS;
   const driver = drivers.find((d) => d.id === opts.config.agent.driver);

@@ -52,6 +52,12 @@ export interface RemediateConfig {
    *  one firing. Tasks beyond the ceiling are DEFERRED (disclosed), in
    *  declaration order — never silently dropped. */
   readonly maxSpendPerRun: number;
+  /** Dispatch-campaign USD ceiling (`remediate.maxDispatchBudget`, 0 =
+   *  undeclared): the most a workflow_dispatch override may raise `maxUsd`
+   *  to. Undeclared ⇒ dispatch can lower spend but never raise it beyond
+   *  the policy cap — spend authority grows only in committed policy,
+   *  never in a dispatch form field. */
+  readonly maxDispatchBudget: number;
 }
 
 /** The effective budget for one task: the per-task override merged over the
@@ -141,6 +147,12 @@ export function resolveRemediateConfig(cwd: string): RemediateConfig {
       Number.isFinite(raw.maxSpendPerRun) &&
       raw.maxSpendPerRun > 0
         ? raw.maxSpendPerRun
+        : 0,
+    maxDispatchBudget:
+      typeof raw.maxDispatchBudget === 'number' &&
+      Number.isFinite(raw.maxDispatchBudget) &&
+      raw.maxDispatchBudget > 0
+        ? raw.maxDispatchBudget
         : 0,
   };
 }

@@ -305,6 +305,12 @@ export function buildPolicySchema(version: string): Schema {
               'Run-level USD ceiling across the per-task matrix (0/absent = none). Tasks ' +
               'beyond it are deferred to the next firing, in order, and disclosed.',
           },
+          maxDispatchBudget: {
+            type: 'number',
+            description:
+              'The most a workflow_dispatch campaign may raise maxUsd to (0/absent = ' +
+              'dispatch can lower spend but never raise it beyond the policy cap).',
+          },
         },
         'Agentic remediation: a scheduled agent inside the verified frame.',
       ),

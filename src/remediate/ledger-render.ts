@@ -56,6 +56,22 @@ export function renderRemediateLedger(r: Omit<RemediateResult, 'ledger'>): strin
     lines.push('');
   }
 
+  if (r.dispatch) {
+    lines.push('### Dispatch campaign', '');
+    lines.push(
+      `- dispatched by: ${r.dispatch.actor ? `\`${r.dispatch.actor}\`` : 'not reported (no GITHUB_ACTOR)'}`,
+    );
+    for (const c of r.dispatch.clamped) lines.push(`- clamped: ${c}`);
+    if (r.dispatch.prompt !== undefined) {
+      lines.push(
+        '- no score hinge exists for a custom goal — verification is the floor + the ' +
+          'guardrail + the human reviewing this PR against the prompt below.',
+      );
+      lines.push('', 'Prompt (verbatim):', '', '```', r.dispatch.prompt, '```');
+    }
+    lines.push('');
+  }
+
   lines.push('### Verification', '');
   lines.push(...renderFloorVerification(r.floor, r.floorAttribution, 'the pre-agent entry run'));
   lines.push(...renderGuardrailVerdict(r.guardrailVerdict));
