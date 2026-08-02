@@ -153,6 +153,7 @@ function applyFailOnSeverity(
  */
 function printUsage(all = false): void {
   if (!all) {
+    // slop-ok — help output IS the product surface here, same as the full view below.
     console.log(`
   ${logger.bold('vyuh-dxkit')} v${VERSION} — a deterministic stop condition + code-graph context layer for AI coding agents
 
