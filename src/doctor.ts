@@ -99,6 +99,29 @@ export interface DoctorReport {
   };
 }
 
+/**
+ * Is the DXKIT_BOT_TOKEN repo secret absent? Tri-state and fail-open:
+ * `true` only when `gh secret list` SUCCEEDED and the name is not there;
+ * `false` when present; `null` when unknowable (no gh, no admin scope,
+ * offline) — the caller stays silent on null, never a false alarm.
+ */
+function botTokenSecretAbsent(cwd: string): boolean | null {
+  try {
+    const out = execSync('gh secret list --json name --jq ".[].name"', {
+      cwd,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 15_000,
+    });
+    return !out
+      .split('\n')
+      .map((l) => l.trim())
+      .includes('DXKIT_BOT_TOKEN');
+  } catch {
+    return null;
+  }
+}
+
 function commandAvailable(cmd: string): boolean {
   // Cross-platform PATH resolution (honors %PATHEXT% on Windows). The
   // prior `which <cmd> 2>/dev/null` shell probe false-negatived every
@@ -929,6 +952,35 @@ function runOperationalChecks(cwd: string, hasManifest: boolean): CheckResult[] 
           },
         });
       }
+    }
+  }
+
+  // 6d. Lane-PR checks credential. A PR-opening lane (dep-bump / remediate)
+  // that pushes with the default GITHUB_TOKEN opens PRs that trigger NO
+  // workflow runs (GitHub's own robot-loop rule) — uncheckable under branch
+  // protection. The lanes disclose this per run, but a run notice is
+  // reactive; doctor is where setup gaps are FOUND. Advisory + fail-open:
+  // when `gh` can't list secrets (no admin scope, offline), stay silent —
+  // never a false alarm.
+  {
+    const prLaneInstalled = ['dxkit-dep-bump.yml', 'dxkit-remediate.yml'].some((f) =>
+      fs.existsSync(path.join(cwd, '.github', 'workflows', f)),
+    );
+    if (prLaneInstalled && botTokenSecretAbsent(cwd) === true) {
+      checks.push({
+        label: 'lane PRs will run no checks — DXKIT_BOT_TOKEN secret is not set',
+        ok: false,
+        tier: 'operational',
+        fix: {
+          hint:
+            'The dep-bump / remediate lanes push with the default GITHUB_TOKEN, and GitHub ' +
+            'never triggers workflows for such pushes — their PRs arrive with no checks ' +
+            '(unmergeable under branch protection). Create a PAT with repo scope and add it ' +
+            'as the DXKIT_BOT_TOKEN repo secret; the lanes pick it up automatically.',
+          command: 'gh secret set DXKIT_BOT_TOKEN',
+          skill: 'dxkit-fix',
+        },
+      });
     }
   }
 

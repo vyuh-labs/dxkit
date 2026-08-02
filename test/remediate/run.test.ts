@@ -537,3 +537,13 @@ describe('WP5: fast-exit, phases, cap accounting, blocked evidence', () => {
     expect(r.ledger).toContain('the cap did enforce');
   });
 });
+
+describe('budget awareness (WP9)', () => {
+  it('the agent is told its caps and the commit-before-the-kill rule', async () => {
+    const driver = fakeDriver({});
+    await runRemediateTask(base(driver));
+    expect(driver.lastRun?.prompt).toContain('Budget for this run');
+    expect(driver.lastRun?.prompt).toContain(`${DEFAULT_REMEDIATE_BUDGET.maxMinutes} minutes`);
+    expect(driver.lastRun?.prompt).toContain('reserve the final minutes');
+  });
+});
