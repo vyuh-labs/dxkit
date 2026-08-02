@@ -23,7 +23,12 @@ const WORKFLOWS = path.join(__dirname, '..', 'src-templates', '.github', 'workfl
  *  template invoking one of these needs GH_TOKEN exactly like a literal `gh`
  *  call. Test-side list, updated when a lane gains gh calls — the assertion
  *  below fails loudly when a NEW template ships a bare `gh` either way. */
-const GH_SHELLING_COMMANDS = ['baseline refresh', 'deps bump', 'remediate configured'];
+const GH_SHELLING_COMMANDS = [
+  'baseline refresh',
+  'deps bump',
+  'remediate configured',
+  'remediate --task',
+];
 
 interface Step {
   readonly file: string;

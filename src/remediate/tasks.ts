@@ -50,6 +50,15 @@ export interface RemediateTask {
    *  the primary signal for the ledger). */
   readonly verify: 'floor' | 'guardrail';
   /**
+   * $0 deterministic fast-exit: when the ENTRY floor (already captured on
+   * the pristine tree before any agent spawns) is green, this task has
+   * nothing to fix — return `no-op` without spawning the agent. Only
+   * meaningful for tasks whose whole goal IS the floor (fix-build); tasks
+   * whose goal lives elsewhere (docs, tests, vulns) must not skip on a
+   * green floor.
+   */
+  readonly skipWhenEntryFloorGreen?: boolean;
+  /**
    * OPTIONAL deterministic score hinge (4.3.4). The lane's law is that a task
    * ships only when "done" is re-verifiable without reading prose — and for
    * work whose whole point is a dimension moving (docs), the floor and
@@ -96,6 +105,7 @@ export const REMEDIATE_TASKS: readonly RemediateTask[] = [
     tier: 'standard',
     tierWhy: 'real diagnosis + repair across build config and test code',
     verify: 'floor',
+    skipWhenEntryFloorGreen: true,
     prompt:
       `Run ${dxkitInRepo('debt --json')}.
 Your task is the CORRECTNESS FLOOR section only: make the failing checks pass.

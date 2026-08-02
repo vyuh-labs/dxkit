@@ -41,7 +41,15 @@ export interface GuardrailGateResult {
   /** True only when the check ran and its canonical exit derivation is
    *  clean — the enforcement answer, never re-derived from the word. */
   readonly passesGate: boolean;
+  /** Compact descriptions of the findings that blocked (capped) — evidence
+   *  for a lane whose work will not land, so a BLOCKED attempt on an
+   *  ephemeral runner is inspectable from the ledger alone (the
+   *  uninspectable-attempt defect). Absent when nothing blocked. */
+  readonly blocking?: readonly string[];
 }
+
+/** Cap on the per-lane blocking-finding list — evidence, not a full report. */
+const BLOCKING_SUMMARY_CAP = 10;
 
 /**
  * Run the guardrail for a lane. Late-imports the check module (heavy; the
@@ -56,8 +64,26 @@ export async function guardrailVerdictFor(
   try {
     const { runGuardrailCheck } = await import('../baseline/check');
     const { verdictCounts } = await import('../baseline/check-renderers');
-    const counts = verdictCounts(await runGuardrailCheck({ cwd, trust }));
-    return { verdict: counts.verdict, ran: true, passesGate: counts.exitCode === 0 };
+    const result = await runGuardrailCheck({ cwd, trust });
+    const counts = verdictCounts(result);
+    // Name what blocked (capped): a lane's BLOCKED verdict must be
+    // inspectable from its ledger — "the guardrail did not pass" with no
+    // findings is a diagnosability black hole on an ephemeral runner.
+    const blockingPairs = result.pairs.filter(
+      (p) => p.classification.blocks && p.suppressedByAllowlist === undefined,
+    );
+    const blocking = blockingPairs
+      .slice(0, BLOCKING_SUMMARY_CAP)
+      .map((p) => `[${p.kind}] ${p.locator ?? p.file ?? '(no locator)'}`);
+    if (blockingPairs.length > BLOCKING_SUMMARY_CAP) {
+      blocking.push(`… and ${blockingPairs.length - BLOCKING_SUMMARY_CAP} more`);
+    }
+    return {
+      verdict: counts.verdict,
+      ran: true,
+      passesGate: counts.exitCode === 0,
+      ...(blocking.length > 0 ? { blocking } : {}),
+    };
   } catch (e) {
     return {
       verdict: `unavailable (${e instanceof Error ? e.message : String(e)})`,
