@@ -28,6 +28,8 @@ import {
   userCommands,
   suggestCommand,
   renderCommandIndex,
+  renderTieredIndex,
+  CORE_COMMAND_IDS,
   gatherRecommendations,
   type CapabilityDescriptor,
 } from '../src/discovery/commands';
@@ -133,6 +135,43 @@ describe('capability registry — lookup + discovery helpers', () => {
     const text = renderCommandIndex().join('\n');
     for (const c of userCommands()) {
       expect(text, `help index missing ${c.id}`).toContain(c.id);
+    }
+  });
+});
+
+describe('tiered help (issue #243) — presentation over the one registry', () => {
+  it('every core id resolves in the registry and is user-facing', () => {
+    for (const id of CORE_COMMAND_IDS) {
+      const c = getCommand(id);
+      expect(c, `core id ${id} not registered`).toBeDefined();
+      expect(c?.audience, `core id ${id} must be user-facing`).toBe('user');
+    }
+  });
+
+  it('the tiered index shows core summaries and still names every other user command', () => {
+    const text = renderTieredIndex().join('\n');
+    for (const id of CORE_COMMAND_IDS) {
+      const c = getCommand(id)!;
+      expect(text, `tiered index missing core ${id}`).toContain(c.summary);
+    }
+    // Collapse, never hide: every non-core user command's id is present.
+    for (const c of userCommands()) {
+      expect(text, `tiered index dropped ${c.id}`).toContain(c.id);
+    }
+    // The expansion path is named, so the tier is never a dead end.
+    expect(text).toContain('--help --all');
+  });
+
+  it('the learn docs referenced by the tiered help exist and are non-trivial', () => {
+    for (const f of [
+      'how-dxkit-thinks.md',
+      'quickstart-developer.md',
+      'quickstart-reviewer.md',
+      'quickstart-admin.md',
+    ]) {
+      const p = path.join(REPO_ROOT, 'docs', 'learn', f);
+      expect(fs.existsSync(p), `docs/learn/${f} missing`).toBe(true);
+      expect(fs.readFileSync(p, 'utf-8').length).toBeGreaterThan(500);
     }
   });
 });
