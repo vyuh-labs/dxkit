@@ -38,6 +38,7 @@ function cfg(partial: Partial<RemediateConfig>): RemediateConfig {
     taskBudgets: {},
     maxSpendPerRun: 0,
     maxDispatchBudget: 0,
+    resume: false,
     ...partial,
   };
 }

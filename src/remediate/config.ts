@@ -58,6 +58,13 @@ export interface RemediateConfig {
    *  the policy cap — spend authority grows only in committed policy,
    *  never in a dispatch form field. */
   readonly maxDispatchBudget: number;
+  /** Opt-in resume (`remediate.resume`, default false): when a prior
+   *  budget-bounded attempt landed as a draft PR (salvage: draft-pr), the
+   *  next run CONTINUES from its branch instead of starting over — the
+   *  entry floor still snapshots the pristine default tree, so a broken
+   *  partial can never grandfather its own breakage. Hard cap of
+   *  MAX_RESUME_ATTEMPTS per branch (resume.ts). */
+  readonly resume: boolean;
 }
 
 /** The effective budget for one task: the per-task override merged over the
@@ -154,5 +161,6 @@ export function resolveRemediateConfig(cwd: string): RemediateConfig {
       raw.maxDispatchBudget > 0
         ? raw.maxDispatchBudget
         : 0,
+    resume: raw.resume === true,
   };
 }
