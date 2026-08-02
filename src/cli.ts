@@ -3416,6 +3416,22 @@ export async function run(argv: string[]): Promise<void> {
       break;
     }
 
+    case 'learn': {
+      const targetPath = resolveRepoPath(positionals[1]);
+      const { runLearn } = await import('./learn');
+      logger.header('vyuh-dxkit learn');
+      const result = await runLearn(targetPath, {
+        out: values.output ? String(values.output) : undefined,
+      });
+      logger.success(`Learn page written to ${result.outputPath}`);
+      logger.dim(
+        result.repoMode
+          ? 'Includes live repo status + the read-only setup checklist. Open it in a browser.'
+          : 'Capability guide (no repo detected here). Open it in a browser.',
+      );
+      break;
+    }
+
     case 'context': {
       // Top-level alias for `explore context` — the token-reduction
       // surface gets first-class billing. positionals[0] is 'context';

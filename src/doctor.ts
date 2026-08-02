@@ -122,6 +122,25 @@ function botTokenSecretAbsent(cwd: string): boolean | null {
   }
 }
 
+/**
+ * Can GitHub Actions create pull requests in this repo? Same tri-state
+ * fail-open contract as `botTokenSecretAbsent`: `false` only when the API
+ * answered and the setting is off; `true` when on; `null` when unknowable
+ * (no gh, no access, offline) — the caller stays silent on null.
+ */
+function actionsCanCreatePrs(cwd: string): boolean | null {
+  try {
+    const out = execSync(
+      'gh api repos/{owner}/{repo}/actions/permissions/workflow --jq .can_approve_pull_request_reviews',
+      { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 15_000 },
+    );
+    const v = out.trim();
+    return v === 'true' ? true : v === 'false' ? false : null;
+  } catch {
+    return null;
+  }
+}
+
 function commandAvailable(cmd: string): boolean {
   // Cross-platform PATH resolution (honors %PATHEXT% on Windows). The
   // prior `which <cmd> 2>/dev/null` shell probe false-negatived every
@@ -982,6 +1001,31 @@ function runOperationalChecks(cwd: string, hasManifest: boolean): CheckResult[] 
         },
       });
     }
+
+    // 6e. Lane-PR creation permission. Same class as 6d, earlier in the
+    // pipeline: with the "Allow GitHub Actions to create and approve pull
+    // requests" setting off, a PR-opening lane pushes its branch and then
+    // fails to open the PR (the run log names this setting; the onboard
+    // preflight probes it too — this is the local-doctor sibling of that
+    // probe). Tri-state fail-open: silent unless the API said "off".
+    if (prLaneInstalled && actionsCanCreatePrs(cwd) === false) {
+      checks.push({
+        label:
+          "lane PRs cannot be opened — 'Allow GitHub Actions to create and approve pull requests' is off",
+        ok: false,
+        tier: 'operational',
+        fix: {
+          hint:
+            'The dep-bump / remediate lanes open PRs from workflow runs, which GitHub ' +
+            'refuses while this setting is off (Settings → Actions → General; an org-level ' +
+            'setting can override the repo). Their runs push a branch, then stop with a ' +
+            'disclosed error.',
+          command:
+            'gh api -X PUT repos/{owner}/{repo}/actions/permissions/workflow -F can_approve_pull_request_reviews=true',
+          skill: 'dxkit-fix',
+        },
+      });
+    }
   }
 
   // 7. Allowlist suppression hygiene. An expired entry no longer
@@ -1314,7 +1358,10 @@ function renderFlowSection(flow: FlowDiagnosis): void {
 // Entry point
 // ────────────────────────────────────────────────────────────────────
 
-export async function runDoctor(cwd: string, opts: { json?: boolean } = {}): Promise<DoctorReport> {
+export async function runDoctor(
+  cwd: string,
+  opts: { json?: boolean; quiet?: boolean } = {},
+): Promise<DoctorReport> {
   const manifestPath = path.join(cwd, '.vyuh-dxkit.json');
   const hasManifest = fs.existsSync(manifestPath);
   let manifest: Manifest | null = null;
@@ -1344,6 +1391,12 @@ export async function runDoctor(cwd: string, opts: { json?: boolean } = {}): Pro
     ...(flow ? { flow } : {}),
     ...(recommendations.length > 0 ? { recommendations } : {}),
   };
+
+  // Quiet mode: an embedding surface (the learn page) wants the report as
+  // DATA — no prose, no JSON dump, and no exit-code mutation. Doctor stays
+  // the ONE probe engine either way (Rule 2.30: learn renders this report,
+  // it never re-implements the checks).
+  if (opts.quiet) return report;
 
   if (opts.json) {
     // Logger is already in stderr mode (setJsonMode was called by cli.ts);

@@ -45,7 +45,7 @@
   ],
   "scripts": {
     "build:sdk": "tsc -p packages/dxkit-sdk",
-    "build": "npm run build:sdk && node scripts/copy-templates.js && tsc && node scripts/generate-policy-schema.js",
+    "build": "npm run build:sdk && node scripts/copy-templates.js && tsc && node scripts/copy-learn-docs.js && node scripts/generate-policy-schema.js",
     "prepublishOnly": "node scripts/require-ci.js && npm run build",
     "typecheck": "npm run build:sdk && tsc --noEmit",
     "typecheck:test": "npm run build:sdk && tsc --noEmit -p tsconfig.test.json",
