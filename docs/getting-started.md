@@ -321,6 +321,40 @@ vyuh-dxkit issue --type=bug --about="..."
 
 See [`vyuh-dxkit issue`](commands/issue.md) for full details.
 
+## 8. Common pitfalls
+
+A handful of first-run issues account for most onboarding friction.
+Each is a two-line fix:
+
+- **Bare `vyuh-dxkit` hits a stale global install.** A previously
+  installed global `vyuh-dxkit` can shadow the repo-local one, so you
+  run an old version without noticing. Fix: use `npx vyuh-dxkit` (or
+  `./node_modules/.bin/vyuh-dxkit`) everywhere; `vyuh-dxkit version`
+  tells you which one answered.
+
+- **`git add .dxkit/` after install misses half the files.** The
+  install also writes `.claude/`, `.githooks/`, workflow files, and
+  merges into `.gitignore`/`package.json`. Fix: `git add .` — the
+  scaffolded `.gitignore` keeps that safe.
+
+- **The pre-push hook times out on slow connections.** GitHub's SSH
+  connection can idle out while a long guardrail check runs, and the
+  push then fails without a clear message. Fix:
+  `GIT_SSH_COMMAND='ssh -o ServerAliveInterval=30 -o ServerAliveCountMax=20' git push`.
+
+- **`gh repo view` fails on private orgs.** Without `gh` auth to your
+  org, the visibility probe reads "Could not resolve to a Repository"
+  and baseline-mode auto-pick degrades. Fix: `gh auth login` with an
+  account that can read the repo, or pin `baseline.mode` in
+  `.dxkit/policy.json` to skip the probe.
+
+- **Baselines belong to CI, not your laptop.** A locally captured
+  committed baseline bakes your machine's scanner versions into the
+  anchor, and every PR gate then risks TOOLING-DRIFT noise against
+  CI's toolchain. Fix: install the refresh lane
+  (`init --with-baseline-refresh`) and let CI capture; `doctor` flags
+  a local anchor.
+
 ## What's next
 
 - **Deep SAST** — dxkit's bundled scanner is intraprocedural and misses

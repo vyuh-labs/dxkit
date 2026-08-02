@@ -215,30 +215,42 @@ export function parseBashForTarget(
   graph: Graph,
   cwd: string,
 ): HookTarget | undefined {
-  if (!/\b(grep|egrep|fgrep|rg|ag|ack)\b/.test(command)) return undefined;
-
-  // First clause only — ignore everything past a pipe/`&&`/`;` so a
-  // downstream command's args don't masquerade as search paths.
-  const head = command.split(/\||&&|;/)[0];
-  const tokens = head.split(/\s+/).filter(Boolean).map(stripQuotes);
-
   const binaries = new Set(['grep', 'egrep', 'fgrep', 'rg', 'ag', 'ack']);
 
-  // 1. A concrete file argument that exists in the graph wins — that's
-  //    the file the agent is looking at, structural map is most useful.
-  for (const tok of tokens) {
-    if (tok.startsWith('-') || binaries.has(tok)) continue;
-    const rel = toRepoRelative(tok, cwd);
-    if (graph.nodesByFile.has(rel)) return { kind: 'file', file: rel };
-  }
+  // Parse the CLAUSE that actually runs the search tool, not the first
+  // clause of a command that merely contains one somewhere. The shipped
+  // false-positive class: `ls src | grep x` matched the whole-command
+  // regex, the head clause (`ls src`) was parsed, and `ls` itself became a
+  // symbol-search pattern — injecting an unrelated symbol table into a
+  // trivial navigation command. Now a clause qualifies only when a search
+  // binary is one of ITS tokens, and extraction starts AFTER that binary.
+  for (const clause of command.split(/\||&&|;/)) {
+    const tokens = clause.split(/\s+/).filter(Boolean).map(stripQuotes);
+    const binIndex = tokens.findIndex((t) => binaries.has(t));
+    if (binIndex === -1) continue;
+    const args = tokens.slice(binIndex + 1);
 
-  // 2. Else the first plausible search term → symbol match. Skip flags,
-  //    the binary, redirections, and path-ish/dir tokens.
-  for (const tok of tokens) {
-    if (tok.startsWith('-') || binaries.has(tok)) continue;
-    if (/[/<>|*]/.test(tok) || tok.includes('..')) continue;
-    if (tok.length < 2) continue;
-    return { kind: 'pattern', pattern: tok };
+    // 1. A concrete file argument that exists in the graph wins — that's
+    //    the file the agent is looking at, structural map is most useful.
+    for (const tok of args) {
+      if (tok.startsWith('-')) continue;
+      const rel = toRepoRelative(tok, cwd);
+      if (graph.nodesByFile.has(rel)) return { kind: 'file', file: rel };
+    }
+
+    // 2. Else the first plausible search term → symbol match. Skip flags,
+    //    redirections, path-ish/dir tokens, and anything too short or too
+    //    un-identifier-like to resolve into the graph meaningfully — a
+    //    weak pattern substring-matching random symbols trains the agent
+    //    to skim past the hook (the relevance floor).
+    for (const tok of args) {
+      if (tok.startsWith('-')) continue;
+      if (/[/<>|*]/.test(tok) || tok.includes('..')) continue;
+      if (tok.length < 3) continue;
+      if (!/^[A-Za-z_$][\w$.-]*$/.test(tok)) continue;
+      return { kind: 'pattern', pattern: tok };
+    }
+    return undefined; // a search clause with no usable target — no-op
   }
   return undefined;
 }
