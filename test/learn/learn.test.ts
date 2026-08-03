@@ -15,10 +15,20 @@ import * as path from 'path';
 
 import { buildLearnBundle } from '../../src/learn/bundle';
 import { renderLearnHtml } from '../../src/learn/render';
-import { gatherLearnRepoStatus, type LearnRepoStatus } from '../../src/learn/repo-status';
+import {
+  gatherLearnRepoStatus,
+  readBaselines,
+  type LearnRepoStatus,
+} from '../../src/learn/repo-status';
 import { runLearn } from '../../src/learn';
 import { userCommands, CORE_COMMAND_IDS } from '../../src/discovery/commands';
 import { POSTURE_KNOBS } from '../../src/discovery/posture-knobs';
+import {
+  BASELINE_SCHEMA_VERSION,
+  pathForBaseline,
+  writeBaselineFile,
+  type BaselineFile,
+} from '../../src/baseline/baseline-file';
 
 function tmpdir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-learn-'));
@@ -103,6 +113,84 @@ describe('learn page — self-contained + zero-context', () => {
     const html = fs.readFileSync(result.outputPath, 'utf-8');
     expect(html).toContain('class="mode">guide<');
     expect(html).toContain('guardrail');
+  });
+});
+
+describe('baselines — anchor-aware under the branch transport (the external-repo eval catch)', () => {
+  function baselineFixture(cwd: string, findingsCount: number, createdAt: string): BaselineFile {
+    const findings = Array.from({ length: findingsCount }, (_, i) => ({
+      id: `${i}`.padStart(16, 'a'),
+      kind: 'secret' as const,
+      tool: 'gitleaks',
+      rule: 'r',
+      file: `src/f${i}.ts`,
+      line: 1,
+      severity: 'high' as const,
+    }));
+    return {
+      schemaVersion: BASELINE_SCHEMA_VERSION,
+      name: 'main',
+      createdAt,
+      repo: { commitSha: 'a'.repeat(40), branch: 'main', root: cwd },
+      analysis: {
+        dxkitVersion: '4.3.6',
+        policyHash: 'p'.repeat(16),
+        ignoreHash: 'i'.repeat(16),
+        toolchainHash: 't'.repeat(16),
+        configHash: 'c'.repeat(16),
+      },
+      tools: { gitleaks: 'unknown' },
+      saltMode: 'deterministic',
+      findings,
+    };
+  }
+
+  function anchorRepo(): { cwd: string; anchorFile: string } {
+    const cwd = tmpdir();
+    fs.mkdirSync(path.join(cwd, '.dxkit'), { recursive: true });
+    fs.writeFileSync(
+      path.join(cwd, '.dxkit', 'policy.json'),
+      JSON.stringify({ baseline: { mode: 'committed-full', anchor: 'branch' } }),
+    );
+    // Stale tree copy: 1 finding, old date.
+    writeBaselineFile(
+      pathForBaseline(cwd, 'main'),
+      baselineFixture(cwd, 1, '2026-07-19T00:00:00.000Z'),
+    );
+    // Fresh anchor content (what the side branch holds): 3 findings, today.
+    const anchorFile = path.join(tmpdir(), 'main.json');
+    writeBaselineFile(anchorFile, baselineFixture(cwd, 3, '2026-08-03T08:30:00.000Z'));
+    return { cwd, anchorFile };
+  }
+
+  it('reads the ANCHOR content when reachable — the numbers the guardrail actually gates against', () => {
+    const { cwd, anchorFile } = anchorRepo();
+    const { summaries, debt } = readBaselines(cwd, () => anchorFile);
+    expect(summaries).toEqual([
+      { name: 'main', capturedAt: '2026-08-03T08:30:00.000Z', entryCount: 3, source: 'anchor' },
+    ]);
+    expect(debt!.total).toBe(3);
+  });
+
+  it('falls back to the tree copy DISCLOSED when the anchor is unreachable', () => {
+    const { cwd } = anchorRepo();
+    const { summaries } = readBaselines(cwd, () => null);
+    expect(summaries).toEqual([
+      { name: 'main', capturedAt: '2026-07-19T00:00:00.000Z', entryCount: 1, source: 'tree' },
+    ]);
+  });
+
+  it('plain committed transport carries no source (no anchor question asked)', () => {
+    const cwd = tmpdir();
+    writeBaselineFile(
+      pathForBaseline(cwd, 'main'),
+      baselineFixture(cwd, 2, '2026-08-01T00:00:00.000Z'),
+    );
+    const { summaries } = readBaselines(cwd, () => {
+      throw new Error('anchor loader must not be called without the branch transport');
+    });
+    expect(summaries[0].source).toBeUndefined();
+    expect(summaries[0].entryCount).toBe(2);
   });
 });
 
