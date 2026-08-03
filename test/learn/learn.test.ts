@@ -289,6 +289,12 @@ describe('learn page — repo mode renders doctor as a read-only setup panel', (
     expect(repo).toContain('functions in the code graph');
     expect(repo).toContain('refreshed 2026-08-01');
     expect(repo).toContain('3 high · 68 medium');
+    // Static page: tiles are plain (no assistant to ask).
+    expect(repo).not.toContain('data-q=');
+    // Serve mode: every tile is ASKABLE (opens the assistant prefilled).
+    const served = renderLearnHtml(bundle, syntheticStatus(), { serve: true, generatedAt: 'x' });
+    expect((served.match(/class="stat" data-q=/g) ?? []).length).toBeGreaterThanOrEqual(5);
+    expect(served).toContain('What does our debt look like?');
     // Static repo page carries no serve-only ask button.
     expect(repo).not.toContain('id="home-ask"');
     // Zero-context: no home view, the showcase is first.
