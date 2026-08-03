@@ -443,6 +443,16 @@ describe('grounding — summaries by default, detail behind the toggle, disclosu
     expect(g.disclosure.join(' ')).toContain('No repo data');
   });
 
+  it('custom-gate authoring is grounded: the worked examples reach the assistant', () => {
+    // The extending-dxkit curated doc is bundled + grounded, so "how do I
+    // gate my own rule?" answers with the located-check example, the
+    // binary-check warning, and the paired-change rule — not a guess.
+    const g = assembleGrounding(bundle, null);
+    expect(g.system).toContain('Author your own gate');
+    expect(g.system).toContain('no-direct-db-imports');
+    expect(g.system).toContain('model-needs-migration');
+  });
+
   it('repo default: labels but no remedies, no fingerprints; disclosure says summaries', () => {
     const g = assembleGrounding(bundle, repoStatus(), { detail: false });
     expect(g.detail).toBe(false);
