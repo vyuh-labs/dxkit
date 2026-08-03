@@ -1,9 +1,12 @@
 # dxkit
 
-## A map before the edit. A real check before done.
+## A map before the edit. A real check before done. Agents that fix — verified.
 
 **dxkit is the change-safety layer for AI coding agents: structural context
-before the edit, and a deterministic stop-gate before the loop can finish.**
+before the edit, a deterministic stop-gate before the loop can finish, and
+autonomous remediation lanes — dependency bumps, debt burn-down, docs and
+test improvement — whose work lands only via pull requests that pass that
+same gate.**
 
 It maps the relevant code, callers, dependencies, and blast radius before the
 agent edits. When an unattended loop tries to stop, it runs the compilation
