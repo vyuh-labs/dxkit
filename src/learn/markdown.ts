@@ -20,12 +20,38 @@ export function escapeHtml(s: string): string {
     .replace(/"/g, '&quot;');
 }
 
+/**
+ * A docs-tree path → this page's internal anchor, or null. The learn page
+ * carries the whole docs tree as views, so a cross-reference like
+ * `docs/learn/quickstart-admin.md` or `docs/commands/allowlist.md` should
+ * NAVIGATE, not render as dead text (eval gap G5). Same slugify as the view
+ * ids in render.ts, so the anchors cannot drift.
+ */
+function docAnchorFor(path: string): string | null {
+  const p = path.replace(/^(\.\.?\/)+/, '');
+  // Both `docs/learn/x.md` (from repo root) and `../learn/x.md` (relative,
+  // from a reference page) land on the same view.
+  const learn = p.match(/^(?:docs\/)?learn\/([\w-]+)\.md$/);
+  if (learn) return `#doc-${learn[1]}`;
+  const ref = p.match(/^docs\/([\w./-]+\.md)$/);
+  if (ref) return `#ref-${slugify(ref[1])}`;
+  return null;
+}
+
 /** Inline transforms, applied to already-escaped text: `code`, **bold**, [t](url). */
 function renderInline(escaped: string): string {
-  let out = escaped.replace(/`([^`]+)`/g, '<code>$1</code>');
+  // Inline code first — and a code span that IS a docs path becomes a live
+  // link to that page's view (G5: the curated docs cite paths as code).
+  let out = escaped.replace(/`([^`]+)`/g, (m, code: string) => {
+    const anchor = docAnchorFor(code);
+    return anchor ? `<a href="${anchor}"><code>${code}</code></a>` : `<code>${code}</code>`;
+  });
   out = out.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
   // Links: only http(s) and repo-relative targets; anything else stays text.
+  // A markdown link whose target is a docs-tree path navigates in-page.
   out = out.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (m, text: string, href: string) => {
+    const anchor = docAnchorFor(href);
+    if (anchor) return `<a href="${anchor}">${text}</a>`;
     if (/^(https?:\/\/|#|\.{0,2}\/)/.test(href) || /^[\w./-]+$/.test(href)) {
       return `<a href="${href}">${text}</a>`;
     }

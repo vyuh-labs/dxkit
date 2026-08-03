@@ -321,7 +321,38 @@ vyuh-dxkit issue --type=bug --about="..."
 
 See [`vyuh-dxkit issue`](commands/issue.md) for full details.
 
-## 8. Lane credentials
+## 8. Turn on the scheduled lanes
+
+dxkit doesn't stop at gating: three optional lanes act on what it finds,
+each landing its work only via ordinary pull requests through the same
+gate a human change faces.
+
+- **Baseline refresh** re-captures findings on a cadence in CI (the fix
+  for the local-capture drift above). Newly published dependency
+  advisories arrive as a decision PR: merging it defers the advisory for
+  a time-boxed window; upgrading the dependency fixes it.
+- **Dependency bump** proposes deterministic security upgrades as PRs on
+  a schedule (`deps bump` is the underlying command).
+- **Remediation** runs budget-bounded agent tasks — fix-build,
+  fix-vulns, fix-lint, improve-tests, write-docs — under hard spend /
+  turn / time caps, from a pristine-tree entry snapshot. The PR body
+  discloses the dispatcher, prompt, model, and spend; a failed attempt
+  lands nothing. One-off **dispatch campaigns** run any task (or a
+  custom prompt) from the Actions UI with clamped budget overrides.
+
+Baseline refresh installs from init (`--with-baseline-refresh`). The other
+two are policy-driven: set the knob and re-render the workflows.
+
+```bash
+vyuh-dxkit policy set depBump.enabled true     # writes the knob AND refreshes
+                                               # the workflow files it drives
+# remediation: add remediate.tasks to .dxkit/policy.json, then
+vyuh-dxkit update                              # re-renders managed workflows
+
+vyuh-dxkit jobs          # what's installed: triggers, schedules, last runs
+```
+
+## 9. Lane credentials
 
 The scheduled lanes (baseline refresh, dep bump, remediate) use up to
 three credentials. Only the first is automatic:
@@ -352,7 +383,7 @@ approve pull requests" (Settings → Actions → General → Workflow
 permissions). Off means lanes can push branches but not open their
 PRs — the run says exactly this when it happens.
 
-## 9. Common pitfalls
+## 10. Common pitfalls
 
 A handful of first-run issues account for most onboarding friction.
 Each is a two-line fix:
@@ -388,6 +419,12 @@ Each is a two-line fix:
 
 ## What's next
 
+- **The whole product, one offline page** — `npx --yes @vyuhlabs/dxkit
+learn --serve` renders every command, policy field, lane task, skill,
+  and doc page as a searchable self-contained HTML knowledge base, with
+  an optional BYO-key assistant grounded in exactly that content (plus
+  your repo's live status when run inside one). Works with no repo at
+  all — it is the fastest way to show dxkit to a teammate.
 - **Deep SAST** — dxkit's bundled scanner is intraprocedural and misses
   cross-function taint (path traversal, SSRF, injection). Bring in an
   interprocedural engine's findings with `npx vyuh-dxkit ingest`:

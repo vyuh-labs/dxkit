@@ -41,7 +41,9 @@ describe('learn markdown renderer — the pinned subset', () => {
     expect(html).toContain('<code>cmd</code>');
     expect(html).toContain('<strong>care</strong>');
     expect(html).toContain('<a href="https://example.com">docs</a>');
-    expect(html).toContain('<a href="docs/learn/how-dxkit-thinks.md">local</a>');
+    // G5: a docs-tree path becomes an IN-PAGE anchor (the learn page carries
+    // the whole docs tree as views), never a dead relative href.
+    expect(html).toContain('<a href="#doc-how-dxkit-thinks">local</a>');
   });
 
   it('refuses non-http(s), non-relative link targets', () => {

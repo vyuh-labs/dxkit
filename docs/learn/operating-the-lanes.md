@@ -50,6 +50,19 @@ write-access-gated by GitHub itself.
 - With `remediate.resume` enabled, a salvaged attempt can continue in a
   later run (draft-PR salvage only, attempt-counted, capped).
 
+## Estimating spend
+
+The caps are hard, so the worst case is arithmetic, not a prediction:
+
+> worst-case monthly spend = enabled tasks × runs per month × per-task cap
+> (default $5), additionally capped by `remediate.maxSpendPerRun` each run.
+
+Example: 3 enabled tasks on the default weekly schedule, default caps:
+3 × 4 × $5 = $60/month ceiling. Real runs usually land far below their cap
+(a typical fix task spends $1–3), and every PR body discloses the actual
+spend, so after two weeks you have your own numbers. One-off campaigns are
+separately capped by `remediate.maxDispatchBudget`.
+
 ## What a failed attempt looks like
 
 The frame holding is the feature: if the agent's work does not verify, the
@@ -57,17 +70,55 @@ run is red, nothing merges, and the blocked attempt's diff is uploaded as a
 run artifact for inspection. The other tasks in a matrix run are isolated
 (own checkout each) and keep going.
 
+## When a run is red
+
+Read the task's job summary first — it names the outcome. The shapes:
+
+- **`guardrail-red` / floor failed** — the frame held: the agent's change
+  did not verify, so nothing landed. The attempt's diff is attached to the
+  run as an artifact (Actions run page, Artifacts section); download it if
+  you want to see what the agent tried. No action required; the next
+  scheduled run retries from a clean tree.
+- **Budget-bounded, not finished** — the task hit its spend / turn / time
+  cap mid-work. Also lands nothing. If it happens repeatedly on the same
+  task, raise that task's budget (`remediate.taskBudgets`) or enable
+  `remediate.resume` so a salvaged attempt (draft-PR salvage,
+  attempt-counted) can continue next run instead of starting over.
+- **Skipped: "an earlier task left unlanded work in the tree"** — task
+  isolation working as designed; the skipped tasks run next time.
+- **Degraded credentials, disclosed in the log** — the run fell back to
+  `GITHUB_TOKEN` (missing or expired `DXKIT_BOT_TOKEN`): the PR opens but
+  gets no CI checks, or with the Actions PR-creation setting off, the
+  branch pushes but no PR opens. The log names the missing piece;
+  `vyuh-dxkit doctor` confirms it from your machine.
+- **Missing agent key** — the remediation lane cannot run its driver at
+  all; the run says which secret is absent (see credentials below).
+- **CANNOT GATE inside the lane** — not the agent's fault: the baseline is
+  stale or a scanner drifted, so the gate refuses to attribute. Re-capture
+  via the baseline-refresh workflow (dispatch it manually if needed); the
+  lane behaves normally once attribution is restored.
+
+Each remediation task is its own job, so the Actions "re-run job" button
+retries one task without re-running the others.
+
 ## Credentials the lanes need
 
-Two GitHub settings decide whether lanes can do their jobs — both are
-covered step by step in the admin quickstart, and `vyuh-dxkit doctor`
-checks them:
+Three credentials decide whether lanes can do their jobs — the GitHub two
+are covered step by step in the admin quickstart
+(`docs/learn/quickstart-admin.md`), and `vyuh-dxkit doctor` checks them:
 
 1. "Allow GitHub Actions to create and approve pull requests" (repo or org
    Actions settings) — without it a lane pushes its branch and cannot open
    the PR.
 2. The `DXKIT_BOT_TOKEN` secret — without it, lane PRs trigger no CI
    checks and cannot satisfy branch protection.
+3. **The agent key** (remediation lane only) — the driver's API key as a
+   repo secret, `ANTHROPIC_API_KEY` for the default `claude-code` driver.
+   Use a scoped workspace key with a provider-side spend limit, never a
+   personal key: dxkit's budget caps are enforced by the runner, and the
+   key's own limit is the independent backstop. Set it with
+   `gh secret set ANTHROPIC_API_KEY`; an absent or expired key is
+   disclosed in the run log, and the other two lanes are unaffected.
 
 ## Watching a run
 

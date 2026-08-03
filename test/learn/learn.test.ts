@@ -161,8 +161,33 @@ describe('learn page — repo mode renders doctor as a read-only setup panel', (
       },
       baselines: [{ name: 'main', capturedAt: '2026-08-01T06:00:00Z', entryCount: 18928 }],
       lastVerdict: null,
+      jobs: [
+        {
+          workflow: 'dxkit-baseline-refresh.yml',
+          name: 'dxkit baseline refresh',
+          triggers: ['cron 0 6 * * *'],
+          nextRunUtc: '2026-08-04 06:00',
+          dispatchable: false,
+        },
+      ],
     };
   }
+
+  it('repo mode lands on the repo HOME dashboard; zero-context lands on the showcase', () => {
+    const repo = renderLearnHtml(bundle, syntheticStatus());
+    // The home view exists and is the FIRST view in the DOM (router default).
+    const firstView = repo.indexOf('<section class="view"');
+    expect(repo.slice(firstView, firstView + 120)).toContain('id="home"');
+    expect(repo).toContain('grandfathered findings in baseline');
+    expect(repo).toContain('dxkit workflows installed');
+    // Static repo page carries no serve-only ask button.
+    expect(repo).not.toContain('id="home-ask"');
+    // Zero-context: no home view, the showcase is first.
+    const zero = renderLearnHtml(bundle, null);
+    expect(zero).not.toContain('id="home"');
+    const zeroFirst = zero.indexOf('<section class="view"');
+    expect(zero.slice(zeroFirst, zeroFirst + 120)).toContain('id="core"');
+  });
 
   it('renders the requirements checklist with remedies as copy-paste commands', () => {
     const html = renderLearnHtml(bundle, syntheticStatus());

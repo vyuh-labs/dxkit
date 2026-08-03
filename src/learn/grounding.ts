@@ -115,8 +115,16 @@ export function assembleGrounding(
         `last guardrail verdict: ${v.unattributableCount > 0 ? 'CANNOT GATE' : v.blocks ? 'BLOCKED' : 'PASSED'} (${v.blockingCount} blocking, ${v.warningCount} warnings, at ${v.ranAt})`,
       );
     }
+    if ((status.jobs?.length ?? 0) > 0) {
+      s.push(`installed dxkit workflows (${status.jobs.length}):`);
+      for (const j of status.jobs) {
+        s.push(
+          `  ${j.name} (${j.workflow}): triggers=[${j.triggers.join(', ')}]${j.nextRunUtc ? `, next scheduled ${j.nextRunUtc} UTC` : ''}${j.dispatchable ? ', dispatchable from the Actions tab' : ''}`,
+        );
+      }
+    }
     if (status.doctor) {
-      const failing = status.doctor.checks.filter((c) => !c.ok);
+      const failing = status.doctor.checks.filter((c) => !c.ok && !c.advisory);
       s.push(
         `doctor: ${status.doctor.checks.length - failing.length} checks pass, ${failing.length} failing`,
       );
@@ -131,6 +139,12 @@ export function assembleGrounding(
             `  recommended: ${r.id} — ${r.recommendation.reason} (${r.recommendation.command})`,
           );
         }
+      } else {
+        // Summary tier includes failing-check LABELS (product-generated
+        // strings) so "what is missing here?" is answerable without the
+        // detail toggle — remedies and recommendation commands (which can
+        // embed repo paths) stay behind it. Eval gap G11.
+        for (const c of failing) s.push(`  failing: ${c.label}`);
       }
     }
     if (detail && status.rawPolicyText) {
@@ -145,7 +159,7 @@ export function assembleGrounding(
     disclosure.push(
       detail
         ? `This repo's status IN DETAIL: the full committed policy.json, baseline counts, the last verdict, each failing doctor check with its remedy, and blocking-finding fingerprints. (Detail toggle is ON.)`
-        : `This repo's status as SUMMARIES ONLY: policy summary, baseline entry counts, the last verdict word, and doctor pass/fail counts. No file paths, no finding contents, no check labels. (Turn on the detail toggle to include failing checks + remedies.)`,
+        : `This repo's status as SUMMARIES: policy summary, baseline entry counts, the last verdict word, doctor pass/fail counts with failing-check LABELS, and the installed dxkit workflow list (names, triggers, schedules). No file paths, no finding contents, no remedies. (Turn on the detail toggle to include remedies, recommendations, and the full policy file.)`,
     );
   } else {
     disclosure.push(`No repo data at all — this is the zero-context guide.`);

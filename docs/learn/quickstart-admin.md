@@ -38,9 +38,10 @@ Require the guardrail check on the default branch. dxkit reads BOTH classic
 branch protection and repository rulesets, so either mechanism works;
 `doctor` reports the effective protection either way.
 
-## 4. GitHub settings the lanes need
+## 4. Credentials and settings the lanes need
 
-Two settings decide whether the scheduled lanes can do their jobs:
+Three things decide whether the scheduled lanes can do their jobs — two
+GitHub settings and, for the remediation lane, an agent key:
 
 1. **Allow GitHub Actions to create and approve pull requests**
    (repo or org Settings, Actions, General). Without it, the dep-bump and
@@ -73,7 +74,46 @@ Two settings decide whether the scheduled lanes can do their jobs:
    The lane workflows use it automatically when present and fall back to
    `GITHUB_TOKEN` (degraded, disclosed) when absent.
 
-## 5. Policy: what blocks here
+3. **The agent key (remediation lane only).** The remediation agent runs
+   with the driver's API key from a repo secret — `ANTHROPIC_API_KEY` for
+   the default `claude-code` driver:
+
+   ```bash
+   gh secret set ANTHROPIC_API_KEY
+   ```
+
+   Use a scoped workspace key with a provider-side spend limit, never a
+   personal key. dxkit's runner enforces the per-task and per-run budget
+   caps from policy; the key's own limit is the independent backstop. An
+   absent or expired key is disclosed in the run log, and the other lanes
+   are unaffected. See the spend arithmetic in
+   `docs/learn/operating-the-lanes.md`.
+
+## 5. Branches dxkit creates (allow them)
+
+The automation works through ordinary branches and PRs, so whatever
+restricts branch creation in your org must allow dxkit's names:
+
+- **PR branches**, created by the lanes and deleted after merge:
+  `dxkit/dep-bump` (the standing dependency-bump PR),
+  `dxkit/remediate-<task>` (one per remediation task),
+  `dxkit/advisory-decision` (the refresh lane's decision PR), and
+  `dxkit/extensions-refresh` (when extensions are installed). The
+  comment-defer workflow commits to the PR's own branch and creates none.
+- **The anchor side branch** (`anchor: 'branch'` transport only): the
+  committed baseline lives on a dedicated branch, `dxkit-baselines` by
+  default, which the after-merge refresh direct-pushes. It must exist
+  outside your protection rules: do not add required checks or push
+  restrictions to it, or the refresh cannot update the anchor and PRs
+  degrade to CANNOT GATE as it goes stale.
+
+If an org ruleset restricts who can create branches or enforces
+branch-name patterns, add `dxkit/*` and `dxkit-baselines` to its
+allowances (rulesets support bypass lists and name conditions). Nothing
+here needs an exemption from the default branch's protection: lane PRs
+merge through the same required checks as human PRs.
+
+## 6. Policy: what blocks here
 
 `.dxkit/policy.json` is the contract. The pieces admins actually tune:
 
@@ -90,7 +130,24 @@ Every knob is discoverable: `vyuh-dxkit capabilities --json` is the
 machine-readable menu, and `doctor` proactively recommends unused
 capabilities that fit the repo.
 
-## 6. Verify end to end
+## 7. Monorepos
+
+Install at the repository root, once. One install gates the whole tree:
+
+- **One baseline for the repo**, not one per package — findings carry file
+  paths, so the diff scoping works regardless of package layout.
+- **Nested manifests are found automatically.** The dependency audit
+  discovers nested lockfiles (a sub-project's `package-lock.json`,
+  `requirements.txt`, `go.mod`, ...) and audits the same set the gate
+  sees; a vulnerable dependency in a nested package is not read as clean.
+- **Multiple languages activate together.** Detection is per-manifest, so
+  a TS frontend + Python service repo runs both packs' linters, audits,
+  and correctness checks in one gate.
+
+Per-package installs are not the model; if you need genuinely separate
+policies for separate trees, make them separate repositories.
+
+## 8. Verify end to end
 
 ```bash
 vyuh-dxkit doctor          # wiring, credentials, protection, staleness

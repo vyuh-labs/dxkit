@@ -106,9 +106,17 @@ Two disciplines explain most of dxkit's behavior when something looks odd:
    nothing" are different statements, and dxkit never lets one masquerade
    as the other.
 
+## Try it before you believe it
+
+`vyuh-dxkit evaluate` installs nothing and writes nothing: it replays your
+repository's recently landed changes through the same gate an install
+would arm and shows what would have blocked, warned, or passed. Evidence
+first, setup second — run it on your messiest repo.
+
 ## Where to go next
 
 - The gate blocked your PR: `docs/learn/quickstart-developer.md`
 - You review PRs here: `docs/learn/quickstart-reviewer.md`
 - You are setting dxkit up: `docs/learn/quickstart-admin.md`
+- Operating the automation: `docs/learn/operating-the-lanes.md`
 - Every command: `vyuh-dxkit --help --all` or `vyuh-dxkit capabilities`

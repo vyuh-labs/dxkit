@@ -135,6 +135,34 @@ const BASE_JS = `
   window.addEventListener('hashchange', route);
   route();
 
+  /* showcase acts: tab stepper with a gentle auto-advance that stops on
+     first interaction (and never starts under prefers-reduced-motion). */
+  (function () {
+    var acts = document.getElementById('acts');
+    if (!acts) return;
+    var tabs = acts.querySelectorAll('.act-tab');
+    var panes = acts.querySelectorAll('.act');
+    var timer = null;
+    function show(i) {
+      for (var j = 0; j < tabs.length; j++) {
+        tabs[j].classList.toggle('on', j === i);
+        panes[j].classList.toggle('on', j === i);
+      }
+    }
+    for (var i = 0; i < tabs.length; i++) {
+      (function (i) {
+        tabs[i].addEventListener('click', function () {
+          if (timer) { clearInterval(timer); timer = null; }
+          show(i);
+        });
+      })(i);
+    }
+    if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      var at = 0;
+      timer = setInterval(function () { at = (at + 1) % panes.length; show(at); }, 5000);
+    }
+  })();
+
   /* search palette */
   var indexEl = el('search-index');
   var INDEX = indexEl ? JSON.parse(indexEl.textContent) : [];
@@ -206,6 +234,9 @@ const ASSISTANT_JS = `
   function closePanel() { el('apanel').classList.remove('open'); }
   el('fab').addEventListener('click', openPanel);
   el('assistant-open').addEventListener('click', openPanel);
+  // Repo-mode home view renders an "Ask the assistant" button (serve only).
+  var homeAsk = el('home-ask');
+  if (homeAsk) homeAsk.addEventListener('click', openPanel);
   el('ap-close').addEventListener('click', closePanel);
   document.addEventListener('keydown', function (ev) {
     if ((ev.ctrlKey || ev.metaKey) && ev.key === '/') { ev.preventDefault();
@@ -356,6 +387,13 @@ const ASSISTANT_JS = `
     var t = el('q'); t.style.height = 'auto'; t.style.height = Math.min(t.scrollHeight, 130) + 'px';
   }
   el('ask').addEventListener('click', ask);
+  var chips = el('chips');
+  if (chips) chips.addEventListener('click', function (ev) {
+    var b = ev.target.closest('.chip');
+    if (!b) return;
+    el('q').value = b.getAttribute('data-q');
+    ask();
+  });
   el('q').addEventListener('keydown', function (ev) {
     if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); ask(); }
   });
