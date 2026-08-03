@@ -244,6 +244,7 @@ function starterChips(hasRepo: boolean): string {
     'What does .dxkit/policy.json control? Where do I start?',
     'What will the remediation lane cost us, and how is spend capped?',
     'The gate blocked my PR. What are my options?',
+    'How do I gate a custom rule of ours? (only new violations block)',
   ];
   // Chips only promise what the current tier answers (tier-1 profile:
   // debt shape, ranked actions, graph freshness — all artifact reads).
