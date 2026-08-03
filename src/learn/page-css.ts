@@ -203,5 +203,48 @@ pre:hover .copybtn, .fix:hover .copybtn { opacity:1; }
   color:var(--on-accent); font-weight:650; font-size:13px; cursor:pointer; font-family:inherit; }
 .ap-error { color:var(--bad); font-size:12px; padding:0 16px 10px; }
 
+/* SPA views (wiki mode): with JS, exactly one view is visible */
+body.spa .view { display:none; }
+body.spa .view.active { display:block; animation:viewin .14s ease; }
+@keyframes viewin { from { opacity:.4; transform:translateY(4px); } to { opacity:1; transform:none; } }
+
+/* hero */
+.hero { padding:34px 34px 30px; background:linear-gradient(135deg, var(--accent-soft), var(--card));
+  border:1px solid var(--border); border-radius:14px; margin-bottom:28px; }
+.hero h1 { font-size:27px; font-weight:750; color:var(--text); letter-spacing:-.02em; margin-bottom:10px; }
+.hero p { font-size:14.5px; max-width:640px; margin-bottom:18px; }
+.hero-actions { display:flex; gap:10px; flex-wrap:wrap; }
+.hero-actions .tbtn { text-decoration:none; height:38px; display:inline-flex; }
+
+/* breadcrumbs + prev/next */
+.crumbs { font-size:12px; color:var(--muted); margin-bottom:14px; min-height:16px; }
+.crumbs a { color:var(--muted); text-decoration:none; }
+.crumbs a:hover { color:var(--accent); }
+.crumbs .sep { margin:0 7px; opacity:.6; }
+.crumbs .here { color:var(--text); font-weight:550; }
+.pagenav { display:flex; justify-content:space-between; gap:12px; margin-top:44px; }
+.pagenav a { flex:1; max-width:46%; text-decoration:none; border:1px solid var(--border); background:var(--card);
+  border-radius:10px; padding:12px 16px; }
+.pagenav a:hover { border-color:var(--accent); }
+.pagenav .dir { font-size:10.5px; text-transform:uppercase; letter-spacing:.6px; color:var(--muted); }
+.pagenav .pt { font-size:13.5px; color:var(--accent); font-weight:550; margin-top:2px; }
+.pagenav a.next { text-align:right; margin-left:auto; }
+
+/* per-page TOC rail */
+.toc { width:200px; flex-shrink:0; position:sticky; top:56px; height:calc(100vh - 56px);
+  overflow-y:auto; padding:26px 16px 40px 6px; display:none; }
+.toc .toc-label { font-size:10.5px; font-weight:600; text-transform:uppercase; letter-spacing:.8px;
+  color:var(--muted); margin-bottom:8px; }
+.toc a { display:block; font-size:12px; color:var(--muted); text-decoration:none; padding:3.5px 0 3.5px 10px;
+  border-left:2px solid var(--border); }
+.toc a:hover { color:var(--accent); }
+.toc a.h3 { padding-left:22px; }
+@media (min-width: 1240px) { .toc { display:block; } }
+
+/* reference index */
+.ref-index-group { font-size:14px; font-weight:650; color:var(--text); margin:22px 0 10px; }
+.ref-card { display:block; text-decoration:none; }
+.ref-card:hover { border-color:var(--accent); }
+
 @media (max-width: 900px) { .sidebar { display:none; } .main { padding:24px 18px 90px; } }
 `;

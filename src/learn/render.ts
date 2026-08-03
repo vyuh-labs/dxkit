@@ -117,12 +117,12 @@ function capCard(c: LearnCapability, knobs: LearnBundle['knobs']): string {
 }
 
 function docSection(d: LearnDoc): string {
-  return `<section id="doc-${escapeHtml(d.slug)}"><div class="doc">${markdownToHtml(d.markdown)}</div></section>`;
+  return `<section class="view" id="doc-${escapeHtml(d.slug)}" data-title="${escapeHtml(d.title)}" data-crumb="Guide"><div class="doc">${markdownToHtml(d.markdown)}</div></section>`;
 }
 
-function statusSection(status: LearnRepoStatus): string {
+function repoStatusView(status: LearnRepoStatus): string {
   const parts: string[] = [];
-  parts.push(`<h2 class="section" id="repo-status">This repo</h2>`);
+  parts.push(`<h2 class="section">This repo</h2>`);
   if (!status.installed) {
     parts.push(
       `<div class="note">dxkit is not installed in this repository yet. The zero-question path: <code>npm init @vyuhlabs/dxkit -- --yes</code>, then <code>vyuh-dxkit doctor</code>.</div>`,
@@ -150,43 +150,46 @@ function statusSection(status: LearnRepoStatus): string {
       `<div class="status-line"><span class="${cls}">●</span> last guardrail verdict: <strong>${word}</strong>${v.blockingCount ? ` (${v.blockingCount} blocking)` : ''}${v.warningCount ? `, ${v.warningCount} warnings` : ''} <span style="color:var(--muted)">(${escapeHtml(v.ranAt.slice(0, 16))})</span></div>`,
     );
   }
+  return `<section class="view" id="repo-status" data-title="This repo" data-crumb="This repo">${parts.join('\n')}</section>`;
+}
 
+function setupView(status: LearnRepoStatus): string {
   const doctor = status.doctor;
-  if (doctor) {
-    parts.push(`<h2 class="section" id="setup-panel">Set up this repo</h2>
+  if (!doctor) return '';
+  const parts: string[] = [];
+  parts.push(`<h2 class="section">Set up this repo</h2>
       <p class="section-sub">Live requirements check (doctor). Everything here is read-only: copy the command, or tell your agent the sentence. The one write path is <code>vyuh-dxkit configure --apply</code>.</p>`);
-    const failing = doctor.checks.filter((c) => !c.ok);
-    const passing = doctor.checks.filter((c) => c.ok);
-    if (failing.length === 0) {
-      parts.push(
-        `<div class="status-line"><span class="badge-ok">●</span> all ${passing.length} doctor checks pass</div>`,
-      );
-    }
-    for (const c of failing) {
-      parts.push(`<div class="status-line fail"><div>
+  const failing = doctor.checks.filter((c) => !c.ok);
+  const passing = doctor.checks.filter((c) => c.ok);
+  if (failing.length === 0) {
+    parts.push(
+      `<div class="status-line"><span class="badge-ok">●</span> all ${passing.length} doctor checks pass</div>`,
+    );
+  }
+  for (const c of failing) {
+    parts.push(`<div class="status-line fail"><div>
         <span class="badge-fail">✗</span> ${escapeHtml(c.label)}
         ${c.fix ? `<div class="fix">${escapeHtml(c.fix.hint)}</div>` : ''}
         ${c.fix?.command ? `<div class="fix"><code>${escapeHtml(c.fix.command)}</code></div>` : ''}
       </div></div>`);
-    }
-    if (doctor.recommendations?.length) {
-      parts.push(
-        `<p class="section-sub" style="margin-top:14px">Doctor also recommends for this repo:</p>`,
-      );
-      for (const r of doctor.recommendations) {
-        parts.push(`<div class="status-line fail"><div>
+  }
+  if (doctor.recommendations?.length) {
+    parts.push(
+      `<p class="section-sub" style="margin-top:14px">Doctor also recommends for this repo:</p>`,
+    );
+    for (const r of doctor.recommendations) {
+      parts.push(`<div class="status-line fail"><div>
           <span class="badge-warn">→</span> <strong>${escapeHtml(r.id)}</strong>: ${escapeHtml(r.recommendation.reason)}
           <div class="fix"><code>${escapeHtml(r.recommendation.command)}</code></div>
         </div></div>`);
-      }
-    }
-    if (passing.length > 0 && failing.length > 0) {
-      parts.push(
-        `<div class="status-line" style="margin-top:8px"><span class="badge-ok">●</span> ${passing.length} other checks pass</div>`,
-      );
     }
   }
-  return parts.join('\n');
+  if (passing.length > 0 && failing.length > 0) {
+    parts.push(
+      `<div class="status-line" style="margin-top:8px"><span class="badge-ok">●</span> ${passing.length} other checks pass</div>`,
+    );
+  }
+  return `<section class="view" id="setup-panel" data-title="Set up this repo" data-crumb="This repo">${parts.join('\n')}</section>`;
 }
 
 /* ─────────────────────────── assistant panel (serve) ─────────────────────────── */
@@ -273,54 +276,80 @@ export function renderLearnHtml(
   }
 
   const body: string[] = [];
-  for (const d of bundle.docs) body.push(docSection(d));
-  body.push(`<h2 class="section" id="core">Start here</h2>
+
+  // Home / "Start here" view: hero + the core capability cards.
+  body.push(`<section class="view" id="core" data-title="Start here" data-crumb="">
+    <div class="hero">
+      <h1>Understand dxkit in one sitting</h1>
+      <p>dxkit gates <strong>changes</strong>, not repositories: existing debt is grandfathered, only net-new problems block. Everything on this page ships with the package and works offline${opts.serve ? ' — and the assistant on the right answers from exactly this content' : ''}.</p>
+      <div class="hero-actions">
+        <a class="tbtn primary" href="#doc-how-dxkit-thinks">Read the mental model</a>
+        <a class="tbtn" href="#reference">Browse the reference (${bundle.reference.length} pages)</a>
+      </div>
+    </div>
+    <h2 class="section">Start here</h2>
     <p class="section-sub">The five commands most repos live in.</p>
-    <div class="cards">${core.map((c) => capCard(c, bundle.knobs)).join('\n')}</div>`);
+    <div class="cards">${core.map((c) => capCard(c, bundle.knobs)).join('\n')}</div>
+  </section>`);
+
+  for (const d of bundle.docs) body.push(docSection(d));
+
   for (const g of groups) {
     const caps = more.filter((c) => c.groupLabel === g);
-    body.push(`<h2 class="section" id="group-${slugify(g)}">${escapeHtml(g)}</h2>
-      <div class="cards">${caps.map((c) => capCard(c, bundle.knobs)).join('\n')}</div>`);
+    body.push(`<section class="view" id="group-${slugify(g)}" data-title="${escapeHtml(g)}" data-crumb="Capabilities">
+      <h2 class="section">${escapeHtml(g)}</h2>
+      <div class="cards">${caps.map((c) => capCard(c, bundle.knobs)).join('\n')}</div></section>`);
   }
   if (bundle.skills.length > 0) {
-    body.push(`<h2 class="section" id="skills">Agent skills</h2>
+    body.push(`<section class="view" id="skills" data-title="Agent skills" data-crumb="Knowledge base">
+      <h2 class="section">Agent skills</h2>
       <p class="section-sub">Installed into <code>.claude/skills/</code> by init so a coding agent drives each capability conversationally.</p>
       <ul class="list-plain">${bundle.skills
         .map((s) => `<li><b>${escapeHtml(s.name)}</b><br>${escapeHtml(s.description)}</li>`)
-        .join('')}</ul>`);
+        .join('')}</ul></section>`);
   }
   if (bundle.tasks.length > 0) {
-    body.push(`<h2 class="section" id="tasks">Remediation lane tasks</h2>
+    body.push(`<section class="view" id="tasks" data-title="Remediation lane tasks" data-crumb="Knowledge base">
+      <h2 class="section">Remediation lane tasks</h2>
       <p class="section-sub">What the scheduled remediation lane (and one-off dispatch campaigns) can run. Every task lands only via a PR through the same gate.</p>
       <ul class="list-plain">${bundle.tasks
         .map(
           (t) =>
             `<li><span class="tier">${escapeHtml(t.tier)}</span><b>${escapeHtml(t.id)}</b><br>${escapeHtml(t.summary)}</li>`,
         )
-        .join('')}</ul>`);
+        .join('')}</ul></section>`);
   }
   if (bundle.reference.length > 0) {
     const refGroups = [...new Set(bundle.reference.map((r) => r.group))];
-    const parts: string[] = [
-      `<h2 class="section" id="reference">Reference</h2>
-       <p class="section-sub">The full documentation shelf, shipped with the package — ${bundle.reference.length} pages, all searchable (Ctrl+K).</p>`,
-    ];
-    for (const g of refGroups) {
-      const docs = bundle.reference.filter((r) => r.group === g);
-      parts.push(`<details class="ref-group"><summary>${escapeHtml(g)} (${docs.length})</summary>
-        ${docs
+    // The reference INDEX view: a wiki-style listing, one card per page.
+    body.push(`<section class="view" id="reference" data-title="Reference" data-crumb="Knowledge base">
+      <h2 class="section">Reference</h2>
+      <p class="section-sub">The full documentation shelf, shipped with the package — ${bundle.reference.length} pages, all searchable (Ctrl+K).</p>
+      ${refGroups
+        .map(
+          (g) => `<h3 class="ref-index-group">${escapeHtml(g)}</h3>
+        <div class="cards">${bundle.reference
+          .filter((r) => r.group === g)
           .map(
-            (r) => `<details class="ref-doc" id="ref-${slugify(r.relPath)}">
-          <summary>${escapeHtml(r.title)} <span style="color:var(--muted)">· docs/${escapeHtml(r.relPath)}</span></summary>
-          <div class="doc">${markdownToHtml(r.markdown)}</div>
-        </details>`,
+            (r) => `<a class="card ref-card" href="#ref-${slugify(r.relPath)}">
+              <span class="cmd">${escapeHtml(r.title)}</span>
+              <p>docs/${escapeHtml(r.relPath)}</p></a>`,
           )
-          .join('\n')}
-      </details>`);
+          .join('')}</div>`,
+        )
+        .join('\n')}
+    </section>`);
+    // One view per reference page (wiki page-per-topic).
+    for (const r of bundle.reference) {
+      body.push(`<section class="view" id="ref-${slugify(r.relPath)}" data-title="${escapeHtml(r.title)}" data-crumb="Reference">
+        <p class="section-sub"><a href="#reference">← Reference</a> · docs/${escapeHtml(r.relPath)}</p>
+        <div class="doc">${markdownToHtml(r.markdown)}</div></section>`);
     }
-    body.push(parts.join('\n'));
   }
-  if (status) body.push(statusSection(status));
+  if (status) {
+    body.push(repoStatusView(status));
+    body.push(setupView(status));
+  }
 
   const searchIndexJson = JSON.stringify(buildSearchIndex(bundle, status)).replace(/</g, '\\u003c');
 
@@ -347,9 +376,12 @@ export function renderLearnHtml(
   ${nav.join('\n  ')}
 </nav>
 <main class="main">
+<div class="crumbs" id="crumbs"></div>
 ${body.join('\n')}
+<div class="pagenav" id="pagenav"></div>
 ${opts.generatedAt ? `<p class="section-sub" style="margin-top:44px">Generated ${escapeHtml(opts.generatedAt)} · fully self-contained page: no external requests, works offline.</p>` : ''}
 </main>
+<aside class="toc" id="toc" aria-label="On this page"></aside>
 </div>
 <div class="palette-overlay" id="palette-overlay">
   <div class="palette">

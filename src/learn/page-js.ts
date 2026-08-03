@@ -50,24 +50,90 @@ const BASE_JS = `
     t.appendChild(b);
   });
 
-  /* active nav */
+  /* ── wiki router: one view at a time, driven by location.hash ── */
+  var views = Array.prototype.slice.call(document.querySelectorAll('.view'));
   var links = Array.prototype.slice.call(document.querySelectorAll('.sidebar a[href^="#"]'));
-  var byId = {};
-  links.forEach(function (a) { byId[a.getAttribute('href').slice(1)] = a; });
-  var observed = Object.keys(byId).map(function (id) { return document.getElementById(id); }).filter(Boolean);
-  if ('IntersectionObserver' in window && observed.length) {
-    var active = null;
-    var io = new IntersectionObserver(function (entries) {
-      entries.forEach(function (en) {
-        if (en.isIntersecting) {
-          if (active) active.classList.remove('active');
-          active = byId[en.target.id];
-          if (active) active.classList.add('active');
-        }
-      });
-    }, { rootMargin: '-20% 0px -70% 0px' });
-    observed.forEach(function (s) { io.observe(s); });
+  document.body.classList.add('spa');
+  function viewFor(id) {
+    var target = document.getElementById(id);
+    if (!target) return null;
+    return target.classList.contains('view') ? target : (target.closest ? target.closest('.view') : null);
   }
+  function buildToc(v) {
+    var toc = el('toc'); if (!toc) return;
+    toc.replaceChildren();
+    var heads = v.querySelectorAll('h2[id], h3[id], h2.section');
+    if (heads.length < 2) return;
+    var label = document.createElement('div'); label.className = 'toc-label'; label.textContent = 'On this page';
+    toc.appendChild(label);
+    Array.prototype.forEach.call(heads, function (h, idx) {
+      if (!h.id) h.id = 'sec-' + v.id + '-' + idx;
+      var a = document.createElement('a');
+      a.href = '#' + h.id;
+      a.textContent = h.textContent;
+      if (h.tagName === 'H3') a.className = 'h3';
+      toc.appendChild(a);
+    });
+  }
+  function buildCrumbs(v) {
+    var c = el('crumbs'); if (!c) return;
+    c.replaceChildren();
+    var home = document.createElement('a'); home.href = '#core'; home.textContent = 'dxkit learn';
+    c.appendChild(home);
+    var crumb = v.getAttribute('data-crumb');
+    if (crumb === 'Reference') {
+      var sep0 = document.createElement('span'); sep0.className = 'sep'; sep0.textContent = '/';
+      var refA = document.createElement('a'); refA.href = '#reference'; refA.textContent = 'Reference';
+      c.appendChild(sep0); c.appendChild(refA);
+    } else if (crumb) {
+      var sep1 = document.createElement('span'); sep1.className = 'sep'; sep1.textContent = '/';
+      var g = document.createElement('span'); g.textContent = crumb;
+      c.appendChild(sep1); c.appendChild(g);
+    }
+    var sep2 = document.createElement('span'); sep2.className = 'sep'; sep2.textContent = '/';
+    var here = document.createElement('span'); here.className = 'here';
+    here.textContent = v.getAttribute('data-title') || v.id;
+    c.appendChild(sep2); c.appendChild(here);
+  }
+  function buildPagenav(v) {
+    var pn = el('pagenav'); if (!pn) return;
+    pn.replaceChildren();
+    var i = views.indexOf(v);
+    function mk(dirText, cls, target) {
+      var a = document.createElement('a'); a.className = cls; a.href = '#' + target.id;
+      var d = document.createElement('div'); d.className = 'dir'; d.textContent = dirText;
+      var t = document.createElement('div'); t.className = 'pt';
+      t.textContent = target.getAttribute('data-title') || target.id;
+      a.appendChild(d); a.appendChild(t); return a;
+    }
+    if (i > 0) pn.appendChild(mk('Previous', 'prev', views[i - 1]));
+    if (i >= 0 && i < views.length - 1) pn.appendChild(mk('Next', 'next', views[i + 1]));
+  }
+  var activeView = null;
+  function showView(v, scrollTargetId) {
+    if (!v) v = views[0];
+    if (activeView) activeView.classList.remove('active');
+    activeView = v;
+    v.classList.add('active');
+    links.forEach(function (a) {
+      var lv = viewFor(a.getAttribute('href').slice(1));
+      a.classList.toggle('active', lv === v);
+    });
+    buildToc(v); buildCrumbs(v); buildPagenav(v);
+    if (scrollTargetId && scrollTargetId !== v.id) {
+      var t = document.getElementById(scrollTargetId);
+      if (t) { t.scrollIntoView({ block: 'start' }); return; }
+    }
+    window.scrollTo(0, 0);
+  }
+  function route() {
+    var id = (location.hash || '#').slice(1);
+    if (!id) { showView(views[0]); return; }
+    var v = viewFor(id);
+    if (v) showView(v, id);
+  }
+  window.addEventListener('hashchange', route);
+  route();
 
   /* search palette */
   var indexEl = el('search-index');
@@ -107,12 +173,8 @@ const BASE_JS = `
   }
   function go(e) {
     closePalette();
-    /* open every ancestor <details> so anchors inside the reference shelf land visibly */
-    var target = document.getElementById(e.a.slice(1));
-    var p = target;
-    while (p) { if (p.tagName === 'DETAILS') p.open = true; p = p.parentElement; }
-    location.hash = e.a;
-    if (target) target.scrollIntoView({ block: 'start' });
+    if (location.hash === e.a) { route(); return; }
+    location.hash = e.a; /* the router shows the containing view */
   }
   el('searchbtn').addEventListener('click', openPalette);
   overlay.addEventListener('click', function (ev) { if (ev.target === overlay) closePalette(); });

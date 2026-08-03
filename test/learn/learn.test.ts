@@ -77,6 +77,14 @@ describe('learn page — self-contained + zero-context', () => {
     expect(html).toContain('palette-input');
     expect(html).toContain('theme-toggle');
     expect(html).toContain('search-index');
+    // Wiki mode: routed views (page-per-topic), hash router, crumbs, TOC,
+    // prev/next — with graceful no-JS fallback (views hidden only under .spa).
+    expect((html.match(/class="view"/g) ?? []).length).toBeGreaterThan(20);
+    expect(html).toContain('hashchange');
+    expect(html).toContain('id="crumbs"');
+    expect(html).toContain('id="pagenav"');
+    expect(html).toContain('id="toc"');
+    expect(html).toContain('body.spa .view');
     expect(html).not.toContain('id="apanel"');
     // No repo section without a repo.
     expect(html).not.toContain('Set up this repo');
