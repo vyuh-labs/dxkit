@@ -17,7 +17,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { runDoctor, type DoctorReport } from '../doctor';
 import { readVerdictForTree, type CachedVerdict } from '../baseline/verdict-cache';
-import { readPolicyObjectSafe } from '../baseline/policy-text';
+import { readPolicyObjectSafe, readPolicyRoot } from '../baseline/policy-text';
 import { readBaselineFile } from '../baseline/baseline-file';
 
 export interface LearnRepoStatus {
@@ -38,6 +38,9 @@ export interface LearnRepoStatus {
   baselines: Array<{ name: string; capturedAt?: string; entryCount: number }>;
   /** The last same-tree guardrail verdict, when cached. */
   lastVerdict: CachedVerdict | null;
+  /** The committed policy file, verbatim — sent to the provider ONLY under
+   *  the explicit detail toggle (it can carry custom check commands). */
+  rawPolicyText?: string;
 }
 
 /** Which lane workflows are installed (filename presence, read-only). */
@@ -113,6 +116,11 @@ export async function gatherLearnRepoStatus(cwd: string): Promise<LearnRepoStatu
     lastVerdict = null;
   }
 
+  // The ONE policy reader again (Rule 2.30): readPolicyRoot returns the raw
+  // text alongside the parsed root, so no second file read exists.
+  const policyRead = readPolicyRoot(path.join(cwd, '.dxkit', 'policy.json'));
+  const rawPolicyText = policyRead.status === 'ok' ? policyRead.text.slice(0, 20_000) : undefined;
+
   return {
     cwd,
     installed,
@@ -120,5 +128,6 @@ export async function gatherLearnRepoStatus(cwd: string): Promise<LearnRepoStatu
     policy: readPolicySummary(cwd),
     baselines: readBaselineSummaries(cwd),
     lastVerdict,
+    rawPolicyText,
   };
 }

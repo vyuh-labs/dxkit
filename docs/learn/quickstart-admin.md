@@ -49,10 +49,29 @@ Two settings decide whether the scheduled lanes can do their jobs:
 2. **A bot token for lane pushes (recommended): `DXKIT_BOT_TOKEN`.**
    Branches pushed with the default `GITHUB_TOKEN` do not trigger workflow
    runs, so lane PRs arrive with no CI checks and cannot satisfy branch
-   protection. Set a fine-grained PAT (contents: write, pull requests:
-   write) as a repo secret named `DXKIT_BOT_TOKEN`; the lane workflows use
-   it automatically when present and fall back to `GITHUB_TOKEN` (degraded,
-   disclosed) when absent.
+   protection. Create the token step by step:
+   1. GitHub → your profile → **Settings** → **Developer settings** →
+      **Personal access tokens** → **Fine-grained tokens** → _Generate new
+      token_. (Prefer a dedicated bot/service account over a personal one,
+      so lane PRs are not attributed to a person and survive offboarding.)
+   2. **Resource owner**: your organization. **Repository access**: only
+      the repositories dxkit's lanes run in.
+   3. **Permissions** (repository): `Contents` → Read and write,
+      `Pull requests` → Read and write. Nothing else.
+   4. **Expiration**: pick a real date and put the rotation on your
+      calendar; an expired token degrades lanes back to `GITHUB_TOKEN`
+      (disclosed in the run log, but easy to miss).
+   5. If your org requires fine-grained token approval, have an org admin
+      approve it (Settings → Personal access tokens in the org).
+   6. Store it as the repo secret and verify:
+
+      ```bash
+      gh secret set DXKIT_BOT_TOKEN     # paste the token when prompted
+      vyuh-dxkit doctor                 # the lane-credential check goes quiet
+      ```
+
+   The lane workflows use it automatically when present and fall back to
+   `GITHUB_TOKEN` (degraded, disclosed) when absent.
 
 ## 5. Policy: what blocks here
 

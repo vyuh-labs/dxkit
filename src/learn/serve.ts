@@ -17,7 +17,19 @@ import type { LearnBundle } from './bundle';
 import type { LearnRepoStatus } from './repo-status';
 import { renderLearnHtml } from './render';
 import { assembleGrounding } from './grounding';
-import { CUSTOM_BASE_URL_ENV, LLM_DRIVERS, envKeyFor, getDriver, relayAsk } from './drivers';
+import {
+  AUTO_MODEL,
+  CUSTOM_BASE_URL_ENV,
+  LLM_DRIVERS,
+  envKeyFor,
+  getDriver,
+  listModels,
+  relayAsk,
+  resolveRouting,
+  routeModel,
+  type ProviderModel,
+} from './drivers';
+import { markdownToHtml } from './markdown';
 
 const MAX_BODY_BYTES = 256 * 1024;
 
@@ -31,6 +43,12 @@ export interface ServeOptions {
   port?: number;
   /** Injectable for tests. */
   fetchFn?: typeof fetch;
+}
+
+interface ModelsBody {
+  driverId?: string;
+  browserKey?: string;
+  baseUrl?: string;
 }
 
 interface AskBody {
@@ -84,6 +102,7 @@ export function buildStatusPayload(
       needsBaseUrl: d.endpoint === null,
       suggestedModels: d.suggestedModels,
       defaultModel: d.defaultModel,
+      routing: d.routing ?? null,
       // Presence only — the key itself never crosses to the browser.
       envKeyPresent: envKeyFor(d) !== null,
     })),
@@ -99,6 +118,10 @@ export async function startLearnServer(
   opts: ServeOptions = {},
 ): Promise<LearnServer> {
   const fetchFn = opts.fetchFn ?? fetch;
+  // Live model lists per driver(+base URL), fetched with the user's key so
+  // the chooser is never a stale hardcoded snapshot. Session-scoped cache;
+  // the compiled-in suggestions remain the labeled offline fallback.
+  const modelCache = new Map<string, ProviderModel[]>();
   const html = renderLearnHtml(bundle, status, {
     generatedAt: new Date().toISOString(),
     serve: true,
@@ -115,6 +138,62 @@ export async function startLearnServer(
       if (req.method === 'GET' && url.startsWith('/api/status')) {
         const detail = new URL(url, 'http://localhost').searchParams.get('detail') === '1';
         json(res, 200, buildStatusPayload(bundle, status, detail));
+        return;
+      }
+      if (req.method === 'POST' && url === '/api/models') {
+        const raw = await readBody(req);
+        if (raw === null) {
+          json(res, 413, { error: 'request body too large' });
+          return;
+        }
+        let body: ModelsBody;
+        try {
+          body = JSON.parse(raw) as ModelsBody;
+        } catch {
+          json(res, 400, { error: 'invalid JSON' });
+          return;
+        }
+        const driver = getDriver(body.driverId ?? '');
+        if (!driver) {
+          json(res, 400, { error: `unknown driver: ${body.driverId ?? '(none)'}` });
+          return;
+        }
+        const baseUrl =
+          (body.baseUrl ?? '').trim() || process.env[CUSTOM_BASE_URL_ENV] || undefined;
+        const apiKey = envKeyFor(driver) ?? (body.browserKey ?? '').trim();
+        const cacheKey = `${driver.id}|${baseUrl ?? ''}`;
+        const fallback = {
+          live: false,
+          models: driver.suggestedModels,
+          routing: driver.routing ?? null,
+          note: 'suggestions from this dxkit release — may be outdated; enter a key to load the live list from the provider',
+        };
+        if (apiKey.length === 0) {
+          json(res, 200, fallback);
+          return;
+        }
+        let models = modelCache.get(cacheKey);
+        if (!models) {
+          const listed = await listModels({ driver, apiKey, baseUrl }, fetchFn);
+          if (!listed.ok || !listed.models) {
+            json(res, 200, {
+              ...fallback,
+              note: `${fallback.note} (live fetch failed: ${listed.error})`,
+            });
+            return;
+          }
+          models = listed.models;
+          modelCache.set(cacheKey, models);
+        }
+        const sorted = [...models].sort(
+          (a, b) => (b.created ?? 0) - (a.created ?? 0) || b.id.localeCompare(a.id),
+        );
+        json(res, 200, {
+          live: true,
+          models: sorted.map((m) => m.id),
+          routing: resolveRouting(driver, models) ?? null,
+          note: 'live list from the provider, fetched with your key',
+        });
         return;
       }
       if (req.method === 'POST' && url === '/api/ask') {
@@ -158,10 +237,28 @@ export async function startLearnServer(
               )
               .slice(-20)
           : [];
+        // "Auto" (or an empty model) routes deterministically between the
+        // driver's fast/deep tiers; an explicit model always wins. The
+        // decision is returned and shown under the answer — never silent.
+        const requested = (body.model ?? '').trim();
+        const routeBaseUrl =
+          (body.baseUrl ?? '').trim() || process.env[CUSTOM_BASE_URL_ENV] || undefined;
+        const liveRouting = resolveRouting(
+          driver,
+          modelCache.get(`${driver.id}|${routeBaseUrl ?? ''}`),
+        );
+        const route =
+          requested.length === 0 || requested === AUTO_MODEL
+            ? routeModel(driver, question, {
+                detail: !!body.detail,
+                historyLength: history.length,
+                routing: liveRouting,
+              })
+            : null;
         const result = await relayAsk(
           {
             driver,
-            model: (body.model ?? '').trim() || driver.defaultModel,
+            model: route ? route.model : requested,
             baseUrl: (body.baseUrl ?? '').trim() || process.env[CUSTOM_BASE_URL_ENV] || undefined,
             apiKey,
             system: grounding.system,
@@ -173,7 +270,18 @@ export async function startLearnServer(
           json(res, 502, { error: result.error });
           return;
         }
-        json(res, 200, { answer: result.answer, keySource: envKeyFor(driver) ? 'env' : 'browser' });
+        json(res, 200, {
+          answer: result.answer,
+          // Rendered through the ONE pinned markdown subset renderer (it
+          // escapes everything), so the page can show formatted answers
+          // without a client-side markdown engine.
+          answerHtml: markdownToHtml(result.answer ?? ''),
+          servedModel: route ? route.model : requested || driver.defaultModel,
+          routed: route !== null,
+          routeTier: route?.tier,
+          routeReason: route?.reason,
+          keySource: envKeyFor(driver) ? 'env' : 'browser',
+        });
         return;
       }
       json(res, 404, { error: 'not found' });

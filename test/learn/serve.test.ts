@@ -13,7 +13,14 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { buildLearnBundle } from '../../src/learn/bundle';
 import { renderLearnHtml } from '../../src/learn/render';
 import { assembleGrounding } from '../../src/learn/grounding';
-import { LLM_DRIVERS, relayAsk, getDriver } from '../../src/learn/drivers';
+import {
+  LLM_DRIVERS,
+  relayAsk,
+  getDriver,
+  routeModel,
+  listModels,
+  resolveRouting,
+} from '../../src/learn/drivers';
 import { startLearnServer, buildStatusPayload } from '../../src/learn/serve';
 import type { LearnRepoStatus } from '../../src/learn/repo-status';
 
@@ -235,10 +242,12 @@ describe('serve — localhost only, key hygiene, graceful no-key degrade', () =>
       const addr = s.server.address();
       expect(typeof addr === 'object' && addr ? addr.address : '').toBe('127.0.0.1');
       const html = await (await fetch(s.url)).text();
-      expect(html).toContain('Ask the assistant');
+      expect(html).toContain('dxkit assistant');
+      expect(html).toContain('assistant-panel');
       expect(html).toContain('<script>');
       expect(html).not.toMatch(/src=["']https?:/);
-      expect(html).not.toMatch(/<(link|img|iframe)\b/);
+      expect(html).not.toMatch(/<link[^>]+href=["']https?:/);
+      expect(html).not.toMatch(/<(img|iframe)\b/);
     } finally {
       await s.close();
     }
@@ -328,20 +337,217 @@ describe('serve — localhost only, key hygiene, graceful no-key degrade', () =>
   });
 });
 
-describe('render — file mode stays script-free, serve mode stays self-contained', () => {
+describe('render — static mode never fetches, serve mode stays self-contained', () => {
   const bundle = buildLearnBundle();
 
-  it('static file mode has no script even with serve-capable code present', () => {
+  it('static file mode has no assistant and its JS makes no network requests', () => {
     const html = renderLearnHtml(bundle, null, {});
-    expect(html).not.toContain('<script');
-    expect(html).not.toContain('Ask the assistant');
+    expect(html).not.toContain('id="apanel"');
+    expect(html).not.toMatch(/fetch\(/);
+    expect(html).toContain('palette-input');
   });
 
   it('serve mode adds the panel + script but still no external loads', () => {
     const html = renderLearnHtml(bundle, null, { serve: true });
-    expect(html).toContain('Ask the assistant');
+    expect(html).toContain('dxkit assistant');
     expect(html).toContain('bring-your-own-key');
     expect(html).not.toMatch(/src=["']https?:/);
     expect(html).not.toMatch(/@import/);
+    // The serve page's JS talks ONLY to same-origin /api/* paths.
+    const fetches = [...html.matchAll(/fetch\((['"])([^'"]+)\1/g)].map((m) => m[2]);
+    expect(fetches.length).toBeGreaterThan(0);
+    for (const f of fetches) expect(f.startsWith('/api/')).toBe(true);
+    // Fetches with computed URLs stay same-origin too (string-concat on /api/).
+    expect(html).not.toMatch(/fetch\((['"])https?:/);
+  });
+});
+
+describe('live model lists — the provider is the source of truth, suggestions are labeled fallback', () => {
+  const bundle = buildLearnBundle();
+
+  it('listModels speaks both wire formats', async () => {
+    const seen: string[] = [];
+    const fetchFn = (async (url: unknown, init: unknown) => {
+      seen.push(String(url));
+      const headers = (init as { headers: Record<string, string> }).headers;
+      if (String(url).includes('api.anthropic.com')) {
+        expect(headers['x-api-key']).toBe('your-key');
+        return new Response(
+          JSON.stringify({ data: [{ id: 'claude-future-9', created_at: '2027-01-01T00:00:00Z' }] }),
+          { status: 200 },
+        );
+      }
+      expect(headers.authorization).toBe('Bearer your-key');
+      return new Response(JSON.stringify({ data: [{ id: 'gpt-9.9', created: 1800000000 }] }), {
+        status: 200,
+      });
+    }) as typeof fetch;
+    const a = await listModels({ driver: getDriver('anthropic')!, apiKey: 'your-key' }, fetchFn);
+    expect(a.ok).toBe(true);
+    expect(a.models![0].id).toBe('claude-future-9');
+    const o = await listModels({ driver: getDriver('openai')!, apiKey: 'your-key' }, fetchFn);
+    expect(o.ok).toBe(true);
+    expect(o.models![0].id).toBe('gpt-9.9');
+    expect(seen[0]).toContain('/v1/models');
+    expect(seen[1]).toBe('https://api.openai.com/v1/models');
+  });
+
+  it('resolveRouting picks the NEWEST flagship/small tier from a live list (never stale)', () => {
+    const openai = getDriver('openai')!;
+    const live = resolveRouting(openai, [
+      { id: 'gpt-5.1', created: 100 },
+      { id: 'gpt-5.6', created: 500 },
+      { id: 'gpt-5.6-mini', created: 500 },
+      { id: 'gpt-5.6-audio-preview', created: 600 },
+      { id: 'gpt-5-mini', created: 50 },
+    ]);
+    expect(live).toEqual({ fast: 'gpt-5.6-mini', deep: 'gpt-5.6' });
+    // Empty/absent list → compiled-in fallback tiers.
+    expect(resolveRouting(openai, undefined)).toEqual(openai.routing);
+    // Pattern miss on a weird list → fallback per tier.
+    expect(resolveRouting(openai, [{ id: 'whisper-1' }])).toEqual(openai.routing);
+  });
+
+  it('/api/models: no key → labeled fallback suggestions; with key → live list + resolved routing', async () => {
+    const fetchFn = (async (url: unknown) =>
+      String(url).endsWith('/models')
+        ? new Response(
+            JSON.stringify({
+              data: [
+                { id: 'gpt-5.6', created: 500 },
+                { id: 'gpt-5.6-mini', created: 500 },
+              ],
+            }),
+            { status: 200 },
+          )
+        : new Response(JSON.stringify({ choices: [{ message: { content: 'ok' } }] }), {
+            status: 200,
+          })) as typeof fetch;
+    const s = await startLearnServer(bundle, null, { fetchFn });
+    try {
+      const noKey = (await (
+        await fetch(`${s.url}api/models`, {
+          method: 'POST',
+          body: JSON.stringify({ driverId: 'openai' }),
+        })
+      ).json()) as { live: boolean; models: string[]; note: string };
+      expect(noKey.live).toBe(false);
+      expect(noKey.note).toContain('may be outdated');
+      const live = (await (
+        await fetch(`${s.url}api/models`, {
+          method: 'POST',
+          body: JSON.stringify({ driverId: 'openai', browserKey: 'your-key' }),
+        })
+      ).json()) as { live: boolean; models: string[]; routing: { fast: string; deep: string } };
+      expect(live.live).toBe(true);
+      expect(live.models).toContain('gpt-5.6');
+      expect(live.routing).toEqual({ fast: 'gpt-5.6-mini', deep: 'gpt-5.6' });
+      // Auto asks now route on the LIVE tiers (cache shared with /api/ask).
+      const ask = (await (
+        await fetch(`${s.url}api/ask`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            driverId: 'openai',
+            model: 'auto',
+            question: 'what is a baseline?',
+            browserKey: 'your-key',
+          }),
+        })
+      ).json()) as { servedModel: string };
+      expect(ask.servedModel).toBe('gpt-5.6-mini');
+    } finally {
+      await s.close();
+    }
+  });
+});
+
+describe('auto model routing — deterministic, disclosed', () => {
+  const bundle = buildLearnBundle();
+  const anthropic = getDriver('anthropic')!;
+
+  it('routes quick lookups to the fast tier and reasoning to the deep tier', () => {
+    expect(routeModel(anthropic, 'what is a baseline?')).toMatchObject({
+      model: 'claude-haiku-4-5',
+      tier: 'fast',
+    });
+    expect(routeModel(anthropic, 'why is my PR blocked and how do I fix it?')).toMatchObject({
+      model: 'claude-opus-5',
+      tier: 'deep',
+      reason: 'reasoning-shaped question',
+    });
+    expect(routeModel(anthropic, 'list gates', { detail: true }).tier).toBe('deep');
+    expect(routeModel(anthropic, 'and then?', { historyLength: 8 }).tier).toBe('deep');
+    expect(routeModel(getDriver('custom')!, 'anything').reason).toContain('single-model');
+  });
+
+  it('serve: model "auto" routes and the response discloses the decision', async () => {
+    let seenModel = '';
+    const fetchFn = (async (_url: unknown, init: unknown) => {
+      seenModel = JSON.parse(String((init as RequestInit).body)).model;
+      return new Response(
+        JSON.stringify({ stop_reason: 'end_turn', content: [{ type: 'text', text: 'ok `x`' }] }),
+        { status: 200 },
+      );
+    }) as typeof fetch;
+    const s = await startLearnServer(bundle, null, { fetchFn });
+    try {
+      const res = await fetch(`${s.url}api/ask`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          driverId: 'anthropic',
+          model: 'auto',
+          question: 'what is a baseline?',
+          browserKey: 'your-key',
+        }),
+      });
+      const body = (await res.json()) as {
+        routed: boolean;
+        servedModel: string;
+        routeTier: string;
+        routeReason: string;
+        answerHtml: string;
+      };
+      expect(seenModel).toBe('claude-haiku-4-5');
+      expect(body.routed).toBe(true);
+      expect(body.servedModel).toBe('claude-haiku-4-5');
+      expect(body.routeTier).toBe('fast');
+      expect(body.routeReason.length).toBeGreaterThan(0);
+      // Answers come back rendered by the ONE pinned markdown renderer.
+      expect(body.answerHtml).toContain('<code>x</code>');
+    } finally {
+      await s.close();
+    }
+  });
+
+  it('an explicit model always wins over routing', async () => {
+    let seenModel = '';
+    const fetchFn = (async (_url: unknown, init: unknown) => {
+      seenModel = JSON.parse(String((init as RequestInit).body)).model;
+      return new Response(
+        JSON.stringify({ stop_reason: 'end_turn', content: [{ type: 'text', text: 'ok' }] }),
+        { status: 200 },
+      );
+    }) as typeof fetch;
+    const s = await startLearnServer(bundle, null, { fetchFn });
+    try {
+      const res = await fetch(`${s.url}api/ask`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          driverId: 'anthropic',
+          model: 'claude-sonnet-5',
+          question: 'why why why?',
+          browserKey: 'your-key',
+        }),
+      });
+      const body = (await res.json()) as { routed: boolean; servedModel: string };
+      expect(seenModel).toBe('claude-sonnet-5');
+      expect(body.routed).toBe(false);
+      expect(body.servedModel).toBe('claude-sonnet-5');
+    } finally {
+      await s.close();
+    }
   });
 });
