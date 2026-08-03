@@ -401,6 +401,15 @@ const ASSISTANT_JS = `
     el('q').value = b.getAttribute('data-q');
     ask();
   });
+  /* Askable home tiles (serve only): clicking a stat tile opens the
+     assistant with the tile's matched question prefilled and asks it. */
+  document.addEventListener('click', function (ev) {
+    var s = ev.target.closest('.stat[data-q]');
+    if (!s) return;
+    openPanel();
+    el('q').value = s.getAttribute('data-q');
+    ask();
+  });
   el('q').addEventListener('keydown', function (ev) {
     if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); ask(); }
   });

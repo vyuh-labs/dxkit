@@ -277,6 +277,8 @@ body.spa .view.active { display:block; animation:viewin .14s ease; }
   margin:22px 0 6px; }
 .stat { background:var(--card); border:1px solid var(--border); border-radius:var(--radius);
   padding:14px 16px; }
+.stat[data-q] { cursor:pointer; transition:border-color .12s ease; }
+.stat[data-q]:hover, .stat[data-q]:focus-visible { border-color:var(--accent); }
 .stat-n { font-size:26px; font-weight:700; color:var(--accent); line-height:1.1; }
 .stat-s { font-size:12px; color:var(--muted); margin-top:5px; line-height:1.45; }
 .stat-note { grid-column:1/-1; font-size:11.5px; color:var(--muted); margin:2px 2px 0; }
