@@ -1,6 +1,7 @@
 /** THE command registry data (CLAUDE.md Rule 16) — one descriptor per top-level
  *  CLI command; `commands.ts` re-exports `COMMANDS` + `CommandId` + helpers. */
 import type { CapabilityDescriptor } from './command-types';
+import { dxkitCli } from '../self-invocation';
 import { INTERNAL_COMMANDS } from './command-defs-internal';
 import { GATE_COMMANDS } from './command-defs-gate';
 import {
@@ -356,6 +357,14 @@ export const COMMANDS = [
     typicalRuntime: '< 10 sec',
     docsBlurb:
       'Generate a self-contained HTML guide: every capability by tier, the mental-model docs, what dxkit verifies and what it cannot, plus (in a repo) live doctor status and a read-only setup checklist. Works in an empty directory too. --serve adds a local grounded assistant (bring-your-own LLM key; localhost only).',
+  },
+  {
+    id: 'mcp',
+    audience: 'user',
+    group: 'explore',
+    summary: 'MCP server: dxkit’s read-only repo tools for any coding agent',
+    typicalRuntime: 'runs until the agent closes it',
+    docsBlurb: `Serve dxkit’s read-only point-query tools (function callers/callees, file blast radius, file history, file owners, baseline findings) over the Model Context Protocol so any MCP-capable coding agent can call them. stdio only — no port, no network listener; register once with e.g. \`claude mcp add dxkit -- ${dxkitCli('mcp')}\`. \`--no-names\` suppresses contributor names.`,
   },
   {
     id: 'context',
