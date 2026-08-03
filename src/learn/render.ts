@@ -148,8 +148,14 @@ function repoStatusView(status: LearnRepoStatus): string {
     </div>`);
   }
   for (const b of status.baselines) {
+    const src =
+      b.source === 'anchor'
+        ? ' <span class="pill">live from the anchor branch</span>'
+        : b.source === 'tree'
+          ? ' <span class="pill">in-tree copy — anchor unreachable, may lag</span>'
+          : '';
     parts.push(
-      `<div class="status-line"><span class="badge-ok">●</span> baseline <code>${escapeHtml(b.name)}</code>: ${b.entryCount} grandfathered findings${b.capturedAt ? `, captured ${escapeHtml(b.capturedAt.slice(0, 10))}` : ''}</div>`,
+      `<div class="status-line"><span class="badge-ok">●</span> baseline <code>${escapeHtml(b.name)}</code>: ${b.entryCount} grandfathered findings${b.capturedAt ? `, captured ${escapeHtml(b.capturedAt.slice(0, 10))}` : ''}${src}</div>`,
     );
   }
   if (status.lastVerdict) {
