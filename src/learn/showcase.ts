@@ -153,7 +153,20 @@ export interface RepoHomeStatus {
     ranAt: string;
   } | null;
   jobs?: Array<{ name: string; nextRunUtc?: string }>;
+  /** Tier-1 repo profile projection (repo-status.ts owns the reads). */
+  profile?: {
+    graph: {
+      functionCount: number;
+      fileCount: number;
+      refreshedAt?: string;
+      stale: boolean;
+    } | null;
+    debt: { bySeverity: Record<string, number> } | null;
+  };
 }
+
+/** Canonical severity display order for the debt shape. */
+const SEVERITY_ORDER = ['critical', 'high', 'medium', 'low', 'unrated'];
 
 function esc(s: string): string {
   return s
@@ -186,10 +199,14 @@ export function renderRepoHome(status: RepoHomeStatus, opts: { serve: boolean })
     ? `<div class="stat"><div class="stat-n ${verdictWord === 'PASSED' ? 'ok' : 'bad'}">${verdictWord}</div><div class="stat-s">last guardrail verdict (${esc(v.ranAt.slice(0, 10))})${v.blockingCount ? ` · ${v.blockingCount} blocking` : ''}${v.warningCount ? ` · ${v.warningCount} warnings` : ''}</div></div>`
     : `<div class="stat"><div class="stat-n">—</div><div class="stat-s">no cached verdict yet · run <code>vyuh-dxkit guardrail check</code></div></div>`;
 
-  // Tile 2: the baseline.
+  // Tile 2: the baseline, with the debt's severity shape when known.
   const b = status.baselines[0];
+  const bySev = status.profile?.debt?.bySeverity ?? {};
+  const sevShape = SEVERITY_ORDER.filter((k) => (bySev[k] ?? 0) > 0)
+    .map((k) => `${bySev[k]} ${k}`)
+    .join(' · ');
   const baselineTile = b
-    ? `<div class="stat"><div class="stat-n">${b.entryCount}</div><div class="stat-s">grandfathered findings in baseline <code>${esc(b.name)}</code>${b.capturedAt ? `, captured ${esc(b.capturedAt.slice(0, 10))}` : ''}</div></div>`
+    ? `<div class="stat"><div class="stat-n">${b.entryCount}</div><div class="stat-s">grandfathered findings in baseline <code>${esc(b.name)}</code>${b.capturedAt ? `, captured ${esc(b.capturedAt.slice(0, 10))}` : ''}${sevShape ? ` · ${esc(sevShape)}` : ''}</div></div>`
     : `<div class="stat"><div class="stat-n">—</div><div class="stat-s">no committed baseline · <code>vyuh-dxkit baseline create</code> (or the refresh lane)</div></div>`;
 
   // Tile 3: automation.
@@ -200,7 +217,13 @@ export function renderRepoHome(status: RepoHomeStatus, opts: { serve: boolean })
     .sort()[0];
   const autoTile = `<div class="stat"><div class="stat-n">${jobs.length}</div><div class="stat-s">dxkit workflows installed${nextRun ? ` · next scheduled run ${esc(nextRun)} UTC` : ''}</div></div>`;
 
-  // Tile 4: setup health (advisory items are advice, not gaps).
+  // Tile 4: the map (tier-1 profile; freshness always stated).
+  const g = status.profile?.graph;
+  const graphTile = g
+    ? `<div class="stat"><div class="stat-n">${g.functionCount.toLocaleString('en-US')}</div><div class="stat-s">functions in the code graph, ${g.fileCount.toLocaleString('en-US')} files${g.refreshedAt ? ` · refreshed ${esc(g.refreshedAt.slice(0, 10))}` : ''}${g.stale ? ` · STALE — <code>vyuh-dxkit describe</code>` : ''}</div></div>`
+    : `<div class="stat"><div class="stat-n">—</div><div class="stat-s">code graph not set up · <code>vyuh-dxkit describe</code></div></div>`;
+
+  // Tile 5: setup health (advisory items are advice, not gaps).
   const failing = (status.doctor?.checks ?? []).filter((c) => !c.ok && !c.advisory);
   const setupTile =
     failing.length === 0
@@ -233,7 +256,7 @@ export function renderRepoHome(status: RepoHomeStatus, opts: { serve: boolean })
       </div>
       ${notInstalled}
     </div>
-    <div class="stats">${verdictTile}${baselineTile}${autoTile}${setupTile}</div>
+    <div class="stats">${verdictTile}${baselineTile}${autoTile}${graphTile}${setupTile}</div>
     ${attention}</section>`;
 }
 
