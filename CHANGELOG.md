@@ -12,6 +12,61 @@ runs of the scheduled lanes plus the issue backlog, shipped as one cycle.
 Eight work packages, each landing its fix together with the regression net
 that keeps the class from recurring — plus the learn surface below.
 
+### Repo intelligence: the profile, the point-query tools, and MCP (#254)
+
+- **The learn page opens on YOUR repo.** In repo mode the first screen is a
+  home dashboard: the last guardrail verdict, the baseline with its debt
+  severity shape, the installed workflows with their next scheduled runs,
+  the code graph's size and freshness, and what setup remains — each tile
+  clickable in serve mode to ask the assistant about exactly that thing.
+- **A bounded repo profile grounds the assistant.** Graph shape with a
+  staleness stamp, grandfathered debt by kind and severity plus failing
+  floor checks, and the newest health report's ranked actions — computed
+  from committed artifacts at serve start (learn reads artifacts, never
+  runs analyzers). Every absent artifact answers with the exact enable
+  command. Under the branch anchor transport the baseline is read from the
+  SAME side-branch primitive the guardrail gates against, with the source
+  disclosed — never a stale tree copy presented as current.
+- **Point queries through read-only tools.** In repo mode the assistant can
+  call a registry of read-only tools instead of guessing: who calls a
+  function, what a file's change reaches (symbols + the tests that
+  exercise it), who owns or recently touched a file, what grandfathered
+  debt sits where, and the last cached guardrail verdict. Every executed
+  call is listed under the answer with its arguments; contributor names
+  ride only under the explicit detail toggle; a bounded loop caps
+  executions per question.
+- **`vyuh-dxkit mcp`.** The same tool registry served over the Model
+  Context Protocol (stdio only — no port, no network listener), so any
+  MCP-capable coding agent can register dxkit once and query the repo's
+  structure, history, ownership, debt, and verdict natively. Read-only by
+  construction: no write path exists on the surface, and nothing returned
+  feeds a verdict.
+- **The assistant teaches custom gates.** A worked "author your own gate"
+  guide — located checks (only net-new violations block, the backlog
+  grandfathers), binary checks and their honest limits, paired-change
+  rules, and when the SDK's findings wire is the right rung — ships in the
+  knowledge base with a starter chip, so "how do I gate our own rule?"
+  answers with schema-true JSON and the dry-run-then-baseline sequence.
+
+### Positioning and the front door
+
+- README and the docs front door rewritten around the settled headline:
+  map the code, prove each change is safe to merge, fix the debt, repeat.
+  The README shows the artifact first — real BLOCKED and CANNOT GATE
+  output, the six-causes table behind the verdict, the paved paths out of
+  a block — and states plainly when not to use dxkit.
+- The learn page's zero-context landing is a product showcase: a
+  three-act verdict walkthrough (blocked, bounded repair, passed), the
+  benchmark stat tiles with their qualifiers, and the refusal tier
+  explained.
+- Four new command reference pages (configure, remediate, jobs,
+  uninstall), a red-lane runbook, spend arithmetic for the remediation
+  lane, platform requirements, the clean-exit story, and monorepo notes.
+- OpenAI is the assistant's default driver (registry order is chooser
+  order); the Anthropic wire marks the grounding prefix cacheable so
+  repeat questions cost a fraction; conditional doctor items render as
+  advice instead of failures.
+
 ### The learn surface (#243, #244, #245, #246)
 
 - **Tiered help.** The default `--help` screen shows the five core commands
