@@ -186,6 +186,12 @@ function esc(s: string): string {
 export function renderRepoHome(status: RepoHomeStatus, opts: { serve: boolean }): string {
   const repoName = esc(status.cwd.replace(/\/+$/, '').split('/').pop() ?? 'this repo');
 
+  // Serve mode makes every tile ASKABLE: clicking opens the assistant with
+  // a question matched to what the tile shows (same mechanism as the
+  // chips). The static page has no assistant, so tiles stay plain.
+  const dq = (q: string): string =>
+    opts.serve ? ` data-q="${esc(q)}" role="button" tabindex="0"` : '';
+
   // Tile 1: the gate.
   const v = status.lastVerdict;
   const verdictWord = v
@@ -196,8 +202,8 @@ export function renderRepoHome(status: RepoHomeStatus, opts: { serve: boolean })
         : 'PASSED'
     : null;
   const verdictTile = v
-    ? `<div class="stat"><div class="stat-n ${verdictWord === 'PASSED' ? 'ok' : 'bad'}">${verdictWord}</div><div class="stat-s">last guardrail verdict (${esc(v.ranAt.slice(0, 10))})${v.blockingCount ? ` · ${v.blockingCount} blocking` : ''}${v.warningCount ? ` · ${v.warningCount} warnings` : ''}</div></div>`
-    : `<div class="stat"><div class="stat-n">—</div><div class="stat-s">no cached verdict yet · run <code>vyuh-dxkit guardrail check</code></div></div>`;
+    ? `<div class="stat"${dq('Explain our last guardrail verdict. What should we do about it?')}><div class="stat-n ${verdictWord === 'PASSED' ? 'ok' : 'bad'}">${verdictWord}</div><div class="stat-s">last guardrail verdict (${esc(v.ranAt.slice(0, 10))})${v.blockingCount ? ` · ${v.blockingCount} blocking` : ''}${v.warningCount ? ` · ${v.warningCount} warnings` : ''}</div></div>`
+    : `<div class="stat"${dq('How do I run the guardrail here and read its verdict?')}><div class="stat-n">—</div><div class="stat-s">no cached verdict yet · run <code>vyuh-dxkit guardrail check</code></div></div>`;
 
   // Tile 2: the baseline, with the debt's severity shape when known.
   const b = status.baselines[0];
@@ -206,8 +212,8 @@ export function renderRepoHome(status: RepoHomeStatus, opts: { serve: boolean })
     .map((k) => `${bySev[k]} ${k}`)
     .join(' · ');
   const baselineTile = b
-    ? `<div class="stat"><div class="stat-n">${b.entryCount}</div><div class="stat-s">grandfathered findings in baseline <code>${esc(b.name)}</code>${b.capturedAt ? `, captured ${esc(b.capturedAt.slice(0, 10))}` : ''}${sevShape ? ` · ${esc(sevShape)}` : ''}</div></div>`
-    : `<div class="stat"><div class="stat-n">—</div><div class="stat-s">no committed baseline · <code>vyuh-dxkit baseline create</code> (or the refresh lane)</div></div>`;
+    ? `<div class="stat"${dq('What does our debt look like?')}><div class="stat-n">${b.entryCount}</div><div class="stat-s">grandfathered findings in baseline <code>${esc(b.name)}</code>${b.capturedAt ? `, captured ${esc(b.capturedAt.slice(0, 10))}` : ''}${sevShape ? ` · ${esc(sevShape)}` : ''}</div></div>`
+    : `<div class="stat"${dq('How do I create a baseline here, and what does it do?')}><div class="stat-n">—</div><div class="stat-s">no committed baseline · <code>vyuh-dxkit baseline create</code> (or the refresh lane)</div></div>`;
 
   // Tile 3: automation.
   const jobs = status.jobs ?? [];
@@ -215,20 +221,20 @@ export function renderRepoHome(status: RepoHomeStatus, opts: { serve: boolean })
     .map((j) => j.nextRunUtc)
     .filter((x): x is string => !!x)
     .sort()[0];
-  const autoTile = `<div class="stat"><div class="stat-n">${jobs.length}</div><div class="stat-s">dxkit workflows installed${nextRun ? ` · next scheduled run ${esc(nextRun)} UTC` : ''}</div></div>`;
+  const autoTile = `<div class="stat"${dq('What do our installed dxkit workflows do, and when do they run?')}><div class="stat-n">${jobs.length}</div><div class="stat-s">dxkit workflows installed${nextRun ? ` · next scheduled run ${esc(nextRun)} UTC` : ''}</div></div>`;
 
   // Tile 4: the map (tier-1 profile; freshness always stated).
   const g = status.profile?.graph;
   const graphTile = g
-    ? `<div class="stat"><div class="stat-n">${g.functionCount.toLocaleString('en-US')}</div><div class="stat-s">functions in the code graph, ${g.fileCount.toLocaleString('en-US')} files${g.refreshedAt ? ` · refreshed ${esc(g.refreshedAt.slice(0, 10))}` : ''}${g.stale ? ` · STALE — <code>vyuh-dxkit describe</code>` : ''}</div></div>`
-    : `<div class="stat"><div class="stat-n">—</div><div class="stat-s">code graph not set up · <code>vyuh-dxkit describe</code></div></div>`;
+    ? `<div class="stat"${dq('Is the code graph fresh here, and what are its hub functions?')}><div class="stat-n">${g.functionCount.toLocaleString('en-US')}</div><div class="stat-s">functions in the code graph, ${g.fileCount.toLocaleString('en-US')} files${g.refreshedAt ? ` · refreshed ${esc(g.refreshedAt.slice(0, 10))}` : ''}${g.stale ? ` · STALE — <code>vyuh-dxkit describe</code>` : ''}</div></div>`
+    : `<div class="stat"${dq('How do I set up the code graph here, and what does it enable?')}><div class="stat-n">—</div><div class="stat-s">code graph not set up · <code>vyuh-dxkit describe</code></div></div>`;
 
   // Tile 5: setup health (advisory items are advice, not gaps).
   const failing = (status.doctor?.checks ?? []).filter((c) => !c.ok && !c.advisory);
   const setupTile =
     failing.length === 0
-      ? `<div class="stat"><div class="stat-n ok">✓</div><div class="stat-s">doctor: everything wired</div></div>`
-      : `<div class="stat"><div class="stat-n bad">${failing.length}</div><div class="stat-s">setup item${failing.length === 1 ? '' : 's'} to finish · <a href="#setup-panel">see remedies</a></div></div>`;
+      ? `<div class="stat"${dq("Is anything missing in this repo's dxkit setup?")}><div class="stat-n ok">✓</div><div class="stat-s">doctor: everything wired</div></div>`
+      : `<div class="stat"${dq("What is missing in this repo's setup, and how do I fix it?")}><div class="stat-n bad">${failing.length}</div><div class="stat-s">setup item${failing.length === 1 ? '' : 's'} to finish · <a href="#setup-panel">see remedies</a></div></div>`;
 
   const attention =
     failing.length > 0

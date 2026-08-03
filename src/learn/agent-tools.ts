@@ -37,6 +37,7 @@ import {
 import type { Graph } from '../explore/types';
 import { ownersFor } from '../analyzers/developer/ownership';
 import { readBaselineFile } from '../baseline/baseline-file';
+import { readVerdictForTree } from '../baseline/verdict-cache';
 
 /** JSON-Schema subset both provider wires (and MCP) accept verbatim. */
 export interface AgentToolSchema {
@@ -384,5 +385,38 @@ export function agentTools(
     },
   };
 
-  return [callers, callees, blast, whoEdited, owners, debt];
+  const verdict: AgentTool = {
+    name: 'guardrail_verdict',
+    description:
+      'The last cached guardrail verdict for THIS exact working tree: PASSED / BLOCKED / CANNOT GATE with blocking and warning counts and when it ran. The cache is same-tree — any file change invalidates it.',
+    inputSchema: { type: 'object', properties: {} },
+    run: () => {
+      let v;
+      try {
+        v = readVerdictForTree(ctx.cwd);
+      } catch {
+        v = null;
+      }
+      if (!v) {
+        return "No cached guardrail verdict for this tree — run 'vyuh-dxkit guardrail check' to produce one (the cache is same-tree: any file change invalidates it).";
+      }
+      const word = v.unattributableCount > 0 ? 'CANNOT GATE' : v.blocks ? 'BLOCKED' : 'PASSED';
+      const lines = [
+        `${word} (${v.blockingCount} blocking, ${v.warningCount} warnings), ran at ${v.ranAt}`,
+      ];
+      if (v.blockingFindings?.length) {
+        if (ctx.detail) {
+          for (const f of v.blockingFindings) {
+            lines.push(`  blocking: kind=${f.kind}, fingerprint=${f.fingerprint}`);
+          }
+        } else {
+          // Same tier as the grounding: fingerprints ride only under detail.
+          lines.push('  blocking-finding fingerprints are behind the detail toggle.');
+        }
+      }
+      return lines.join('\n');
+    },
+  };
+
+  return [callers, callees, blast, whoEdited, owners, debt, verdict];
 }
