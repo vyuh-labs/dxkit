@@ -33,8 +33,13 @@ that keeps the class from recurring — plus the learn surface below.
   checklist with copy-paste remedies.
 - **The knowledge base is the whole documentation set, and it cannot
   drift.** The page ships the entire docs tree (command reference,
-  configuration and policy reference, benchmarks, the extension SDK) plus
-  the installed agent-skill and remediation-task catalogs, all searchable.
+  configuration and policy reference, benchmarks, the extension SDK), a
+  complete policy field reference generated from the policy schema
+  itself, the installed agent-skill catalog, and the remediation-task
+  catalog with each task's model-tier rationale and verification hinge —
+  all searchable. New guides cover operating the lanes (schedules,
+  one-off dispatch campaigns, budgets) and a step-by-step bot-token
+  setup for admins.
   A coverage test enforces that every command, policy knob, skill, task,
   and doc is in the bundle or declared-excluded with a reason — a feature
   or doc that skips the knowledge base fails CI.
@@ -43,9 +48,13 @@ that keeps the class from recurring — plus the learn surface below.
   your own LLM key: auto-detected from the environment (never sent to the
   browser) or entered in the page (held in tab memory, relayed per
   request, never stored). Three providers — Anthropic, OpenAI, any
-  OpenAI-compatible endpoint — with an **Auto** model choice that routes
-  each question deterministically between a fast tier and a deep tier and
-  discloses, under every answer, which model served and why. Repo
+  OpenAI-compatible endpoint — and the model chooser loads the LIVE model
+  list from the provider with your key (compiled-in suggestions remain
+  only as a labeled offline fallback, so the chooser is never a stale
+  snapshot). An **Auto** model choice routes each question
+  deterministically between a fast tier and a deep tier — resolved
+  against the live list, newest models win — and discloses, under every
+  answer, which model served and why. Repo
   grounding defaults to summaries and counts; finding-level detail sits
   behind a visible toggle, and the page states exactly what is sent —
   generated from the same assembly as the payload, so the disclosure

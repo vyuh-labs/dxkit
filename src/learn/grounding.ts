@@ -29,7 +29,8 @@ const ASSISTANT_CHARTER = `You are the dxkit learn assistant, running locally ne
 Answer ONLY from the grounding below — the registry digest, the docs, and (when present) this repo's status.
 When the answer is an action, produce the EXACT command to run, or the sentence to tell a coding agent.
 You execute nothing and cannot change anything; the one configuration write path is 'vyuh-dxkit configure --apply', which you may quote but the user runs.
-If the grounding does not answer a question, say so plainly and point to 'vyuh-dxkit doctor' or the docs; never invent capabilities or flags.`;
+Your knowledge is version-locked: you know exactly the capabilities of the dxkit version named below (the one installed here), generated from its own registries — never speculate about newer or older versions.
+If the grounding does not answer a question, say so plainly, suggest 'vyuh-dxkit doctor' or the reference shelf, and point the user to the public repository (github.com/vyuh-labs/dxkit) or 'vyuh-dxkit issue' to report the documentation gap; never invent capabilities or flags.`;
 
 export function assembleGrounding(
   bundle: LearnBundle,
@@ -50,8 +51,17 @@ export function assembleGrounding(
   );
   parts.push(`## Capability registry (dxkit v${bundle.version})\n${capLines.join('\n')}`);
   parts.push(`## Policy knobs\n${knobLines.join('\n')}`);
+  if (bundle.policyFields.length > 0) {
+    const fieldLines = bundle.policyFields.map(
+      (f) =>
+        `- ${f.path} (${f.type}${f.default !== undefined ? `, default ${f.default}` : ''}${f.enum ? `, one of: ${f.enum.join('|')}` : ''}): ${f.description || '(no description)'}`,
+    );
+    parts.push(
+      `## Policy field reference (every field .dxkit/policy.json accepts)\n${fieldLines.join('\n')}`,
+    );
+  }
   disclosure.push(
-    `The capability registry: every command name + description, and policy knob names (product facts, no repo data).`,
+    `The capability registry: every command name + description, policy knob names, and the full policy field reference (product facts, no repo data).`,
   );
 
   // 2. The curated docs + the grounded slice of the reference shelf — all
@@ -71,7 +81,14 @@ export function assembleGrounding(
   }
   if (bundle.tasks.length > 0) {
     parts.push(
-      `## Remediation lane tasks\n${bundle.tasks.map((t) => `- ${t.id} (${t.tier} tier): ${t.summary}`).join('\n')}`,
+      `## Remediation lane tasks\n${bundle.tasks
+        .map(
+          (t) =>
+            `- ${t.id} (${t.tier} tier — ${t.tierWhy}): ${t.summary} Verified by the ${t.verify}${t.hinge ? `; score hinge: ${t.hinge}` : ''}.`,
+        )
+        .join(
+          '\n',
+        )}\nTasks run on the scheduled lane, or as one-off dispatch campaigns from the Actions UI (workflow_dispatch inputs: task, custom prompt, spend/turn/minute overrides — clamped by remediate.maxDispatchBudget). Everything lands only via a PR through the gate.`,
     );
   }
   disclosure.push(
@@ -116,6 +133,9 @@ export function assembleGrounding(
         }
       }
     }
+    if (detail && status.rawPolicyText) {
+      s.push(`full committed policy.json:\n${status.rawPolicyText}`);
+    }
     if (detail && status.lastVerdict?.blockingFindings?.length) {
       for (const f of status.lastVerdict.blockingFindings) {
         s.push(`  blocking finding: kind=${f.kind}, fingerprint=${f.fingerprint}`);
@@ -124,7 +144,7 @@ export function assembleGrounding(
     parts.push(`## This repo (live status)\n${s.join('\n')}`);
     disclosure.push(
       detail
-        ? `This repo's status IN DETAIL: policy summary, baseline counts, the last verdict, each failing doctor check with its remedy, and blocking-finding fingerprints. (Detail toggle is ON.)`
+        ? `This repo's status IN DETAIL: the full committed policy.json, baseline counts, the last verdict, each failing doctor check with its remedy, and blocking-finding fingerprints. (Detail toggle is ON.)`
         : `This repo's status as SUMMARIES ONLY: policy summary, baseline entry counts, the last verdict word, and doctor pass/fail counts. No file paths, no finding contents, no check labels. (Turn on the detail toggle to include failing checks + remedies.)`,
     );
   } else {

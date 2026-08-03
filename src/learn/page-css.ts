@@ -138,6 +138,9 @@ pre:hover .copybtn, .fix:hover .copybtn { opacity:1; }
 .list-plain li { background:var(--card); border:1px solid var(--border); border-radius:8px; padding:10px 14px; font-size:12.5px; }
 .list-plain li b { color:var(--text); font-weight:650; }
 .list-plain li .tier { float:right; font-size:10px; color:var(--muted); background:var(--raise); border-radius:12px; padding:1px 8px; }
+.task-why { font-size:11px; color:var(--muted); }
+.models-note { font-size:11px; color:var(--muted); }
+.models-note.live { color:var(--ok); }
 
 /* search palette */
 .palette-overlay { position:fixed; inset:0; z-index:60; background:rgba(0,0,0,.35); display:none;

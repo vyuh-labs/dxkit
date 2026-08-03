@@ -69,6 +69,25 @@ describe('KB coverage — generated class (registries reach every surface)', () 
     }
   });
 
+  it('every policy schema field is in the bundle, the page, and the grounding', () => {
+    const schema = JSON.parse(
+      fs.readFileSync(path.join(REPO_ROOT, 'policy.schema.json'), 'utf-8'),
+    ) as { properties?: Record<string, unknown> };
+    expect(bundle.policyFields.length).toBeGreaterThan(40);
+    // Every top-level schema property appears as a field path root.
+    for (const top of Object.keys(schema.properties ?? {})) {
+      expect(
+        bundle.policyFields.some((f) => f.path === top || f.path.startsWith(`${top}.`)),
+        `schema field ${top} missing from bundle`,
+      ).toBe(true);
+    }
+    for (const f of bundle.policyFields) {
+      expect(grounding.system, `grounding missing policy field ${f.path}`).toContain(f.path);
+    }
+    expect(html).toContain('Policy field reference');
+    expect(html).toContain('"k":"policy field"');
+  });
+
   it('every remediation task is in the bundle, the page, and the grounding', () => {
     expect(REMEDIATE_TASKS.length).toBeGreaterThan(3);
     for (const t of REMEDIATE_TASKS) {
@@ -149,5 +168,26 @@ describe('KB content — the previously-missing narratives exist', () => {
     expect(html).toContain('Remediation lane tasks');
     expect(html).toContain('Agent skills');
     expect(KB_EXCLUDED.length).toBeGreaterThanOrEqual(0);
+  });
+
+  it('the admin path walks bot-token creation; lanes guide covers campaigns + budgets', () => {
+    const admin = bundle.docs.find((d) => d.slug === 'quickstart-admin')!;
+    expect(admin.markdown).toContain('Fine-grained tokens');
+    expect(admin.markdown).toContain('gh secret set DXKIT_BOT_TOKEN');
+    const lanes = bundle.docs.find((d) => d.slug === 'operating-the-lanes')!;
+    expect(lanes.markdown).toContain('maxDispatchBudget');
+    expect(lanes.markdown).toContain('Run workflow');
+    expect(grounding.system).toContain('maxDispatchBudget');
+  });
+
+  it('task detail (tier reason + verification hinge) reaches the page and grounding', () => {
+    const hinged = bundle.tasks.find((t) => t.hinge);
+    expect(hinged, 'expected at least one score-hinged task').toBeDefined();
+    expect(html).toContain('Score hinge:');
+    expect(grounding.system).toContain('score hinge');
+    for (const t of bundle.tasks) {
+      expect(t.tierWhy.length).toBeGreaterThan(0);
+      expect(['floor', 'guardrail']).toContain(t.verify);
+    }
   });
 });

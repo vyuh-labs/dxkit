@@ -62,6 +62,14 @@ function buildSearchIndex(bundle: LearnBundle, status: LearnRepoStatus | null): 
       if (h) out.push({ t: h[1], k: 'doc section', a: `#${slugify(h[1])}`, s: d.title });
     }
   }
+  for (const f of bundle.policyFields) {
+    out.push({
+      t: f.path,
+      k: 'policy field',
+      a: '#policy-reference',
+      s: f.description.slice(0, 160),
+    });
+  }
   for (const r of bundle.reference) {
     out.push({
       t: r.title,
@@ -219,7 +227,15 @@ function assistantPanel(): string {
     <div class="ap-row" id="detail-row" hidden>
       <label><input type="checkbox" id="detail"> Include finding-level detail (off = summaries and counts only)</label>
     </div>
+    <div class="ap-row"><span id="models-note" class="models-note"></span></div>
     <details class="ap-disclosure" id="sent-note"><summary>Exactly what is sent with each question</summary><ul id="disclosure"></ul></details>
+    <details class="ap-disclosure"><summary>How this assistant works</summary>
+      <ul>
+        <li>It answers from a fixed knowledge pack: this dxkit version's own registries (every command and policy field), the shipped docs, and — in a repo — this repo's dxkit status (policy, doctor results, baselines, last verdict), gathered when the server started.</li>
+        <li>It does NOT read your source code, does not browse the internet or GitHub, and cannot run anything. Its knowledge is version-locked to the installed dxkit.</li>
+        <li>Your question + the grounding go directly from this machine to the provider you chose, with your key. dxkit stores nothing.</li>
+      </ul>
+    </details>
   </div>
   <div class="ap-chat" id="chat">
     <div class="ap-empty" id="chat-empty">Ask anything about dxkit${''} or this repo.<br><br>“Why is my PR blocked?”<br>“What should we adopt next?”<br>“How do I defer a finding?”</div>
@@ -265,6 +281,8 @@ export function renderLearnHtml(
   nav.push(`<a href="#core">Start here</a>`);
   for (const g of groups) nav.push(`<a href="#group-${slugify(g)}">${escapeHtml(g)}</a>`);
   nav.push(`<div class="nav-label">Knowledge base</div>`);
+  if (bundle.policyFields.length > 0)
+    nav.push(`<a href="#policy-reference">Policy fields (${bundle.policyFields.length})</a>`);
   if (bundle.skills.length > 0) nav.push(`<a href="#skills">Agent skills</a>`);
   if (bundle.tasks.length > 0) nav.push(`<a href="#tasks">Remediation tasks</a>`);
   if (bundle.reference.length > 0)
@@ -315,9 +333,23 @@ export function renderLearnHtml(
       <ul class="list-plain">${bundle.tasks
         .map(
           (t) =>
-            `<li><span class="tier">${escapeHtml(t.tier)}</span><b>${escapeHtml(t.id)}</b><br>${escapeHtml(t.summary)}</li>`,
+            `<li><span class="tier">${escapeHtml(t.tier)} · ${escapeHtml(t.verify)}</span><b>${escapeHtml(t.id)}</b><br>${escapeHtml(t.summary)}<br><span class="task-why">Model tier: ${escapeHtml(t.tierWhy)}${t.hinge ? `<br>Score hinge: ${escapeHtml(t.hinge)}` : ''}</span></li>`,
         )
-        .join('')}</ul></section>`);
+        .join('')}</ul>
+      <div class="note">Run tasks two ways: the <strong>scheduled lane</strong> (cron, the tasks enabled in policy), or a <strong>one-off dispatch campaign</strong> from the GitHub Actions UI (Run workflow → pick a task or <code>custom</code> with a free-text prompt, plus spend/turn/minute overrides — clamped by <code>remediate.maxDispatchBudget</code>). Either way, work lands ONLY via a pull request through the same gate, with the dispatcher, prompt, model, and spend disclosed in the PR body.</div></section>`);
+  }
+  if (bundle.policyFields.length > 0) {
+    const rows = bundle.policyFields
+      .map(
+        (f) =>
+          `<tr><td><code>${escapeHtml(f.path)}</code></td><td>${escapeHtml(f.type)}${f.enum ? `<br><span class="task-why">${f.enum.map(escapeHtml).join(' | ')}</span>` : ''}</td><td>${f.default !== undefined ? `<code>${escapeHtml(f.default)}</code>` : ''}</td><td>${escapeHtml(f.description)}</td></tr>`,
+      )
+      .join('');
+    body.push(`<section class="view" id="policy-reference" data-title="Policy field reference" data-crumb="Knowledge base">
+      <h2 class="section">Policy field reference</h2>
+      <p class="section-sub">Every field <code>.dxkit/policy.json</code> accepts — ${bundle.policyFields.length} fields, generated from the same schema the file validates against, so this table cannot drift from the product. See also the narrative <a href="#ref-${slugify('configuration/policy-guide.md')}">policy guide</a>.</p>
+      <div class="doc"><table><thead><tr><th>Field</th><th>Type</th><th>Default</th><th>What it does</th></tr></thead><tbody>${rows}</tbody></table></div>
+    </section>`);
   }
   if (bundle.reference.length > 0) {
     const refGroups = [...new Set(bundle.reference.map((r) => r.group))];

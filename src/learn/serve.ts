@@ -23,8 +23,11 @@ import {
   LLM_DRIVERS,
   envKeyFor,
   getDriver,
+  listModels,
   relayAsk,
+  resolveRouting,
   routeModel,
+  type ProviderModel,
 } from './drivers';
 import { markdownToHtml } from './markdown';
 
@@ -40,6 +43,12 @@ export interface ServeOptions {
   port?: number;
   /** Injectable for tests. */
   fetchFn?: typeof fetch;
+}
+
+interface ModelsBody {
+  driverId?: string;
+  browserKey?: string;
+  baseUrl?: string;
 }
 
 interface AskBody {
@@ -109,6 +118,10 @@ export async function startLearnServer(
   opts: ServeOptions = {},
 ): Promise<LearnServer> {
   const fetchFn = opts.fetchFn ?? fetch;
+  // Live model lists per driver(+base URL), fetched with the user's key so
+  // the chooser is never a stale hardcoded snapshot. Session-scoped cache;
+  // the compiled-in suggestions remain the labeled offline fallback.
+  const modelCache = new Map<string, ProviderModel[]>();
   const html = renderLearnHtml(bundle, status, {
     generatedAt: new Date().toISOString(),
     serve: true,
@@ -125,6 +138,62 @@ export async function startLearnServer(
       if (req.method === 'GET' && url.startsWith('/api/status')) {
         const detail = new URL(url, 'http://localhost').searchParams.get('detail') === '1';
         json(res, 200, buildStatusPayload(bundle, status, detail));
+        return;
+      }
+      if (req.method === 'POST' && url === '/api/models') {
+        const raw = await readBody(req);
+        if (raw === null) {
+          json(res, 413, { error: 'request body too large' });
+          return;
+        }
+        let body: ModelsBody;
+        try {
+          body = JSON.parse(raw) as ModelsBody;
+        } catch {
+          json(res, 400, { error: 'invalid JSON' });
+          return;
+        }
+        const driver = getDriver(body.driverId ?? '');
+        if (!driver) {
+          json(res, 400, { error: `unknown driver: ${body.driverId ?? '(none)'}` });
+          return;
+        }
+        const baseUrl =
+          (body.baseUrl ?? '').trim() || process.env[CUSTOM_BASE_URL_ENV] || undefined;
+        const apiKey = envKeyFor(driver) ?? (body.browserKey ?? '').trim();
+        const cacheKey = `${driver.id}|${baseUrl ?? ''}`;
+        const fallback = {
+          live: false,
+          models: driver.suggestedModels,
+          routing: driver.routing ?? null,
+          note: 'suggestions from this dxkit release — may be outdated; enter a key to load the live list from the provider',
+        };
+        if (apiKey.length === 0) {
+          json(res, 200, fallback);
+          return;
+        }
+        let models = modelCache.get(cacheKey);
+        if (!models) {
+          const listed = await listModels({ driver, apiKey, baseUrl }, fetchFn);
+          if (!listed.ok || !listed.models) {
+            json(res, 200, {
+              ...fallback,
+              note: `${fallback.note} (live fetch failed: ${listed.error})`,
+            });
+            return;
+          }
+          models = listed.models;
+          modelCache.set(cacheKey, models);
+        }
+        const sorted = [...models].sort(
+          (a, b) => (b.created ?? 0) - (a.created ?? 0) || b.id.localeCompare(a.id),
+        );
+        json(res, 200, {
+          live: true,
+          models: sorted.map((m) => m.id),
+          routing: resolveRouting(driver, models) ?? null,
+          note: 'live list from the provider, fetched with your key',
+        });
         return;
       }
       if (req.method === 'POST' && url === '/api/ask') {
@@ -172,9 +241,19 @@ export async function startLearnServer(
         // driver's fast/deep tiers; an explicit model always wins. The
         // decision is returned and shown under the answer — never silent.
         const requested = (body.model ?? '').trim();
+        const routeBaseUrl =
+          (body.baseUrl ?? '').trim() || process.env[CUSTOM_BASE_URL_ENV] || undefined;
+        const liveRouting = resolveRouting(
+          driver,
+          modelCache.get(`${driver.id}|${routeBaseUrl ?? ''}`),
+        );
         const route =
           requested.length === 0 || requested === AUTO_MODEL
-            ? routeModel(driver, question, { detail: !!body.detail, historyLength: history.length })
+            ? routeModel(driver, question, {
+                detail: !!body.detail,
+                historyLength: history.length,
+                routing: liveRouting,
+              })
             : null;
         const result = await relayAsk(
           {

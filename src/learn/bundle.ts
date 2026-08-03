@@ -75,6 +75,20 @@ export interface LearnTask {
   id: string;
   summary: string;
   tier: string;
+  tierWhy: string;
+  /** Which verification the outcome hinges on (floor vs guardrail). */
+  verify: string;
+  /** Human line for the score hinge, when the task declares one. */
+  hinge?: string;
+}
+
+export interface LearnPolicyField {
+  /** Dotted path, e.g. `remediate.maxDispatchBudget`. */
+  path: string;
+  type: string;
+  description: string;
+  default?: string;
+  enum?: string[];
 }
 
 export interface LearnBundle {
@@ -87,6 +101,10 @@ export interface LearnBundle {
   reference: ReferenceDoc[];
   skills: LearnSkill[];
   tasks: LearnTask[];
+  /** EVERY policy field, flattened from the generated policy.schema.json —
+   *  the same schema the policy file validates against, so this reference
+   *  cannot drift from what the product accepts. */
+  policyFields: LearnPolicyField[];
 }
 
 /** Display order of the curated docs on the page. */
@@ -96,6 +114,7 @@ const DOC_SLUGS = [
   'quickstart-developer',
   'quickstart-reviewer',
   'quickstart-admin',
+  'operating-the-lanes',
   'extending-dxkit',
 ] as const;
 
@@ -138,6 +157,53 @@ export function learnDocsDir(): string {
   const packaged = path.join(__dirname, 'docs');
   if (fs.existsSync(packaged)) return packaged;
   return path.join(__dirname, '..', '..', 'docs', 'learn');
+}
+
+/** The generated policy schema shipped at the package root. */
+function policySchemaPath(): string {
+  return path.join(__dirname, '..', '..', 'policy.schema.json');
+}
+
+interface SchemaNode {
+  type?: string | string[];
+  description?: string;
+  default?: unknown;
+  enum?: unknown[];
+  properties?: Record<string, SchemaNode>;
+  items?: SchemaNode;
+  additionalProperties?: SchemaNode | boolean;
+}
+
+function flattenSchema(node: SchemaNode, prefix: string, out: LearnPolicyField[]): void {
+  for (const [key, child] of Object.entries(node.properties ?? {})) {
+    const p = prefix ? `${prefix}.${key}` : key;
+    const type = Array.isArray(child.type) ? child.type.join('|') : (child.type ?? 'object');
+    out.push({
+      path: p,
+      type,
+      description: child.description ?? '',
+      default: child.default === undefined ? undefined : JSON.stringify(child.default),
+      enum: Array.isArray(child.enum) ? child.enum.map((e) => String(e)) : undefined,
+    });
+    if (child.properties) flattenSchema(child, p, out);
+    if (child.items?.properties) flattenSchema(child.items, `${p}[]`, out);
+    if (typeof child.additionalProperties === 'object' && child.additionalProperties.properties) {
+      flattenSchema(child.additionalProperties, `${p}.<name>`, out);
+    }
+  }
+}
+
+function loadPolicyFields(): LearnPolicyField[] {
+  try {
+    // policy-text-ok: this is policy.schema.json (the generated JSON-Schema
+    // artifact, strict JSON by construction), not a user's JSONC policy file.
+    const schema = JSON.parse(fs.readFileSync(policySchemaPath(), 'utf-8')) as SchemaNode; // policy-text-ok
+    const out: LearnPolicyField[] = [];
+    flattenSchema(schema, '', out);
+    return out;
+  } catch {
+    return [];
+  }
 }
 
 /** The packaged reference shelf (`dist/learn/docs-ref`), or the repo docs/. */
@@ -284,7 +350,17 @@ export function buildLearnBundle(): LearnBundle {
     docs: loadDocs(),
     reference: loadReference(),
     skills: loadSkills(),
-    tasks: REMEDIATE_TASKS.map((t) => ({ id: t.id, summary: t.summary, tier: String(t.tier) })),
+    tasks: REMEDIATE_TASKS.map((t) => ({
+      id: t.id,
+      summary: t.summary,
+      tier: String(t.tier),
+      tierWhy: t.tierWhy,
+      verify: t.verify,
+      hinge: t.scoreHinge
+        ? `must raise the ${t.scoreHinge.improve} score above the pristine-tree entry score (holding ${t.scoreHinge.holdSteady.join(', ') || 'nothing else'} steady) or nothing lands`
+        : undefined,
+    })),
+    policyFields: loadPolicyFields(),
   };
 }
 

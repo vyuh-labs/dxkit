@@ -238,28 +238,56 @@ const ASSISTANT_JS = `
     for (var i = 0; i < state.drivers.length; i++) if (state.drivers[i].id === id) return state.drivers[i];
     return null;
   }
-  function syncDriver() {
-    var d = currentDriver(); if (!d) return;
-    el('baseurl-row').hidden = !d.needsBaseUrl;
+  function fillModels(d, payload) {
     var ms = el('model-select');
+    var keep = ms.value;
     ms.replaceChildren();
-    if (d.routing) {
+    var routing = payload.routing || d.routing;
+    if (routing) {
       var auto = document.createElement('option');
       auto.value = 'auto';
-      auto.textContent = 'Auto — ' + d.routing.fast + ' ↔ ' + d.routing.deep;
+      auto.textContent = 'Auto — ' + routing.fast + ' ↔ ' + routing.deep;
       ms.appendChild(auto);
     }
-    d.suggestedModels.forEach(function (m) {
+    (payload.models || []).slice(0, 30).forEach(function (m) {
       var o = document.createElement('option'); o.value = m; o.textContent = m; ms.appendChild(o);
     });
     var custom = document.createElement('option');
     custom.value = CUSTOM_SENTINEL; custom.textContent = 'Other model…';
     ms.appendChild(custom);
-    ms.value = d.routing ? 'auto' : (d.suggestedModels[0] || CUSTOM_SENTINEL);
+    ms.value = keep && Array.prototype.some.call(ms.options, function (o) { return o.value === keep; })
+      ? keep : (routing ? 'auto' : ((payload.models || [])[0] || CUSTOM_SENTINEL));
     el('model-custom').hidden = ms.value !== CUSTOM_SENTINEL;
+    var note = el('models-note');
+    if (note) {
+      note.textContent = payload.note || '';
+      note.classList.toggle('live', !!payload.live);
+    }
+  }
+  function loadModels() {
+    var d = currentDriver(); if (!d) return;
+    fetch('/api/models', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        driverId: d.id,
+        browserKey: el('key').value,
+        baseUrl: el('baseurl').value.trim()
+      })
+    }).then(function (r) { return r.json(); })
+      .then(function (p) { fillModels(d, p); })
+      .catch(function () { fillModels(d, { models: d.suggestedModels, routing: d.routing,
+        note: 'suggestions from this dxkit release — may be outdated' }); });
+  }
+  function syncDriver() {
+    var d = currentDriver(); if (!d) return;
+    el('baseurl-row').hidden = !d.needsBaseUrl;
+    fillModels(d, { models: d.suggestedModels, routing: d.routing, live: false,
+      note: 'suggestions from this dxkit release — may be outdated; a key loads the live list' });
     el('key-env-note').hidden = !d.envKeyPresent;
     el('key-input-label').hidden = d.envKeyPresent;
     el('key-env-name').textContent = d.keyEnv;
+    loadModels();
   }
   function chosenModel() {
     var v = el('model-select').value;
@@ -335,7 +363,9 @@ const ASSISTANT_JS = `
   el('model-select').addEventListener('change', function () {
     el('model-custom').hidden = el('model-select').value !== CUSTOM_SENTINEL;
   });
-  el('drv').addEventListener('change', syncDriver);
+  el('drv').addEventListener('change', function () { el('model-select').value = ''; syncDriver(); });
+  el('key').addEventListener('change', loadModels);
+  el('baseurl').addEventListener('change', loadModels);
   el('detail').addEventListener('change', refreshStatus);
   refreshStatus();
 })();
