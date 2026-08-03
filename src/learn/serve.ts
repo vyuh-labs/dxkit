@@ -24,11 +24,11 @@ import {
   envKeyFor,
   getDriver,
   listModels,
-  relayAsk,
   resolveRouting,
   routeModel,
   type ProviderModel,
 } from './drivers';
+import { relayAsk } from './relay';
 import { markdownToHtml } from './markdown';
 import { agentTools } from './agent-tools';
 
