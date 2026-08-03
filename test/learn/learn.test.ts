@@ -170,6 +170,23 @@ describe('learn page — repo mode renders doctor as a read-only setup panel', (
           dispatchable: false,
         },
       ],
+      profile: {
+        graph: {
+          functionCount: 2253,
+          fileCount: 310,
+          callEdgeCount: 9800,
+          hubs: [],
+          refreshedAt: '2026-08-01T06:00:00.000Z',
+          stale: false,
+        },
+        debt: {
+          total: 18928,
+          byKind: { code: 18925, secret: 3 },
+          bySeverity: { high: 3, medium: 68, unrated: 18857 },
+          floorFailing: [],
+        },
+        health: null,
+      },
     };
   }
 
@@ -180,6 +197,10 @@ describe('learn page — repo mode renders doctor as a read-only setup panel', (
     expect(repo.slice(firstView, firstView + 120)).toContain('id="home"');
     expect(repo).toContain('grandfathered findings in baseline');
     expect(repo).toContain('dxkit workflows installed');
+    // Tier-1 profile tiles: graph size + freshness, debt severity shape.
+    expect(repo).toContain('functions in the code graph');
+    expect(repo).toContain('refreshed 2026-08-01');
+    expect(repo).toContain('3 high · 68 medium');
     // Static repo page carries no serve-only ask button.
     expect(repo).not.toContain('id="home-ask"');
     // Zero-context: no home view, the showcase is first.

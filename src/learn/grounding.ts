@@ -123,6 +123,71 @@ export function assembleGrounding(
         );
       }
     }
+    // Repo profile (tier-1 repo intelligence). Every derived fact carries
+    // its freshness stamp; every absent artifact carries the exact enable
+    // command — the assistant points, never pretends. Counts and
+    // product-phrased strings sit in the summary tier; hub SYMBOL NAMES +
+    // file paths are repo content and stay behind the detail toggle.
+    const profile = status.profile;
+    if (profile) {
+      if (profile.graph) {
+        const g = profile.graph;
+        s.push(
+          `code graph: ${g.functionCount} functions across ${g.fileCount} files, ${g.callEdgeCount} call edges${g.refreshedAt ? `, refreshed ${g.refreshedAt.slice(0, 10)}` : ''}${g.stale ? ` — STALE (older than two weeks); refresh with 'vyuh-dxkit describe'` : ''}`,
+        );
+        if (detail && g.hubs.length > 0) {
+          s.push(`  top hub functions by callers:`);
+          for (const h of g.hubs) {
+            s.push(
+              `    ${h.label} (${h.sourceFile}): ${h.callsIn} callers, ${h.callsOut} calls out`,
+            );
+          }
+        }
+      } else {
+        s.push(
+          `code graph: not set up — enable with 'vyuh-dxkit describe' (one-off) or the graph.refresh policy field (kept fresh in CI); point-query answers need it`,
+        );
+      }
+      if (profile.debt) {
+        const d = profile.debt;
+        const kinds = Object.entries(d.byKind)
+          .sort((a, b) => b[1] - a[1])
+          .map(([k, n]) => `${k}=${n}`)
+          .join(', ');
+        const sevs = Object.entries(d.bySeverity)
+          .sort((a, b) => b[1] - a[1])
+          .map(([k, n]) => `${k}=${n}`)
+          .join(', ');
+        s.push(
+          `grandfathered debt shape: ${d.total} findings by kind (${kinds}); by severity (${sevs})`,
+        );
+        if (d.floorFailing.length > 0) {
+          s.push(
+            `  failing floor checks (pre-existing, grandfathered): ${d.floorFailing.map((c) => `${c.pack}: ${c.label}`).join('; ')}`,
+          );
+        }
+        s.push(`  full prioritized inventory: 'vyuh-dxkit debt'`);
+      } else {
+        s.push(
+          `grandfathered debt shape: no committed baseline to read — repos in ref-based mode gate against a git ref instead; 'vyuh-dxkit baseline create' writes one`,
+        );
+      }
+      if (profile.health) {
+        const h = profile.health;
+        s.push(
+          `health report${h.analyzedAt ? ` of ${h.analyzedAt.slice(0, 10)}` : ''}: overall ${h.overallScore}/100 (${h.rating}) — re-run 'vyuh-dxkit health' for current`,
+        );
+        for (const a of h.topActions) {
+          s.push(
+            `  top action [${a.dimension}]${a.upliftIfFixed ? ` (+${a.upliftIfFixed} if fixed)` : ''}: ${a.reason}`,
+          );
+        }
+      } else {
+        s.push(
+          `no health report artifact — run 'vyuh-dxkit health' to get ranked improvement actions`,
+        );
+      }
+    }
     if (status.doctor) {
       const failing = status.doctor.checks.filter((c) => !c.ok && !c.advisory);
       s.push(
@@ -158,8 +223,8 @@ export function assembleGrounding(
     parts.push(`## This repo (live status)\n${s.join('\n')}`);
     disclosure.push(
       detail
-        ? `This repo's status IN DETAIL: the full committed policy.json, baseline counts, the last verdict, each failing doctor check with its remedy, and blocking-finding fingerprints. (Detail toggle is ON.)`
-        : `This repo's status as SUMMARIES: policy summary, baseline entry counts, the last verdict word, doctor pass/fail counts with failing-check LABELS, and the installed dxkit workflow list (names, triggers, schedules). No file paths, no finding contents, no remedies. (Turn on the detail toggle to include remedies, recommendations, and the full policy file.)`,
+        ? `This repo's status IN DETAIL: the full committed policy.json, baseline counts, the last verdict, each failing doctor check with its remedy, blocking-finding fingerprints, and the repo profile including hub function names with their file paths. (Detail toggle is ON.)`
+        : `This repo's status as SUMMARIES: policy summary, baseline entry counts, the last verdict word, doctor pass/fail counts with failing-check LABELS, the installed dxkit workflow list (names, triggers, schedules), and the repo profile as COUNTS with freshness dates (graph size, debt by kind and severity, health score with its ranked action reasons). No file paths, no symbol names, no finding contents, no remedies. (Turn on the detail toggle to include remedies, recommendations, hub function names, and the full policy file.)`,
     );
   } else {
     disclosure.push(`No repo data at all — this is the zero-context guide.`);
