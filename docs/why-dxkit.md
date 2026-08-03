@@ -1,6 +1,6 @@
 # Why dxkit
 
-dxkit does not try to replace SonarQube, Snyk, Semgrep, GitHub Advanced Security, Trivy, Gitleaks, or OSV-Scanner. It does three things they do not.
+dxkit does not try to replace SonarQube, Snyk, Semgrep, GitHub Advanced Security, Trivy, Gitleaks, or OSV-Scanner. It does a handful of things they do not.
 
 ## 1. It assumes your repo is messy
 
@@ -53,6 +53,19 @@ dxkit's bundled SAST is intraprocedural and won't match a proprietary interproce
 - **In your repo, in your loop.** Detection runs where it's licensed (your Snyk for private repos; CodeQL for open source / GHAS); enforcement and the agentic fix loop run locally. No lock-in to one vendor's platform.
 
 Snyk and CodeQL _detect_; dxkit makes their output enforceable and fixable.
+
+## 5. It remediates — inside the same frame
+
+Detection without repair is a report; repair without verification is a risk.
+dxkit ships both halves of the loop: scheduled lanes (baseline refresh with
+an advisory decision PR, dependency bumps) and budget-bounded remediation
+agents (fix the build, burn down debt, improve tests, write docs, or a
+one-off custom campaign). What makes them shippable is the frame, not the
+model: every attempt starts from a pristine-tree entry snapshot, runs under
+hard spend/turn/time caps, and lands **only** via a pull request that passes
+the correctness floor and the same guardrail a human change faces — with the
+dispatcher, prompt, model, and spend disclosed in the PR body. A failed
+attempt lands nothing and says so.
 
 ## What dxkit is not
 

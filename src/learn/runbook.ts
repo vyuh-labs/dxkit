@@ -103,7 +103,9 @@ export function renderRunbook(cwd: string): string {
 
 dxkit gates **changes**, not the whole repo: findings that already existed are
 recorded in a baseline and never blamed on the next pull request. Only
-**net-new** problems introduced by a change can block it.
+**net-new** problems introduced by a change can block it. Where lanes are
+installed, dxkit also does maintenance work itself — and everything an agent
+produces lands only via a pull request through the same gate.
 
 ## What runs here, and when
 

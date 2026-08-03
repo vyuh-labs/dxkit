@@ -299,7 +299,7 @@ export function renderLearnHtml(
   body.push(`<section class="view" id="core" data-title="Start here" data-crumb="">
     <div class="hero">
       <h1>Understand dxkit in one sitting</h1>
-      <p>dxkit gates <strong>changes</strong>, not repositories: existing debt is grandfathered, only net-new problems block. Everything on this page ships with the package and works offline${opts.serve ? ' — and the assistant on the right answers from exactly this content' : ''}.</p>
+      <p>dxkit gates <strong>changes</strong>, not repositories: existing debt is grandfathered, only net-new problems block. And it <strong>acts</strong> on what it finds — scheduled lanes and remediation agents bump dependencies, burn down debt, and improve tests and docs, landing only via pull requests that pass the same gate as a human change. Everything on this page ships with the package and works offline${opts.serve ? ' — and the assistant on the right answers from exactly this content' : ''}.</p>
       <div class="hero-actions">
         <a class="tbtn primary" href="#doc-how-dxkit-thinks">Read the mental model</a>
         <a class="tbtn" href="#reference">Browse the reference (${bundle.reference.length} pages)</a>

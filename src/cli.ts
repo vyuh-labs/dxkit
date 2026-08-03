@@ -156,7 +156,7 @@ function printUsage(all = false): void {
   if (!all) {
     // slop-ok — help output IS the product surface here, same as the full view below.
     console.log(`
-  ${logger.bold('vyuh-dxkit')} v${VERSION} — a deterministic stop condition + code-graph context layer for AI coding agents
+  ${logger.bold('vyuh-dxkit')} v${VERSION} — context before the edit, a deterministic gate before done, and remediation agents that land only through that gate
 
 ${renderTieredIndex().join('\n')}
   ${logger.bold('Learn:')}
@@ -173,7 +173,7 @@ ${renderTieredIndex().join('\n')}
     return;
   }
   console.log(`
-  ${logger.bold('vyuh-dxkit')} v${VERSION} — a deterministic stop condition + code-graph context layer for AI coding agents
+  ${logger.bold('vyuh-dxkit')} v${VERSION} — context before the edit, a deterministic gate before done, and remediation agents that land only through that gate
 
   ${logger.bold('Commands:')}
 ${renderCommandIndex().join('\n')}
