@@ -24,6 +24,7 @@ import {
   findingContextQuery,
   graphProfile,
   hotFilesQuery,
+  symbolLookup,
   nodesInFile,
 } from '../../src/explore/queries';
 import type {
@@ -623,6 +624,24 @@ describe('findingContextQuery', () => {
     it('returns undefined for a file absent from the graph', () => {
       expect(enclosingSymbolFor(FC, 'src/nowhere.ts', 12)).toBeUndefined();
     });
+  });
+});
+
+describe('symbolLookup', () => {
+  // The shared fixture carries an empty symbolIndex; the lookup needs one.
+  const GS = { ...G, symbolIndex: { main: ['n1'], helper: ['n3'], logger: ['n5'] } };
+
+  it('resolves case-insensitively and strips label decorations (trailing (), leading .)', () => {
+    expect(symbolLookup(GS, 'helper').nodes.map((n) => n.id)).toEqual(['n3']);
+    expect(symbolLookup(GS, 'Helper()').nodes.map((n) => n.id)).toEqual(['n3']);
+    // Method-node hub labels carry a leading dot; the profile's own hub
+    // label must round-trip through the lookup (external-repo eval catch).
+    expect(symbolLookup(GS, '.helper()').nodes.map((n) => n.id)).toEqual(['n3']);
+  });
+
+  it('suggests on a miss, empty on blank', () => {
+    expect(symbolLookup(GS, 'helpr').suggestions).toContain('helper');
+    expect(symbolLookup(GS, '  ')).toEqual({ nodes: [], suggestions: [] });
   });
 });
 
