@@ -30,6 +30,7 @@ import {
   type ProviderModel,
 } from './drivers';
 import { markdownToHtml } from './markdown';
+import { agentTools } from './agent-tools';
 
 const MAX_BODY_BYTES = 256 * 1024;
 
@@ -92,6 +93,19 @@ export function buildStatusPayload(
   detail: boolean,
 ): unknown {
   const grounding = assembleGrounding(bundle, status, { detail });
+  const disclosure = [...grounding.disclosure];
+  if (status !== null) {
+    // Registry-derived (never a hand-kept list): the read-only point-query
+    // tools the assistant may call in repo mode. Each executed call is
+    // listed under the answer with its arguments; each result goes to the
+    // chosen provider. Contributor names stay behind the detail toggle.
+    const names = agentTools({ cwd: status.cwd, detail })
+      .map((t) => t.name)
+      .join(', ');
+    disclosure.push(
+      `Repo tools the assistant may call for point questions (read-only, each call listed under the answer, results sent to your provider): ${names}. Contributor names appear only with the detail toggle on.`,
+    );
+  }
   return {
     version: bundle.version,
     repoMode: status !== null,
@@ -107,7 +121,7 @@ export function buildStatusPayload(
       envKeyPresent: envKeyFor(d) !== null,
     })),
     envBaseUrlPresent: !!process.env[CUSTOM_BASE_URL_ENV],
-    disclosure: grounding.disclosure,
+    disclosure,
     detail,
   };
 }
@@ -255,6 +269,10 @@ export async function startLearnServer(
                 routing: liveRouting,
               })
             : null;
+        // Repo mode offers the read-only point-query tool registry (tier-2
+        // repo intelligence, #254). Zero-context asks stay single-shot.
+        const tools =
+          status !== null ? agentTools({ cwd: status.cwd, detail: !!body.detail }) : undefined;
         const result = await relayAsk(
           {
             driver,
@@ -263,6 +281,7 @@ export async function startLearnServer(
             apiKey,
             system: grounding.system,
             messages: [...history, { role: 'user', content: question }],
+            ...(tools ? { tools } : {}),
           },
           fetchFn,
         );
@@ -281,6 +300,9 @@ export async function startLearnServer(
           routeTier: route?.tier,
           routeReason: route?.reason,
           keySource: envKeyFor(driver) ? 'env' : 'browser',
+          // The per-call disclosure ledger: every repo tool the model
+          // consulted for this answer, in order. Rendered under the answer.
+          toolCalls: result.toolCalls ?? [],
         });
         return;
       }

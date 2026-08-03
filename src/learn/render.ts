@@ -266,7 +266,7 @@ function assistantPanel(hasRepo: boolean): string {
 <aside class="assistant-panel" id="apanel" aria-label="dxkit assistant">
   <div class="ap-head">
     <span class="t">✦ dxkit assistant</span>
-    <span class="sub">bring-your-own-key · local relay · executes nothing</span>
+    <span class="sub">bring-your-own-key · local relay · read-only, changes nothing</span>
     <button class="close" id="ap-close" title="Close">✕</button>
   </div>
   <div class="ap-config">

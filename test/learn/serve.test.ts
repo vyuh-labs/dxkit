@@ -15,6 +15,7 @@ import { renderLearnHtml } from '../../src/learn/render';
 import { assembleGrounding } from '../../src/learn/grounding';
 import {
   LLM_DRIVERS,
+  MAX_TOOL_CALLS,
   relayAsk,
   getDriver,
   routeModel,
@@ -228,6 +229,194 @@ describe('relay — wire formats, key hygiene', () => {
     expect(body.messages[0]).toEqual({ role: 'system', content: 'SYS' });
   });
 
+  it('no-tools requests carry no tools key on either wire (byte-compat pin)', async () => {
+    for (const driverId of ['anthropic', 'openai'] as const) {
+      let body: Record<string, unknown> = {};
+      const fetchFn = (async (_u: unknown, init: unknown) => {
+        body = JSON.parse(String((init as RequestInit).body)) as Record<string, unknown>;
+        return new Response(
+          JSON.stringify({
+            stop_reason: 'end_turn',
+            content: [{ type: 'text', text: 'a' }],
+            choices: [{ message: { content: 'a' } }],
+          }),
+          { status: 200 },
+        );
+      }) as typeof fetch;
+      const result = await relayAsk(
+        {
+          driver: getDriver(driverId)!,
+          model: 'm',
+          apiKey: 'k',
+          system: 's',
+          messages: [{ role: 'user', content: 'q' }],
+        },
+        fetchFn,
+      );
+      expect(result.ok).toBe(true);
+      expect('tools' in body).toBe(false);
+      expect('toolCalls' in result).toBe(false);
+    }
+  });
+
+  it('anthropic tool loop: executes the requested tool, relays the result, ledgers the call', async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    let call = 0;
+    const fetchFn = (async (_u: unknown, init: unknown) => {
+      bodies.push(JSON.parse(String((init as RequestInit).body)) as Record<string, unknown>);
+      call++;
+      if (call === 1) {
+        return new Response(
+          JSON.stringify({
+            stop_reason: 'tool_use',
+            content: [
+              { type: 'text', text: 'let me check' },
+              { type: 'tool_use', id: 'tu1', name: 'echo_tool', input: { x: 'main' } },
+            ],
+          }),
+          { status: 200 },
+        );
+      }
+      return new Response(
+        JSON.stringify({ stop_reason: 'end_turn', content: [{ type: 'text', text: 'done' }] }),
+        { status: 200 },
+      );
+    }) as typeof fetch;
+    const ran: unknown[] = [];
+    const result = await relayAsk(
+      {
+        driver: getDriver('anthropic')!,
+        model: 'm',
+        apiKey: 'k',
+        system: 's',
+        messages: [{ role: 'user', content: 'q' }],
+        tools: [
+          {
+            name: 'echo_tool',
+            description: 'd',
+            inputSchema: { type: 'object', properties: {} },
+            run: (args) => {
+              ran.push(args);
+              return 'TOOL-OUTPUT';
+            },
+          },
+        ],
+      },
+      fetchFn,
+    );
+    expect(result.ok).toBe(true);
+    expect(result.answer).toBe('done');
+    expect(ran).toEqual([{ x: 'main' }]);
+    expect(result.toolCalls).toEqual([
+      { tool: 'echo_tool', args: '{"x":"main"}', resultChars: 'TOOL-OUTPUT'.length },
+    ]);
+    // First request offered the tool; second carried the executed result.
+    expect((bodies[0].tools as unknown[]).length).toBe(1);
+    const second = bodies[1].messages as Array<{ role: string; content: unknown }>;
+    const toolResult = second[second.length - 1];
+    expect(toolResult.role).toBe('user');
+    expect(JSON.stringify(toolResult.content)).toContain('TOOL-OUTPUT');
+    expect(JSON.stringify(toolResult.content)).toContain('tu1');
+  });
+
+  it('openai tool loop: tool_calls round-trips via role:tool messages', async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    let call = 0;
+    const fetchFn = (async (_u: unknown, init: unknown) => {
+      bodies.push(JSON.parse(String((init as RequestInit).body)) as Record<string, unknown>);
+      call++;
+      if (call === 1) {
+        return new Response(
+          JSON.stringify({
+            choices: [
+              {
+                message: {
+                  tool_calls: [{ id: 'c1', function: { name: 'echo_tool', arguments: '{"x":1}' } }],
+                },
+              },
+            ],
+          }),
+          { status: 200 },
+        );
+      }
+      return new Response(JSON.stringify({ choices: [{ message: { content: 'done' } }] }), {
+        status: 200,
+      });
+    }) as typeof fetch;
+    const result = await relayAsk(
+      {
+        driver: getDriver('openai')!,
+        model: 'm',
+        apiKey: 'k',
+        system: 's',
+        messages: [{ role: 'user', content: 'q' }],
+        tools: [
+          {
+            name: 'echo_tool',
+            description: 'd',
+            inputSchema: { type: 'object', properties: {} },
+            run: () => 'TOOL-OUTPUT',
+          },
+        ],
+      },
+      fetchFn,
+    );
+    expect(result.ok).toBe(true);
+    expect(result.answer).toBe('done');
+    expect(result.toolCalls).toHaveLength(1);
+    expect((bodies[0].tools as Array<{ type: string }>)[0].type).toBe('function');
+    const second = bodies[1].messages as Array<{ role: string; tool_call_id?: string }>;
+    const toolMsg = second[second.length - 1];
+    expect(toolMsg.role).toBe('tool');
+    expect(toolMsg.tool_call_id).toBe('c1');
+  });
+
+  it('a model that never stops calling tools is bounded: budget disclosed, loop converges', async () => {
+    let calls = 0;
+    const fetchFn = (async (_u: unknown, init: unknown) => {
+      const body = JSON.parse(String((init as RequestInit).body)) as {
+        tool_choice?: unknown;
+      };
+      calls++;
+      // Once the relay forces tool_choice none, answer with text.
+      if (body.tool_choice) {
+        return new Response(
+          JSON.stringify({ stop_reason: 'end_turn', content: [{ type: 'text', text: 'forced' }] }),
+          { status: 200 },
+        );
+      }
+      return new Response(
+        JSON.stringify({
+          stop_reason: 'tool_use',
+          content: [{ type: 'tool_use', id: `t${calls}`, name: 'echo_tool', input: {} }],
+        }),
+        { status: 200 },
+      );
+    }) as typeof fetch;
+    const result = await relayAsk(
+      {
+        driver: getDriver('anthropic')!,
+        model: 'm',
+        apiKey: 'k',
+        system: 's',
+        messages: [{ role: 'user', content: 'q' }],
+        tools: [
+          {
+            name: 'echo_tool',
+            description: 'd',
+            inputSchema: { type: 'object', properties: {} },
+            run: () => 'x',
+          },
+        ],
+      },
+      fetchFn,
+    );
+    expect(result.ok).toBe(true);
+    expect(result.answer).toBe('forced');
+    expect(result.toolCalls!.length).toBeLessThanOrEqual(MAX_TOOL_CALLS);
+    expect(calls).toBeLessThanOrEqual(MAX_TOOL_CALLS + 2);
+  });
+
   it('custom driver without a base URL is a disclosed error', async () => {
     const result = await relayAsk(
       {
@@ -322,6 +511,14 @@ describe('grounding — summaries by default, detail behind the toggle, disclosu
     };
     const gs = assembleGrounding(bundle, staleSt, { detail: false });
     expect(gs.system).toContain('STALE');
+  });
+
+  it('repo mode discloses the point-query tool registry; zero-context does not', () => {
+    const repo = buildStatusPayload(bundle, repoStatus(), false) as { disclosure: string[] };
+    expect(repo.disclosure.join(' ')).toContain('function_callers');
+    expect(repo.disclosure.join(' ')).toContain('read-only');
+    const zero = buildStatusPayload(bundle, null, false) as { disclosure: string[] };
+    expect(zero.disclosure.join(' ')).not.toContain('function_callers');
   });
 });
 
