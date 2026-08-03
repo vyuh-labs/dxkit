@@ -2,14 +2,18 @@
 
 One page. If you read nothing else, read this.
 
-## The one-sentence model
+## The two-sentence model
 
 dxkit proves that a **change** introduced no new problems, without requiring
-the repository to be clean first.
+the repository to be clean first. And it **acts** on the problems it knows
+about: remediation agents and scheduled lanes do real maintenance work, and
+their output lands only through that same proof.
 
-That sentence drives everything else. dxkit is not a linter that shouts about
-everything wrong in your repo. It is a gate that answers one question per
-change: "did THIS change make things worse?"
+Those two sentences drive everything else. dxkit is not a linter that shouts
+about everything wrong in your repo, and its agents are not unsupervised
+autofix. The gate answers one question per change — "did THIS change make
+things worse?" — and the agents are simply another author whose changes get
+asked the same question.
 
 ## The four pieces
 
