@@ -252,7 +252,11 @@ export interface SymbolLookupResult {
  * trailing `()` is stripped so `main()` and `main` both resolve.
  */
 export function symbolLookup(graph: Graph, name: string): SymbolLookupResult {
-  const kw = name.toLowerCase().trim().replace(/\(\)$/, '');
+  // Strip the display decorations graph labels carry: a trailing `()` and
+  // a leading `.` (method-node labels — `.find()`, `.save()`). Without the
+  // dot strip, asking about a hub the PROFILE itself named misses the
+  // symbolIndex (the external-repo eval catch, 2026-08-03).
+  const kw = name.toLowerCase().trim().replace(/^\./, '').replace(/\(\)$/, '');
   if (!kw) return { nodes: [], suggestions: [] };
   const ids = findSeedIds(graph, kw, false);
   if (ids.size === 0) {
