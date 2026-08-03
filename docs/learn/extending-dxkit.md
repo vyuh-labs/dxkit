@@ -99,3 +99,76 @@ wrapper, on every machine, with no per-developer setup.
 | a script that can print JSON                  | rung 3: manifest + wire document |
 | a wrapper/dialect the parsers should learn    | rung 4: plugin (data table)      |
 | findings from an external SAST engine (SARIF) | `vyuh-dxkit ingest`, not the SDK |
+
+## Author your own gate: worked examples
+
+The most common ask — "gate net-new regressions on something specific to
+us" — usually needs no SDK at all. Work down this list and stop at the
+first fit.
+
+### 1. A located custom check (only NEW violations block)
+
+The workhorse. Give dxkit a command plus a regex with named groups, and
+every match becomes a first-class finding with its own identity: the
+existing backlog is grandfathered into the baseline, and only net-new
+matches block a PR — the same brownfield discipline as every native kind.
+
+Example: forbid direct database imports outside the data layer, enforced
+today by review comments.
+
+```jsonc
+// .dxkit/policy.json
+"checks": [
+  {
+    "name": "no-direct-db-imports",
+    "command": ["bash", "scripts/arch-db-imports.sh"],
+    "parse": { "regex": "^(?<file>[^:]+):(?<line>\\d+): (?<message>.*)$" },
+    "blocking": true
+  }
+]
+```
+
+The script prints one `path:line: message` row per violation (a plain
+grep does fine) and can exit non-zero or zero — located parses read the
+OUTPUT, not the exit code, because many linters exit 0 while reporting.
+After adding the check: `vyuh-dxkit checks run` to dry-run it, then
+`vyuh-dxkit baseline create` (or the refresh lane) to grandfather the
+current backlog. From then on, a PR introducing a new violation is
+BLOCKED with the exact file:line, while the old debt burns down on its
+own schedule.
+
+### 2. A binary check (whole command must pass)
+
+For a command that is genuinely pass/fail — a license audit, a schema
+validator. `"parse": "exit"` gates on the exit code (`expectedExit`
+defaults to 0). Honest warning: a binary check grandfathers the WHOLE
+check, so if it is failing at baseline time, new failures cannot be told
+apart from old ones. Prefer a located parse whenever the output names
+locations.
+
+### 3. A paired-change rule (no command at all)
+
+"Changing X requires also changing Y" — declarative over the diff, runs
+on every surface including fork PRs because nothing is spawned:
+
+```jsonc
+"pairedChecks": [
+  { "name": "model-needs-migration",
+    "if": ["src/models/**"], "then": ["migrations/**"],
+    "message": "a data-model change ships with its migration" }
+]
+```
+
+### 4. The SDK, when you need a real analyzer
+
+If your gate needs analysis a command-plus-regex cannot express — an
+in-house scanner with structured output, a contract read from your
+framework's build — emit the `findings.v1` wire document from your own
+script (rung 3 above) and dxkit gates those findings with the same
+fingerprints, grandfathering, and allowlists as native ones.
+
+Two operational notes, both load-bearing: custom checks gate in
+COMMITTED baseline modes (a throwaway worktree at a git ref lacks your
+toolchain, so ref-based mode discloses instead of guessing), and
+`checks[].command` runs from the committed policy only — review edits to
+it with the scrutiny of a CI workflow change.
