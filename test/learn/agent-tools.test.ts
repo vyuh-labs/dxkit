@@ -110,6 +110,7 @@ describe('agent tool registry — contract', () => {
       'file_history',
       'file_owners',
       'debt_findings',
+      'guardrail_verdict',
     ]);
     expect(new Set(names).size).toBe(names.length);
     for (const t of tools) {
@@ -124,6 +125,12 @@ describe('agent tool registry — contract', () => {
       expect(typeof t.run({})).toBe('string');
       expect(typeof t.run({ symbol: 42 as unknown as string, file: null })).toBe('string');
     }
+  });
+
+  it('guardrail_verdict: absent cache → the run command, never an error', () => {
+    const tools = agentTools({ cwd: tmpRepo(), detail: false }, noGit);
+    const out = tools.find((t) => t.name === 'guardrail_verdict')!.run({});
+    expect(out).toContain("run 'vyuh-dxkit guardrail check'");
   });
 
   it('absent graph → the exact enable command, never an error', () => {
