@@ -1,31 +1,17 @@
 # dxkit
 
-## A map before the edit. A real check before done. Agents that fix — verified.
+## Map the code. Prove each change is safe to merge. Fix the debt. Repeat.
 
-**dxkit is the change-safety layer for AI coding agents: structural context
-before the edit, a deterministic stop-gate before the loop can finish, and
-autonomous remediation lanes — dependency bumps, debt burn-down, docs and
-test improvement — whose work lands only via pull requests that pass that
-same gate.**
+**Coding agents write more code than anyone can review by hand. dxkit
+covers the gap with three things: a living map of your codebase that
+grounds agents in real structure before they edit, a deterministic check
+that proves each change is safe to merge, and a repair crew of agents that
+bump dependencies, fix vulnerabilities, and improve tests, with every fix
+landing through that same check.**
 
-It maps the relevant code, callers, dependencies, and blast radius before the
-agent edits. When an unattended loop tries to stop, it runs the compilation
-and affected-test checks it can establish in that environment — anything it
-cannot run is reported explicitly, never silently passed — plus the
-configured detector-backed policy, and blocks if the change introduced a
-prohibited regression.
-
-Existing findings are baselined, not approved. The agent fixes what it
-introduced, not years of unrelated debt. No model decides the gate verdict.
-
-```text
-BEFORE THE EDIT                     BEFORE STOPPING
-
-Relevant code                       Compilation
-Callers and dependencies      ->    Affected tests
-Blast radius                        Net-new policy findings
-Likely affected tests               Exact repair reason
-```
+It works on the repo you have today. Existing debt is baselined and
+attributed on day one, so the gate is green immediately and every verdict
+after that is about what actually changed.
 
 <p align="center">
   <img src=".github/assets/loop-stop-gate-demo.gif" width="820" alt="dxkit blocks a coding-agent loop on a net-new regression, returns the finding to the agent, and allows the stop after the agent repairs it." />
@@ -124,7 +110,11 @@ What you can rely on:
   agent still holds the task context.
 - **Explicit failure states.** dxkit distinguishes a clean verdict from a
   skipped or unavailable check. A skipped detector is never reported as
-  passed.
+  passed, and a verdict it cannot attribute is refused (`CANNOT GATE`),
+  never guessed.
+- **Verified remediation.** Lane and agent work merges the same way yours
+  does: through the gate, via a PR, with model and spend disclosed. There
+  is no side door.
 - **Deliberate releases.** Minors are batched scope; patches are verified
   production fixes that may ship same-day; every release passes the full gate
   suite including dxkit's own guardrail. Policy: [RELEASES.md](RELEASES.md).
@@ -228,6 +218,122 @@ The escape-rate benchmark above used `full-debt` (it gated both the secret
 trap and the test-gap trap). The default install starts narrower so a first
 run does not trap you in expensive test-generation loops. Switch with
 `npm init @vyuhlabs/dxkit -- --claude-loop --loop-preset full-debt`.
+
+## The proof, verbatim
+
+Here is the gate doing its job. A block names the exact finding, its
+durable fingerprint, and the paved path out:
+
+```text
+Guardrail BLOCKED — 1 new regression
+
+Blocking (1)
+  ADDED [critical] secret src/payments/stripe-sync.ts:41
+  · block-rule: policy block-rule fired: newSecret
+  · fingerprint: 3f9c2a51de8b4c07  (allowlist add --fingerprint=3f9c2a51de8b4c07)
+```
+
+And when dxkit cannot honestly attribute a finding to your change, say a
+scanner upgraded underneath you since the baseline was captured, it refuses
+to guess:
+
+```text
+Guardrail CANNOT GATE — 3 findings on block-rule kind (secret) cannot be attributed
+
+Cannot attribute — refusing to pass (3)
+  · 3 findings covered by block rule newSecret cannot be attributed —
+    secret: gitleaks 8.18.4 → 8.21.0 since the baseline was captured
+  · dispatch the baseline-refresh workflow to re-capture the anchor from CI
+    and restore attribution; the guardrail refuses to pass until then
+```
+
+That refusal tier exists because a difference between two scans has six
+possible causes, and just one of them is your change:
+
+| A finding delta can mean...                    | dxkit rules it out with...                            |
+| ---------------------------------------------- | ----------------------------------------------------- |
+| the change introduced it                       | **the one cause that blocks**                         |
+| the scan didn't fully observe the current side | per-kind observation disclosures, never silent        |
+| the finding moved (line shift, rename)         | git-aware identity matching with durable fingerprints |
+| a scanner changed underneath you               | per-kind recall contexts (tool + plugin + config)     |
+| dxkit itself changed what it can see           | versioned observation epochs                          |
+| a truncated or partial prior report            | multiset-aware pair matching                          |
+
+`net-new` means the other five were ruled out. When they can't be, the
+verdict is `CANNOT GATE`: named cause, named remedy, exit 1. A `PASSED`
+over an attribution gap is not constructible, and a tool upgrade is never
+blamed on whoever opened the next PR.
+
+## When it blocks: the paved paths
+
+A block is not a dead end; every verdict prints its own way out, on the
+record and in the PR:
+
+- **Fix it.** The common case. The finding is gone from the branch, the
+  gate passes. Nothing to clean up.
+- **False positive?** Suppress it in your PR with a typed reason:
+  `allowlist add --fingerprint=<id> --category=false-positive --reason="..."`.
+  The entry lands in `.dxkit/allowlist.json`, so the reviewer sees the
+  suppression next to the change that needed it.
+- **Real, but not this PR?** Defer it, time-boxed:
+  `allowlist defer <fingerprint> --expires=+14d --reason="..."`. It stops
+  blocking until expiry, then **re-blocks**. With the comment workflow
+  installed, anyone with write access can do this from the PR conversation:
+  `/dxkit defer <fingerprint> --expires=+14d --reason="..."`.
+- **CANNOT GATE?** Not about your code. The baseline is stale or a scanner
+  drifted; the remedy (re-capture from CI) is printed, and the repo admin
+  owns it, not your PR.
+
+`allowlist audit` keeps the ledger honest: stale, expiring, and
+missing-rationale entries surface on a schedule, and `receipt` renders the
+verdict + suppressions + score delta as a PR-comment block reviewers can
+trust without re-running anything.
+
+## Verified remediation: agents with a budget and no side door
+
+Detection without repair is a report; repair without verification is a
+risk. dxkit ships both halves, inside one frame:
+
+- **Scheduled lanes.** Baseline refresh re-captures findings from CI on a
+  cadence, and newly published dependency advisories arrive as a decision
+  PR: merging defers them for a time-boxed window that re-blocks at expiry,
+  upgrading the dependency fixes them. Dependency bump proposes
+  deterministic security upgrades as ordinary PRs.
+- **Remediation tasks.** Budget-bounded agent runs (fix-build, fix-vulns,
+  fix-lint, improve-tests, write-docs), each starting from a pristine-tree
+  entry snapshot under hard spend / turn / time caps. Score-hinged tasks
+  must move their target dimension above the entry score or nothing lands.
+- **Dispatch campaigns.** One-off runs from the Actions UI: pick a task or
+  write a custom prompt, override budgets within an org-set ceiling
+  (`remediate.maxDispatchBudget`). Write-access-gated by GitHub itself.
+
+What makes them shippable is the frame, not the model: every attempt lands
+**only** via a pull request that passes the correctness floor and the same
+guardrail a human change faces, with the dispatcher, prompt, model, and
+spend disclosed in the PR body. The agent's own claim of success is never
+trusted. A failed attempt lands nothing, says so, and uploads its diff as a
+run artifact for inspection.
+
+```bash
+npx vyuh-dxkit jobs          # what's installed: triggers, schedules, last runs
+npx vyuh-dxkit policy set    # cadence, budgets, which tasks are enabled
+```
+
+## Show your team: the whole product, one page
+
+```bash
+npx --yes @vyuhlabs/dxkit learn --serve
+```
+
+One self-contained, offline HTML page: every command, policy field, lane
+task, agent skill, and documentation page, all searchable (Ctrl+K), plus an
+optional BYO-key assistant (Anthropic, OpenAI, or any OpenAI-compatible
+endpoint) grounded in exactly that content. Run it inside a repo and the
+assistant also answers from that repo's live truth: what is enabled, why
+the last PR blocked, what to adopt next. Keys stay local; by default the
+assistant sends summaries, never raw findings, and the page states exactly
+what is sent. Works in an empty directory with no repo at all — it is the
+fastest way to show dxkit to a teammate.
 
 ## Why baseline-relative verification matters
 
@@ -471,6 +577,24 @@ reduce median token usage. The worst-case session used about 57% fewer
 tokens, variance was roughly halved, and on a small repo the overhead was
 about zero. The graph scopes how the agent explores the repository; the
 Stop-gate bounds what the configured policy allows it to finish with.
+
+## When not to use dxkit
+
+- **A greenfield solo project with zero debt and no agents.** The baseline
+  would be empty and plain CI linting already gives you most of the value.
+  dxkit starts paying for itself when there is existing debt to grandfather
+  or unattended loops to gate.
+- **You want an LLM's opinion of your code.** dxkit deliberately has no
+  model in the verdict. AI review tools are complements, not competitors —
+  run both; only one of them is a gate.
+- **You want a hosted dashboard and org analytics SaaS.** Everything here
+  runs locally and writes files into your repo. There is no cloud, which
+  also means no cross-repo org rollups beyond what you build on the JSON
+  reports.
+- **You need detection beyond the engines it drives.** dxkit orchestrates
+  and ingests detectors (gitleaks, Semgrep, OSV, Snyk Code, CodeQL, any
+  SARIF); it does not out-detect them. If no engine can see a finding
+  class, dxkit cannot gate it — and will not pretend to.
 
 ## Contributing
 

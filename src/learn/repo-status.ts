@@ -19,6 +19,7 @@ import { runDoctor, type DoctorReport } from '../doctor';
 import { readVerdictForTree, type CachedVerdict } from '../baseline/verdict-cache';
 import { readPolicyObjectSafe, readPolicyRoot } from '../baseline/policy-text';
 import { readBaselineFile } from '../baseline/baseline-file';
+import { collectJobs } from '../jobs-cli';
 
 export interface LearnRepoStatus {
   cwd: string;
@@ -38,6 +39,17 @@ export interface LearnRepoStatus {
   baselines: Array<{ name: string; capturedAt?: string; entryCount: number }>;
   /** The last same-tree guardrail verdict, when cached. */
   lastVerdict: CachedVerdict | null;
+  /** Every installed dxkit workflow: name, triggers, next cron fire. From
+   *  the ONE jobs collector (`jobs-cli.ts:collectJobs`, Rule 2.30) with the
+   *  gh last-run probe disabled — the page renders offline-fast; live run
+   *  conclusions stay `vyuh-dxkit jobs`' job. */
+  jobs: Array<{
+    workflow: string;
+    name: string;
+    triggers: string[];
+    nextRunUtc?: string;
+    dispatchable: boolean;
+  }>;
   /** The committed policy file, verbatim — sent to the provider ONLY under
    *  the explicit detail toggle (it can carry custom check commands). */
   rawPolicyText?: string;
@@ -121,6 +133,19 @@ export async function gatherLearnRepoStatus(cwd: string): Promise<LearnRepoStatu
   const policyRead = readPolicyRoot(path.join(cwd, '.dxkit', 'policy.json'));
   const rawPolicyText = policyRead.status === 'ok' ? policyRead.text.slice(0, 20_000) : undefined;
 
+  let jobs: LearnRepoStatus['jobs'] = [];
+  try {
+    jobs = collectJobs(cwd, { lastRunProbe: () => undefined }).map((j) => ({
+      workflow: j.workflow,
+      name: j.name,
+      triggers: [...j.triggers],
+      ...(j.nextRunUtc ? { nextRunUtc: j.nextRunUtc } : {}),
+      dispatchable: j.dispatchable,
+    }));
+  } catch {
+    jobs = [];
+  }
+
   return {
     cwd,
     installed,
@@ -128,6 +153,7 @@ export async function gatherLearnRepoStatus(cwd: string): Promise<LearnRepoStatu
     policy: readPolicySummary(cwd),
     baselines: readBaselineSummaries(cwd),
     lastVerdict,
+    jobs,
     rawPolicyText,
   };
 }

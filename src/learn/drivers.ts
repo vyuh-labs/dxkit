@@ -1,9 +1,12 @@
 /**
  * The LLM driver registry for the learn assistant (issue #245) — the ONE
- * place provider facts live. Three drivers by design decision (2026-08-02):
- * Anthropic (default), OpenAI, and an OpenAI-compatible custom endpoint that
- * covers org proxies, Azure-style gateways, and local models without naming
- * products. Each driver declares its key env var, endpoint, wire format, and
+ * place provider facts live. Three drivers by design decision (2026-08-02;
+ * default order revised 2026-08-03): OpenAI (default — cheapest per query,
+ * and its API auto-caches the repeated grounding prefix), Anthropic on
+ * selection, and an OpenAI-compatible custom endpoint that covers org
+ * proxies, Azure-style gateways, and local models without naming products.
+ * Registry ORDER is the page's chooser order; the first entry is the
+ * default. Each driver declares its key env var, endpoint, wire format, and
  * a couple of SUGGESTED models plus a free-text override on the page — never
  * an exhaustive model list (those go stale between releases).
  *
@@ -33,16 +36,6 @@ export interface LlmDriver {
 
 export const LLM_DRIVERS: readonly LlmDriver[] = [
   {
-    id: 'anthropic',
-    label: 'Anthropic (Claude)',
-    keyEnv: 'ANTHROPIC_API_KEY',
-    endpoint: 'https://api.anthropic.com',
-    wire: 'anthropic',
-    suggestedModels: ['claude-opus-5', 'claude-sonnet-5', 'claude-haiku-4-5'],
-    defaultModel: 'claude-opus-5',
-    routing: { fast: 'claude-haiku-4-5', deep: 'claude-opus-5' },
-  },
-  {
     id: 'openai',
     label: 'OpenAI',
     keyEnv: 'OPENAI_API_KEY',
@@ -51,6 +44,16 @@ export const LLM_DRIVERS: readonly LlmDriver[] = [
     suggestedModels: ['gpt-5.1', 'gpt-5-mini', 'gpt-5-nano'],
     defaultModel: 'gpt-5.1',
     routing: { fast: 'gpt-5-mini', deep: 'gpt-5.1' },
+  },
+  {
+    id: 'anthropic',
+    label: 'Anthropic (Claude)',
+    keyEnv: 'ANTHROPIC_API_KEY',
+    endpoint: 'https://api.anthropic.com',
+    wire: 'anthropic',
+    suggestedModels: ['claude-opus-5', 'claude-sonnet-5', 'claude-haiku-4-5'],
+    defaultModel: 'claude-opus-5',
+    routing: { fast: 'claude-haiku-4-5', deep: 'claude-opus-5' },
   },
   {
     id: 'custom',
@@ -193,8 +196,12 @@ export function routeModel(
   if (opts.detail) deepReasons.push('finding-level grounding is on');
   if (q.length > 240) deepReasons.push('long question');
   if ((q.match(/\?/g) ?? []).length >= 2) deepReasons.push('multi-part question');
+  // Fast-by-default (2026-08-03 tune from live routing observation): plain
+  // how-to questions are LOOKUPS the grounding answers directly — "how do I
+  // set up the bot token" needs retrieval, not reasoning. Deep is reserved
+  // for genuinely analytic shapes (explain/compare/design/debug/why).
   if (
-    /\b(why|how (do|should|can|would)|explain|design|architect|compare|trade-?offs?|debug|root cause|investigate|plan|migrate|strategy|convince|justify)\b/i.test(
+    /\b(why|explain|design|architect|compare|trade-?offs?|debug|root cause|investigate|plan|migrate|strategy|convince|justify|recommend|should (we|i)\b)/i.test(
       q,
     )
   ) {
@@ -267,7 +274,11 @@ export async function relayAsk(
         body: JSON.stringify({
           model: req.model,
           max_tokens: 2048,
-          system: req.system,
+          // The grounding is a stable ~50k-token prefix reused across every
+          // question in a session; cache_control makes repeat queries pay
+          // ~10% for it (G14). OpenAI's wire needs nothing — it auto-caches
+          // repeated prefixes.
+          system: [{ type: 'text', text: req.system, cache_control: { type: 'ephemeral' } }],
           messages: req.messages,
         }),
       });

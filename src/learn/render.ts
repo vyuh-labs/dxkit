@@ -23,6 +23,8 @@ import type { LearnRepoStatus } from './repo-status';
 import { escapeHtml, markdownToHtml, slugify } from './markdown';
 import { CSS } from './page-css';
 import { BASE_JS, ASSISTANT_JS } from './page-js';
+import { renderShowcaseHero, renderRepoHome } from './showcase';
+import { dxkitCli } from '../self-invocation';
 
 /* ─────────────────────────── search index ─────────────────────────── */
 
@@ -85,7 +87,7 @@ function buildSearchIndex(bundle: LearnBundle, status: LearnRepoStatus | null): 
     out.push({ t: t.id, k: 'remediation task', a: '#tasks', s: t.summary });
   }
   if (status?.doctor) {
-    for (const c of status.doctor.checks.filter((x) => !x.ok)) {
+    for (const c of status.doctor.checks.filter((x) => !x.ok && !x.advisory)) {
       out.push({
         t: c.label,
         k: 'setup item',
@@ -158,6 +160,16 @@ function repoStatusView(status: LearnRepoStatus): string {
       `<div class="status-line"><span class="${cls}">●</span> last guardrail verdict: <strong>${word}</strong>${v.blockingCount ? ` (${v.blockingCount} blocking)` : ''}${v.warningCount ? `, ${v.warningCount} warnings` : ''} <span style="color:var(--muted)">(${escapeHtml(v.ranAt.slice(0, 16))})</span></div>`,
     );
   }
+  if ((status.jobs?.length ?? 0) > 0) {
+    parts.push(`<h3 class="ref-index-group">Installed workflows</h3>
+      <div class="doc"><table><thead><tr><th>Workflow</th><th>Triggers</th><th>Next scheduled run (UTC)</th></tr></thead><tbody>${status.jobs
+        .map(
+          (j) =>
+            `<tr><td><strong>${escapeHtml(j.name)}</strong><br><code>${escapeHtml(j.workflow)}</code></td><td>${j.triggers.map((t) => escapeHtml(t)).join(', ')}${j.dispatchable ? ' <span class="pill">dispatchable</span>' : ''}</td><td>${j.nextRunUtc ? escapeHtml(j.nextRunUtc) : ''}</td></tr>`,
+        )
+        .join('')}</tbody></table></div>
+      <div class="note">Live last-run results: <code>${dxkitCli('jobs')}</code>. A dispatchable workflow can also be started from the Actions tab (Run workflow).</div>`);
+  }
   return `<section class="view" id="repo-status" data-title="This repo" data-crumb="This repo">${parts.join('\n')}</section>`;
 }
 
@@ -166,8 +178,12 @@ function setupView(status: LearnRepoStatus): string {
   if (!doctor) return '';
   const parts: string[] = [];
   parts.push(`<h2 class="section">Set up this repo</h2>
-      <p class="section-sub">Live requirements check (doctor). Everything here is read-only: copy the command, or tell your agent the sentence. The one write path is <code>vyuh-dxkit configure --apply</code>.</p>`);
-  const failing = doctor.checks.filter((c) => !c.ok);
+      <p class="section-sub">Live requirements check (doctor). Everything here is read-only: copy the command, or tell your agent the sentence. The one write path is <code>vyuh-dxkit configure --apply</code>.</p>
+      <div class="note">Full walkthrough, including the bot token and the branches your org must allow: <a href="#doc-quickstart-admin">Admin setup path</a>.</div>`);
+  // Advisory items are conditional advice (doctor cannot prove the
+  // condition applies here) — rendered as →, never as a red ✗ (G13).
+  const failing = doctor.checks.filter((c) => !c.ok && !c.advisory);
+  const advisory = doctor.checks.filter((c) => !c.ok && c.advisory);
   const passing = doctor.checks.filter((c) => c.ok);
   if (failing.length === 0) {
     parts.push(
@@ -177,6 +193,13 @@ function setupView(status: LearnRepoStatus): string {
   for (const c of failing) {
     parts.push(`<div class="status-line fail"><div>
         <span class="badge-fail">✗</span> ${escapeHtml(c.label)}
+        ${c.fix ? `<div class="fix">${escapeHtml(c.fix.hint)}</div>` : ''}
+        ${c.fix?.command ? `<div class="fix"><code>${escapeHtml(c.fix.command)}</code></div>` : ''}
+      </div></div>`);
+  }
+  for (const c of advisory) {
+    parts.push(`<div class="status-line fail"><div>
+        <span class="badge-warn">→</span> ${escapeHtml(c.label)} <span style="color:var(--muted)">(conditional advice)</span>
         ${c.fix ? `<div class="fix">${escapeHtml(c.fix.hint)}</div>` : ''}
         ${c.fix?.command ? `<div class="fix"><code>${escapeHtml(c.fix.command)}</code></div>` : ''}
       </div></div>`);
@@ -202,7 +225,31 @@ function setupView(status: LearnRepoStatus): string {
 
 /* ─────────────────────────── assistant panel (serve) ─────────────────────────── */
 
-function assistantPanel(): string {
+/** Starter prompts: one click each, repo-aware. Every one of these is a
+ *  question the grounding genuinely answers (admin quickstart's bot-token
+ *  walkthrough, the policy field reference, operating-the-lanes, the
+ *  developer quickstart, and — in repo mode — the live status + jobs). */
+function starterChips(hasRepo: boolean): string {
+  const shared = [
+    'What does dxkit verify, and what can it not do?',
+    'How do I trial dxkit on a repo without installing anything?',
+    'How do I set up the bot token, and which permissions does it need?',
+    'Which branches does dxkit create, and what does my org need to allow?',
+    'What does .dxkit/policy.json control? Where do I start?',
+    'What will the remediation lane cost us, and how is spend capped?',
+    'The gate blocked my PR. What are my options?',
+  ];
+  const repo = [
+    'What is set up in this repo, and what is missing?',
+    'What does our policy enforce right now?',
+  ];
+  const chips = hasRepo ? [...repo, ...shared] : shared;
+  return `<div class="chips" id="chips">${chips
+    .map((q) => `<button class="chip" data-q="${escapeHtml(q)}">${escapeHtml(q)}</button>`)
+    .join('')}</div>`;
+}
+
+function assistantPanel(hasRepo: boolean): string {
   return `
 <button class="assistant-fab" id="fab">✦ Ask dxkit <kbd style="opacity:.7;font-size:10px">Ctrl+/</kbd></button>
 <aside class="assistant-panel" id="apanel" aria-label="dxkit assistant">
@@ -238,7 +285,8 @@ function assistantPanel(): string {
     </details>
   </div>
   <div class="ap-chat" id="chat">
-    <div class="ap-empty" id="chat-empty">Ask anything about dxkit${''} or this repo.<br><br>“Why is my PR blocked?”<br>“What should we adopt next?”<br>“How do I defer a finding?”</div>
+    <div class="ap-empty" id="chat-empty">Ask anything about dxkit${hasRepo ? ' or this repo' : ''} — or start from one of these:
+      ${starterChips(hasRepo)}</div>
   </div>
   <div class="ap-error" id="ask-error"></div>
   <div class="ap-input">
@@ -273,6 +321,13 @@ export function renderLearnHtml(
   const groups = [...new Set(more.map((c) => c.groupLabel))];
 
   const nav: string[] = [];
+  if (status) {
+    // Repo mode: home IS the repo — the dashboard lands first and leads nav.
+    nav.push(`<div class="nav-label">This repo</div>`);
+    nav.push(`<a href="#home">Home</a>`);
+    nav.push(`<a href="#repo-status">Status</a>`);
+    if (status.doctor) nav.push(`<a href="#setup-panel">Set up this repo</a>`);
+  }
   nav.push(`<div class="nav-label">Guide</div>`);
   for (const d of bundle.docs) {
     nav.push(`<a href="#doc-${escapeHtml(d.slug)}">${escapeHtml(d.title)}</a>`);
@@ -287,24 +342,17 @@ export function renderLearnHtml(
   if (bundle.tasks.length > 0) nav.push(`<a href="#tasks">Remediation tasks</a>`);
   if (bundle.reference.length > 0)
     nav.push(`<a href="#reference">Reference (${bundle.reference.length} pages)</a>`);
-  if (status) {
-    nav.push(`<div class="nav-label">This repo</div>`);
-    nav.push(`<a href="#repo-status">Status</a>`);
-    if (status.doctor) nav.push(`<a href="#setup-panel">Set up this repo</a>`);
-  }
-
   const body: string[] = [];
 
-  // Home / "Start here" view: hero + the core capability cards.
+  // Repo mode lands on the repo dashboard (the FIRST view is the router
+  // default); zero-context lands on the showcase.
+  if (status) {
+    body.push(renderRepoHome(status, { serve: Boolean(opts.serve) }));
+  }
+
+  // The product showcase (showcase.ts), then the core capability cards.
   body.push(`<section class="view" id="core" data-title="Start here" data-crumb="">
-    <div class="hero">
-      <h1>Understand dxkit in one sitting</h1>
-      <p>dxkit gates <strong>changes</strong>, not repositories: existing debt is grandfathered, only net-new problems block. And it <strong>acts</strong> on what it finds — scheduled lanes and remediation agents bump dependencies, burn down debt, and improve tests and docs, landing only via pull requests that pass the same gate as a human change. Everything on this page ships with the package and works offline${opts.serve ? ' — and the assistant on the right answers from exactly this content' : ''}.</p>
-      <div class="hero-actions">
-        <a class="tbtn primary" href="#doc-how-dxkit-thinks">Read the mental model</a>
-        <a class="tbtn" href="#reference">Browse the reference (${bundle.reference.length} pages)</a>
-      </div>
-    </div>
+    ${renderShowcaseHero({ serve: Boolean(opts.serve), referenceCount: bundle.reference.length })}
     <h2 class="section">Start here</h2>
     <p class="section-sub">The five commands most repos live in.</p>
     <div class="cards">${core.map((c) => capCard(c, bundle.knobs)).join('\n')}</div>
@@ -421,7 +469,7 @@ ${opts.generatedAt ? `<p class="section-sub" style="margin-top:44px">Generated $
     <div class="palette-results" id="palette-results"></div>
   </div>
 </div>
-${opts.serve ? assistantPanel() : ''}
+${opts.serve ? assistantPanel(status !== null) : ''}
 <script type="application/json" id="search-index">${searchIndexJson}</script>
 <script>${BASE_JS}</script>
 ${opts.serve ? `<script>${ASSISTANT_JS}</script>` : ''}
