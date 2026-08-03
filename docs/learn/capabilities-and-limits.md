@@ -43,6 +43,19 @@ both directions, so you can decide what to rely on it for.
 - **The honesty of allowlist entries.** A false-positive category or a
   deferral reason is a human statement, on the record and auditable, but
   dxkit does not second-guess it.
+- **UI or screen testing.** dxkit does not drive browsers or screens and
+  does not generate end-to-end UI tests. Its testing surface is test-gap
+  analysis, affected-test selection, and the `improve-tests` remediation
+  task, which writes tests in the repo's own test framework.
+- **API collection generation.** dxkit maps UI-to-API integration (the
+  flow gate) and inventories served routes, but it does not generate or
+  maintain request-collection suites for external API tools. The route
+  inventory (`flow` / `describe`) is a sound input if you build those
+  elsewhere.
+- **Code migration.** Framework or platform migrations are not a dxkit
+  capability. A custom remediation campaign can attempt scoped migration
+  work, but it carries no score hinge: verification is compile + affected
+  tests + the guardrail + your review, and the PR says so.
 
 ## Standing limits worth knowing
 

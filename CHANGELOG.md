@@ -23,20 +23,43 @@ that keeps the class from recurring — plus the learn surface below.
   three persona quickstarts (developer, reviewer, admin), and a
   capabilities-and-limits statement that says explicitly what dxkit
   verifies and what it cannot.
-- **`vyuh-dxkit learn`.** One self-contained offline HTML page — zero CDN
-  loads, zero scripts — with capability cards rendered from the registries,
-  the docs above, and (inside a repo) live doctor status plus a strictly
-  read-only "Set up this repo" checklist with copy-paste remedies. Works in
-  an empty directory: `npx @vyuhlabs/dxkit learn` needs no repo at all.
-- **`learn --serve`.** A localhost-only assistant grounded hard in that same
-  content plus the repo's live status. Bring your own LLM key: auto-detected
-  from the environment (never sent to the browser) or entered in the page
-  (held in tab memory, relayed per request, never stored). Three providers:
-  Anthropic, OpenAI, and any OpenAI-compatible endpoint. Repo grounding
-  defaults to summaries and counts; finding-level detail sits behind a
-  visible toggle, and the page states exactly what is sent — generated from
-  the same assembly as the payload, so the disclosure cannot drift. The
-  assistant explains and produces exact commands; it executes nothing.
+- **`vyuh-dxkit learn`.** One self-contained offline HTML page — every
+  asset inline, zero external requests, works from file:// — with a full
+  product UI: light and dark themes, a Ctrl+K search palette over
+  everything on the page, copy buttons on every command, and capability
+  cards rendered from the registries. Works in an empty directory:
+  `npx @vyuhlabs/dxkit learn` needs no repo at all. Inside a repo it adds
+  live doctor status plus a strictly read-only "Set up this repo"
+  checklist with copy-paste remedies.
+- **The knowledge base is the whole documentation set, and it cannot
+  drift.** The page ships the entire docs tree (command reference,
+  configuration and policy reference, benchmarks, the extension SDK), a
+  complete policy field reference generated from the policy schema
+  itself, the installed agent-skill catalog, and the remediation-task
+  catalog with each task's model-tier rationale and verification hinge —
+  all searchable. New guides cover operating the lanes (schedules,
+  one-off dispatch campaigns, budgets) and a step-by-step bot-token
+  setup for admins.
+  A coverage test enforces that every command, policy knob, skill, task,
+  and doc is in the bundle or declared-excluded with a reason — a feature
+  or doc that skips the knowledge base fails CI.
+- **`learn --serve`.** A localhost-only assistant in a dedicated panel,
+  grounded hard in that same content plus the repo's live status. Bring
+  your own LLM key: auto-detected from the environment (never sent to the
+  browser) or entered in the page (held in tab memory, relayed per
+  request, never stored). Three providers — Anthropic, OpenAI, any
+  OpenAI-compatible endpoint — and the model chooser loads the LIVE model
+  list from the provider with your key (compiled-in suggestions remain
+  only as a labeled offline fallback, so the chooser is never a stale
+  snapshot). An **Auto** model choice routes each question
+  deterministically between a fast tier and a deep tier — resolved
+  against the live list, newest models win — and discloses, under every
+  answer, which model served and why. Repo
+  grounding defaults to summaries and counts; finding-level detail sits
+  behind a visible toggle, and the page states exactly what is sent —
+  generated from the same assembly as the payload, so the disclosure
+  cannot drift. The assistant explains and produces exact commands; it
+  executes nothing.
 - **Per-repo runbook.** Install/update generates `RUNBOOK.dxkit.md` at the
   repo root: what dxkit actually runs in this repo (gates, lane schedules),
   what to do when blocked, and the typed escape hatches — rendered from repo
