@@ -93,6 +93,32 @@ function repoStatus(): LearnRepoStatus {
         dispatchable: true,
       },
     ],
+    profile: {
+      graph: {
+        functionCount: 2253,
+        fileCount: 310,
+        callEdgeCount: 9800,
+        hubs: [
+          { label: 'secretHubFunction', sourceFile: 'src/deep/hub.ts', callsIn: 41, callsOut: 3 },
+        ],
+        refreshedAt: '2026-08-01T06:00:00.000Z',
+        stale: false,
+      },
+      debt: {
+        total: 42,
+        byKind: { 'dep-vuln': 30, secret: 2, code: 10 },
+        bySeverity: { high: 3, medium: 29, unrated: 10 },
+        floorFailing: [{ pack: 'typescript', label: 'tsc --noEmit' }],
+      },
+      health: {
+        overallScore: 50,
+        rating: 'C',
+        analyzedAt: '2026-08-01T00:00:00Z',
+        topActions: [
+          { dimension: 'testing', reason: 'no coverage data available', upliftIfFixed: 35 },
+        ],
+      },
+    },
   };
 }
 
@@ -258,6 +284,44 @@ describe('grounding — summaries by default, detail behind the toggle, disclosu
     expect(g.system).toContain('vyuh-dxkit fix-it');
     expect(g.system).toContain('fp-123');
     expect(g.disclosure.join(' ')).toContain('IN DETAIL');
+  });
+
+  it('repo profile: counts + freshness ride the summary tier; hub symbol names stay behind detail', () => {
+    const g = assembleGrounding(bundle, repoStatus(), { detail: false });
+    // Graph shape, debt shape, health headline: counts + product-phrased
+    // strings, each with its freshness stamp.
+    expect(g.system).toContain('2253 functions');
+    expect(g.system).toContain('refreshed 2026-08-01');
+    expect(g.system).toContain('dep-vuln=30');
+    expect(g.system).toContain('high=3');
+    expect(g.system).toContain('overall 50/100 (C)');
+    expect(g.system).toContain('no coverage data available');
+    expect(g.system).toContain('tsc --noEmit');
+    // Hub SYMBOL NAMES + their file paths are repo content: detail only.
+    expect(g.system).not.toContain('secretHubFunction');
+    expect(g.system).not.toContain('src/deep/hub.ts');
+    expect(g.disclosure.join(' ')).toContain('COUNTS');
+    const gd = assembleGrounding(bundle, repoStatus(), { detail: true });
+    expect(gd.system).toContain('secretHubFunction');
+    expect(gd.system).toContain('src/deep/hub.ts');
+  });
+
+  it('absent profile artifacts carry the exact enable command; a stale graph names the refresh', () => {
+    const absent = repoStatus();
+    absent.profile = { graph: null, debt: null, health: null };
+    const g = assembleGrounding(bundle, absent, { detail: false });
+    expect(g.system).toContain('code graph: not set up');
+    expect(g.system).toContain('vyuh-dxkit describe');
+    expect(g.system).toContain("run 'vyuh-dxkit health'");
+    expect(g.system).toContain('no committed baseline to read');
+
+    const staleSt = repoStatus();
+    staleSt.profile = {
+      ...staleSt.profile,
+      graph: { ...staleSt.profile.graph!, stale: true },
+    };
+    const gs = assembleGrounding(bundle, staleSt, { detail: false });
+    expect(gs.system).toContain('STALE');
   });
 });
 

@@ -239,9 +239,14 @@ function starterChips(hasRepo: boolean): string {
     'What will the remediation lane cost us, and how is spend capped?',
     'The gate blocked my PR. What are my options?',
   ];
+  // Chips only promise what the current tier answers (tier-1 profile:
+  // debt shape, ranked actions, graph freshness — all artifact reads).
   const repo = [
     'What is set up in this repo, and what is missing?',
     'What does our policy enforce right now?',
+    'What does our debt look like?',
+    'What should we improve first?',
+    'Is the code graph set up and fresh here?',
   ];
   const chips = hasRepo ? [...repo, ...shared] : shared;
   return `<div class="chips" id="chips">${chips
