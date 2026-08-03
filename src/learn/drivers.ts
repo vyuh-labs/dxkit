@@ -23,6 +23,12 @@ export interface LlmDriver {
   /** Suggestions only — the page always offers a free-text model field. */
   readonly suggestedModels: readonly string[];
   readonly defaultModel: string;
+  /**
+   * Auto-routing tiers (the "Auto" model choice): quick lookups go to `fast`,
+   * reasoning-shaped questions to `deep`. Routing never crosses providers
+   * (keys differ); a driver without tiers always serves its default model.
+   */
+  readonly routing?: { readonly fast: string; readonly deep: string };
 }
 
 export const LLM_DRIVERS: readonly LlmDriver[] = [
@@ -34,6 +40,7 @@ export const LLM_DRIVERS: readonly LlmDriver[] = [
     wire: 'anthropic',
     suggestedModels: ['claude-opus-5', 'claude-sonnet-5', 'claude-haiku-4-5'],
     defaultModel: 'claude-opus-5',
+    routing: { fast: 'claude-haiku-4-5', deep: 'claude-opus-5' },
   },
   {
     id: 'openai',
@@ -41,8 +48,9 @@ export const LLM_DRIVERS: readonly LlmDriver[] = [
     keyEnv: 'OPENAI_API_KEY',
     endpoint: 'https://api.openai.com/v1',
     wire: 'openai-chat',
-    suggestedModels: ['gpt-5.1', 'gpt-5-mini'],
+    suggestedModels: ['gpt-5.1', 'gpt-5-mini', 'gpt-5-nano'],
     defaultModel: 'gpt-5.1',
+    routing: { fast: 'gpt-5-mini', deep: 'gpt-5.1' },
   },
   {
     id: 'custom',
@@ -54,6 +62,54 @@ export const LLM_DRIVERS: readonly LlmDriver[] = [
     defaultModel: '',
   },
 ] as const;
+
+/** The sentinel the page sends when the model choice is "Auto". */
+export const AUTO_MODEL = 'auto';
+
+export interface RouteDecision {
+  model: string;
+  tier: 'fast' | 'deep';
+  /** One human-readable clause, DISCLOSED under the answer — the routing is
+   *  deterministic and the user always sees which model served and why. */
+  reason: string;
+}
+
+/**
+ * Deterministic per-question routing for the "Auto" model choice. Pure and
+ * pinned by test: reasoning-shaped questions (why/how/design/debug...), long
+ * or multi-part questions, deep follow-up chains, and detail-grounded asks go
+ * to the deep tier; short lookups go to the fast tier.
+ */
+export function routeModel(
+  driver: LlmDriver,
+  question: string,
+  opts: { detail?: boolean; historyLength?: number } = {},
+): RouteDecision {
+  if (!driver.routing) {
+    return {
+      model: driver.defaultModel,
+      tier: 'deep',
+      reason: 'single-model provider (no routing tiers)',
+    };
+  }
+  const q = question.trim();
+  const deepReasons: string[] = [];
+  if (opts.detail) deepReasons.push('finding-level grounding is on');
+  if (q.length > 240) deepReasons.push('long question');
+  if ((q.match(/\?/g) ?? []).length >= 2) deepReasons.push('multi-part question');
+  if (
+    /\b(why|how (do|should|can|would)|explain|design|architect|compare|trade-?offs?|debug|root cause|investigate|plan|migrate|strategy|convince|justify)\b/i.test(
+      q,
+    )
+  ) {
+    deepReasons.push('reasoning-shaped question');
+  }
+  if ((opts.historyLength ?? 0) >= 6) deepReasons.push('deep follow-up chain');
+  if (deepReasons.length > 0) {
+    return { model: driver.routing.deep, tier: 'deep', reason: deepReasons[0] };
+  }
+  return { model: driver.routing.fast, tier: 'fast', reason: 'quick lookup' };
+}
 
 export function getDriver(id: string): LlmDriver | undefined {
   return LLM_DRIVERS.find((d) => d.id === id);

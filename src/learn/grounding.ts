@@ -54,11 +54,29 @@ export function assembleGrounding(
     `The capability registry: every command name + description, and policy knob names (product facts, no repo data).`,
   );
 
-  // 2. The curated docs — also product facts.
+  // 2. The curated docs + the grounded slice of the reference shelf — all
+  // product facts shipped with the package (never repo data). The command
+  // pages and deep benchmark chapters stay page/search-only for size; the
+  // registry digest above covers every command.
   for (const d of bundle.docs) {
     parts.push(`## Doc: ${d.title}\n${d.markdown}`);
   }
-  disclosure.push(`The built-in docs (mental model, quickstarts, capabilities-and-limits).`);
+  for (const r of bundle.reference.filter((x) => x.grounded)) {
+    parts.push(`## Reference: ${r.title} (docs/${r.relPath})\n${r.markdown}`);
+  }
+  if (bundle.skills.length > 0) {
+    parts.push(
+      `## Agent skills dxkit installs\n${bundle.skills.map((s) => `- ${s.name}: ${s.description}`).join('\n')}`,
+    );
+  }
+  if (bundle.tasks.length > 0) {
+    parts.push(
+      `## Remediation lane tasks\n${bundle.tasks.map((t) => `- ${t.id} (${t.tier} tier): ${t.summary}`).join('\n')}`,
+    );
+  }
+  disclosure.push(
+    `The built-in docs: mental model, quickstarts, capabilities-and-limits, extending dxkit, the configuration reference, getting started, benchmarks overview, plus the installed agent-skill and remediation-task catalogs.`,
+  );
 
   // 3. Repo status — ONLY in repo mode, summaries by default.
   if (status) {

@@ -160,7 +160,9 @@ function emptyResult(): ShipInstallResult {
   return { installed: [], skipped: [], sidecars: [], notes: [] };
 }
 
-function templatesDir(): string {
+/** The ONE packaged-templates locator (also consumed by the learn bundle's
+ *  skills inventory — never a second `../templates` join elsewhere). */
+export function templatesDir(): string {
   return path.join(__dirname, '..', 'templates');
 }
 

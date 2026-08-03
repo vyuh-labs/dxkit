@@ -47,6 +47,18 @@ For a wave of blocking dependency advisories from the last check there is a
 bulk form: `vyuh-dxkit allowlist defer --from-last-check --reason="..."`.
 Other kinds are deliberately one-at-a-time.
 
+**Straight from the PR conversation**: when the repo has the comment-defer
+workflow installed, anyone with write access can defer without leaving
+GitHub by commenting on the PR:
+
+```text
+/dxkit defer <fingerprint> --expires=+14d --reason="tracked in the payments epic"
+```
+
+The workflow applies the same time-boxed deferral the CLI does and commits
+it to the PR branch, so the reviewer sees it like any other change. The
+fingerprint is in the guardrail's PR comment.
+
 ## 4. The verdict is CANNOT GATE
 
 Stop: this is not about your code. dxkit is telling you it cannot honestly

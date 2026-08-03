@@ -112,6 +112,36 @@ export function markdownToHtml(md: string): string {
       continue;
     }
 
+    // Pipe tables (GitHub style): a header row, a separator row, body rows.
+    // The reference docs (benchmarks, extension SDK) use them heavily.
+    if (
+      /^\|.*\|\s*$/.test(line) &&
+      i + 1 < lines.length &&
+      /^\|[\s:|-]+\|\s*$/.test(lines[i + 1])
+    ) {
+      flushPara();
+      const splitRow = (l: string): string[] =>
+        l
+          .trim()
+          .replace(/^\|/, '')
+          .replace(/\|$/, '')
+          .split('|')
+          .map((c) => c.trim());
+      const header = splitRow(line);
+      i += 2; // skip header + separator
+      const rows: string[][] = [];
+      while (i < lines.length && /^\|.*\|\s*$/.test(lines[i])) {
+        rows.push(splitRow(lines[i]));
+        i++;
+      }
+      const th = header.map((h) => `<th>${renderInline(escapeHtml(h))}</th>`).join('');
+      const trs = rows
+        .map((r) => `<tr>${r.map((c) => `<td>${renderInline(escapeHtml(c))}</td>`).join('')}</tr>`)
+        .join('');
+      out.push(`<table><thead><tr>${th}</tr></thead><tbody>${trs}</tbody></table>`);
+      continue;
+    }
+
     // Blockquote (flat).
     if (/^>\s?/.test(line)) {
       flushPara();

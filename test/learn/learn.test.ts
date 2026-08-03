@@ -39,7 +39,7 @@ describe('learn bundle — registry-driven, cannot drift', () => {
     }
   });
 
-  it('carries every posture knob and all five curated docs with real titles', () => {
+  it('carries every posture knob and all six curated docs with real titles', () => {
     expect(bundle.knobs.length).toBe(POSTURE_KNOBS.length);
     expect(bundle.docs.map((d) => d.slug)).toEqual([
       'how-dxkit-thinks',
@@ -47,6 +47,7 @@ describe('learn bundle — registry-driven, cannot drift', () => {
       'quickstart-developer',
       'quickstart-reviewer',
       'quickstart-admin',
+      'extending-dxkit',
     ]);
     for (const d of bundle.docs) {
       expect(d.title, `${d.slug} packaging stub leaked`).not.toBe(d.slug);
@@ -58,16 +59,25 @@ describe('learn bundle — registry-driven, cannot drift', () => {
 describe('learn page — self-contained + zero-context', () => {
   const bundle = buildLearnBundle();
 
-  it('zero-repo render: full guide, no scripts, no external loads', () => {
+  it('zero-repo render: full guide, self-contained, zero external loads, no network JS', () => {
     const html = renderLearnHtml(bundle, null);
     for (const id of CORE_COMMAND_IDS) expect(html).toContain(`>${id}</span>`);
     expect(html).toContain('What dxkit verifies, and what it cannot');
     expect(html).toContain('How dxkit thinks');
-    // Self-containment: no JS at all in this increment, no remote fetches.
-    expect(html).not.toContain('<script');
-    expect(html).not.toMatch(/<(link|img|iframe)\b/);
+    // Self-containment: inline assets only — no CDN scripts, no remote
+    // styles/fonts/images, no imports. The favicon is a data: URI.
     expect(html).not.toMatch(/src=["']https?:/);
+    expect(html).not.toMatch(/<link[^>]+href=["']https?:/);
+    expect(html).not.toMatch(/<(img|iframe)\b/);
     expect(html).not.toMatch(/@import/);
+    // The STATIC page's script performs zero network requests (search,
+    // theme, copy, nav are pure client-side over embedded data).
+    expect(html).not.toMatch(/fetch\(/);
+    // Search + theme are present in both modes; the assistant is serve-only.
+    expect(html).toContain('palette-input');
+    expect(html).toContain('theme-toggle');
+    expect(html).toContain('search-index');
+    expect(html).not.toContain('id="apanel"');
     // No repo section without a repo.
     expect(html).not.toContain('Set up this repo');
   });
@@ -82,7 +92,7 @@ describe('learn page — self-contained + zero-context', () => {
     expect(result.repoMode).toBe(false);
     expect(result.outputPath).toBe(path.join(dir, 'dxkit-learn.html'));
     const html = fs.readFileSync(result.outputPath, 'utf-8');
-    expect(html).toContain('capability guide');
+    expect(html).toContain('class="mode">guide<');
     expect(html).toContain('guardrail');
   });
 });
@@ -156,18 +166,19 @@ describe('learn page — repo mode renders doctor as a read-only setup panel', (
     expect(html).toContain('18928 grandfathered findings');
   });
 
-  it('escapes repo-derived strings and stays script-free', () => {
+  it('escapes repo-derived strings at the render boundary', () => {
     const html = renderLearnHtml(bundle, syntheticStatus());
     expect(html).not.toContain('<script>alert(1)');
     expect(html).toContain('&lt;script&gt;alert(1)&lt;/script&gt;');
-    expect(html).not.toContain('<script');
   });
 
-  it('is read-only: the one write path is only ever quoted', () => {
+  it('is read-only: the one write path is only ever quoted, and static-mode JS never fetches', () => {
     const html = renderLearnHtml(bundle, syntheticStatus());
     expect(html).toContain('configure --apply');
-    // No forms, no buttons, no JS handlers anywhere on the page.
-    expect(html).not.toMatch(/<(form|button|input)\b/);
+    // No forms, no inline JS handlers; the static page's script makes zero
+    // network requests (theme/search/copy/nav only).
+    expect(html).not.toMatch(/<form\b/);
     expect(html).not.toMatch(/on(click|submit|load)=/);
+    expect(html).not.toMatch(/fetch\(/);
   });
 });

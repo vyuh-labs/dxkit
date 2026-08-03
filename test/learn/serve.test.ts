@@ -13,7 +13,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { buildLearnBundle } from '../../src/learn/bundle';
 import { renderLearnHtml } from '../../src/learn/render';
 import { assembleGrounding } from '../../src/learn/grounding';
-import { LLM_DRIVERS, relayAsk, getDriver } from '../../src/learn/drivers';
+import { LLM_DRIVERS, relayAsk, getDriver, routeModel } from '../../src/learn/drivers';
 import { startLearnServer, buildStatusPayload } from '../../src/learn/serve';
 import type { LearnRepoStatus } from '../../src/learn/repo-status';
 
@@ -235,10 +235,12 @@ describe('serve — localhost only, key hygiene, graceful no-key degrade', () =>
       const addr = s.server.address();
       expect(typeof addr === 'object' && addr ? addr.address : '').toBe('127.0.0.1');
       const html = await (await fetch(s.url)).text();
-      expect(html).toContain('Ask the assistant');
+      expect(html).toContain('dxkit assistant');
+      expect(html).toContain('assistant-panel');
       expect(html).toContain('<script>');
       expect(html).not.toMatch(/src=["']https?:/);
-      expect(html).not.toMatch(/<(link|img|iframe)\b/);
+      expect(html).not.toMatch(/<link[^>]+href=["']https?:/);
+      expect(html).not.toMatch(/<(img|iframe)\b/);
     } finally {
       await s.close();
     }
@@ -328,20 +330,117 @@ describe('serve — localhost only, key hygiene, graceful no-key degrade', () =>
   });
 });
 
-describe('render — file mode stays script-free, serve mode stays self-contained', () => {
+describe('render — static mode never fetches, serve mode stays self-contained', () => {
   const bundle = buildLearnBundle();
 
-  it('static file mode has no script even with serve-capable code present', () => {
+  it('static file mode has no assistant and its JS makes no network requests', () => {
     const html = renderLearnHtml(bundle, null, {});
-    expect(html).not.toContain('<script');
-    expect(html).not.toContain('Ask the assistant');
+    expect(html).not.toContain('id="apanel"');
+    expect(html).not.toMatch(/fetch\(/);
+    expect(html).toContain('palette-input');
   });
 
   it('serve mode adds the panel + script but still no external loads', () => {
     const html = renderLearnHtml(bundle, null, { serve: true });
-    expect(html).toContain('Ask the assistant');
+    expect(html).toContain('dxkit assistant');
     expect(html).toContain('bring-your-own-key');
     expect(html).not.toMatch(/src=["']https?:/);
     expect(html).not.toMatch(/@import/);
+    // The serve page's JS talks ONLY to same-origin /api/* paths.
+    const fetches = [...html.matchAll(/fetch\((['"])([^'"]+)\1/g)].map((m) => m[2]);
+    expect(fetches.length).toBeGreaterThan(0);
+    for (const f of fetches) expect(f.startsWith('/api/')).toBe(true);
+    // Fetches with computed URLs stay same-origin too (string-concat on /api/).
+    expect(html).not.toMatch(/fetch\((['"])https?:/);
+  });
+});
+
+describe('auto model routing — deterministic, disclosed', () => {
+  const bundle = buildLearnBundle();
+  const anthropic = getDriver('anthropic')!;
+
+  it('routes quick lookups to the fast tier and reasoning to the deep tier', () => {
+    expect(routeModel(anthropic, 'what is a baseline?')).toMatchObject({
+      model: 'claude-haiku-4-5',
+      tier: 'fast',
+    });
+    expect(routeModel(anthropic, 'why is my PR blocked and how do I fix it?')).toMatchObject({
+      model: 'claude-opus-5',
+      tier: 'deep',
+      reason: 'reasoning-shaped question',
+    });
+    expect(routeModel(anthropic, 'list gates', { detail: true }).tier).toBe('deep');
+    expect(routeModel(anthropic, 'and then?', { historyLength: 8 }).tier).toBe('deep');
+    expect(routeModel(getDriver('custom')!, 'anything').reason).toContain('single-model');
+  });
+
+  it('serve: model "auto" routes and the response discloses the decision', async () => {
+    let seenModel = '';
+    const fetchFn = (async (_url: unknown, init: unknown) => {
+      seenModel = JSON.parse(String((init as RequestInit).body)).model;
+      return new Response(
+        JSON.stringify({ stop_reason: 'end_turn', content: [{ type: 'text', text: 'ok `x`' }] }),
+        { status: 200 },
+      );
+    }) as typeof fetch;
+    const s = await startLearnServer(bundle, null, { fetchFn });
+    try {
+      const res = await fetch(`${s.url}api/ask`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          driverId: 'anthropic',
+          model: 'auto',
+          question: 'what is a baseline?',
+          browserKey: 'your-key',
+        }),
+      });
+      const body = (await res.json()) as {
+        routed: boolean;
+        servedModel: string;
+        routeTier: string;
+        routeReason: string;
+        answerHtml: string;
+      };
+      expect(seenModel).toBe('claude-haiku-4-5');
+      expect(body.routed).toBe(true);
+      expect(body.servedModel).toBe('claude-haiku-4-5');
+      expect(body.routeTier).toBe('fast');
+      expect(body.routeReason.length).toBeGreaterThan(0);
+      // Answers come back rendered by the ONE pinned markdown renderer.
+      expect(body.answerHtml).toContain('<code>x</code>');
+    } finally {
+      await s.close();
+    }
+  });
+
+  it('an explicit model always wins over routing', async () => {
+    let seenModel = '';
+    const fetchFn = (async (_url: unknown, init: unknown) => {
+      seenModel = JSON.parse(String((init as RequestInit).body)).model;
+      return new Response(
+        JSON.stringify({ stop_reason: 'end_turn', content: [{ type: 'text', text: 'ok' }] }),
+        { status: 200 },
+      );
+    }) as typeof fetch;
+    const s = await startLearnServer(bundle, null, { fetchFn });
+    try {
+      const res = await fetch(`${s.url}api/ask`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          driverId: 'anthropic',
+          model: 'claude-sonnet-5',
+          question: 'why why why?',
+          browserKey: 'your-key',
+        }),
+      });
+      const body = (await res.json()) as { routed: boolean; servedModel: string };
+      expect(seenModel).toBe('claude-sonnet-5');
+      expect(body.routed).toBe(false);
+      expect(body.servedModel).toBe('claude-sonnet-5');
+    } finally {
+      await s.close();
+    }
   });
 });

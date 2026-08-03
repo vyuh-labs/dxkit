@@ -49,6 +49,15 @@ describe('learn markdown renderer — the pinned subset', () => {
     expect(html).not.toContain('<a href="javascript:');
   });
 
+  it('renders pipe tables (header + separator + body), cells inline-formatted', () => {
+    const html = markdownToHtml(
+      '| Rung | You write |\n| ---- | --------- |\n| 1 | a `key` |\n| 2 | **bold** |',
+    );
+    expect(html).toContain('<table><thead><tr><th>Rung</th><th>You write</th></tr></thead>');
+    expect(html).toContain('<td>1</td><td>a <code>key</code></td>');
+    expect(html).toContain('<td><strong>bold</strong></td>');
+  });
+
   it('escapes raw HTML everywhere', () => {
     const html = markdownToHtml('<script>alert(1)</script>\n\n> a <b>quote</b>');
     expect(html).not.toContain('<script>');
@@ -73,7 +82,7 @@ describe('learn markdown renderer — the pinned subset', () => {
       const renderedHeadings = (html.match(/<h[1-4] /g) ?? []).length;
       expect(renderedHeadings, `${f}: headings dropped`).toBe(headingCount);
       expect(html, `${f}: unescaped angle bracket`).not.toMatch(
-        /<(?!\/?(h[1-4]|p|ul|ol|li|pre|code|strong|a|blockquote)\b)[a-z]/i,
+        /<(?!\/?(h[1-4]|p|ul|ol|li|pre|code|strong|a|blockquote|table|thead|tbody|tr|th|td)\b)[a-z]/i,
       );
     }
   });

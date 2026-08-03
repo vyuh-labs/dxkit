@@ -17,7 +17,16 @@ import type { LearnBundle } from './bundle';
 import type { LearnRepoStatus } from './repo-status';
 import { renderLearnHtml } from './render';
 import { assembleGrounding } from './grounding';
-import { CUSTOM_BASE_URL_ENV, LLM_DRIVERS, envKeyFor, getDriver, relayAsk } from './drivers';
+import {
+  AUTO_MODEL,
+  CUSTOM_BASE_URL_ENV,
+  LLM_DRIVERS,
+  envKeyFor,
+  getDriver,
+  relayAsk,
+  routeModel,
+} from './drivers';
+import { markdownToHtml } from './markdown';
 
 const MAX_BODY_BYTES = 256 * 1024;
 
@@ -84,6 +93,7 @@ export function buildStatusPayload(
       needsBaseUrl: d.endpoint === null,
       suggestedModels: d.suggestedModels,
       defaultModel: d.defaultModel,
+      routing: d.routing ?? null,
       // Presence only — the key itself never crosses to the browser.
       envKeyPresent: envKeyFor(d) !== null,
     })),
@@ -158,10 +168,18 @@ export async function startLearnServer(
               )
               .slice(-20)
           : [];
+        // "Auto" (or an empty model) routes deterministically between the
+        // driver's fast/deep tiers; an explicit model always wins. The
+        // decision is returned and shown under the answer — never silent.
+        const requested = (body.model ?? '').trim();
+        const route =
+          requested.length === 0 || requested === AUTO_MODEL
+            ? routeModel(driver, question, { detail: !!body.detail, historyLength: history.length })
+            : null;
         const result = await relayAsk(
           {
             driver,
-            model: (body.model ?? '').trim() || driver.defaultModel,
+            model: route ? route.model : requested,
             baseUrl: (body.baseUrl ?? '').trim() || process.env[CUSTOM_BASE_URL_ENV] || undefined,
             apiKey,
             system: grounding.system,
@@ -173,7 +191,18 @@ export async function startLearnServer(
           json(res, 502, { error: result.error });
           return;
         }
-        json(res, 200, { answer: result.answer, keySource: envKeyFor(driver) ? 'env' : 'browser' });
+        json(res, 200, {
+          answer: result.answer,
+          // Rendered through the ONE pinned markdown subset renderer (it
+          // escapes everything), so the page can show formatted answers
+          // without a client-side markdown engine.
+          answerHtml: markdownToHtml(result.answer ?? ''),
+          servedModel: route ? route.model : requested || driver.defaultModel,
+          routed: route !== null,
+          routeTier: route?.tier,
+          routeReason: route?.reason,
+          keySource: envKeyFor(driver) ? 'env' : 'browser',
+        });
         return;
       }
       json(res, 404, { error: 'not found' });
