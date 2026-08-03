@@ -398,7 +398,7 @@ export function agentTools(
         v = null;
       }
       if (!v) {
-        return "No cached guardrail verdict for this tree — run 'vyuh-dxkit guardrail check' to produce one (the cache is same-tree: any file change invalidates it).";
+        return "No cached guardrail verdict for this tree — run 'vyuh-dxkit guardrail check' to produce one (the cache is same-tree, so a file change invalidates it).";
       }
       const word = v.unattributableCount > 0 ? 'CANNOT GATE' : v.blocks ? 'BLOCKED' : 'PASSED';
       const lines = [
