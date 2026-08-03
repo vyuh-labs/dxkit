@@ -15,13 +15,12 @@ import { renderLearnHtml } from '../../src/learn/render';
 import { assembleGrounding } from '../../src/learn/grounding';
 import {
   LLM_DRIVERS,
-  MAX_TOOL_CALLS,
-  relayAsk,
   getDriver,
   routeModel,
   listModels,
   resolveRouting,
 } from '../../src/learn/drivers';
+import { MAX_TOOL_CALLS, relayAsk } from '../../src/learn/relay';
 import { startLearnServer, buildStatusPayload } from '../../src/learn/serve';
 import type { LearnRepoStatus } from '../../src/learn/repo-status';
 
