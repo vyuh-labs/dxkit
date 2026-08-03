@@ -235,6 +235,38 @@ export function hotFilesQuery(graph: Graph, limit = 20): HotFileResult[] {
   return results.slice(0, limit);
 }
 
+// ─── Symbol lookup (learn repo intelligence, tier 2) ─────────────────────────
+
+/** Result of a by-name symbol lookup: matched nodes, or "did you mean"
+ *  suggestions when nothing matched. */
+export interface SymbolLookupResult {
+  nodes: GraphNode[];
+  suggestions: string[];
+}
+
+/**
+ * Case-insensitive exact lookup of a symbol name against the graph's
+ * symbolIndex, with edit-distance/substring suggestions on a miss — the
+ * canonical "resolve what the user typed to graph nodes" step for
+ * point-query consumers (the learn tool loop, future MCP tools). A
+ * trailing `()` is stripped so `main()` and `main` both resolve.
+ */
+export function symbolLookup(graph: Graph, name: string): SymbolLookupResult {
+  const kw = name.toLowerCase().trim().replace(/\(\)$/, '');
+  if (!kw) return { nodes: [], suggestions: [] };
+  const ids = findSeedIds(graph, kw, false);
+  if (ids.size === 0) {
+    return { nodes: [], suggestions: suggestionsFor(graph, kw).map((s) => s.key) };
+  }
+  const nodes: GraphNode[] = [];
+  for (const id of ids) {
+    const n = graph.nodeById.get(id);
+    if (n) nodes.push(n);
+  }
+  nodes.sort((a, b) => a.sourceFile.localeCompare(b.sourceFile) || a.label.localeCompare(b.label));
+  return { nodes, suggestions: [] };
+}
+
 // ─── Whole-graph profile (learn repo intelligence, tier 1) ───────────────────
 
 /** One hub row in a `graphProfile` result: a callable symbol many other

@@ -378,6 +378,13 @@ const ASSISTANT_JS = `
           (res.body.routed ? ' · auto-routed: ' + res.body.routeReason : '') +
           ' · key: ' + res.body.keySource;
         addMeta(meta);
+        /* The per-call disclosure ledger: every repo tool consulted for
+           this answer (each result was sent to the provider). */
+        var tc = res.body.toolCalls || [];
+        if (tc.length > 0) {
+          addMeta('consulted ' + tc.length + ' repo tool' + (tc.length === 1 ? '' : 's') + ': ' +
+            tc.map(function (c) { return c.tool + '(' + c.args + ')'; }).join(' · '));
+        }
         state.history.push({ role: 'user', content: q });
         state.history.push({ role: 'assistant', content: res.body.answer });
       })
