@@ -105,8 +105,14 @@ export function assembleGrounding(
       );
     }
     for (const b of status.baselines) {
+      const src =
+        b.source === 'anchor'
+          ? ', read live from the anchor branch (what the guardrail gates against)'
+          : b.source === 'tree'
+            ? ', in-tree copy — the anchor branch was unreachable, so these numbers may lag the operative baseline'
+            : '';
       s.push(
-        `baseline '${b.name}': ${b.entryCount} grandfathered findings${b.capturedAt ? `, captured ${b.capturedAt.slice(0, 10)}` : ''}`,
+        `baseline '${b.name}': ${b.entryCount} grandfathered findings${b.capturedAt ? `, captured ${b.capturedAt.slice(0, 10)}` : ''}${src}`,
       );
     }
     if (status.lastVerdict) {

@@ -20,6 +20,8 @@ import { readVerdictForTree, type CachedVerdict } from '../baseline/verdict-cach
 import { readPolicyObjectSafe, readPolicyRoot } from '../baseline/policy-text';
 import { readBaselineFile } from '../baseline/baseline-file';
 import { failingFloorDebt } from '../baseline/floor-debt';
+import { loadAnchorFromBranch } from '../baseline/anchor';
+import { loadPolicyFromCwd } from '../baseline/policy';
 import { collectJobs } from '../jobs-cli';
 import { tryLoadGraph, GRAPH_REPORT_PATH } from '../explore/load';
 import { graphProfile, type GraphProfileHub } from '../explore/queries';
@@ -38,8 +40,17 @@ export interface LearnRepoStatus {
     lintEnabled: boolean;
     lanes: string[];
   } | null;
-  /** Committed baseline metadata (name → captured info). */
-  baselines: Array<{ name: string; capturedAt?: string; entryCount: number }>;
+  /** Committed baseline metadata (name → captured info). `source` is set
+   *  only when the policy uses the `branch` anchor transport: `anchor`
+   *  means the numbers come from the live side branch (what the guardrail
+   *  actually gates against — D4d); `tree` means the anchor was
+   *  unreachable and this is the in-tree copy, which may lag. */
+  baselines: Array<{
+    name: string;
+    capturedAt?: string;
+    entryCount: number;
+    source?: 'anchor' | 'tree';
+  }>;
   /** The last same-tree guardrail verdict, when cached. */
   lastVerdict: CachedVerdict | null;
   /** Every installed dxkit workflow: name, triggers, next cron fire. From
@@ -137,9 +148,24 @@ function readPolicySummary(cwd: string): LearnRepoStatus['policy'] {
   };
 }
 
+/** Injectable for tests: resolves the OPERATIVE baseline content path for
+ *  a tree path under the `branch` anchor transport (temp file), or null. */
+export type AnchorLoader = typeof loadAnchorFromBranch;
+
 /** One pass over the committed baselines yields BOTH the per-file
- *  summaries and the aggregate debt shape (no double read). */
-function readBaselines(cwd: string): {
+ *  summaries and the aggregate debt shape (no double read).
+ *
+ *  ANCHOR-AWARE (the external-repo eval catch, 2026-08-03): under the
+ *  `branch` anchor transport the guardrail gates against the SIDE BRANCH
+ *  (D4d), and the in-tree copy routinely lags it — on a real repo the tree
+ *  said Jul 19 / no severities while the anchor held today's capture. So
+ *  learn resolves each baseline through the SAME `loadAnchorFromBranch`
+ *  primitive the guardrail uses (Rule 2), falls back to the tree copy when
+ *  the anchor is unreachable, and DISCLOSES which source it read. */
+export function readBaselines(
+  cwd: string,
+  anchorLoad: AnchorLoader = loadAnchorFromBranch,
+): {
   summaries: LearnRepoStatus['baselines'];
   debt: LearnRepoProfile['debt'];
 } {
@@ -150,13 +176,47 @@ function readBaselines(cwd: string): {
   const floorFailing: Array<{ pack: string; label: string }> = [];
   let total = 0;
   let anyRead = false;
+  let section: ReturnType<typeof loadPolicyFromCwd>['baseline'];
+  try {
+    section = loadPolicyFromCwd(cwd).baseline;
+  } catch {
+    section = undefined;
+  }
+  const anchorConfigured = section?.anchor === 'branch';
   try {
     for (const f of fs.readdirSync(dir).filter((x) => x.endsWith('.json'))) {
       const name = f.replace(/\.json$/, '');
       try {
+        const treePath = path.join(dir, f);
+        let readPath = treePath;
+        let source: 'anchor' | 'tree' | undefined;
+        if (anchorConfigured) {
+          const anchorPath = (() => {
+            try {
+              return anchorLoad(cwd, treePath, section);
+            } catch {
+              return null;
+            }
+          })();
+          source = anchorPath ? 'anchor' : 'tree';
+          if (anchorPath) readPath = anchorPath;
+        }
         // The one baseline reader (schema-validating) — never a second parse.
-        const file = readBaselineFile(path.join(dir, f));
-        summaries.push({ name, capturedAt: file.createdAt, entryCount: file.findings.length });
+        let file;
+        try {
+          file = readBaselineFile(readPath);
+        } catch (err) {
+          if (readPath === treePath) throw err;
+          // Unreadable anchor content: the tree copy, disclosed as such.
+          file = readBaselineFile(treePath);
+          source = 'tree';
+        }
+        summaries.push({
+          name,
+          capturedAt: file.createdAt,
+          entryCount: file.findings.length,
+          ...(source ? { source } : {}),
+        });
         anyRead = true;
         total += file.findings.length;
         for (const entry of file.findings) {
