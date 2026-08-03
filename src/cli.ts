@@ -410,6 +410,8 @@ export async function run(argv: string[]): Promise<void> {
       // learn: local assistant server + its port
       serve: { type: 'boolean', default: false },
       port: { type: 'string' },
+      // mcp: suppress contributor names in history/ownership tools
+      'no-names': { type: 'boolean', default: false },
       frontend: { type: 'string' },
       backend: { type: 'string' },
       specs: { type: 'string' },
@@ -3424,6 +3426,19 @@ export async function run(argv: string[]): Promise<void> {
         filter: values.filter as string | undefined,
         budget: values.budget as string | undefined,
         depth: values.depth as string | undefined,
+      });
+      break;
+    }
+
+    case 'mcp': {
+      // No header/log output: stdout IS the protocol channel (newline-
+      // delimited JSON-RPC). The agent that registered the server owns
+      // the process lifecycle; we run until stdin closes.
+      const { runMcpServer } = await import('./mcp-cli');
+      await runMcpServer({
+        cwd: resolveRepoPath(positionals[1]),
+        version: VERSION,
+        noNames: Boolean(values['no-names']),
       });
       break;
     }
