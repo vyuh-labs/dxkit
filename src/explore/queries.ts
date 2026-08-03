@@ -235,6 +235,79 @@ export function hotFilesQuery(graph: Graph, limit = 20): HotFileResult[] {
   return results.slice(0, limit);
 }
 
+// ─── Whole-graph profile (learn repo intelligence, tier 1) ───────────────────
+
+/** One hub row in a `graphProfile` result: a callable symbol many other
+ *  symbols call into. */
+export interface GraphProfileHub {
+  label: string;
+  sourceFile: string;
+  callsIn: number;
+  callsOut: number;
+}
+
+/** Bounded whole-graph summary for profile-style consumers (the learn
+ *  page's repo grounding). Counts + a small hub list — never the graph
+ *  itself. */
+export interface GraphProfile {
+  /** Callable symbols (function + method nodes). */
+  functionCount: number;
+  /** Distinct source files any node was declared in. */
+  fileCount: number;
+  /** `calls` edges in the graph. */
+  callEdgeCount: number;
+  /** Top callable symbols by call fan-in, descending. */
+  hubs: GraphProfileHub[];
+}
+
+/**
+ * Whole-graph profile: counts plus the top-N hub functions by call
+ * fan-in. The learn assistant's "what shape is this codebase?" answer —
+ * deliberately bounded (top-N, counts only) so a profile consumer never
+ * walks the graph itself (Rule 12).
+ */
+export function graphProfile(graph: Graph, hubLimit = 8): GraphProfile {
+  const files = new Set<string>();
+  let functionCount = 0;
+  let callEdgeCount = 0;
+  const callable: Array<{ node: GraphNode; callsIn: number; callsOut: number }> = [];
+
+  for (const node of graph.nodes) {
+    if (node.sourceFile) files.add(node.sourceFile);
+    for (const e of graph.edgesFromNode.get(node.id) ?? []) {
+      if (e.relation === 'calls') callEdgeCount++;
+    }
+    if (node.kind !== 'function' && node.kind !== 'method') continue;
+    functionCount++;
+    let callsIn = 0;
+    let callsOut = 0;
+    for (const e of graph.edgesToNode.get(node.id) ?? []) {
+      if (e.relation === 'calls') callsIn++;
+    }
+    for (const e of graph.edgesFromNode.get(node.id) ?? []) {
+      if (e.relation === 'calls') callsOut++;
+    }
+    callable.push({ node, callsIn, callsOut });
+  }
+
+  callable.sort((a, b) => {
+    if (b.callsIn !== a.callsIn) return b.callsIn - a.callsIn;
+    return a.node.label.localeCompare(b.node.label);
+  });
+
+  return {
+    functionCount,
+    fileCount: files.size,
+    callEdgeCount,
+    hubs: callable.slice(0, hubLimit).map((c) => ({
+      label: c.node.label,
+      sourceFile: c.node.sourceFile,
+      callsIn: c.callsIn,
+      callsOut: c.callsOut,
+    })),
+  };
+}
+
 /**
  * One row of `vyuh-dxkit explore communities` output. A community is
  * a Louvain-clustered grouping of nodes; the dominant source dir +
