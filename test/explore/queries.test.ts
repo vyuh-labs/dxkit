@@ -22,6 +22,7 @@ import {
   featureQuery,
   fileSummaryQuery,
   findingContextQuery,
+  graphProfile,
   hotFilesQuery,
   nodesInFile,
 } from '../../src/explore/queries';
@@ -622,5 +623,31 @@ describe('findingContextQuery', () => {
     it('returns undefined for a file absent from the graph', () => {
       expect(enclosingSymbolFor(FC, 'src/nowhere.ts', 12)).toBeUndefined();
     });
+  });
+});
+
+describe('graphProfile', () => {
+  it('counts callables/files/call-edges and ranks hubs by fan-in', () => {
+    const p = graphProfile(G);
+    expect(p.functionCount).toBe(3);
+    expect(p.fileCount).toBe(3);
+    expect(p.callEdgeCount).toBe(3);
+    // logger has 2 callers, helper 1, main 0 — descending, label tiebreak.
+    expect(p.hubs.map((h) => h.label)).toEqual(['logger()', 'helper()', 'main()']);
+    expect(p.hubs[0]).toEqual({
+      label: 'logger()',
+      sourceFile: 'src/c.ts',
+      callsIn: 2,
+      callsOut: 0,
+    });
+    expect(p.hubs[1].callsOut).toBe(1); // helper -> logger
+  });
+
+  it('honors hubLimit and excludes module/class nodes from callables', () => {
+    const p = graphProfile(G, 1);
+    expect(p.hubs).toHaveLength(1);
+    expect(p.hubs[0].label).toBe('logger()');
+    // Module nodes counted in files but never as functions/hubs.
+    expect(p.functionCount).toBe(3);
   });
 });
