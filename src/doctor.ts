@@ -58,6 +58,14 @@ export interface CheckResult {
   ok: boolean;
   tier: 'reports' | 'dx' | 'operational';
   /**
+   * Conditional advice, not a failure: the check cannot prove its condition
+   * applies here (e.g. ".npmrc legacy-peer-deps" without proof of an
+   * ERESOLVE fallback). Rendered as advice (→), excluded from fail tallies
+   * and from the learn page's red setup items — a repo where the condition
+   * never applied must not show a red ✗ (eval gap G13).
+   */
+  advisory?: boolean;
+  /**
    * Fix metadata — present when ok=false AND a fix is known. Absent
    * on passing checks (nothing to fix) and on failures without a
    * canned repair path (some checks just inform).
@@ -855,6 +863,7 @@ function runOperationalChecks(cwd: string, hasManifest: boolean): CheckResult[] 
       checks.push({
         label: '.npmrc legacy-peer-deps persistence',
         ok: false,
+        advisory: true,
         tier: 'operational',
         fix: {
           hint: 'If create-dxkit fell back to --legacy-peer-deps, persist the choice to .npmrc so future installs work.',
@@ -1123,7 +1132,8 @@ function buildReport(cwd: string, checks: CheckResult[]): DoctorReport {
   };
   const tally = (arr: CheckResult[]) => ({
     pass: arr.filter((c) => c.ok).length,
-    fail: arr.filter((c) => !c.ok).length,
+    // Advisory items are advice, not failures — they never fail a tier.
+    fail: arr.filter((c) => !c.ok && !c.advisory).length,
   });
   const reportsTally = tally(byTier.reports);
   const dxTally = tally(byTier.dx);
@@ -1154,7 +1164,7 @@ function buildReport(cwd: string, checks: CheckResult[]): DoctorReport {
                 ? 'fail'
                 : 'partial',
       },
-      fixable: checks.filter((c) => !c.ok && c.fix),
+      fixable: checks.filter((c) => !c.ok && !c.advisory && c.fix),
     },
   };
 }
@@ -1191,6 +1201,7 @@ function renderProse(report: DoctorReport, hasManifest: boolean): void {
     logger.info('Operational health (runtime state of this install):');
     for (const c of byTier.operational) {
       if (c.ok) logger.success(c.label);
+      else if (c.advisory) logger.info(`→ ${c.label} (conditional advice, not a failure)`);
       else logger.warn(c.label);
     }
   }

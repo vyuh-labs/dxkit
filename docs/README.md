@@ -1,10 +1,13 @@
 # DXKit User Guide
 
-A Stop-gate for autonomous coding loops. dxkit baselines a repo's current
-findings and blocks only the net-new ones a change introduces, running
-locally with no model in the gate. The same deterministic core also powers
-code-health analysis across 8 language ecosystems (Python, TypeScript, Go,
-Rust, C#, Kotlin, Java, Ruby).
+Map the code. Prove each change is safe to merge. Fix the debt. Repeat.
+dxkit keeps a
+living map of your codebase that grounds coding agents, proves each change
+introduces no new regressions with a deterministic verdict (no model in the
+verdict, existing debt baselined and attributed), and runs budget-bounded
+repair agents whose work lands through that same gate. Everything runs
+locally and covers 10 language ecosystems (TypeScript / JavaScript, Python,
+Go, Rust, C#, Kotlin, Java, Ruby, Swift, PHP).
 
 ## Start here
 
@@ -46,6 +49,37 @@ to re-activate manually: `vyuh-dxkit hooks activate`.
 | [`allowlist export --snyk`](commands/allowlist.md) | Propagate Snyk-originated suppressions to a `.snyk` policy      |
 | [`.dxkit/policy.json`](configuration/policy.md)    | Tune which classifications block vs. warn                       |
 
+## Scheduled lanes and remediation
+
+Beyond gating, dxkit ships automation that acts on what it finds, always
+landing via ordinary pull requests that pass the same gate as a human
+change:
+
+| Lane                 | What it does                                                                                                                                |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Baseline refresh** | Re-captures findings on a cadence; newly published dependency advisories arrive as a decision PR (merge = time-boxed defer, upgrade = fix)  |
+| **Dependency bump**  | `deps bump` as a scheduled lane: deterministic security upgrades proposed as PRs                                                            |
+| **Remediation**      | Budget-bounded agent tasks (fix-build, fix-vulns, fix-lint, improve-tests, write-docs) plus one-off dispatch campaigns with a custom prompt |
+
+Every remediation PR discloses the dispatcher, prompt, model, and spend in
+its body; a failed attempt lands nothing and says so. Operate them with
+`vyuh-dxkit jobs` (what is installed, schedules, last runs) and
+`vyuh-dxkit policy set` (budgets, cadence, enabled tasks). The
+[getting-started lane-credentials section](getting-started.md#9-lane-credentials)
+covers the three credentials the lanes need.
+
+## Learn: the whole product, one page
+
+```bash
+npx --yes @vyuhlabs/dxkit learn --serve
+```
+
+Renders a self-contained, offline HTML knowledge base — every command,
+policy field, lane task, skill, and doc page, searchable — plus an optional
+BYO-key assistant grounded in exactly that content (and, inside a repo,
+your repo's live status). `vyuh-dxkit learn` alone writes the page without
+serving.
+
 ## What you can run
 
 Once dxkit + its tools are installed, here's the command surface. This
@@ -79,7 +113,7 @@ construction; commands with a linked page have a full reference under
 | `ingest`                                                         | Ingest external SAST findings (Snyk / Sonar / CodeQL / SARIF) as first-class                            | varies (reads engine API or SARIF)                              |
 | [`loop`](commands/loop.md)                                       | Autonomous-loop utilities (doctor / ledger / snapshot)                                                  | < 5 sec                                                         |
 | [`deps`](commands/deps.md)                                       | Deterministic dependency security bumps (plan / apply / land a PR)                                      | plan < 1 min; --apply varies (runs your install + tests)        |
-| `remediate`                                                      | Agentic remediation inside the verified frame (plan / run / land a PR)                                  | plan < 5 sec; a task run is budget-bounded (default 30 min cap) |
+| [`remediate`](commands/remediate.md)                             | Agentic remediation inside the verified frame (plan / run / land a PR)                                  | plan < 5 sec; a task run is budget-bounded (default 30 min cap) |
 | [`checks`](commands/checks.md)                                   | List / dry-run your custom repo-invariant + lint gates                                                  | varies (runs your checks)                                       |
 | `extensions`                                                     | Plug your own extractors and sinks into dxkit (any language)                                            | seconds (the `dev` loop)                                        |
 | `schema`                                                         | Data-model inventory + the schema drift gate                                                            | 5-30 sec                                                        |
@@ -93,10 +127,10 @@ construction; commands with a linked page have a full reference under
 | [`init`](commands/init.md)                                       | Install dxkit agent DX in this repo                                                                     | 5-30 sec                                                        |
 | [`update`](commands/update.md)                                   | Re-generate managed files (preserves your edits)                                                        | 5-30 sec                                                        |
 | `policy`                                                         | Read policy values (get), change a knob + refresh its workflows (set), adopt newly shipped knobs (sync) | < 5 sec                                                         |
-| `uninstall`                                                      | Remove dxkit, restoring the exact pre-dxkit state                                                       | < 30 sec                                                        |
+| [`uninstall`](commands/uninstall.md)                             | Remove dxkit, restoring the exact pre-dxkit state                                                       | < 30 sec                                                        |
 | [`doctor`](commands/doctor.md)                                   | Verify setup — and recommend capabilities you are not using                                             | < 5 sec                                                         |
-| `jobs`                                                           | Show the installed dxkit jobs: triggers, schedules, next/last runs                                      | < 5 sec                                                         |
-| `configure`                                                      | Compute + apply a deterministic config plan for this repo                                               | < 30 sec                                                        |
+| [`jobs`](commands/jobs.md)                                       | Show the installed dxkit jobs: triggers, schedules, next/last runs                                      | < 5 sec                                                         |
+| [`configure`](commands/configure.md)                             | Compute + apply a deterministic config plan for this repo                                               | < 30 sec                                                        |
 | `capabilities`                                                   | List every dxkit capability + what this repo should adopt                                               | < 5 sec                                                         |
 | [`tools`](commands/tools.md)                                     | Show / install required analysis tools                                                                  | < 5 sec (list); install varies                                  |
 | `hooks`                                                          | Activate the dxkit git hooks (core.hooksPath)                                                           | < 5 sec                                                         |

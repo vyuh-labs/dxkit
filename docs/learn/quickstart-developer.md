@@ -85,6 +85,28 @@ vyuh-dxkit guardrail check
 Exit 0 means CI's gate will agree with you. If the repo has git hooks
 installed, pre-push already does this.
 
+## What dxkit adds to your normal day
+
+When nothing is wrong, almost nothing: a pre-push hook that runs the gate
+(typically 30 seconds to 2 minutes, scoped to what changed) and one CI
+check on your PR. No new commands to learn until the day something blocks,
+and then the verdict itself tells you what to type. The agent-context
+pieces (skills, the code map) work for you silently.
+
+## Emergency: shipping anyway
+
+Production is down and the pre-push gate is in your way:
+
+```bash
+DXKIT_SKIP_HOOKS=1 git push        # dxkit-specific, audit-friendly
+git push --no-verify               # standard git, skips every hook
+```
+
+Both skip the local hook only. The CI guardrail still runs on the PR —
+that is the design, not a gap: the unbypassable check lives where
+reviewers can see it, and the local hook exists to save you a round trip,
+not to stand between you and an incident.
+
 ## One rule
 
 Never "fix" a block by re-creating the baseline from your feature branch.

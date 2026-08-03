@@ -189,6 +189,28 @@ describe('claude-code driver (exec injected)', () => {
     });
   });
 
+  it('falls back to modelUsage keys for the concrete model id (the first production run reported neither modelId nor model)', async () => {
+    const d = runWith({
+      stdout: JSON.stringify({
+        total_cost_usd: 2.72,
+        num_turns: 80,
+        is_error: false,
+        modelUsage: { 'claude-sonnet-4-6': { inputTokens: 1 } },
+      }),
+    });
+    const r = await d.run({ cwd: '/tmp', prompt: 'p', budget, model: 'sonnet', env: {} });
+    expect(r.resolvedModelId).toBe('claude-sonnet-4-6');
+    // A multi-model run discloses all ids, never silently picks one.
+    const d2 = runWith({
+      stdout: JSON.stringify({
+        is_error: false,
+        modelUsage: { 'model-a': {}, 'model-b': {} },
+      }),
+    });
+    const r2 = await d2.run({ cwd: '/tmp', prompt: 'p', budget, model: 'sonnet', env: {} });
+    expect(r2.resolvedModelId).toBe('model-a + model-b');
+  });
+
   it('reports a wall-clock kill as timedOut (salvage territory, not failure)', async () => {
     const d = runWith({ code: null, timedOut: true, stderr: 'killed' });
     const r = await d.run({ cwd: '/tmp', prompt: 'p', budget, model: 'sonnet', env: {} });

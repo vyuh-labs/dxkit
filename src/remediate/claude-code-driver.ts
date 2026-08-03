@@ -91,6 +91,20 @@ interface ClaudeJsonResult {
   readonly is_error?: boolean;
   readonly modelId?: string;
   readonly model?: string;
+  /** Per-model usage map, keyed by CONCRETE model id — present in newer CLI
+   *  versions and the only place the id appears in their result JSON (real
+   *  runs have reported neither `modelId` nor `model`, leaving the envelope
+   *  at "concrete id not reported by driver"). */
+  readonly modelUsage?: Record<string, unknown>;
+}
+
+/** The concrete model id(s) a result actually used, or undefined. Falls back
+ *  to the `modelUsage` keys; a multi-model run discloses all, joined. */
+function resolvedModelFrom(result: ClaudeJsonResult): string | undefined {
+  if (result.modelId) return result.modelId;
+  if (result.model) return result.model;
+  const used = result.modelUsage ? Object.keys(result.modelUsage) : [];
+  return used.length > 0 ? used.join(' + ') : undefined;
 }
 
 const TIER_ALIAS: Record<ModelTier, string> = {
@@ -185,7 +199,7 @@ export function makeClaudeCodeDriver(exec: AgentExec = realAgentExec): AgentDriv
         completed: outcome.code === 0 && result.is_error !== true,
         turns,
         costUsd: typeof result.total_cost_usd === 'number' ? result.total_cost_usd : undefined,
-        resolvedModelId: result.modelId ?? result.model,
+        resolvedModelId: resolvedModelFrom(result),
         timedOut: false,
         transcriptTail: tail,
       };

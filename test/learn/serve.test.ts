@@ -84,12 +84,24 @@ function repoStatus(): LearnRepoStatus {
       ranAt: '2026-08-01T12:00:00Z',
       blockingFindings: [{ fingerprint: 'fp-123', kind: 'dep-vuln', status: 'added' }],
     },
+    jobs: [
+      {
+        workflow: 'dxkit-dep-bump.yml',
+        name: 'dxkit dep bump',
+        triggers: ['cron 0 7 * * 1', 'workflow_dispatch'],
+        nextRunUtc: '2026-08-10 07:00',
+        dispatchable: true,
+      },
+    ],
   };
 }
 
 describe('driver registry — decision-locked shape', () => {
-  it('ships exactly anthropic (default) + openai + custom, all well-formed', () => {
-    expect(LLM_DRIVERS.map((d) => d.id)).toEqual(['anthropic', 'openai', 'custom']);
+  it('ships exactly openai (default) + anthropic + custom, all well-formed', () => {
+    // Registry order IS the chooser order; first entry is the page default.
+    // OpenAI first (user decision 2026-08-03): cheapest per query, and its
+    // API auto-caches the repeated grounding prefix.
+    expect(LLM_DRIVERS.map((d) => d.id)).toEqual(['openai', 'anthropic', 'custom']);
     for (const d of LLM_DRIVERS) {
       expect(d.keyEnv.length).toBeGreaterThan(0);
       expect(['anthropic', 'openai-chat']).toContain(d.wire);
@@ -137,7 +149,11 @@ describe('relay — wire formats, key hygiene', () => {
     expect(headers['x-api-key']).toBe('your-unit-key-123');
     expect(headers['anthropic-version']).toBe('2023-06-01');
     const body = JSON.parse(String(seen!.init.body));
-    expect(body.system).toBe('SYSTEM-PROMPT');
+    // The grounding is a stable prefix reused across a session, so the wire
+    // marks it cacheable (G14) — repeat queries pay ~10% for cached input.
+    expect(body.system).toEqual([
+      { type: 'text', text: 'SYSTEM-PROMPT', cache_control: { type: 'ephemeral' } },
+    ]);
     expect(body.messages).toEqual([{ role: 'user', content: 'q' }]);
   });
 
@@ -213,13 +229,26 @@ describe('grounding — summaries by default, detail behind the toggle, disclosu
     expect(g.disclosure.join(' ')).toContain('No repo data');
   });
 
-  it('repo default: counts only — no failing labels, no fingerprints; disclosure says summaries', () => {
+  it('repo default: labels but no remedies, no fingerprints; disclosure says summaries', () => {
     const g = assembleGrounding(bundle, repoStatus(), { detail: false });
     expect(g.detail).toBe(false);
     expect(g.system).toContain('1 failing');
-    expect(g.system).not.toContain('SECRET-SHAPED failing label');
+    // G11: failing-check LABELS ride the summary tier so "what is missing
+    // here?" is answerable without the toggle...
+    expect(g.system).toContain('SECRET-SHAPED failing label');
+    // ...but remedies (can embed repo paths) and fingerprints stay behind it.
+    expect(g.system).not.toContain('vyuh-dxkit fix-it');
     expect(g.system).not.toContain('fp-123');
-    expect(g.disclosure.join(' ')).toContain('SUMMARIES ONLY');
+    expect(g.disclosure.join(' ')).toContain('SUMMARIES');
+    expect(g.disclosure.join(' ')).toContain('LABELS');
+  });
+
+  it('installed workflows (jobs) ground the assistant: names, triggers, schedule — even without detail', () => {
+    const g = assembleGrounding(bundle, repoStatus(), { detail: false });
+    expect(g.system).toContain('dxkit dep bump');
+    expect(g.system).toContain('cron 0 7 * * 1');
+    expect(g.system).toContain('2026-08-10 07:00');
+    expect(g.disclosure.join(' ')).toContain('workflow list');
   });
 
   it('detail toggle: labels + remedies + fingerprints appear, and the disclosure says so', () => {
@@ -332,7 +361,7 @@ describe('serve — localhost only, key hygiene, graceful no-key degrade', () =>
   it('status payload detail flag round-trips through the one grounding assembly', () => {
     const off = buildStatusPayload(bundle, repoStatus(), false) as { disclosure: string[] };
     const on = buildStatusPayload(bundle, repoStatus(), true) as { disclosure: string[] };
-    expect(off.disclosure.join(' ')).toContain('SUMMARIES ONLY');
+    expect(off.disclosure.join(' ')).toContain('SUMMARIES');
     expect(on.disclosure.join(' ')).toContain('IN DETAIL');
   });
 });
@@ -359,6 +388,19 @@ describe('render — static mode never fetches, serve mode stays self-contained'
     for (const f of fetches) expect(f.startsWith('/api/')).toBe(true);
     // Fetches with computed URLs stay same-origin too (string-concat on /api/).
     expect(html).not.toMatch(/fetch\((['"])https?:/);
+  });
+
+  it('starter chips: shared prompts always, repo-only prompts only with a repo', () => {
+    const zero = renderLearnHtml(bundle, null, { serve: true });
+    expect(zero).toContain('id="chips"');
+    expect(zero).toContain('bot token');
+    expect(zero).toContain('Which branches does dxkit create');
+    expect(zero).not.toContain('What is set up in this repo');
+    const repo = renderLearnHtml(bundle, repoStatus(), { serve: true });
+    expect(repo).toContain('What is set up in this repo');
+    // The repo page also renders the installed-workflow inventory.
+    expect(repo).toContain('Installed workflows');
+    expect(repo).toContain('dxkit-dep-bump.yml');
   });
 });
 
@@ -476,6 +518,9 @@ describe('auto model routing — deterministic, disclosed', () => {
       tier: 'deep',
       reason: 'reasoning-shaped question',
     });
+    // Fast-by-default tune (2026-08-03): a plain how-to is a LOOKUP the
+    // grounding answers directly — retrieval, not reasoning.
+    expect(routeModel(anthropic, 'How do I set up the bot token for this repo?').tier).toBe('fast');
     expect(routeModel(anthropic, 'list gates', { detail: true }).tier).toBe('deep');
     expect(routeModel(anthropic, 'and then?', { historyLength: 8 }).tier).toBe('deep');
     expect(routeModel(getDriver('custom')!, 'anything').reason).toContain('single-model');

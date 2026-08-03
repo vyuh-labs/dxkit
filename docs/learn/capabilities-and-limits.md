@@ -57,6 +57,30 @@ both directions, so you can decide what to rely on it for.
   work, but it carries no score hinge: verification is compile + affected
   tests + the guardrail + your review, and the PR says so.
 
+## Platform requirements
+
+- **The gate runs anywhere.** `guardrail check`, baselines, the allowlist,
+  reports, and the correctness floor are a local CLI: any CI system that
+  can run a Node command can gate PRs with it (GitLab, Jenkins, Circle —
+  run the same command, fail the pipeline on exit 1).
+- **The automation is GitHub-native today.** The scheduled lanes, dispatch
+  campaigns, the `/dxkit defer` comment workflow, branch-protection setup,
+  and repo-visibility detection are built on GitHub Actions and the GitHub
+  API. On another platform you keep the gate and lose the lanes; there is
+  no non-GitHub lane support today.
+- **Installs fetch scanners from the network.** `tools install` downloads
+  pinned, checksum-verified scanner binaries; a fully air-gapped install
+  is not supported today. Once tools are installed, scans and the gate
+  run offline.
+
+## Leaving is clean
+
+`vyuh-dxkit uninstall` restores the pre-dxkit state: it deletes what dxkit
+created, reverses what it merged into shared files (`.gitignore`,
+`package.json`, agent settings), and refuses to touch files you created or
+modified. It shows its plan and asks before touching anything. Reversibility
+is part of the adoption case: trying dxkit does not commit you to it.
+
 ## Standing limits worth knowing
 
 - The gate is only as current as the baseline. A stale baseline degrades to
