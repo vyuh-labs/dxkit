@@ -54,7 +54,7 @@ function fakeDriver(
 ): AgentDriver & { lastRun?: Parameters<AgentDriver['run']>[0] } {
   const driver: AgentDriver & { lastRun?: Parameters<AgentDriver['run']>[0] } = {
     id: 'fake-agent',
-    budgetSupport: { turns: true, cost: true },
+    budgetSupport: { turns: 'enforced', cost: 'reported' },
     credentialEnv: ['FAKE_KEY'],
     cli: null,
     resolveModel: (tier) => `fake-${tier}`,
@@ -257,7 +257,7 @@ describe('the budget envelope (runner-enforced, disclosed)', () => {
   });
 
   it('a driver that cannot enforce a cap yields a DISCLOSED limitation, never silence', async () => {
-    const driver = fakeDriver({ costUsd: 99 }, { budgetSupport: { turns: false, cost: false } });
+    const driver = fakeDriver({ costUsd: 99 }, { budgetSupport: { turns: 'none', cost: 'none' } });
     const r = await runRemediateTask(base(driver));
     // cost unsupported → the runner does NOT enforce maxUsd from a number the
     // driver cannot vouch for; both limitations are disclosed in the envelope
@@ -274,7 +274,7 @@ describe('the budget envelope (runner-enforced, disclosed)', () => {
     // and discards verified work under the default salvage policy.
     const driver = fakeDriver(
       { turns: DEFAULT_REMEDIATE_BUDGET.maxTurns },
-      { budgetSupport: { turns: false, cost: true } },
+      { budgetSupport: { turns: 'reported', cost: 'reported' } },
     );
     const r = await runRemediateTask(base(driver));
     expect(r.outcome).toBe('verified');

@@ -37,6 +37,15 @@ export function runRemediatePlan(cwd: string, opts: RemediatePlanOptions = {}): 
   // The run-level spend ceiling, applied here so the WORKFLOW's matrix reads
   // the trimmed list from the plan (one derivation) instead of re-deriving it.
   const ceiling = tasksWithinSpendCeiling(config);
+  // The disclosed per-RUN spend projection (the undisclosed-4x class): each
+  // matrix task is its own invocation with its own maxUsd, so one firing may
+  // spend the SUM — a ceiling multiplication the serial shape's coupling
+  // used to hide. Derived from the same per-task budgets the runner
+  // enforces, and shown whether or not maxSpendPerRun caps it.
+  const projectedMaxSpendUsd = ceiling.run.reduce(
+    (sum, taskId) => sum + budgetForTask(config, taskId).maxUsd,
+    0,
+  );
 
   if (opts.json) {
     process.stdout.write(
@@ -57,11 +66,20 @@ export function runRemediatePlan(cwd: string, opts: RemediatePlanOptions = {}): 
           matrixTasks: ceiling.run,
           deferredBySpendCeiling: ceiling.deferred,
           maxSpendPerRun: config.maxSpendPerRun,
+          /** What one firing may spend: Σ of the matrix tasks' per-task
+           *  maxUsd (each matrix job is its own invocation with its own
+           *  cap). Advisory where the driver only reports cost — see
+           *  budgetSupport. */
+          projectedMaxSpendUsd,
           unknownTasks: config.unknownTasks,
+          /** Per-dimension driver capability: 'enforced' | 'reported' |
+           *  'none'. A dimension below 'enforced' also appears in
+           *  unenforceableCaps. */
+          budgetSupport: driver ? driver.budgetSupport : null,
           unenforceableCaps: driver
             ? [
-                ...(driver.budgetSupport.turns ? [] : ['maxTurns']),
-                ...(driver.budgetSupport.cost ? [] : ['maxUsd']),
+                ...(driver.budgetSupport.turns === 'enforced' ? [] : ['maxTurns']),
+                ...(driver.budgetSupport.cost === 'enforced' ? [] : ['maxUsd']),
               ]
             : [],
         },
@@ -89,8 +107,24 @@ export function runRemediatePlan(cwd: string, opts: RemediatePlanOptions = {}): 
     `budget: ${config.agent.budget.maxTurns} turns, ${config.agent.budget.maxMinutes} min, ` +
       `$${config.agent.budget.maxUsd} — salvage: ${config.salvage}`,
   );
-  if (!driver.budgetSupport.turns) logger.warn(`maxTurns is not enforceable by ${driver.id}`);
-  if (!driver.budgetSupport.cost) logger.warn(`maxUsd is not enforceable by ${driver.id}`);
+  if (driver.budgetSupport.turns !== 'enforced') {
+    logger.warn(`maxTurns is not enforceable by ${driver.id}`);
+  }
+  if (driver.budgetSupport.cost === 'none') {
+    logger.warn(`maxUsd is not enforceable by ${driver.id} (no spend reporting)`);
+  } else if (driver.budgetSupport.cost === 'reported') {
+    logger.warn(
+      `maxUsd is ADVISORY for ${driver.id} (cost is reported after the run, not enforced ` +
+        `mid-run) — the enforced turn cap and wall clock bound real spend`,
+    );
+  }
+  logger.info(
+    `per-run spend projection: up to $${projectedMaxSpendUsd} across ${ceiling.run.length} ` +
+      `task(s) in one firing` +
+      (config.maxSpendPerRun > 0
+        ? ` (maxSpendPerRun: $${config.maxSpendPerRun})`
+        : ' (no remediate.maxSpendPerRun ceiling declared)'),
+  );
   logger.info(`schedule (managed workflow): ${config.schedule}`);
   if (!config.enabled) {
     logger.dim('remediate.enabled is not set — the scheduled workflow is off; local runs work.');

@@ -52,11 +52,20 @@ write-access-gated by GitHub itself.
 
 ## Estimating spend
 
-The caps are hard, so the worst case is arithmetic, not a prediction:
+The worst case is arithmetic, but be precise about which caps are hard:
+`maxTurns` and `maxMinutes` are enforced by the runner/CLI; **`maxUsd` is
+advisory for the claude-code driver** (spend is reported after the run,
+not stopped mid-run — the ledger says so). Real spend is bounded by the
+turn cap, so the projection uses observed cost-per-turn, and dispatch
+turn overrides are clamped against `remediate.maxDispatchBudget` so a
+one-off campaign cannot silently raise the ceiling.
 
-> worst-case monthly spend = enabled tasks × runs per month × per-task cap
-> (default $5), additionally capped by `remediate.maxSpendPerRun` each run.
+> worst-case monthly spend ≈ enabled tasks × runs per month × per-task
+> cap (default $5, turn-bounded), additionally capped by
+> `remediate.maxSpendPerRun` each run.
 
+`remediate plan` prints the per-run projection (the sum of the matrix
+tasks' caps — each matrix task is its own invocation with its own cap).
 Example: 3 enabled tasks on the default weekly schedule, default caps:
 3 × 4 × $5 = $60/month ceiling. Real runs usually land far below their cap
 (a typical fix task spends $1–3), and every PR body discloses the actual
