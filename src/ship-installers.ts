@@ -45,6 +45,7 @@ import { readFlowConfig } from './analyzers/flow/config';
 import { discoverExtensions } from './extensions/manifest';
 import { mergeIntoPolicyFile } from './baseline/policy-write';
 import { detectEnforcement, type EnforcementState } from './enforcement';
+import { DXKIT_RUNTIME_ARTIFACT_PATHS } from './runtime-artifacts';
 
 /**
  * Detect the consumer repo's default branch so workflow templates
@@ -1274,13 +1275,10 @@ export function installPrReview(cwd: string, opts: InstallerOpts = {}): ShipInst
 }
 
 export const GITIGNORE_HEADER = '# dxkit — runtime outputs (analyzer reports + dashboard)';
-export const GITIGNORE_ENTRIES = [
-  '.dxkit/reports/',
-  '.dxkit/dashboard.html',
-  '.dxkit/cache/',
-  '.dxkit/loop/',
-  'graphify-out/',
-];
+// Derived from the ONE runtime-artifact list (Rule 2) — the remediate
+// runner's sweep/scrub reads the same paths, so what init gitignores and
+// what the lane refuses to land can never drift apart.
+export const GITIGNORE_ENTRIES = [...DXKIT_RUNTIME_ARTIFACT_PATHS];
 
 /**
  * Seed `.gitignore` with dxkit's runtime-output paths and write a

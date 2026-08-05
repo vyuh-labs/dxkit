@@ -34,6 +34,7 @@ import { resolveDispatchedTask } from './dispatch';
 import { resumePromptNote } from './resume';
 import { realGit } from './git-ops';
 import { evaluateScoreHinge, healthHingeScores } from './score-hinge';
+import { salvageForTask } from './config';
 import type { AgentEnvelope, RemediateResult, RemediateRunOptions } from './outcome';
 
 // The outcome vocabulary lives in `./outcome` and the ledger renderer in
@@ -56,7 +57,7 @@ export async function runRemediateTask(opts: RemediateRunOptions): Promise<Remed
   const finish = (r: Omit<RemediateResult, 'ledger' | 'dispatch' | 'resume'>): RemediateResult => {
     const withDispatch = {
       ...dispatchDisclosure,
-      ...(opts.resume ? { resume: opts.resume } : {}),
+      ...(opts.resume ? { resume: { attempt: opts.resume.attempt } } : {}),
       ...r,
     };
     return { ...withDispatch, ledger: renderRemediateLedger(withDispatch) };
@@ -104,6 +105,10 @@ export async function runRemediateTask(opts: RemediateRunOptions): Promise<Remed
 
   const choice = resolveModelSetting(driver, opts.config.agent.model, task.tier);
   const budget = opts.config.agent.budget;
+  // The ONE salvage resolver (config.ts): explicit policy wins; 'auto'
+  // follows the task's declared completion shape. The CLI's land decision
+  // reads the same function, so the note here and the landing agree.
+  const effectiveSalvage = salvageForTask(opts.config, task);
   // A cap below 'enforced' is a DISCLOSED limitation, phrased by what the
   // driver CAN do. Claiming an unenforced cap as a cap is the $14.71 class:
   // maxUsd read post-hoc while max_turns silently governed real spend.
@@ -195,7 +200,9 @@ export async function runRemediateTask(opts: RemediateRunOptions): Promise<Remed
     `reserve the final minutes to commit ALL remaining work and record where you stopped ` +
     `in docs/DXKIT-REMEDIATION-NOTES.md — work committed before the cap survives; ` +
     `uncommitted edits are swept into a single unlabeled-context commit.`;
-  const resumeNote = opts.resume ? resumePromptNote(opts.resume.attempt) : '';
+  const resumeNote = opts.resume
+    ? resumePromptNote(opts.resume.attempt, opts.resume.blockingContext)
+    : '';
   const agentResult: AgentRunResult = await driver.run({
     cwd: opts.cwd,
     prompt: task.prompt + budgetNote + resumeNote,
@@ -234,6 +241,11 @@ export async function runRemediateTask(opts: RemediateRunOptions): Promise<Remed
   // never leak into the landing layer unreviewed.
   opts.onPhase?.('sweep');
   const sweepError = git.sweepLeftovers();
+  // Drop attempt-introduced runtime artifacts (regenerable scan state the
+  // agent committed mid-run) BEFORE the diff question — an attempt whose
+  // only content was scan output must read as a no-op, and a real attempt
+  // must not carry `.dxkit/reports/*` into its PR. Disclosed below.
+  const scrubbed = git.scrubRuntimeArtifacts(baseHead);
   const hasDiff = git.hasDiff(baseHead);
 
   // Reported spend exceeding the (advisory) cap is an honest post-hoc claim
@@ -313,8 +325,13 @@ export async function runRemediateTask(opts: RemediateRunOptions): Promise<Remed
       envelope,
       floor: entryFloor,
       ...evidenceTail,
+      ...(scrubbed.length > 0 ? { scrubbedArtifacts: scrubbed } : {}),
       ...(partial ? { partial } : {}),
-      note: 'agent ran and produced no committed change.',
+      note:
+        scrubbed.length > 0
+          ? 'agent ran and produced no committed change beyond regenerable dxkit scan state ' +
+            '(dropped, disclosed below).'
+          : 'agent ran and produced no committed change.',
       baseHead,
       head: git.head(),
     });
@@ -346,6 +363,7 @@ export async function runRemediateTask(opts: RemediateRunOptions): Promise<Remed
     baseHead,
     head: git.head(),
     ...evidenceTail,
+    ...(scrubbed.length > 0 ? { scrubbedArtifacts: scrubbed } : {}),
     ...(partial ? { partial } : {}),
   };
 
@@ -374,16 +392,30 @@ export async function runRemediateTask(opts: RemediateRunOptions): Promise<Remed
       guardrail.blocking && guardrail.blocking.length > 0
         ? `\n\nBlocking findings:\n${guardrail.blocking.map((b) => `- ${b}`).join('\n')}`
         : '';
+    // Salvage disposition for a RAN-and-BLOCKED verdict: under draft-pr
+    // salvage the blocked attempt may be pushed as a RED draft (its own
+    // required guardrail check keeps it unmergeable), so the work and the
+    // exact blocking reasons survive the ephemeral runner and the next run
+    // can RESUME from them instead of starting over — guardrail-red is
+    // where the most valuable partial work used to die. An UNRUNNABLE
+    // guardrail stays absolute: an unverified diff is never pushed.
+    const salvageNote =
+      guardrail.ran && effectiveSalvage === 'draft-pr'
+        ? ' Salvage policy: draft-pr — the BLOCKED attempt may be pushed as a red DRAFT ' +
+          '(unmergeable while the guardrail check is red) so the next run can resume from it.'
+        : '';
     return finish({
       outcome: 'guardrail-red',
       ...common,
       note:
         (guardrail.ran
-          ? `the guardrail did not pass (${guardrail.verdict}) — nothing lands. The attempt ` +
+          ? `the guardrail did not pass (${guardrail.verdict}) — nothing merges. The attempt ` +
             'diff is uploaded as a run artifact when this ran under Actions; locally the ' +
             'branch stays for inspection.'
           : `the guardrail could not run (${guardrail.verdict}) — nothing lands. An ` +
-            'agent-authored diff is never pushed unverified.') + evidence,
+            'agent-authored diff is never pushed unverified.') +
+        salvageNote +
+        evidence,
     });
   }
 
@@ -409,7 +441,7 @@ export async function runRemediateTask(opts: RemediateRunOptions): Promise<Remed
 
   if (partial) {
     const salvage =
-      opts.config.salvage === 'draft-pr'
+      effectiveSalvage === 'draft-pr'
         ? 'salvage policy: draft-pr — the verified partial work may land as a DRAFT.'
         : 'salvage policy: discard — the partial work is not landed (branch left for inspection).';
     return finish({

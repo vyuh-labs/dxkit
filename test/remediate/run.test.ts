@@ -41,6 +41,7 @@ function fakeGit(opts: { diff?: boolean; sweepError?: string } = {}): RemediateG
   return {
     head: () => head,
     sweepLeftovers: () => opts.sweepError,
+    scrubRuntimeArtifacts: () => [],
     hasDiff: () => {
       if (opts.diff) head = 'head1111';
       return !!opts.diff;
@@ -204,7 +205,7 @@ describe('the verified frame (the agent is never trusted)', () => {
     );
     expect(r.outcome).toBe('guardrail-red');
     expect(r.note).toContain('BLOCKED');
-    expect(r.note).toContain('nothing lands');
+    expect(r.note).toContain('nothing merges');
   });
 
   it('guardrail-red: an UNRUNNABLE guardrail fails closed for the agent lane', async () => {
@@ -358,7 +359,10 @@ describe('resolveRemediateConfig (conservative normalization)', () => {
         model: 'auto',
         budget: { maxTurns: 80, maxMinutes: 30, maxUsd: 5 },
       });
-      expect(c.salvage).toBe('discard');
+      // 'auto' resolves per task shape via salvageForTask (open-ended →
+      // draft-pr, bounded → discard); the raw default is the posture, not
+      // a concrete decision.
+      expect(c.salvage).toBe('auto');
     } finally {
       rmSync(cwd, { recursive: true, force: true });
     }

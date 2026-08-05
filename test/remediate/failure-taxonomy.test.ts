@@ -183,6 +183,7 @@ function fakeGit(opts: { diff?: boolean } = {}): RemediateGit {
   return {
     head: () => 'base0000',
     sweepLeftovers: () => undefined,
+    scrubRuntimeArtifacts: () => [],
     hasDiff: () => !!opts.diff,
   };
 }

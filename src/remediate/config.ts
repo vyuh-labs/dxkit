@@ -5,8 +5,9 @@
  *   - `budget` is required-with-defaults: an enabled block with no budget
  *     gets the conservative caps below, echoed in the ledger — never an
  *     unbounded run (the stranded-spend scar);
- *   - `salvage` defaults to `discard`: a partial diff from a budget-killed
- *     run is dropped unless the repo opts into draft PRs;
+ *   - `salvage` defaults to `auto`: the decision follows each task's
+ *     declared completion shape (open-ended → draft-pr, bounded → discard;
+ *     see `salvageForTask`) unless policy pins one value for every task;
  *   - unknown task ids are RETAINED in `unknownTasks` (disclosed by the
  *     caller, never silently dropped — a typo must not read as "nothing to
  *     do");
@@ -14,7 +15,7 @@
  *     workflow injects them from repo secrets.
  */
 import { readPolicySection } from '../baseline/policy-text';
-import { knownTaskIds, type RemediateTaskId } from './tasks';
+import { knownTaskIds, remediateTaskById, type RemediateTask, type RemediateTaskId } from './tasks';
 
 export interface RemediateBudget {
   readonly maxTurns: number;
@@ -35,7 +36,14 @@ export interface RemediateConfig {
   readonly unknownTasks: readonly string[];
   /** Cadence for the managed workflow (the cadence-knob grammar). */
   readonly schedule: string;
-  readonly salvage: 'discard' | 'draft-pr';
+  /**
+   * The salvage POSTURE as configured. `'auto'` (the default when policy
+   * says nothing) resolves PER TASK from its declared completion shape —
+   * see `salvageForTask`. An explicit `'discard'` / `'draft-pr'` overrides
+   * every task. Consumers of a concrete decision go through
+   * `salvageForTask`, never this raw field.
+   */
+  readonly salvage: 'discard' | 'draft-pr' | 'auto';
   readonly agent: {
     readonly driver: string;
     /** 'auto' | a tier name | a driver-native id (resolved per task). */
@@ -65,6 +73,29 @@ export interface RemediateConfig {
    *  partial can never grandfather its own breakage. Hard cap of
    *  MAX_RESUME_ATTEMPTS per branch (resume.ts). */
   readonly resume: boolean;
+}
+
+/**
+ * The effective salvage decision for ONE task — the single resolver every
+ * consumer reads (the CLI's land eligibility, the runner's disposition
+ * note, resume eligibility). An explicit policy setting wins; `'auto'`
+ * follows the task's declared completion shape: open-ended tasks (docs,
+ * tests — no completion test, every outcome is budget-bounded) default to
+ * `draft-pr` so their verified work is never structurally discarded;
+ * bounded tasks keep the conservative `discard`.
+ */
+export function salvageForTask(
+  config: Pick<RemediateConfig, 'salvage'>,
+  task: Pick<RemediateTask, 'completion'> | RemediateTaskId,
+): 'discard' | 'draft-pr' {
+  if (config.salvage !== 'auto') return config.salvage;
+  const shape =
+    typeof task === 'string'
+      ? // 'custom' lives outside the registry (dispatch-only) and has no
+        // completion test — open-ended by construction.
+        (remediateTaskById(task)?.completion ?? (task === 'custom' ? 'open-ended' : 'bounded'))
+      : task.completion;
+  return shape === 'open-ended' ? 'draft-pr' : 'discard';
 }
 
 /** The effective budget for one task: the per-task override merged over the
@@ -137,7 +168,8 @@ export function resolveRemediateConfig(cwd: string): RemediateConfig {
     tasks: tasks.length > 0 ? tasks : (['fix-vulns'] as const),
     unknownTasks,
     schedule: typeof raw.schedule === 'string' && raw.schedule.trim() ? raw.schedule : 'weekly',
-    salvage: raw.salvage === 'draft-pr' ? 'draft-pr' : 'discard',
+    salvage:
+      raw.salvage === 'draft-pr' ? 'draft-pr' : raw.salvage === 'discard' ? 'discard' : 'auto',
     agent: {
       driver:
         typeof agent.driver === 'string' && agent.driver.trim() ? agent.driver : 'claude-code',

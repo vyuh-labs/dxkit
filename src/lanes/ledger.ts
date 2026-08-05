@@ -40,6 +40,10 @@ export interface LaneEvent {
    *  budget-bounded draft that a reviewer chose to merge anyway. */
   readonly outcome: 'landed';
   readonly partial?: boolean;
+  /** The draft was pushed BLOCKED (guardrail-red salvage): unmergeable until
+   *  its findings are fixed — if this event ever reaches the default branch,
+   *  a human resolved them first. */
+  readonly blocked?: boolean;
   readonly findingsClosed?: readonly LaneFindingsClosed[];
   readonly costUsd?: number;
   readonly resolvedModelId?: string;

@@ -80,6 +80,16 @@ export function renderRemediateLedger(r: Omit<RemediateResult, 'ledger'>): strin
     );
   }
 
+  if (r.scrubbedArtifacts && r.scrubbedArtifacts.length > 0) {
+    lines.push(
+      `Dropped from the attempt (regenerable dxkit scan state the agent committed mid-run — ` +
+        `never part of the delivery): ${r.scrubbedArtifacts.length} path(s): ` +
+        r.scrubbedArtifacts.slice(0, 8).join(', ') +
+        (r.scrubbedArtifacts.length > 8 ? ', …' : ''),
+      '',
+    );
+  }
+
   if (r.dispatch) {
     lines.push('### Dispatch campaign', '');
     lines.push(

@@ -18,16 +18,29 @@ import { DEFAULT_REMEDIATE_BUDGET } from '../../src/remediate/config';
 import type { AnalysisTrustContext } from '../../src/analysis-trust';
 import type { CorrectnessFloorResult } from '../../src/analyzers/correctness/run';
 
-function fakeExec(opts: { openPr?: boolean; markers?: number; failFetch?: boolean }): {
+function fakeExec(opts: {
+  openPr?: boolean;
+  markers?: number;
+  failFetch?: boolean;
+  failPush?: boolean;
+  prBody?: string;
+}): {
   exec: ResumeExec;
   calls: string[][];
 } {
   const calls: string[][] = [];
   const exec: ResumeExec = (bin, args) => {
     calls.push([bin, ...args]);
-    if (bin === 'gh') return opts.openPr ? '[{"url":"https://x/pr/1"}]' : '[]';
+    if (bin === 'gh') {
+      if (!opts.openPr) return '[]';
+      return JSON.stringify([{ url: 'https://x/pr/1', body: opts.prBody ?? '' }]);
+    }
     if (bin === 'git' && args[0] === 'fetch') {
       if (opts.failFetch) throw new Error('fetch failed');
+      return '';
+    }
+    if (bin === 'git' && args[0] === 'push') {
+      if (opts.failPush) throw new Error('push rejected');
       return '';
     }
     if (bin === 'git' && args[0] === 'rev-list') return String(opts.markers ?? 0);
@@ -75,6 +88,41 @@ describe('prepareResume — the eligibility ladder', () => {
     expect(commit!.join(' ')).toContain('--allow-empty');
   });
 
+  it('the attempt marker is PUSHED immediately — a no-op resume still consumes an attempt', () => {
+    // Observed live: the marker only reached the remote when a landing
+    // force-pushed, so runs 2 and 3 both announced attempt #1 and the
+    // MAX_RESUME_ATTEMPTS cap was unreachable — a doomed branch resumed
+    // (and spent) forever.
+    const { exec, calls } = fakeExec({ openPr: true, markers: 0 });
+    const d = prepareResume('/repo', 'fix-build', ON, exec);
+    expect(d.resumed).toBe(true);
+    const push = calls.find((c) => c[0] === 'git' && c[1] === 'push');
+    expect(push).toBeDefined();
+    expect(push!.join(' ')).toContain('HEAD:refs/heads/');
+    // The push happens AFTER the marker commit — it carries the counter.
+    const commitIdx = calls.findIndex((c) => c[0] === 'git' && c.includes('commit'));
+    expect(calls.indexOf(push!)).toBeGreaterThan(commitIdx);
+  });
+
+  it('a failed marker push still resumes, with the cap risk disclosed', () => {
+    const { exec } = fakeExec({ openPr: true, markers: 0, failPush: true });
+    const d = prepareResume('/repo', 'fix-build', ON, exec);
+    expect(d.resumed).toBe(true);
+    expect(d.note).toContain('attempt marker could not be pushed');
+  });
+
+  it('carries the prior attempt blocking findings from the draft-PR ledger into the decision', () => {
+    const body =
+      'ledger...\n\nBlocking findings:\n- [dep-vuln] form-data GHSA-1\n- [test-gap] src/x.js\n\nrest';
+    const { exec } = fakeExec({ openPr: true, markers: 0, prBody: body });
+    const d = prepareResume('/repo', 'fix-build', ON, exec);
+    expect(d.resumed).toBe(true);
+    expect(d.blockingContext).toContain('form-data GHSA-1');
+    expect(d.blockingContext).toContain('src/x.js');
+    // and it reaches the resumed prompt
+    expect(resumePromptNote(d.attempt!, d.blockingContext)).toContain('BLOCKED by the guardrail');
+  });
+
   it('any git/gh failure → fresh run, never a throw', () => {
     const { exec } = fakeExec({ openPr: true, failFetch: true });
     const d = prepareResume('/repo', 'fix-build', ON, exec);
@@ -98,6 +146,7 @@ function fakeGit(): RemediateGit {
   return {
     head: () => head,
     sweepLeftovers: () => undefined,
+    scrubRuntimeArtifacts: () => [],
     hasDiff: () => {
       head = 'salvage01';
       return true;

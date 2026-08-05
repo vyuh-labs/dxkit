@@ -22,6 +22,7 @@
  */
 import { execFileSync } from 'child_process';
 import { BOT_IDENTITY } from '../land-refresh';
+import { internalGitPushArgs } from '../git-internal-push';
 import { remediateBranchFor } from './land';
 import type { RemediateConfig } from './config';
 
@@ -48,9 +49,28 @@ export interface ResumeDecision {
   readonly resumed: boolean;
   /** 1-based resume attempt number (marker commits + 1). */
   readonly attempt?: number;
+  /** The prior attempt's blocking findings (extracted from the open draft
+   *  PR's ledger body, bounded) — carried into the resumed prompt so
+   *  attempt N+1 starts from "close these findings", not from scratch. */
+  readonly blockingContext?: string;
   /** Why no resume happened, when the knob is ON but nothing resumed —
    *  disclosed by the caller, never silent. Absent when the knob is off. */
   readonly note?: string;
+}
+
+/** Extract the ledger's "Blocking findings" list from a PR body, bounded —
+ *  the durable record of WHY the prior attempt was blocked. */
+export function extractBlockingContext(body: string | undefined): string | undefined {
+  if (!body) return undefined;
+  const idx = body.indexOf('Blocking findings:');
+  if (idx === -1) return undefined;
+  const section = body
+    .slice(idx)
+    .split('\n')
+    .slice(1)
+    .filter((l) => l.trim().startsWith('- '));
+  if (section.length === 0) return undefined;
+  return section.join('\n').slice(0, 1500);
 }
 
 /**
@@ -76,12 +96,25 @@ export function prepareResume(
   const branch = remediateBranchFor(taskId);
   try {
     // An OPEN PR for the standing branch is the resume anchor — a merged or
-    // closed one means the work was decided on; start fresh.
-    const prJson = run('gh', ['pr', 'list', '--head', branch, '--state', 'open', '--json', 'url']);
-    const open = JSON.parse(prJson || '[]') as unknown[];
+    // closed one means the work was decided on; start fresh. The body is the
+    // prior attempt's ledger: its "Blocking findings" list (a guardrail-red
+    // salvage) is carried into the resumed prompt so attempt N+1 starts from
+    // "close these findings", not from scratch.
+    const prJson = run('gh', [
+      'pr',
+      'list',
+      '--head',
+      branch,
+      '--state',
+      'open',
+      '--json',
+      'url,body',
+    ]);
+    const open = JSON.parse(prJson || '[]') as Array<{ body?: string }>;
     if (!Array.isArray(open) || open.length === 0) {
       return { resumed: false, note: `no open draft PR for '${branch}' — fresh run` };
     }
+    const blockingContext = extractBlockingContext(open[0]?.body);
     run('git', ['fetch', 'origin', branch]);
     // Count prior resume markers on the salvage head (bounded to the branch's
     // own history vs the current default tree).
@@ -112,7 +145,28 @@ export function prepareResume(
       '-m',
       `${RESUME_MARKER} [skip ci]`,
     ]);
-    return { resumed: true, attempt: prior + 1 };
+    // Push the marker IMMEDIATELY — the attempt counter must advance even
+    // when this attempt lands nothing. The counter previously lived only in
+    // commits the lander force-pushed on success, so a doomed branch whose
+    // resumes kept no-oping counted "attempt #1" forever and re-spent its
+    // budget every scheduled firing (MAX_RESUME_ATTEMPTS was unreachable —
+    // observed live across three runs). At this point HEAD is provably
+    // FETCH_HEAD + one empty marker commit, so the push carries ZERO agent
+    // content — the never-push-unverified law is untouched.
+    let note: string | undefined;
+    try {
+      run('git', internalGitPushArgs(`HEAD:refs/heads/${branch}`));
+    } catch (e) {
+      note =
+        `attempt marker could not be pushed (${e instanceof Error ? e.message.split('\n')[0] : String(e)}) — ` +
+        `the ${MAX_RESUME_ATTEMPTS}-attempt cap may not engage across runs until a landing pushes`;
+    }
+    return {
+      resumed: true,
+      attempt: prior + 1,
+      ...(blockingContext ? { blockingContext } : {}),
+      ...(note ? { note } : {}),
+    };
   } catch (e) {
     return {
       resumed: false,
@@ -121,11 +175,17 @@ export function prepareResume(
   }
 }
 
-/** The continuation instruction appended to the task prompt on a resume. */
-export function resumePromptNote(attempt: number): string {
+/** The continuation instruction appended to the task prompt on a resume.
+ *  When the prior attempt was BLOCKED, its findings ride along so this
+ *  attempt starts from "close these", not from scratch. */
+export function resumePromptNote(attempt: number, blockingContext?: string): string {
   return (
     `\nRESUMED ATTEMPT #${attempt}: a previous budget-bounded run already committed real ` +
     `work on this branch. Read docs/DXKIT-REMEDIATION-NOTES.md and the recent git log ` +
-    `FIRST, then CONTINUE from where it stopped — do not redo or rewrite completed work.`
+    `FIRST, then CONTINUE from where it stopped — do not redo or rewrite completed work.` +
+    (blockingContext
+      ? `\nThe previous attempt was BLOCKED by the guardrail on exactly these findings — ` +
+        `resolving them is this attempt's FIRST priority:\n${blockingContext}`
+      : '')
   );
 }
