@@ -28,7 +28,10 @@ export function renderRemediateLedger(r: Omit<RemediateResult, 'ledger'>): strin
         : e.modelSource === 'pinned-tier'
           ? 'tier pinned by policy'
           : 'pinned by policy';
-    lines.push(`- driver: \`${e.driver}\``);
+    lines.push(
+      `- driver: \`${e.driver}\`` +
+        (e.cliVersion ? ` — agent CLI ${e.cliVersion}` : ' — agent CLI version not reported'),
+    );
     lines.push(
       `- model: \`${e.model}\` (${modelWhy})` +
         (e.resolvedModelId
@@ -36,11 +39,23 @@ export function renderRemediateLedger(r: Omit<RemediateResult, 'ledger'>): strin
           : ' — concrete id not reported by driver'),
     );
     if (e.modelWarning) lines.push(`- model warning: ${e.modelWarning}`);
+    // Under subscription auth a reported cost is a NOTIONAL API-equivalent,
+    // not billed spend — printing it as "spend" makes a benchmark table read
+    // as a bill (and a $0 lane look free when it is quota).
+    const spendLabel = e.auth === 'subscription' ? 'API-equivalent cost' : 'spend';
     lines.push(
-      `- spend: ${e.costUsd !== undefined ? `$${e.costUsd.toFixed(2)}` : 'not reported'} over ` +
+      `- auth: ${
+        e.auth === 'subscription'
+          ? 'subscription (stored login — costs shown are API-equivalents, not billed spend)'
+          : 'api-key (billed API spend)'
+      }`,
+    );
+    lines.push(
+      `- ${spendLabel}: ${e.costUsd !== undefined ? `$${e.costUsd.toFixed(2)}` : 'not reported'} over ` +
         `${e.turns !== undefined ? `${e.turns} turns` : 'an unreported turn count'} ` +
         `(caps: ${e.budget.maxTurns} turns, ${e.budget.maxMinutes} min, $${e.budget.maxUsd})`,
     );
+    if (e.failure) lines.push(`- driver-reported failure: ${e.failure}`);
     if (e.turns !== undefined && e.turns > e.budget.maxTurns) {
       // The 81-vs-80 confusion: the driver's reported count can exceed the
       // cap it enforced (its accounting includes the closing turn). Say so —

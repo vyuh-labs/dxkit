@@ -48,12 +48,13 @@ import type { RemediateConfig } from './config';
 
 export type RemediateOutcome =
   | 'verified' // diff produced, floor net-new-clean, guardrail PASSED — ready to land
-  | 'no-op' // agent ran, no diff (nothing to fix)
+  | 'no-op' // agent ran TO COMPLETION, no diff (nothing to fix)
   | 'floor-red' // diff breaks the net-new floor — never lands
   | 'guardrail-red' // guardrail blocked, refused, or could not run — never lands
   | 'score-red' // the task's score hinge did not hold (goal not met) — never lands
   | 'budget-exhausted' // a cap hit; partial diff (salvage policy decides its fate)
   | 'agent-never-ran' // CLI/auth/env failure — infra, not a code outcome
+  | 'agent-failed' // the run errored after starting and produced no committed change
   | 'sweep-failed' // agent committed work but leftovers could not be swept
   | 'refused'; // trust/config refusal, disclosed
 
@@ -65,8 +66,22 @@ export interface AgentEnvelope {
   readonly modelWarning?: string;
   /** Concrete id the run reported, or absent ("not reported by driver"). */
   readonly resolvedModelId?: string;
+  /** The agent CLI build that executed the run (run provenance), when the
+   *  driver could probe it. */
+  readonly cliVersion?: string;
+  /**
+   * Which auth path the run used: `api-key` = the runner injected a declared
+   * credential (billed API spend); `subscription` = no credential injected,
+   * the CLI's own stored login applied. Under subscription auth a reported
+   * cost is a NOTIONAL API-equivalent, not billed spend — the ledger labels
+   * it so a benchmark table never reads as a bill.
+   */
+  readonly auth: 'api-key' | 'subscription';
   readonly turns?: number;
   readonly costUsd?: number;
+  /** Driver-reported failure (an error after the run started) — disclosed
+   *  even when committed work verifies clean. */
+  readonly failure?: string;
   readonly budget: {
     readonly maxTurns: number;
     readonly maxMinutes: number;
@@ -105,6 +120,10 @@ export interface RemediateResult {
   /** Present when this run CONTINUED a prior budget-bounded attempt
    *  (resume-from-salvage) — disclosed in the ledger/PR body. */
   readonly resume?: { readonly attempt: number };
+  /** The last lines of the agent's captured output — JOB-LOG evidence for a
+   *  non-clean outcome (the run page must be diagnosable without reading
+   *  source). Never rendered into the ledger / PR body. */
+  readonly transcriptTail?: string;
   /** The verification ledger — PR body / job summary markdown. */
   readonly ledger: string;
 }
@@ -231,11 +250,19 @@ export async function runRemediateTask(opts: RemediateRunOptions): Promise<Remed
     );
   }
 
+  // Auth-path disclosure (driver-generic): a declared credential the runner
+  // actually injected = billed API spend; none = the CLI's stored login
+  // (subscription), whose reported costs are notional API-equivalents.
+  const auth: AgentEnvelope['auth'] = driver.credentialEnv.some((name) => opts.agentEnv?.[name])
+    ? 'api-key'
+    : 'subscription';
+
   const envelopeBase = {
     driver: driver.id,
     model: choice.native,
     modelSource: choice.source,
     ...(choice.warning ? { modelWarning: choice.warning } : {}),
+    auth,
     budget,
     unenforceableCaps,
   };
@@ -304,15 +331,24 @@ export async function runRemediateTask(opts: RemediateRunOptions): Promise<Remed
   const envelope: AgentEnvelope = {
     ...envelopeBase,
     ...(agentResult.resolvedModelId ? { resolvedModelId: agentResult.resolvedModelId } : {}),
+    ...(agentResult.cliVersion ? { cliVersion: agentResult.cliVersion } : {}),
     ...(agentResult.turns !== undefined ? { turns: agentResult.turns } : {}),
     ...(agentResult.costUsd !== undefined ? { costUsd: agentResult.costUsd } : {}),
+    ...(agentResult.failure ? { failure: agentResult.failure.reason } : {}),
   };
+  // Job-log evidence for every post-run exit (never rendered into the
+  // ledger): a non-clean outcome must be diagnosable from the run page.
+  const evidenceTail = agentResult.transcriptTail
+    ? { transcriptTail: agentResult.transcriptTail }
+    : {};
 
   if (agentResult.neverRan) {
     return finish({
       outcome: 'agent-never-ran',
       task: task.id,
       envelope,
+      floor: entryFloor,
+      ...evidenceTail,
       note: `agent never ran: ${agentResult.neverRan.reason}`,
     });
   }
@@ -348,6 +384,8 @@ export async function runRemediateTask(opts: RemediateRunOptions): Promise<Remed
         outcome: 'agent-never-ran',
         task: task.id,
         envelope,
+        floor: entryFloor,
+        ...evidenceTail,
         note: `agent left uncommitted work the sweep could not commit: ${sweepError}`,
       });
     }
@@ -355,6 +393,8 @@ export async function runRemediateTask(opts: RemediateRunOptions): Promise<Remed
       outcome: 'sweep-failed',
       task: task.id,
       envelope,
+      floor: entryFloor,
+      ...evidenceTail,
       ...(partial ? { partial } : {}),
       note:
         `the agent committed work, but the runner could not sweep its remaining uncommitted ` +
@@ -366,10 +406,35 @@ export async function runRemediateTask(opts: RemediateRunOptions): Promise<Remed
   }
 
   if (!hasDiff) {
+    // A benign no-op requires the agent's run to have ENDED CLEAN. An
+    // errored run with no diff is a failure — reporting it as "nothing to
+    // fix" is the green-job-over-a-dead-agent class, one guard further out
+    // than the driver's never-ran taxonomy (defense in depth: any driver
+    // that misses its own failure shape still cannot produce a green no-op
+    // here). A budget-cut run (timedOut / cap hit) stays a no-op with the
+    // `partial` flag: "ran out of budget before committing anything" is a
+    // true statement the ledger already makes.
+    if (!agentResult.completed && !partial) {
+      return finish({
+        outcome: 'agent-failed',
+        task: task.id,
+        envelope,
+        floor: entryFloor,
+        ...evidenceTail,
+        note:
+          `the agent run ended in an error and produced no committed change` +
+          `${agentResult.failure ? `: ${agentResult.failure.reason}` : ''}. ` +
+          'Nothing to verify; nothing lands.',
+        baseHead,
+        head: git.head(),
+      });
+    }
     return finish({
       outcome: 'no-op',
       task: task.id,
       envelope,
+      floor: entryFloor,
+      ...evidenceTail,
       ...(partial ? { partial } : {}),
       note: 'agent ran and produced no committed change.',
       baseHead,
@@ -402,6 +467,7 @@ export async function runRemediateTask(opts: RemediateRunOptions): Promise<Remed
     guardrailVerdict: guardrail.verdict,
     baseHead,
     head: git.head(),
+    ...evidenceTail,
     ...(partial ? { partial } : {}),
   };
 

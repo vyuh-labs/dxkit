@@ -110,6 +110,7 @@ function fakeDriver(): AgentDriver & { lastRun?: Parameters<AgentDriver['run']>[
     id: 'fake-agent',
     budgetSupport: { turns: true, cost: true },
     credentialEnv: [],
+    cli: null,
     resolveModel: (tier) => `fake-${tier}`,
     available: () => ({ ok: true }),
     run: async (opts) => {

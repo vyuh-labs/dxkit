@@ -17,7 +17,22 @@ export function renderFloorVerification(
   entryLabel: string,
 ): string[] {
   if (!floor) return ['Correctness floor: not run (dry run).', ''];
-  const attributed = attribution ?? [];
+  // A floor WITHOUT an attribution pass is the ENTRY snapshot (the run
+  // exited before any change existed to attribute — a no-op, a failed
+  // agent). Say what it is: rendering the attributed headline here once
+  // printed "not run (dry run)" for a floor that HAD run, and would print
+  // "passed" over a red entry floor. Pre-existing debt is disclosed as
+  // exactly that — it belongs to the repo, not to this run.
+  if (!attribution) {
+    const checks = floor.checks.map((c) => `- ${c.pack}/${c.label}: ${c.status}`).join('\n');
+    return [
+      `Correctness floor (entry snapshot — no change to attribute): ` +
+        `**${floor.blocks ? 'red (pre-existing debt, not caused by this run)' : 'green'}**`,
+      checks,
+      '',
+    ];
+  }
+  const attributed = attribution;
   const netNew = attributed.filter((a) => a.attribution === 'net-new');
   const preExisting = attributed.filter((a) => a.attribution === 'pre-existing');
   const unattributed = attributed.filter((a) => a.attribution === 'unattributed');
