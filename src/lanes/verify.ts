@@ -72,9 +72,18 @@ export async function guardrailVerdictFor(
     const blockingPairs = result.pairs.filter(
       (p) => p.classification.blocks && p.suppressedByAllowlist === undefined,
     );
-    const blocking = blockingPairs
-      .slice(0, BLOCKING_SUMMARY_CAP)
-      .map((p) => `[${p.kind}] ${p.locator ?? p.file ?? '(no locator)'}`);
+    const blocking = blockingPairs.slice(0, BLOCKING_SUMMARY_CAP).map((p) => {
+      // Per-finding reason codes ride the line: the #25 investigation had to
+      // read SOURCE to learn why six findings blocked, because the lane's
+      // list gave a kind + path and nothing else. The codes are the
+      // classifier's own (`no-prior-match`, `block-rule`, …), compact enough
+      // for a ledger row while making the verdict auditable from the run.
+      const codes = p.classification.reasons.map((r) => r.code).join(', ');
+      return (
+        `[${p.kind}] ${p.locator ?? p.file ?? '(no locator)'} — ` +
+        `${p.classification.status}${codes ? ` (${codes})` : ''}`
+      );
+    });
     if (blockingPairs.length > BLOCKING_SUMMARY_CAP) {
       blocking.push(`… and ${blockingPairs.length - BLOCKING_SUMMARY_CAP} more`);
     }

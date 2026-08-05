@@ -199,6 +199,30 @@ export const KIND_OBSERVATION_SCOPE: Record<
   license: ['licenses'],
 });
 
+/**
+ * Kinds whose per-file MEMBERSHIP is derived from REPO-GLOBAL signals, not
+ * from the file's own content. `test-gap` is the type case: a file is
+ * "untested" by coverage artifacts, import-graph reachability from active
+ * test files, and filename heuristics — so a change ANYWHERE in the graph
+ * (removing a dead import, reformatting, deleting a test) shifts which
+ * OTHER files hold findings. The live incident: an agent's lint sweep
+ * removed unused relative imports; six files — two never touched by the
+ * diff — fell out of the tests' 3-hop reachable set and were blocked as
+ * "net-new" test gaps. They were untested all along; only dxkit's
+ * VISIBILITY changed (Rule 19 causes #3/#6, never cause #1).
+ *
+ * The classifier consequence (`classify.ts`): an `added` finding of such a
+ * kind may keep developer attribution ONLY when the finding's file was
+ * ADDED by the diff — an edit cannot introduce a derived-membership finding
+ * (the file was equally untested before). Everything else demotes to
+ * `uncertain` (warn, never block). Extend this set deliberately, with the
+ * signal chain named — a kind here trades block coverage for attribution
+ * honesty.
+ */
+export const DERIVED_MEMBERSHIP_KINDS: ReadonlySet<BaselineEntry['kind']> = Object.freeze(
+  new Set<BaselineEntry['kind']>(['test-gap']),
+);
+
 /** The finding kinds a ref-based diff structurally excludes, mapped to the
  *  scope flags of the analyzers that produce them. `secret-hmac` is absent
  *  deliberately: it is a companion output of the secrets analyzer, which

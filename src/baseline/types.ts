@@ -85,15 +85,23 @@ export type FindingId = string;
  * entries across an upgrade. The version is stamped on the baseline +
  * allowlist files so a later dxkit can detect the gap and migrate.
  *
- * Adding a future `v3`: extend this union, add its branch in
+ * Adding a future version: extend this union, add its branch in
  * `identityFor`, retain the prior scheme's id function, and the migrator
  * + `update` handle the rest with no further wiring.
+ *
+ * v3 (4.3.7): `test-gap` stops hashing its `risk` tier. The tier is
+ * THRESHOLD-DERIVED from line count (`high` requires > 500 lines), so a
+ * reformat crossing the boundary changed the fingerprint — the old id read
+ * "resolved", the new id read "net-new", from formatting alone (a Rule 9
+ * violation: identity must not hash a derived, threshold-sensitive
+ * attribute). The tier stays STORED on the entry (display, and v1/v2
+ * recomputation for migration); it just no longer mints identity.
  */
-export type IdentitySchemeVersion = 'v1' | 'v2';
+export type IdentitySchemeVersion = 'v1' | 'v2' | 'v3';
 
 /** The scheme `identityFor` mints new identities under by default, and the
  *  version stamped on freshly written baseline / allowlist files. */
-export const CURRENT_IDENTITY_SCHEME: IdentitySchemeVersion = 'v2';
+export const CURRENT_IDENTITY_SCHEME: IdentitySchemeVersion = 'v3';
 
 /**
  * Discriminated union of every finding kind that participates in

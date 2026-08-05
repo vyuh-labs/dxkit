@@ -127,7 +127,11 @@ export interface BrownfieldBlockRules {
    *  lens. Classified by the one canonical predicate,
    *  `src/analyzers/security/malicious.ts`. */
   readonly newMaliciousDependency?: boolean;
-  /** Block when an untested source file is added in a changed file. */
+  /** Block a test-gap finding on a source file this diff ADDED (a new file
+   *  shipping without a test). Deliberately never fires on an EDITED file:
+   *  test-gap membership is derived from repo-global signals (coverage /
+   *  reachability), so an edit cannot introduce one — see
+   *  `DERIVED_MEMBERSHIP_KINDS`. */
   readonly newUntestedChangedSource?: boolean;
   /** Block any newly-introduced severe quality issue in changed files. */
   readonly newSevereQualityIssueInChangedFiles?: boolean;

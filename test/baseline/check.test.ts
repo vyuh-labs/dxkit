@@ -8,6 +8,7 @@ import { runGuardrailCheck } from '../../src/baseline/check';
 import { renderConsole, renderJson, renderMarkdown } from '../../src/baseline/check-renderers';
 import { computeFlowBindingFingerprint } from '../../src/analyzers/tools/fingerprint-contract';
 import { trustedLocalContext } from '../../src/analysis-trust';
+import { CURRENT_IDENTITY_SCHEME } from '../../src/baseline/types';
 
 /**
  * End-to-end exercise of the guardrail-check orchestrator. The
@@ -661,7 +662,7 @@ describe('runGuardrailCheck — identity-scheme migration guard', () => {
     const created = await createBaseline({ cwd: dir });
     if (!created.path) throw new Error('expected committed-mode baseline');
     const bl = JSON.parse(readFileSync(created.path, 'utf8'));
-    expect(bl.identityScheme).toBe('v2');
+    expect(bl.identityScheme).toBe(CURRENT_IDENTITY_SCHEME);
   });
 
   it('rejects a committed baseline minted under an older scheme, with an actionable message', async () => {
@@ -798,7 +799,7 @@ describe('runGuardrailCheck — flow integration gate seam', () => {
       JSON.stringify({
         schemaVersion: 'dxkit-allowlist/v1',
         mode: 'full',
-        identityScheme: 'v2',
+        identityScheme: CURRENT_IDENTITY_SCHEME,
         entries: [
           {
             fingerprint: fp,

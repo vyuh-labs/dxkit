@@ -86,6 +86,40 @@ export function computeChangedPaths(cwd: string, baseSha: string): ReadonlyArray
 }
 
 /**
+ * Added-file projection of the same concept (base → WORKING TREE): the set
+ * of project-relative files that did NOT exist at `baseSha` — tracked
+ * additions (`--diff-filter=A`, rename-aware so a renamed file is NOT an
+ * addition) plus untracked files.
+ *
+ * This is the attribution discriminator for kinds whose per-file MEMBERSHIP
+ * is derived from repo-global signals (test-gap: a file is "untested" by
+ * coverage/reachability/filename heuristics). An EDIT cannot introduce such
+ * a finding — the file was equally untested before the diff — so only an
+ * ADDED file supports "the developer introduced this".
+ *
+ * Returns `null` when the set cannot be computed (base unreachable, git
+ * failure). Callers MUST treat `null` as UNKNOWN — never demote on it, and
+ * never read it as "nothing was added".
+ */
+export function computeAddedFiles(cwd: string, baseSha: string): ReadonlySet<string> | null {
+  if (!baseSha) return null;
+  try {
+    const tracked = gitLines(cwd, [
+      'diff',
+      '--name-only',
+      '--diff-filter=A',
+      '--find-renames',
+      baseSha,
+      '--',
+    ]);
+    const untracked = gitLines(cwd, ['ls-files', '--others', '--exclude-standard']);
+    return new Set<string>([...tracked, ...untracked]);
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Line-granularity sibling of `computeChangedFiles` — the ONE changed-line
  * attribution the guardrail consults. Both live in this module because they
  * are two projections of one concept ("what did the working tree change vs
