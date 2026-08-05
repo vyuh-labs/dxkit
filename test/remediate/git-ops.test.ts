@@ -58,7 +58,7 @@ describe('scrubRuntimeArtifacts', () => {
 
     const ops = realGit(repo);
     const scrubbed = ops.scrubRuntimeArtifacts(base);
-    expect(scrubbed.sort()).toEqual([
+    expect([...scrubbed].sort()).toEqual([
       '.dxkit/cache/analysis-result-1.json',
       '.dxkit/reports/health-audit-1.json',
     ]);
