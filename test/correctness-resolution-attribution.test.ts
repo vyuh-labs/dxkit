@@ -200,3 +200,74 @@ describe('runFloorForSurface pre-push — resolution failures are attributed', (
     expect(outcome.blocks).toBe(true);
   });
 });
+
+describe('runFloorForSurface pre-push — floor-debt envelope demotes grandfathered checks (4.3.7)', () => {
+  let dir: string;
+
+  beforeAll(() => {
+    dir = makeRepo();
+    // The committed baseline's floor-debt envelope records the syntax check
+    // already FAILING at capture — the repo's grandfathered debt.
+    mkdirSync(join(dir, '.dxkit', 'baselines'), { recursive: true });
+    writeFileSync(
+      join(dir, '.dxkit', 'baselines', 'main.json'),
+      JSON.stringify({
+        schemaVersion: 'dxkit-baseline/v1',
+        name: 'main',
+        createdAt: '2026-08-01T00:00:00Z',
+        repo: {},
+        analysis: {},
+        tools: [],
+        findings: [],
+        floorDebt: {
+          capturedAtCommit: 'abcdef123456abcdef123456abcdef123456abcd',
+          capturedAt: '2026-08-01T00:00:00Z',
+          checks: [{ pack: 'synthetic', label: 'syntax', command: 'fake-syntax', status: 'fail' }],
+        },
+      }),
+    );
+  });
+  afterAll(() => rmSync(dir, { recursive: true, force: true }));
+
+  it('a check recorded failing in the envelope warns instead of hard-blocking the push', () => {
+    // The incident shape: CI's two-sided floor reported these failures as
+    // pre-existing/unattributable while the local pre-push hook hard-blocked
+    // them (bypassed with --no-verify — a gate that trains bypassing).
+    const outcome = runFloorForSurface({
+      surface: 'pre-push',
+      cwd: dir,
+      base: 'base-marker',
+      packs: [packWithResolution(unresolved('ghost-pkg'), { syntaxFails: true })],
+      exec: failSyntaxExec,
+    });
+    expect(outcome.ran).toBe(true);
+    expect(outcome.blocks).toBe(false);
+    expect(outcome.summary).toContain('floor-debt');
+    expect(outcome.summary).toContain('pre-existing debt, not blocked at pre-push');
+    expect(outcome.summary).toContain('abcdef123456');
+  });
+
+  it('a failing check ABSENT from the envelope still blocks (point-in-time kept)', () => {
+    const outcome = runFloorForSurface({
+      surface: 'pre-push',
+      cwd: dir,
+      base: 'base-marker',
+      packs: [
+        {
+          ...packWithResolution(unresolved(), { syntaxFails: true }),
+          correctness: {
+            ...(
+              packWithResolution(unresolved(), { syntaxFails: true }) as {
+                correctness: object;
+              }
+            ).correctness,
+            syntaxCheck: () => ({ label: 'other-syntax', bin: 'fake-syntax', args: [] }),
+            resolutionCheck: () => null,
+          },
+        } as unknown as LanguageSupport,
+      ],
+      exec: failSyntaxExec,
+    });
+    expect(outcome.blocks).toBe(true);
+  });
+});

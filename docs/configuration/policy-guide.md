@@ -29,6 +29,7 @@ stanzas).
 | `expiryNotice.enabled`              | [#expiry-notice](#expiry-notice)             |
 | `flow.mode`                         | [#flow-mode](#flow-mode)                     |
 | `flow.sources`                      | [#flow-sources](#flow-sources)               |
+| `graph.refresh`                     | [#graph-refresh](#graph-refresh)             |
 | `licenses.prohibited`               | [#prohibited-licenses](#prohibited-licenses) |
 | `lint.blocking`                     | [#lint-gate](#lint-gate)                     |
 | `lint.enabled`                      | [#lint-gate](#lint-gate)                     |
@@ -278,6 +279,18 @@ on; a notification that could not be posted must never fail a baseline capture.
 every merge — the score-over-time series `vyuh-dxkit metrics` renders.
 
 **Default and why.** Off; enabling installs a managed workflow (`update`).
+
+## Graph refresh
+
+**What it does.** The code-graph CI transport. Set to `cache`, `update`
+installs the managed `dxkit-graph-refresh` workflow, which rebuilds
+`graph.json` on a schedule and stores it in the Actions cache so gated
+runs skip the rebuild. `off` (or absent) means rebuild-on-demand.
+
+**Default and why.** Absent (rebuild-on-demand) — the transport changes no
+finding, only CI wall-clock, so nothing recommends it proactively. Set it
+with `vyuh-dxkit policy set graph.refresh cache` and run
+`vyuh-dxkit update` to install the workflow.
 
 ## Loop preset
 
