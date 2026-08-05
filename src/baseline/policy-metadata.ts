@@ -184,6 +184,17 @@ export const POLICY_PARAMS: readonly PolicyParamMeta[] = [
     anchor: 'reports-on-merge',
   },
   {
+    // Settable because dxkit's own guidance (docs + the learn assistant)
+    // points users at exactly this field — a knob the product recommends
+    // must be reachable through `policy set`, not a hand edit (the
+    // guidance/settability drift class). Still scaffold-exempt: it is a CI
+    // transport, not a posture.
+    path: 'graph.refresh',
+    summary: 'code-graph CI transport: "cache" installs the graph-refresh workflow on update',
+    anchor: 'graph-refresh',
+    enumValues: ['cache', 'off'],
+  },
+  {
     path: 'loop.preset',
     summary: 'what blocks an autonomous loop from declaring done',
     anchor: 'loop-preset',

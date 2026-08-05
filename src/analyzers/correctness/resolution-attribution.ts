@@ -83,32 +83,70 @@ export function refutedResolutionSpecifiers(
   }
 }
 
+/** Check-level base evidence for the pre-push surface: (pack, label) rows
+ *  recorded FAILING in the committed baseline's floor-debt envelope, plus a
+ *  short provenance string for the disclosure. */
+export interface PrePushDebtEvidence {
+  readonly rows: readonly FloorBaseCheck[];
+  /** Where the evidence comes from (commit prefix or capture date). */
+  readonly captured: string;
+}
+
 /**
  * Route a blocking pre-push floor result through the ONE attribution
- * comparator (`attributeFloorFailures`), with the resolution check's base
- * side supplied by `refutedResolutionSpecifiers`. Checks with no base
- * evidence keep the surface's point-in-time semantics
- * (`absentMeans: 'net-new'` — a failing syntax or test check still blocks
- * exactly as before). Returns null when there is nothing to adjust (no
- * failing resolution check, no decisive base evidence) so the caller keeps
- * the original outcome byte-for-byte.
+ * comparator (`attributeFloorFailures`), with base evidence composed from
+ * BOTH cheap sources the hook can afford (no base worktree run):
+ *
+ *   - FINDING-level: `refutedResolutionSpecifiers` for the resolution
+ *     check — a specifier provably unresolvable at the merge base;
+ *   - CHECK-level: the committed baseline's floor-debt envelope (when the
+ *     caller supplies it) — a check recorded FAILING at baseline capture
+ *     was already red before this branch existed, so blocking the push on
+ *     it blames the developer for the repo's grandfathered debt. The
+ *     shipped class: the CI floor correctly reported the same failures as
+ *     pre-existing/unattributable while the local pre-push hook
+ *     hard-blocked them (bypassed with --no-verify — a gate that trains
+ *     bypassing). Check-level evidence cannot see ADDITIONAL failures
+ *     inside an already-red check; the note says so, and CI's two-sided
+ *     floor stays authoritative.
+ *
+ * Checks with NO base evidence keep the surface's point-in-time semantics
+ * (`absentMeans: 'net-new'` — a failing check with no record still blocks
+ * exactly as before). Returns null when there is nothing to adjust so the
+ * caller keeps the original outcome byte-for-byte.
  */
 export function attributePrePushResolution(
   cwd: string,
   baseSha: string,
   packs: readonly LanguageSupport[],
   result: CorrectnessFloorResult,
+  debt?: PrePushDebtEvidence | null,
 ): { blocks: boolean; note: string } | null {
   const failingResolution = result.checks.filter(
     (c) => c.status === 'fail' && c.label === IMPORT_RESOLUTION_LABEL && c.findings?.length,
   );
-  if (failingResolution.length === 0) return null;
 
   const baseRows: FloorBaseCheck[] = [];
+  const resolutionCovered = new Set<string>();
   for (const check of failingResolution) {
     const refuted = refutedResolutionSpecifiers(cwd, baseSha, packs, check.findings ?? []);
     if (refuted === null || refuted.length === 0) continue;
     baseRows.push({ pack: check.pack, label: check.label, status: 'fail', findings: refuted });
+    resolutionCovered.add(`${check.pack}\0${check.label}`);
+  }
+  // Floor-debt rows for FAILING checks not already covered by the stronger
+  // finding-level evidence (a debt row for the resolution check would erase
+  // its per-specifier attribution).
+  const debtDemoted: string[] = [];
+  for (const row of debt?.rows ?? []) {
+    const key = `${row.pack}\0${row.label}`;
+    if (resolutionCovered.has(key)) continue;
+    const failsNow = result.checks.some(
+      (c) => c.status === 'fail' && c.pack === row.pack && c.label === row.label,
+    );
+    if (!failsNow) continue;
+    baseRows.push({ pack: row.pack, label: row.label, status: 'fail' });
+    debtDemoted.push(`${row.pack} ${row.label}`);
   }
   if (baseRows.length === 0) return null;
 
@@ -117,6 +155,7 @@ export function attributePrePushResolution(
   const parts: string[] = [];
   for (const a of attributed) {
     if (a.check.label !== IMPORT_RESOLUTION_LABEL) continue;
+    if (!resolutionCovered.has(`${a.check.pack}\0${a.check.label}`)) continue;
     const refutedCount =
       (a.check.findings?.length ?? 0) -
       (a.attribution === 'net-new' ? (a.netNewFindings?.length ?? 0) : 0);
@@ -130,6 +169,14 @@ export function attributePrePushResolution(
     if (a.attribution === 'net-new' && a.netNewFindings?.length) {
       parts.push(`net-new unresolved import(s) BLOCK: ${a.netNewFindings.join(', ')}`);
     }
+  }
+  if (debtDemoted.length > 0) {
+    parts.push(
+      `${debtDemoted.join(', ')}: recorded failing in the committed baseline's floor-debt ` +
+        `envelope (${debt!.captured}) — pre-existing debt, not blocked at pre-push. ` +
+        `Check-level evidence cannot see additional failures inside an already-red check; ` +
+        `CI's two-sided floor is authoritative`,
+    );
   }
   return { blocks, note: parts.length > 0 ? ` [${parts.join('; ')}]` : '' };
 }

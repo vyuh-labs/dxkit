@@ -49,9 +49,16 @@ import {
   type CorrectnessFloorResult,
 } from './run';
 import { attributeFloorFailures, type AttributedFloorFailure } from './attribution';
-import { attributePrePushResolution } from './resolution-attribution';
+import { attributePrePushResolution, type PrePushDebtEvidence } from './resolution-attribution';
 export { refutedResolutionSpecifiers } from './resolution-attribution';
 import { resolveCorrectnessSurface } from './surface';
+import {
+  DEFAULT_BASELINE_NAME,
+  pathForBaseline,
+  readBaselineFile,
+} from '../../baseline/baseline-file';
+import { loadAnchorFromBranch } from '../../baseline/anchor';
+import { readPolicySection } from '../../baseline/policy-text';
 
 /** The surfaces this runner serves (the loop-stop surface has its own runner). */
 export type RunnableSurface = 'pre-push' | 'ci';
@@ -215,10 +222,20 @@ export function runFloorForSurface(opts: RunFloorForSurfaceOptions): SurfaceFloo
       result,
     };
   }
-  // Pre-push resolution attribution (4.3.3): a blocking import-resolution
-  // failure is tested against sound base-side evidence before it may block.
+  // Pre-push attribution (4.3.3, extended 4.3.7): a blocking failure is
+  // tested against the cheap base evidence the hook can afford — sound
+  // per-specifier refutation for import-resolution, and the committed
+  // baseline's floor-debt envelope (check-level) for everything else — so
+  // the hook stops hard-blocking the repo's grandfathered debt that CI's
+  // two-sided floor correctly reports as pre-existing.
   if (surface === 'pre-push' && result.blocks && prePushBase) {
-    const adjusted = attributePrePushResolution(cwd, prePushBase, packs, result);
+    const adjusted = attributePrePushResolution(
+      cwd,
+      prePushBase,
+      packs,
+      result,
+      loadFloorDebtEvidence(cwd),
+    );
     if (adjusted) {
       return {
         surface,
@@ -240,6 +257,44 @@ export function runFloorForSurface(opts: RunFloorForSurfaceOptions): SurfaceFloo
     summary: describeCorrectnessFloor(result) + envSuffix,
     result,
   };
+}
+
+/**
+ * Check-level pre-push base evidence from the committed baseline's
+ * floor-debt envelope: the (pack, label) rows recorded FAILING at baseline
+ * capture. Reads the tree copy first, then the branch-transport anchor
+ * (read-only temp materialization) — the same precedence the guardrail
+ * uses. Null on any miss: no envelope, no baseline, unreadable — the
+ * surface then keeps its point-in-time semantics unchanged (fail toward
+ * blocking; the false-block prevention only engages on committed
+ * evidence).
+ */
+function loadFloorDebtEvidence(cwd: string): PrePushDebtEvidence | null {
+  try {
+    const baselinePath = pathForBaseline(cwd, DEFAULT_BASELINE_NAME);
+    let file: string | null = fs.existsSync(baselinePath) ? baselinePath : null;
+    if (!file) {
+      const section = readPolicySection(cwd, 'baseline') as
+        | Parameters<typeof loadAnchorFromBranch>[2]
+        | undefined;
+      file = loadAnchorFromBranch(cwd, baselinePath, section);
+    }
+    if (!file) return null;
+    const debt = readBaselineFile(file).floorDebt;
+    if (!debt) return null;
+    const rows = debt.checks
+      .filter((c) => c.status === 'fail')
+      .map((c) => ({ pack: c.pack, label: c.label, status: 'fail' as const }));
+    if (rows.length === 0) return null;
+    return {
+      rows,
+      captured: debt.capturedAtCommit
+        ? `captured at ${debt.capturedAtCommit.slice(0, 12)}`
+        : `captured ${debt.capturedAt}`,
+    };
+  } catch {
+    return null;
+  }
 }
 
 /**
