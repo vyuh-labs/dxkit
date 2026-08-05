@@ -213,6 +213,19 @@ function finalizeTaskRun(cwd: string, taskId: string, run: TaskRun): TaskRun {
   } catch {
     // the record is evidence plumbing, never a failure
   }
+  if (!run.clean) {
+    // A non-clean outcome must be diagnosable from the run page: the agent
+    // phase group otherwise closes with ZERO output (the driver captures the
+    // CLI's streams), so the failure's own evidence — the driver-reported
+    // cause and the transcript tail — surfaces in the LOG here. Log only,
+    // never the ledger/PR body.
+    if (run.result.envelope?.failure) {
+      logger.warn(`driver-reported failure: ${run.result.envelope.failure}`);
+    }
+    if (run.result.transcriptTail) {
+      logger.warn(`agent transcript (last lines):\n${run.result.transcriptTail}`);
+    }
+  }
   if (process.env.GITHUB_ACTIONS === 'true' && !run.clean) {
     const first = (run.result.note ?? run.result.outcome).split('\n')[0];
     process.stdout.write(
@@ -260,6 +273,8 @@ function taskRunJson(run: TaskRun): Record<string, unknown> {
     // format-patches into a run artifact when nothing landed.
     baseHead: r.baseHead ?? null,
     head: r.head ?? null,
+    // Failure evidence (machine-readable record only — never the PR body).
+    transcriptTail: r.transcriptTail ?? null,
     ledger: r.ledger,
   };
 }

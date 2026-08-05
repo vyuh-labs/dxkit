@@ -46,12 +46,24 @@ export interface AgentRunResult {
   /** Concrete model id the run actually used, when the driver reports it —
    *  the ledger discloses absence ("not reported by driver"). */
   readonly resolvedModelId?: string;
+  /** The agent CLI build that executed the run, when the driver can probe it
+   *  — the executor is part of the run's provenance (Rule 19 cause #5: "the
+   *  TOOL changed" must be visible, so the envelope names the build). */
+  readonly cliVersion?: string;
   /** Wall-clock cap hit: the runner salvages committed work, the outcome
    *  taxonomy says the task was cut short. */
   readonly timedOut: boolean;
-  /** CLI died before the agent ran (auth, bad flag) — a distinct infra
-   *  outcome (`agent-never-ran`), never read as "agent made no change". */
+  /** CLI died before the agent ran (auth, credit, bad flag) — a distinct
+   *  infra outcome (`agent-never-ran`), never read as "agent made no
+   *  change". The reason carries the CLI's own human-readable cause when it
+   *  reports one ("Credit balance is too low"), so the ledger names what a
+   *  maintainer must actually fix. */
   readonly neverRan?: { readonly reason: string };
+  /** The run ended in a driver/API error AFTER real work started — distinct
+   *  from neverRan (no work happened) and timedOut (salvage territory). The
+   *  runner verifies whatever was committed and DISCLOSES this; a no-diff
+   *  errored run is a failure outcome, never a benign no-op. */
+  readonly failure?: { readonly reason: string };
   /** For the failure taxonomy only — never rendered into a PR body. */
   readonly transcriptTail: string;
 }
@@ -77,6 +89,17 @@ export interface AgentDriver {
    * new driver never means hand-editing the template.
    */
   readonly credentialEnv: readonly string[];
+  /**
+   * The installable agent CLI, PINNED — the managed workflow renders its
+   * install step FROM this declaration (Rule 15: registry-driven, never a
+   * hand-edited template line). An unattended lane must not float its
+   * executor: a CLI release changing behavior under a byte-identical dxkit
+   * is Rule 19 cause #5 ("the TOOL changed"), so the version is explicit
+   * and bumping it is a deliberate one-line driver change. `null` declares
+   * a driver with no installable CLI (it manages its own runtime) — a
+   * stated fact, never an omission.
+   */
+  readonly cli: { readonly package: string; readonly version: string } | null;
   available(cwd: string): { readonly ok: true } | { readonly ok: false; readonly reason: string };
   run(opts: AgentRunOptions): Promise<AgentRunResult>;
 }

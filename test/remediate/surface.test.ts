@@ -48,6 +48,10 @@ describe('installCiRemediate (the managed workflow)', () => {
     // no unrendered substitution keys survive
     expect(text).not.toContain('__DXKIT_REMEDIATE_CREDENTIAL_ENV__');
     expect(text).not.toContain('__DXKIT_REMEDIATE_CRON__');
+    expect(text).not.toContain('__DXKIT_REMEDIATE_AGENT_CLI_INSTALL__');
+    // The agent CLI install is PINNED from the driver's declaration — an
+    // unattended lane must not float its executor (Rule 19 cause #5).
+    expect(text).toContain(`npm install -g ${claude.cli!.package}@${claude.cli!.version}`);
   });
 
   it('renders the git-identity step from the ONE bot identity (a runner has none ambient)', () => {

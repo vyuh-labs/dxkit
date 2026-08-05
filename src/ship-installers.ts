@@ -1084,12 +1084,20 @@ export function installCiRemediate(cwd: string, opts: InstallerOpts = {}): ShipI
   const taskOptionLines = knownTaskIds()
     .map((id) => `          - ${id}`)
     .join('\n');
+  // The agent CLI install is rendered from the driver's PINNED declaration
+  // (Rule 15): an unattended lane must not float its executor, and bumping
+  // the CLI is a one-line driver change, never a template edit. A driver
+  // with no installable CLI (cli: null) renders a disclosed no-op.
+  const agentCliInstall = driver?.cli
+    ? `npm install -g ${driver.cli.package}@${driver.cli.version}`
+    : `echo "driver '${config.agent.driver}' declares no installable CLI"`;
   const result = installWorkflow(cwd, 'dxkit-remediate.yml', opts, {
     [CI_RUNTIME_SETUP_KEY]: renderCiRuntimeSetup(cwd),
     __DXKIT_DEFAULT_BRANCH__: resolveDefaultBranch(cwd),
     __DXKIT_REMEDIATE_CRON__: cronFromCadence(config.schedule),
     __DXKIT_REMEDIATE_CREDENTIAL_ENV__: credentialLines,
     __DXKIT_REMEDIATE_TASK_OPTIONS__: taskOptionLines,
+    __DXKIT_REMEDIATE_AGENT_CLI_INSTALL__: agentCliInstall,
     __DXKIT_BOT_NAME__: BOT_IDENTITY.name,
     __DXKIT_BOT_EMAIL__: BOT_IDENTITY.email,
   });

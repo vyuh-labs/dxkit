@@ -40,8 +40,17 @@ describe('driver registry contract', () => {
       expect(typeof driver.budgetSupport.turns).toBe('boolean');
       expect(typeof driver.budgetSupport.cost).toBe('boolean');
       expect(Array.isArray(driver.credentialEnv)).toBe(true);
+      // The executor declaration: an exact pinned version (an unattended
+      // lane never floats its CLI) or an explicit null — never absent.
+      expect(driver.cli === null || /^\d+\.\d+\.\d+$/.test(driver.cli.version)).toBe(true);
     });
   }
+
+  it('claude-code pins its installable CLI (the workflow renders from this)', () => {
+    const cli = driverById('claude-code')!.cli;
+    expect(cli?.package).toBe('@anthropic-ai/claude-code');
+    expect(cli?.version).toMatch(/^\d+\.\d+\.\d+$/);
+  });
 });
 
 describe('resolveModelSetting (the three accepted shapes)', () => {

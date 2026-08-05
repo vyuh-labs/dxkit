@@ -86,6 +86,14 @@ Read the task's job summary first — it names the outcome. The shapes:
   attempt-counted) can continue next run instead of starting over.
 - **Skipped: "an earlier task left unlanded work in the tree"** — task
   isolation working as designed; the skipped tasks run next time.
+- **`agent-never-ran`** — the agent CLI/API failed before any work
+  happened: an invalid or credit-exhausted `ANTHROPIC_API_KEY`, a missing
+  CLI, a bad flag. The job is red and the ledger names the provider's own
+  cause (for example `agent never ran: Credit balance is too low`) — fix
+  the key or credit on the provider side; no dxkit change is involved.
+- **`agent-failed`** — the run started, then ended in an error with no
+  committed change. The ledger carries the driver-reported cause and the
+  job log carries the agent's last output lines.
 - **Degraded credentials, disclosed in the log** — the run fell back to
   `GITHUB_TOKEN` (missing or expired `DXKIT_BOT_TOKEN`): the PR opens but
   gets no CI checks, or with the Actions PR-creation setting off, the

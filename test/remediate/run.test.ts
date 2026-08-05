@@ -56,6 +56,7 @@ function fakeDriver(
     id: 'fake-agent',
     budgetSupport: { turns: true, cost: true },
     credentialEnv: ['FAKE_KEY'],
+    cli: null,
     resolveModel: (tier) => `fake-${tier}`,
     available: () => ({ ok: true }),
     run: async (opts) => {
