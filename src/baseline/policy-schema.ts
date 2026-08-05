@@ -316,9 +316,10 @@ export function buildPolicySchema(version: string): Schema {
           resume: {
             type: 'boolean',
             description:
-              'Opt-in: continue a prior budget-bounded attempt from its draft-PR salvage ' +
-              'branch instead of starting over (requires salvage: "draft-pr"; capped ' +
-              'resumes; entry floor stays anchored to the pristine base).',
+              'Opt-in: continue a prior budget-bounded or guardrail-blocked attempt from its ' +
+              'draft-PR salvage branch instead of starting over (requires the effective ' +
+              'per-task salvage to be draft-pr; capped resumes with a durable attempt ' +
+              'counter; entry floor stays anchored to the pristine base).',
           },
         },
         'Agentic remediation: a scheduled agent inside the verified frame.',

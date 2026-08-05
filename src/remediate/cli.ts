@@ -34,6 +34,7 @@ import { prepareResume, type ResumeDecision } from './resume';
 import {
   budgetForTask,
   resolveRemediateConfig,
+  salvageForTask,
   tasksWithinSpendCeiling,
   type RemediateConfig,
 } from './config';
@@ -87,8 +88,13 @@ async function executeTask(
   const task = remediateTaskById(taskId);
   const policyBudget = task ? budgetForTask(config, task.id) : config.agent.budget;
   const dispatch = readDispatchOverrides(process.env, policyBudget, config);
+  // The concrete salvage decision for THIS task (the one resolver: explicit
+  // policy wins, 'auto' follows the task's completion shape) — threaded into
+  // the runner's config so the ledger note and the landing below agree.
+  const salvage = task ? salvageForTask(config, task) : 'discard';
   const taskConfig: RemediateConfig = {
     ...config,
+    salvage,
     agent: {
       ...config.agent,
       budget: dispatch.any ? dispatch.budget : policyBudget,
@@ -102,13 +108,14 @@ async function executeTask(
   let entryFloor: CorrectnessFloorResult | undefined;
   let resume: ResumeDecision = { resumed: false };
   if (land === 'pr' && task && config.resume) {
+    // (salvage below is the task-resolved decision — resume needs draft-pr)
     entryFloor = runCorrectnessFloor({
       cwd,
       changedFiles: [],
       scope: 'full',
       packs: detectActiveLanguages(cwd),
     });
-    resume = prepareResume(cwd, task.id, config);
+    resume = prepareResume(cwd, task.id, { resume: config.resume, salvage });
     if (resume.note) logger.warn(`resume: ${resume.note}`);
     if (resume.resumed) {
       logger.info(`resuming budget-bounded attempt #${resume.attempt} from the salvage branch`);
@@ -129,15 +136,27 @@ async function executeTask(
       dispatch,
       ...(entryFloor !== undefined ? { entryFloor } : {}),
       ...(resume.resumed && resume.attempt !== undefined
-        ? { resume: { attempt: resume.attempt } }
+        ? {
+            resume: {
+              attempt: resume.attempt,
+              ...(resume.blockingContext ? { blockingContext: resume.blockingContext } : {}),
+            },
+          }
         : {}),
     });
   } finally {
     reporter.stop();
   }
 
-  const draftSalvage = result.outcome === 'budget-exhausted' && config.salvage === 'draft-pr';
-  const landEligible = result.outcome === 'verified' || draftSalvage;
+  const draftSalvage = result.outcome === 'budget-exhausted' && salvage === 'draft-pr';
+  // Guardrail-red under draft-pr salvage: the BLOCKED attempt is pushed as a
+  // RED draft — its own required guardrail check keeps it unmergeable, so
+  // "nothing merges" holds while the work + blocking findings survive the
+  // ephemeral runner and the next run can RESUME from them (guardrail-red
+  // was the outcome where the most valuable partial work died). Only a
+  // RAN-and-blocked verdict qualifies; an unrunnable guardrail never pushes.
+  const blockedSalvage = result.outcome === 'guardrail-red' && salvage === 'draft-pr';
+  const landEligible = result.outcome === 'verified' || draftSalvage || blockedSalvage;
   if (land !== 'pr' || !landEligible) {
     return finalizeTaskRun(cwd, taskId, {
       result,
@@ -170,7 +189,8 @@ async function executeTask(
     lane: 'remediate',
     task: taskId,
     outcome: 'landed',
-    ...(draftSalvage ? { partial: true } : {}),
+    ...(draftSalvage || blockedSalvage ? { partial: true } : {}),
+    ...(blockedSalvage ? { blocked: true } : {}),
     ...(result.envelope?.costUsd !== undefined ? { costUsd: result.envelope.costUsd } : {}),
     ...(result.envelope?.resolvedModelId
       ? { resolvedModelId: result.envelope.resolvedModelId }
@@ -181,15 +201,23 @@ async function executeTask(
     cwd,
     taskId,
     defaultBranch,
-    prTitle: `dxkit remediate: ${taskId}${draftSalvage ? ' (partial, budget-bounded)' : ''}`,
+    prTitle:
+      `dxkit remediate: ${taskId}` +
+      (blockedSalvage
+        ? ' (blocked: guardrail-red — do not merge)'
+        : draftSalvage
+          ? ' (partial, budget-bounded)'
+          : ''),
     prBody: result.ledger,
-    draft: draftSalvage,
+    draft: draftSalvage || blockedSalvage,
     ledgerPath,
   });
   return finalizeTaskRun(cwd, taskId, {
     result,
     ...(landResult.prUrl ? { prUrl: landResult.prUrl } : {}),
     landed: true,
+    // A blocked salvage is NOT clean: the draft exists for inspection and
+    // resume, but the task did not end well — the job stays red.
     clean: result.outcome === 'verified' || draftSalvage,
   });
 }

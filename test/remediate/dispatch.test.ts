@@ -131,6 +131,7 @@ function fakeGit(): RemediateGit {
   return {
     head: () => head,
     sweepLeftovers: () => undefined,
+    scrubRuntimeArtifacts: () => [],
     hasDiff: () => {
       head = 'head1111';
       return true;

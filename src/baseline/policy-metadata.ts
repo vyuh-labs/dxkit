@@ -207,9 +207,11 @@ export const POLICY_PARAMS: readonly PolicyParamMeta[] = [
   },
   {
     path: 'remediate.salvage',
-    summary: 'fate of budget-cut partial work',
+    summary:
+      'fate of partial/blocked work: auto (default — per task shape: open-ended tasks ' +
+      'draft-pr, bounded tasks discard), or pin one value for every task',
     anchor: 'remediate-salvage',
-    enumValues: ['discard', 'draft-pr'],
+    enumValues: ['auto', 'discard', 'draft-pr'],
   },
   {
     path: 'remediate.agent.driver',

@@ -72,13 +72,29 @@ campaigns (below) and can never be scheduled from policy.
 
 ## Salvage and resume
 
-`remediate.salvage` defaults to `discard`: a partial diff from a
-budget-killed run is dropped. With `draft-pr`, the partial lands as a
-draft PR marked partial. With `remediate.resume: true` (opt-in), the next
-run continues from that salvage branch instead of starting over, up to 2
-attempts per branch before falling back to a fresh run. The entry floor
-still snapshots the pristine default tree first, so a broken partial
-reads as net-new and can never grandfather its own breakage.
+`remediate.salvage` defaults to `auto`: the decision follows each task's
+declared completion shape. Open-ended tasks (`write-docs`,
+`improve-tests`) have no completion test — the agent stops when a cap
+cuts it off, never because it is done — so `discard` would throw away
+their verified, gate-passing work every run; they default to `draft-pr`.
+Bounded tasks (`fix-build`, `fix-vulns`, `fix-lint`) can genuinely
+finish, so they keep the conservative `discard`. Pin `discard` or
+`draft-pr` in policy to override every task.
+
+Under `draft-pr`, a budget-cut partial lands as a draft PR marked
+partial, and a guardrail-BLOCKED attempt lands as a red draft titled "do
+not merge" — its own required guardrail check keeps it unmergeable, so
+nothing merges while the work and the exact blocking findings survive
+the ephemeral runner. An unrunnable guardrail never pushes anything.
+
+With `remediate.resume: true` (opt-in), the next run continues from that
+salvage branch instead of starting over, up to 2 attempts per branch
+before falling back to a fresh run (the attempt counter is pushed with
+the branch, so a no-op resume still consumes an attempt). A resumed
+attempt after a guardrail block gets the prior blocking findings in its
+prompt, so it starts from "close these", not from scratch. The entry
+floor still snapshots the pristine default tree first, so a broken
+partial reads as net-new and can never grandfather its own breakage.
 
 ## Dispatch campaigns
 

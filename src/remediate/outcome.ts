@@ -92,6 +92,9 @@ export interface RemediateResult {
    *  non-clean outcome (the run page must be diagnosable without reading
    *  source). Never rendered into the ledger / PR body. */
   readonly transcriptTail?: string;
+  /** dxkit runtime-artifact paths dropped from the attempt (regenerable
+   *  scan state the agent committed mid-run) — disclosed in the ledger. */
+  readonly scrubbedArtifacts?: readonly string[];
   /** The verification ledger — PR body / job summary markdown. */
   readonly ledger: string;
 }
@@ -101,7 +104,13 @@ export interface RemediateGit {
   /** Commit uncommitted leftovers (excluding dxkit runtime state); returns
    *  an error string when the sweep commit failed. */
   sweepLeftovers(): string | undefined;
-  /** Any commits in base..HEAD? */
+  /** Drop attempt-introduced dxkit runtime artifacts (regenerable scan
+   *  state the AGENT committed mid-run) from the landing; returns the
+   *  scrubbed paths (disclosed). Paths tracked at base are never touched.
+   *  Fail-open: an error returns [] and the attempt lands as-is. */
+  scrubRuntimeArtifacts(baseHead: string): readonly string[];
+  /** Any CONTENT change in base..HEAD? (Commit count is the wrong
+   *  question: a resume marker is an empty commit.) */
   hasDiff(baseHead: string): boolean;
 }
 
@@ -134,8 +143,10 @@ export interface RemediateRunOptions {
    *  default tree BEFORE checking out a salvage branch, so attribution stays
    *  anchored to the original base — a broken partial reads NET-NEW. */
   readonly entryFloor?: CorrectnessFloorResult;
-  /** Present when this run continues a prior budget-bounded attempt. */
-  readonly resume?: { readonly attempt: number };
+  /** Present when this run continues a prior budget-bounded attempt. The
+   *  optional blockingContext is the prior attempt's guardrail findings
+   *  (from its draft-PR ledger) — appended to the prompt, never the ledger. */
+  readonly resume?: { readonly attempt: number; readonly blockingContext?: string };
 }
 
 /** The runner's observable phases, in order. */
