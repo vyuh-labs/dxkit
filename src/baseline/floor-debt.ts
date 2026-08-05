@@ -35,6 +35,7 @@ import {
   type CorrectnessStatus,
 } from '../analyzers/correctness/run';
 import { describeUnmetRequirement, hostOf } from '../execution';
+import { dxkitCli } from '../self-invocation';
 
 /** Per-check budget for baseline-time capture. Generous — this is a one-time
  *  inventory pass, not a hook — but bounded, so a capture can never hang. */
@@ -101,7 +102,12 @@ export function captureFloorDebt(
   const checks: FloorDebtCheck[] = result.checks.map((c) => ({
     pack: c.pack as string,
     label: c.label,
-    command: [c.bin, ...(c.args ?? [])].filter(Boolean).join(' '),
+    // In-process checks (import-resolution) have no argv — name the CLI
+    // entry that re-runs them instead of storing an empty command (rendered
+    // downstream as a bare "repro:" with nothing after it).
+    command:
+      [c.bin, ...(c.args ?? [])].filter(Boolean).join(' ').trim() ||
+      `${dxkitCli('floor check')} (in-process check)`,
     status: c.status,
     ...(c.output !== undefined ? { output: c.output } : {}),
     ...(c.unmet !== undefined ? { unmet: describeUnmetRequirement(c.unmet, host) } : {}),
