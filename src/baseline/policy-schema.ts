@@ -325,10 +325,7 @@ export function buildPolicySchema(version: string): Schema {
       ),
       graph: obj(
         {
-          refresh: {
-            type: 'string',
-            description: 'Code-graph transport for CI (e.g. "cache"); set by init/update.',
-          },
+          refresh: stringProp('graph.refresh'),
         },
         'Code-graph plumbing.',
       ),
