@@ -15,7 +15,10 @@
  * Budget overrides are CLAMPED: maxUsd may never exceed
  * `remediate.maxDispatchBudget` (when unset, the policy's own per-task cap
  * is the ceiling — a dispatch without a declared ceiling can lower spend,
- * never raise it). Every clamp is disclosed, never silent.
+ * never raise it), and max_turns is clamped against the SAME spend
+ * authority — turns govern real spend when the driver cannot enforce
+ * maxUsd mid-run, so an unclamped turn override was a back door around the
+ * ceiling. Every clamp is disclosed, never silent.
  */
 import type { RemediateBudget, RemediateConfig } from './config';
 import { customDispatchTask, knownTaskIds, remediateTaskById, type RemediateTask } from './tasks';
@@ -136,10 +139,41 @@ export function readDispatchOverrides(
     }
   }
 
+  // TURNS are clamped against the SAME committed spend authority. maxUsd is
+  // advisory for a driver that only reports cost post-hoc, so the turn cap
+  // is the lever that actually bounds real spend — an unclamped max_turns
+  // was a back door around the ceiling ($14.71 spent against a $5 cap: the
+  // dispatch raised turns 80 → 200 and the "clamped" USD cap never
+  // enforced). A dispatch may lower turns freely; raising them beyond
+  // policy scales with the declared spend authority (usdCeiling / policy
+  // maxUsd), so with no maxDispatchBudget declared, turns cannot rise at
+  // all — the documented "spend authority grows only in committed policy"
+  // now holds for the lever that matters.
+  const turnsCeiling = Math.max(
+    policyBudget.maxTurns,
+    Math.floor(policyBudget.maxTurns * (usdCeiling / policyBudget.maxUsd)),
+  );
+  let maxTurns = policyBudget.maxTurns;
+  if (reqTurns !== undefined) {
+    maxTurns = Math.min(reqTurns, turnsCeiling);
+    if (maxTurns < reqTurns) {
+      clamped.push(
+        `max_turns override ${reqTurns} clamped to ${maxTurns} — turns govern real spend ` +
+          `when the driver cannot enforce maxUsd mid-run, so raising them beyond policy ` +
+          `(${policyBudget.maxTurns}) requires spend authority from ` +
+          `remediate.maxDispatchBudget (committed policy, ${
+            config.maxDispatchBudget > 0
+              ? `$${config.maxDispatchBudget} declared — allows up to ${turnsCeiling} turns`
+              : 'not declared'
+          })`,
+      );
+    }
+  }
+
   return {
     budget: {
       maxUsd,
-      maxTurns: reqTurns ?? policyBudget.maxTurns,
+      maxTurns,
       maxMinutes: reqMinutes ?? policyBudget.maxMinutes,
     },
     ...(model !== undefined ? { model } : {}),

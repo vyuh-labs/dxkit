@@ -59,7 +59,7 @@ __DXKIT_REMEDIATE_TASK_OPTIONS__
         type: string
         default: ''
       max_turns:
-        description: 'Turn-cap override (blank = policy)'
+        description: 'Turn-cap override (blank = policy; clamped against remediate.maxDispatchBudget — turns govern real spend)'
         type: string
         default: ''
       max_minutes:

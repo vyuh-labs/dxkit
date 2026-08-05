@@ -190,7 +190,7 @@ function fakeGit(opts: { diff?: boolean } = {}): RemediateGit {
 function fakeDriver(result: Partial<AgentRunResult>): AgentDriver {
   return {
     id: 'fake-agent',
-    budgetSupport: { turns: true, cost: true },
+    budgetSupport: { turns: 'enforced', cost: 'reported' },
     credentialEnv: ['FAKE_KEY'],
     cli: null,
     resolveModel: (tier) => `fake-${tier}`,

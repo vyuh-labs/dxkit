@@ -157,7 +157,13 @@ const TIER_ALIAS: Record<ModelTier, string> = {
 export function makeClaudeCodeDriver(exec: AgentExec = realAgentExec): AgentDriver {
   return {
     id: 'claude-code',
-    budgetSupport: { turns: true, cost: true },
+    // The honest declaration: `--max-turns` genuinely stops the run; cost is
+    // only REPORTED in the closing JSON — the CLI cannot stop mid-run on
+    // spend, so maxUsd is a post-hoc classification, never an enforcement
+    // (the $14.71-against-$5 incident). The dispatch layer clamps max_turns
+    // against the committed spend authority because turns are the lever
+    // that actually bounds spend here.
+    budgetSupport: { turns: 'enforced', cost: 'reported' },
     credentialEnv: ['ANTHROPIC_API_KEY'],
     // The pinned executor the managed workflow installs. Bump deliberately
     // (one line, one place) — never float `latest` under an unattended lane.

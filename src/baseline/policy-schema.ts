@@ -308,8 +308,10 @@ export function buildPolicySchema(version: string): Schema {
           maxDispatchBudget: {
             type: 'number',
             description:
-              'The most a workflow_dispatch campaign may raise maxUsd to (0/absent = ' +
-              'dispatch can lower spend but never raise it beyond the policy cap).',
+              'The dispatch spend authority: the most a workflow_dispatch campaign may raise ' +
+              'maxUsd to, and the same authority clamps max_turns proportionally (turns govern ' +
+              'real spend when the driver cannot enforce cost mid-run). 0/absent = dispatch ' +
+              'can lower budgets but never raise them beyond the policy caps.',
           },
           resume: {
             type: 'boolean',

@@ -50,15 +50,25 @@ campaigns (below) and can never be scheduled from policy.
 ## Budgets (from `.dxkit/policy.json`)
 
 - `remediate.agent.budget`: `maxTurns` (default 80), `maxMinutes` (30),
-  `maxUsd` (5). Caps are enforced by the runner, not the agent's
-  self-report; a cap the driver cannot enforce is disclosed in the ledger.
+  `maxUsd` (5). What each cap can actually DO depends on the driver and is
+  declared per dimension (`enforced` / `reported` / `none`) and disclosed
+  in the ledger. For `claude-code`: `maxTurns` and `maxMinutes` are
+  enforced; **`maxUsd` is advisory** — the CLI reports spend only after
+  the run and cannot stop mid-run on cost, so real spend is bounded by
+  the turn cap and wall clock (an overrun is disclosed and the attempt
+  marked partial).
 - `remediate.taskBudgets.<id>`: per-task overrides merged over the shared
   budget.
 - `remediate.maxSpendPerRun` (0 = no ceiling): run-level USD ceiling;
   tasks beyond it are deferred to the next firing, in declaration order,
-  and named.
-- `remediate.maxDispatchBudget` (0 = undeclared): the most a dispatch
-  override may raise `maxUsd` to.
+  and named. `remediate plan` prints the per-run projection (the sum of
+  the matrix tasks' caps) either way — each matrix task is its own
+  invocation with its own cap, so one firing may spend the sum.
+- `remediate.maxDispatchBudget` (0 = undeclared): the dispatch spend
+  authority. It clamps the `max_usd` override AND the `max_turns`
+  override (proportionally against the policy budget) — turns govern real
+  spend when the driver cannot enforce cost mid-run, so an unclamped turn
+  override would be a back door around the ceiling.
 
 ## Salvage and resume
 

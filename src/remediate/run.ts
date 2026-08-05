@@ -104,15 +104,25 @@ export async function runRemediateTask(opts: RemediateRunOptions): Promise<Remed
 
   const choice = resolveModelSetting(driver, opts.config.agent.model, task.tier);
   const budget = opts.config.agent.budget;
+  // A cap below 'enforced' is a DISCLOSED limitation, phrased by what the
+  // driver CAN do. Claiming an unenforced cap as a cap is the $14.71 class:
+  // maxUsd read post-hoc while max_turns silently governed real spend.
   const unenforceableCaps: string[] = [];
-  if (!driver.budgetSupport.turns) {
+  if (driver.budgetSupport.turns !== 'enforced') {
     unenforceableCaps.push(
       `maxTurns is not enforceable by ${driver.id}; the wall-clock cap (${budget.maxMinutes} min) applies`,
     );
   }
-  if (!driver.budgetSupport.cost) {
+  if (driver.budgetSupport.cost === 'none') {
     unenforceableCaps.push(
       `maxUsd is not enforceable by ${driver.id} (no spend reporting); the wall-clock cap applies`,
+    );
+  } else if (driver.budgetSupport.cost === 'reported') {
+    unenforceableCaps.push(
+      `maxUsd ($${budget.maxUsd}) is ADVISORY for ${driver.id}: the CLI reports spend only ` +
+        `after the run and cannot stop mid-run on cost. Real spend is bounded by the ` +
+        `enforced turn cap (${budget.maxTurns}) and the wall clock (${budget.maxMinutes} min); ` +
+        `an overrun is disclosed and the attempt marked partial`,
     );
   }
 
@@ -226,16 +236,18 @@ export async function runRemediateTask(opts: RemediateRunOptions): Promise<Remed
   const sweepError = git.sweepLeftovers();
   const hasDiff = git.hasDiff(baseHead);
 
+  // Reported spend exceeding the (advisory) cap is an honest post-hoc claim
+  // — "the run overran maxUsd" — for any driver that at least REPORTS cost.
   const overUsd =
-    driver.budgetSupport.cost &&
+    driver.budgetSupport.cost !== 'none' &&
     agentResult.costUsd !== undefined &&
     agentResult.costUsd > budget.maxUsd;
-  // A cap dxkit cannot enforce is a cap dxkit may not claim was HIT — the
-  // same refusal the cost clause makes. A driver that reports turns without
-  // enforcing them would otherwise mislabel a natural completion as
-  // budget-exhausted while the envelope discloses the cap as unenforceable.
+  // A cap dxkit cannot enforce is a cap dxkit may not claim was HIT — a
+  // driver that merely reports turns without enforcing them would mislabel
+  // a natural completion as budget-exhausted while the envelope discloses
+  // the cap as unenforceable.
   const overTurns =
-    driver.budgetSupport.turns &&
+    driver.budgetSupport.turns === 'enforced' &&
     agentResult.turns !== undefined &&
     agentResult.turns >= budget.maxTurns;
   const partial = agentResult.timedOut || overUsd || overTurns;

@@ -108,7 +108,7 @@ function fakeGit(): RemediateGit {
 function fakeDriver(): AgentDriver & { lastRun?: Parameters<AgentDriver['run']>[0] } {
   const driver: AgentDriver & { lastRun?: Parameters<AgentDriver['run']>[0] } = {
     id: 'fake-agent',
-    budgetSupport: { turns: true, cost: true },
+    budgetSupport: { turns: 'enforced', cost: 'reported' },
     credentialEnv: [],
     cli: null,
     resolveModel: (tier) => `fake-${tier}`,

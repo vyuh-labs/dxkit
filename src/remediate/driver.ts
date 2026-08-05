@@ -19,6 +19,9 @@
 /** dxkit's own capability tiers — driver-neutral, task-registry vocabulary. */
 export type ModelTier = 'light' | 'standard' | 'deep';
 
+/** What a driver can do about a budget cap — see `AgentDriver.budgetSupport`. */
+export type BudgetCapability = 'enforced' | 'reported' | 'none';
+
 export const MODEL_TIERS: readonly ModelTier[] = ['light', 'standard', 'deep'];
 
 export function isModelTier(v: unknown): v is ModelTier {
@@ -77,12 +80,27 @@ export interface AgentDriver {
    */
   resolveModel(tier: ModelTier): string;
   /**
-   * Which budget dimensions this driver can enforce/report. An undeclared
-   * dimension becomes a DISCLOSED limitation in the ledger ("maxUsd not
-   * enforceable by <driver>; wall-clock cap applied"), never a silent no-op.
-   * maxMinutes is always runner-enforced, so it is not declared here.
+   * Per budget dimension, what the driver can actually DO about the cap —
+   * three-valued because "reports it afterward" is not "enforces it", and
+   * conflating them shipped a $14.71 spend against a $5 cap:
+   *
+   *   - `'enforced'`  — the driver stops the run at the cap (claude-code's
+   *     `--max-turns`);
+   *   - `'reported'`  — the driver only reports the dimension after the run;
+   *     the cap is applied POST-HOC (an overrun marks the attempt partial
+   *     and is disclosed) and the ledger says so plainly;
+   *   - `'none'`      — neither enforced nor reported.
+   *
+   * Anything below `'enforced'` becomes a DISCLOSED limitation in the
+   * ledger, never a silent no-op, and the dispatch layer clamps the levers
+   * that DO bound the dimension (raising `max_turns` raises real spend, so
+   * turns are clamped against the committed spend authority). maxMinutes is
+   * always runner-enforced, so it is not declared here.
    */
-  readonly budgetSupport: { readonly turns: boolean; readonly cost: boolean };
+  readonly budgetSupport: {
+    readonly turns: BudgetCapability;
+    readonly cost: BudgetCapability;
+  };
   /**
    * Env var NAMES the driver needs (e.g. ['ANTHROPIC_API_KEY']). The managed
    * workflow template renders its secret wiring FROM this declaration, so a
