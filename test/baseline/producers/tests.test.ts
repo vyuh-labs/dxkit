@@ -105,7 +105,7 @@ describe('testGapsToBaselineEntries', () => {
     expect(first.status).toBe('commented-out');
   });
 
-  it('produces a different identity when the same file changes risk tier', () => {
+  it('keeps ONE identity when the same file changes risk tier (v3: risk is display, not identity)', () => {
     const a = testGapsToBaselineEntries(
       report({
         gaps: [
@@ -126,6 +126,11 @@ describe('testGapsToBaselineEntries', () => {
         ],
       }),
     );
-    expect(a[0].id).not.toBe(b[0].id);
+    // Rule 9: the tier is threshold-derived from line count, so hashing it
+    // let a reformat across the 500-line boundary mint a fresh finding.
+    // The tier still rides the ENTRY (display + prior-scheme migration).
+    expect(a[0].id).toBe(b[0].id);
+    expect(a[0].kind === 'test-gap' && a[0].risk).toBe('medium');
+    expect(b[0].kind === 'test-gap' && b[0].risk).toBe('critical');
   });
 });
