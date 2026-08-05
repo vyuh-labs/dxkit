@@ -96,7 +96,17 @@ describe('scrubRuntimeArtifacts', () => {
 describe('hasDiff is a CONTENT question', () => {
   it('an empty marker commit is not a diff (the resume counter is bookkeeping, not work)', () => {
     const base = git('rev-parse', 'HEAD');
-    git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '--allow-empty', '-q', '-m', 'marker');
+    git(
+      '-c',
+      'user.name=t',
+      '-c',
+      'user.email=t@t',
+      'commit',
+      '--allow-empty',
+      '-q',
+      '-m',
+      'marker',
+    );
     const ops = realGit(repo);
     expect(ops.hasDiff(base)).toBe(false);
     writeFileSync(join(repo, 'src.js'), 'module.exports = 3;\n');

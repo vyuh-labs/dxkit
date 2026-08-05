@@ -168,7 +168,8 @@ export function resolveRemediateConfig(cwd: string): RemediateConfig {
     tasks: tasks.length > 0 ? tasks : (['fix-vulns'] as const),
     unknownTasks,
     schedule: typeof raw.schedule === 'string' && raw.schedule.trim() ? raw.schedule : 'weekly',
-    salvage: raw.salvage === 'draft-pr' ? 'draft-pr' : raw.salvage === 'discard' ? 'discard' : 'auto',
+    salvage:
+      raw.salvage === 'draft-pr' ? 'draft-pr' : raw.salvage === 'discard' ? 'discard' : 'auto',
     agent: {
       driver:
         typeof agent.driver === 'string' && agent.driver.trim() ? agent.driver : 'claude-code',

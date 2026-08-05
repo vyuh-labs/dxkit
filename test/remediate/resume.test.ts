@@ -112,7 +112,8 @@ describe('prepareResume — the eligibility ladder', () => {
   });
 
   it('carries the prior attempt blocking findings from the draft-PR ledger into the decision', () => {
-    const body = 'ledger...\n\nBlocking findings:\n- [dep-vuln] form-data GHSA-1\n- [test-gap] src/x.js\n\nrest';
+    const body =
+      'ledger...\n\nBlocking findings:\n- [dep-vuln] form-data GHSA-1\n- [test-gap] src/x.js\n\nrest';
     const { exec } = fakeExec({ openPr: true, markers: 0, prBody: body });
     const d = prepareResume('/repo', 'fix-build', ON, exec);
     expect(d.resumed).toBe(true);

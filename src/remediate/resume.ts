@@ -22,6 +22,7 @@
  */
 import { execFileSync } from 'child_process';
 import { BOT_IDENTITY } from '../land-refresh';
+import { internalGitPushArgs } from '../git-internal-push';
 import { remediateBranchFor } from './land';
 import type { RemediateConfig } from './config';
 
@@ -154,7 +155,7 @@ export function prepareResume(
     // content — the never-push-unverified law is untouched.
     let note: string | undefined;
     try {
-      run('git', ['push', 'origin', `HEAD:refs/heads/${branch}`]);
+      run('git', internalGitPushArgs(`HEAD:refs/heads/${branch}`));
     } catch (e) {
       note =
         `attempt marker could not be pushed (${e instanceof Error ? e.message.split('\n')[0] : String(e)}) — ` +
