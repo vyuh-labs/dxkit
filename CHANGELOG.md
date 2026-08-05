@@ -5,6 +5,139 @@ All notable changes to `@vyuhlabs/dxkit` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.3.7] - 2026-08-06
+
+The honesty release: one class of defect, fixed across every surface it
+wore. A day of live production runs showed dxkit's account of what it did
+diverging from what actually happened — a dead agent reporting a green
+job, a $5 spend cap that did not cap, verified work silently discarded,
+blame attributed to files a change never touched, alarms about work
+already done. For a product whose differentiator is calibrated honesty,
+each fix ships with the regression net that keeps its class closed.
+
+### The agent lane tells the truth about its runs
+
+- **An agent that cannot authenticate is no longer a green no-op.** The
+  claude CLI reports a failed API call as `num_turns: 1`, which defeated
+  the zero-turns guard; the run then fell into "agent ran and produced no
+  committed change" and the job passed. Observed live: an out-of-credit
+  account produced weekly green jobs that did nothing. The driver now
+  classifies both observed failure shapes (invalid key, exhausted credit —
+  one signature) as `agent-never-ran` with the provider's own cause in the
+  ledger ("agent never ran: Credit balance is too low"), and the runner
+  independently refuses to report a benign no-op for any run that did not
+  end clean (the new red `agent-failed` outcome — defense in depth for any
+  future driver).
+- **The ledger discloses the run's provenance**: which auth path executed
+  (api-key vs subscription — subscription costs are labeled API-equivalent,
+  never spend), the agent CLI build that ran, and any driver-reported
+  failure even when the committed work verified clean. The managed
+  workflow now installs a PINNED agent CLI, rendered from the driver
+  registry. On a failed run the transcript tail and cause surface in the
+  job log, so a red job is diagnosable from the run page.
+- **Every pre-verification exit carries the entry floor.** "Correctness
+  floor: not run (dry run)" was false on the no-diff path — the floor had
+  run; it is why the agent spawned. The shared renderer gained an
+  entry-snapshot arm that never prints "passed" over a red entry floor.
+
+### Spend caps mean what they say
+
+- **`maxUsd` is declared advisory where it is advisory.** The claude CLI
+  reports cost only after the run and cannot stop mid-run on spend; the
+  driver contract is now three-valued per budget dimension
+  (`enforced` / `reported` / `none`) and the ledger says plainly that real
+  spend is bounded by the enforced turn cap and wall clock.
+- **The dispatch turn override is clamped against committed spend
+  authority.** Raising `max_turns` was an unclamped back door around the
+  spend ceiling (observed live: $14.71 spent against a $5 cap via
+  `max_turns=200`). A dispatch can lower turns freely; raising them beyond
+  policy scales with `remediate.maxDispatchBudget`, and with no declared
+  ceiling turns cannot rise at all. Every clamp is disclosed.
+- **`remediate plan` prints the per-run spend projection** (the sum of the
+  matrix tasks' caps): the matrix redesign made each task its own
+  invocation with its own cap, which multiplied the per-run ceiling — now
+  disclosed in the plan output and JSON.
+
+### Salvage and resume stop discarding real work
+
+- **Salvage defaults follow the task's declared completion shape.** Tasks
+  now declare `bounded` (a completion test exists) or `open-ended` (a
+  score hinge, no finish line). Open-ended tasks can never report
+  `verified`, so the old `discard` default structurally threw away their
+  verified, gate-passing work every run (observed live: 454 documentation
+  lines, guardrail green, discarded). `remediate.salvage` defaults to
+  `auto`: open-ended tasks salvage as draft PRs, bounded tasks keep the
+  conservative discard, and an explicit policy value still pins every
+  task.
+- **A guardrail-blocked attempt can survive as a red draft.** Under
+  draft-pr salvage, a RAN-and-BLOCKED attempt lands as a draft titled "do
+  not merge" — its own required guardrail check keeps it unmergeable — so
+  the work and the exact blocking findings outlive the ephemeral runner,
+  and the next resume starts from "close these findings" instead of from
+  zero. An unrunnable guardrail still never pushes anything.
+- **The resume attempt counter is durable.** The marker commit is pushed
+  the moment it is created (provably zero agent content), so a no-op
+  resume consumes an attempt and the resume cap actually engages —
+  previously a doomed branch resumed "attempt #1" forever, re-spending its
+  budget every scheduled firing.
+- **Remediation PRs no longer carry dxkit's own scan output.** The
+  runtime-artifact paths live in one module consumed by both the
+  `.gitignore` seed and a new landing scrub: attempt-introduced
+  `.dxkit/reports/`, `.dxkit/cache/` and friends are dropped and
+  disclosed; paths a repo deliberately tracks are respected.
+
+### The gate reports magnitude and urgency honestly
+
+- **One finding, one row, one count.** Located check identity buckets
+  lines into a 3-line window, so a linter reporting one rule on adjacent
+  lines minted the same fingerprint repeatedly — a real PR read "206 new
+  regressions" over 137 unique fingerprints. The producer now emits one
+  entry per identity, with extra in-window occurrences disclosed on the
+  entry, and the headline counts what the allowlist can act on.
+- **A change can only introduce a test gap by adding a file.** Test-gap
+  membership is derived from repo-global signals (coverage, import-graph
+  reachability, filename heuristics), so an edit anywhere can shift which
+  OTHER files read as untested — reproduced end-to-end: removing unused
+  imports contracted the tests' reachable set and six files, two of them
+  untouched by the diff, were blocked as "net-new" gaps. A net-new
+  test-gap now keeps developer attribution only when the diff ADDED the
+  file; everything else demotes to a warning with the shift named. The
+  `newUntestedChangedSource` block rule, previously unfireable (test-gap
+  findings carry no line for its overlap predicate), now fires on exactly
+  the honest case: a new file shipping without a test.
+- **Finding identity scheme v3.** `test-gap` no longer hashes its risk
+  tier (threshold-derived from line count, so a reformat across the
+  500-line boundary minted resolved + net-new from formatting alone).
+  `vyuh-dxkit update` migrates committed baselines and allowlists
+  automatically, as with every scheme change.
+- **The expiry notice cross-checks the current findings.** A lapsing
+  allowlist entry whose finding no longer exists is reported as prunable
+  bookkeeping with the removal command — never as "the finding returns in
+  N days" (observed live: an urgent-sounding issue about an advisory the
+  repo had already fixed).
+- **Repro lines always name a real command.** In-process floor checks
+  (import resolution) rendered `repro:` followed by empty backticks; they
+  now point at `vyuh-dxkit floor check`.
+- **Lane blocking lists carry per-finding reason codes**, so a blocked run
+  is auditable from its ledger without reading source.
+
+### The pre-push hook stops blocking grandfathered debt
+
+- The local pre-push floor hard-blocked pre-existing failures that CI's
+  two-sided floor correctly reported as not this change's fault — a false
+  block that trains `--no-verify`. Pre-push now composes both cheap
+  base-evidence tiers through the one attribution comparator: per-specifier
+  refutation for import resolution, plus check-level rows from the
+  committed baseline's floor-debt envelope (a check recorded failing at
+  capture is grandfathered debt). Limits are disclosed and CI stays
+  authoritative; absent evidence keeps the previous point-in-time block.
+
+### Small fixes
+
+- `vyuh-dxkit policy set graph.refresh cache` now works (the docs and the
+  learn assistant already pointed at exactly that field; setting it
+  previously required a hand edit).
+
 ## [4.3.6] - 2026-08-02
 
 The batch defect release: everything collected from the first production

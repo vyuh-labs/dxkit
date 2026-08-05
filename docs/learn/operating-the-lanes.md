@@ -84,10 +84,13 @@ run artifact for inspection. The other tasks in a matrix run are isolated
 Read the task's job summary first — it names the outcome. The shapes:
 
 - **`guardrail-red` / floor failed** — the frame held: the agent's change
-  did not verify, so nothing landed. The attempt's diff is attached to the
-  run as an artifact (Actions run page, Artifacts section); download it if
-  you want to see what the agent tried. No action required; the next
-  scheduled run retries from a clean tree.
+  did not verify, so nothing merges. The attempt's diff is attached to the
+  run as an artifact (Actions run page, Artifacts section). Under
+  `draft-pr` salvage a guardrail-blocked attempt is additionally pushed as
+  a red draft PR titled "do not merge" (its own guardrail check keeps it
+  unmergeable), so the work and the blocking findings survive the runner
+  and a resumed attempt can continue from them. Otherwise no action is
+  required; the next scheduled run retries from a clean tree.
 - **Budget-bounded, not finished** — the task hit its spend / turn / time
   cap mid-work. Also lands nothing. If it happens repeatedly on the same
   task, raise that task's budget (`remediate.taskBudgets`) or enable
