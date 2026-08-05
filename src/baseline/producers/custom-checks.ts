@@ -19,7 +19,16 @@ import type { RichBaselineEntry } from '../types';
 export function customCheckFindingsToBaselineEntries(
   findings: readonly CustomCheckFinding[],
 ): RichBaselineEntry[] {
-  return findings.map((f) => {
+  // ONE entry per identity. Located identity buckets lines into the shared
+  // 3-line window (Rule 9), so a linter reporting the same rule on adjacent
+  // lines mints the SAME fingerprint N times — and the multiset survived
+  // into the verdict: a real PR was reported as "206 new regressions" over
+  // 137 unique fingerprints (69 duplicate rows), inflating the headline by
+  // 50%. The fingerprint is the gate's unit (the allowlist waives by
+  // fingerprint), so it is the count's unit too; extra occurrences inside
+  // one window are disclosed on the entry, never counted as findings.
+  const byId = new Map<string, { entry: RichBaselineEntry; occurrences: number }>();
+  for (const f of findings) {
     const id = identityFor({
       kind: 'custom-check',
       check: f.check,
@@ -27,15 +36,28 @@ export function customCheckFindingsToBaselineEntries(
       ...(f.line !== undefined ? { line: f.line } : {}),
       ...(f.rule !== undefined ? { rule: f.rule } : {}),
     });
-    return {
-      id,
-      kind: 'custom-check' as const,
-      check: f.check,
-      blocking: f.blocking,
-      ...(f.file !== undefined ? { file: f.file } : {}),
-      ...(f.line !== undefined ? { line: f.line } : {}),
-      ...(f.rule !== undefined ? { rule: f.rule } : {}),
-      ...(f.message !== undefined ? { message: f.message } : {}),
-    };
-  });
+    const hit = byId.get(id);
+    if (hit) {
+      hit.occurrences += 1;
+      continue;
+    }
+    byId.set(id, {
+      occurrences: 1,
+      entry: {
+        id,
+        kind: 'custom-check' as const,
+        check: f.check,
+        blocking: f.blocking,
+        ...(f.file !== undefined ? { file: f.file } : {}),
+        ...(f.line !== undefined ? { line: f.line } : {}),
+        ...(f.rule !== undefined ? { rule: f.rule } : {}),
+        ...(f.message !== undefined ? { message: f.message } : {}),
+      },
+    });
+  }
+  return [...byId.values()].map(({ entry, occurrences }) =>
+    occurrences > 1 && 'message' in entry && entry.message !== undefined
+      ? { ...entry, message: `${entry.message} (${occurrences} occurrences in this line window)` }
+      : entry,
+  );
 }

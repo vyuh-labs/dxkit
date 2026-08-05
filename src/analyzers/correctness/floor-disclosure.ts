@@ -31,12 +31,29 @@ import type { SurfaceFloorOutcome } from './surface-run';
 import type { AttributedFloorFailure } from './attribution';
 import type { CorrectnessCheckResult } from './run';
 
+/** The check's own reproduction command, or null for an IN-PROCESS check
+ *  (import-resolution runs no shell command — rendering its empty argv
+ *  printed a bare pair of backticks as the "repro"). */
+function reproCommand(c: CorrectnessCheckResult): string | null {
+  const cmd = [c.bin, ...(c.args ?? [])]
+    .filter((s) => typeof s === 'string' && s.trim())
+    .join(' ')
+    .trim();
+  return cmd || null;
+}
+
+/** One repro phrase for every surface: the check's command, or the
+ *  canonical CLI entry that re-runs in-process checks. */
 function repro(c: CorrectnessCheckResult): string {
-  return [c.bin, ...(c.args ?? [])].filter(Boolean).join(' ');
+  return reproCommand(c) ?? `${dxkitCli('floor check')} re-runs this in-process check`;
 }
 
 function mdCheck(c: CorrectnessCheckResult): string[] {
-  const lines = [`- **${c.pack} ${c.label}** — repro: \`${repro(c)}\``];
+  const cmd = reproCommand(c);
+  const lines = [
+    `- **${c.pack} ${c.label}** — ` +
+      (cmd ? `repro: \`${cmd}\`` : `repro: \`${dxkitCli('floor check')}\` (in-process check)`),
+  ];
   if (c.output) {
     lines.push('  <details><summary>output</summary>');
     lines.push('');

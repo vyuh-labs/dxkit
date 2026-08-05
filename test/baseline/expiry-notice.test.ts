@@ -235,6 +235,60 @@ describe('syncExpiryNotice', () => {
   });
 });
 
+describe('the resolved cross-check (#15 — no alarm about completed work)', () => {
+  it('a lapsing entry whose finding is GONE from the current set is prunable, never a returning finding', () => {
+    const d = mkRepo({ allowlist: LAPSING });
+    const exec = fakeExec({
+      'issue list': '[]',
+      'issue create': 'https://github.com/acme/repo/issues/9\n',
+    });
+    // Only the first fingerprint still exists in the fresh scan.
+    const out = syncExpiryNotice({
+      cwd: d,
+      exec,
+      now: NOW,
+      currentFindingIds: new Set(['aaaa000000000001']),
+    });
+    expect(out.outcome).toBe('issue-opened');
+    expect(out.lapsing).toBe(1); // the live one only
+    const create = exec.calls.find((c) => c[1] === 'issue' && c[2] === 'create')!;
+    const body = create[create.indexOf('--body') + 1];
+    expect(body).toContain('aaaa000000000001');
+    expect(body).toContain('Already resolved (1)');
+    expect(body).toContain('aaaa000000000002');
+    expect(create.join(' ')).toContain('(1)'); // title counts LIVE entries only
+  });
+
+  it('all lapsing entries resolved -> nothing to report (and an open notice self-closes)', () => {
+    const d = mkRepo({ allowlist: LAPSING });
+    const noneLive = new Set(['unrelated-id']);
+    const quiet = syncExpiryNotice({
+      cwd: d,
+      exec: fakeExec({ 'issue list': '[]' }),
+      now: NOW,
+      currentFindingIds: noneLive,
+    });
+    expect(quiet.outcome).toBe('nothing-to-report');
+    expect(quiet.note).toContain('already resolved');
+
+    const exec = fakeExec({
+      'issue list': JSON.stringify([
+        { number: 7, url: 'https://x/7', body: `${EXPIRY_NOTICE_MARKER}` },
+      ]),
+    });
+    const closed = syncExpiryNotice({ cwd: d, exec, now: NOW, currentFindingIds: noneLive });
+    expect(closed.outcome).toBe('issue-closed');
+    expect(exec.calls.some((c) => c[2] === 'close')).toBe(true);
+  });
+
+  it('an UNKNOWN current set treats every entry as live (fail-open)', () => {
+    const d = mkRepo({ allowlist: LAPSING });
+    const exec = fakeExec({ 'issue list': '[]', 'issue create': 'https://x/9\n' });
+    const out = syncExpiryNotice({ cwd: d, exec, now: NOW, currentFindingIds: null });
+    expect(out.lapsing).toBe(2);
+  });
+});
+
 describe('the refresh lane runs the notice independently of the advisory lane', () => {
   /** Policy that makes the advisory lane take its earliest no-op return. */
   const REF_BASED = { baseline: { mode: 'ref-based' } };
