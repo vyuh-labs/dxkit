@@ -138,6 +138,27 @@ each fix ships with the regression net that keeps its class closed.
   learn assistant already pointed at exactly that field; setting it
   previously required a hand edit).
 
+### Declarative gates
+
+- **`pairedChecks` rules can trigger on ADDED files only.** `ifAdded`
+  globs (beside or instead of `if`) fire only when the change created a
+  matching file — the "a new component ships with a guide" norm, without
+  over-demanding the companion on every edit of an existing file. When
+  the added-file set cannot be computed the clause never fires blind and
+  the skip is disclosed. The gate stays pure (git metadata only — every
+  surface, fork PRs, ref-based mode).
+
+### Small fixes (continued)
+
+- **"No languages detected" names the true cause.** An (almost) empty
+  checked-out branch now says so — file count, branch name, how many
+  other branches exist, and that this is NOT an unsupported-stack claim
+  (observed live: a supported C# repo whose default branch held four
+  files read as "unsupported" while the code sat on other branches).
+  Genuinely unsupported source names what was seen (an extension
+  histogram) so the claim is checkable. One explainer, consumed by
+  init's detect step and describe's honesty notes.
+
 ## [4.3.6] - 2026-08-02
 
 The batch defect release: everything collected from the first production
