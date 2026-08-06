@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync } from 'fs'
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { createBaseline } from '../../src/baseline/create';
-import { runGuardrailCheck } from '../../src/baseline/check';
+import { runGuardrailCheck, schemeMismatchRemedy } from '../../src/baseline/check';
 import { renderConsole, renderJson, renderMarkdown } from '../../src/baseline/check-renderers';
 import { computeFlowBindingFingerprint } from '../../src/analyzers/tools/fingerprint-contract';
 import { trustedLocalContext } from '../../src/analysis-trust';
@@ -840,4 +840,30 @@ describe('runGuardrailCheck — flow integration gate seam', () => {
     expect(result.flowGate?.findings.map((f) => f.path)).toContain('/dead');
     expect(result.blocks).toBe(true);
   }, 300_000);
+});
+
+describe('schemeMismatchRemedy — the remedy matches the migration STATE', () => {
+  it('anchor stale + local already migrated -> baseline publish (never a "run update" loop)', () => {
+    const remedy = schemeMismatchRemedy(
+      'v2',
+      { used: 'anchor', anchorRef: 'dxkit-baselines', note: 'x' },
+      CURRENT_IDENTITY_SCHEME,
+    );
+    expect(remedy).toContain('baseline publish');
+    expect(remedy).toContain('dxkit-baselines');
+    expect(remedy).toContain('already migrated');
+    expect(remedy).not.toContain('vyuh-dxkit update');
+  });
+
+  it('everything else keeps the generic update remedy', () => {
+    for (const [anchorSource, treeScheme] of [
+      [undefined, null],
+      [{ used: 'anchor', anchorRef: 'dxkit-baselines', note: 'x' }, 'v2'],
+      [{ used: 'tree-fallback', anchorRef: 'dxkit-baselines', note: 'x' }, CURRENT_IDENTITY_SCHEME],
+    ] as const) {
+      const remedy = schemeMismatchRemedy('v2', anchorSource as never, treeScheme as never);
+      expect(remedy).toContain('update');
+      expect(remedy).not.toContain('already migrated');
+    }
+  });
 });
