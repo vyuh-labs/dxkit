@@ -137,6 +137,10 @@ each fix ships with the regression net that keeps its class closed.
 - `vyuh-dxkit policy set graph.refresh cache` now works (the docs and the
   learn assistant already pointed at exactly that field; setting it
   previously required a hand edit).
+- The identity-scheme mismatch remedy matches the migration state: on an
+  anchor-transport repo where `update` already migrated the local
+  baseline, the gate now says the real next step (`baseline publish`)
+  instead of telling a user who just ran `update` to run `update`.
 
 ### Declarative gates
 
