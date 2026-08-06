@@ -190,6 +190,14 @@ export function buildPolicySchema(version: string): Schema {
               items: { type: 'string' },
               description: 'Globs that trigger the rule when the change touches them.',
             },
+            ifAdded: {
+              type: 'array',
+              items: { type: 'string' },
+              description:
+                'Globs that trigger the rule only when the change ADDED a matching file ' +
+                '(created; renames excluded) — for norms about new artifacts, e.g. a new ' +
+                'component must ship with a guide. A rule needs `if` and/or `ifAdded`.',
+            },
             then: {
               type: 'array',
               items: { type: 'string' },

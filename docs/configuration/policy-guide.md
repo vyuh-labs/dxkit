@@ -201,6 +201,23 @@ you know; dxkit inferring them would recommend wrong pairings confidently.
 ]
 ```
 
+**Tuning.** For norms about NEW artifacts, use `ifAdded` instead of (or
+beside) `if`: it triggers only when the change ADDED a matching file, so
+editing an existing one never over-demands the companion. A rule needs at
+least one of `if` / `ifAdded`, plus `then`.
+
+```jsonc
+"pairedChecks": [
+  { "name": "component-needs-guide",
+    "ifAdded": ["src/components/**"], "then": ["docs/guides/**"],
+    "message": "a new component ships with a guide" }
+]
+```
+
+When the added-file set cannot be computed for a run, an `ifAdded` clause
+is not evaluated (it never fires blind) and the skip is disclosed in the
+gate output.
+
 ## Prohibited licenses
 
 **What it does.** Blocks a net-new dependency whose license matches a
