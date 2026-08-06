@@ -316,6 +316,31 @@ export interface AnchorSourceDisclosure {
 }
 
 /**
+ * The scheme-mismatch remedy, state-aware (exported for tests). A repo whose
+ * LOCAL baseline is already current-scheme while the gate read a
+ * stale-scheme ANCHOR gets the real next step (`baseline publish`) —
+ * telling a user who just ran `update` to "run update" is a loop.
+ */
+export function schemeMismatchRemedy(
+  baselineScheme: string,
+  anchorSource: AnchorSourceDisclosure | undefined,
+  treeScheme: string | null,
+): string {
+  if (anchorSource?.used === 'anchor' && treeScheme === CURRENT_IDENTITY_SCHEME) {
+    return (
+      `The LOCAL baseline is already migrated to ${CURRENT_IDENTITY_SCHEME}, but this ` +
+      `gate reads the '${anchorSource.anchorRef}' anchor branch, which still holds ` +
+      `${baselineScheme}. Run \`${dxkitCli('baseline publish')}\` to land the migrated ` +
+      `baseline on the anchor (and commit .dxkit/allowlist.json).`
+    );
+  }
+  return (
+    `Run \`${dxkitCli('update')}\` to migrate the baseline + allowlist ` +
+    `automatically, or \`${dxkitCli('baseline create --force')}\` to re-anchor manually.`
+  );
+}
+
+/**
  * One unobserved slice of the baseline: a check (or a scoped-out gather) the
  * current run never executed, with how many committed baseline findings that
  * leaves un-re-verified. The aggregate the renderers print INSTEAD of listing
@@ -792,12 +817,26 @@ export async function runGuardrailCheck(
   if (mode.mode !== 'ref-based') {
     const baselineScheme = baseline.identityScheme ?? 'v1';
     if (baselineScheme !== CURRENT_IDENTITY_SCHEME) {
+      // The remedy must match the STATE (observed on the live migration
+      // test): on an anchor-transport repo, `update` migrates the LOCAL
+      // baseline but the gate reads the ANCHOR — telling a user who just
+      // ran update to "run update" is a loop. When the source was the
+      // anchor and the tree copy is already current-scheme, the real next
+      // step is `baseline publish`.
+      let treeScheme: string | null = null;
+      if (anchorSource?.used === 'anchor' && baselinePath && fs.existsSync(baselinePath)) {
+        try {
+          treeScheme = readBaselineFile(baselinePath).identityScheme ?? 'v1';
+        } catch {
+          /* unreadable tree copy — keep the generic remedy */
+        }
+      }
+      const remedy = schemeMismatchRemedy(baselineScheme, anchorSource, treeScheme);
       throw new Error(
         `Baseline "${baseline.name}" was captured under finding-identity scheme ` +
           `${baselineScheme}, but this dxkit mints ${CURRENT_IDENTITY_SCHEME}. The identity ` +
           `scheme changed between versions; diffing across schemes would flag every existing ` +
-          `finding as net-new. Run \`${dxkitCli('update')}\` to migrate the baseline + allowlist ` +
-          `automatically, or \`${dxkitCli('baseline create --force')}\` to re-anchor manually.`,
+          `finding as net-new. ${remedy}`,
       );
     }
   }
