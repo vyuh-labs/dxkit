@@ -85,7 +85,13 @@ export function normalizeCustomChecks(
 /** A validated paired-change rule the gate evaluates. */
 export interface PairedCheckRule {
   readonly name: string;
+  /** Trigger globs over the CHANGED-path set (may be empty when the rule
+   *  triggers on additions only). */
   readonly ifGlobs: readonly string[];
+  /** Trigger globs over the ADDED-file set (created files; renames are not
+   *  additions) — the "new component ships with a guide" shape, where a
+   *  plain `if` would over-demand the companion on every edit. */
+  readonly ifAddedGlobs: readonly string[];
   readonly thenGlobs: readonly string[];
   readonly message?: string;
   readonly blocking: boolean;
@@ -121,10 +127,12 @@ export function normalizePairedChecks(
       continue;
     }
     const ifGlobs = normalizeGlobs(raw.if);
+    const ifAddedGlobs = normalizeGlobs(raw.ifAdded);
     const thenGlobs = normalizeGlobs(raw.then);
-    if (ifGlobs.length === 0 || thenGlobs.length === 0) {
+    if ((ifGlobs.length === 0 && ifAddedGlobs.length === 0) || thenGlobs.length === 0) {
       warnings.push(
-        `pairedChecks rule '${name}' needs at least one \`if\` and one \`then\` glob and was skipped`,
+        `pairedChecks rule '${name}' needs at least one trigger glob (\`if\` or \`ifAdded\`) ` +
+          `and one \`then\` glob and was skipped`,
       );
       continue;
     }
@@ -132,6 +140,7 @@ export function normalizePairedChecks(
     rules.push({
       name,
       ifGlobs,
+      ifAddedGlobs,
       thenGlobs,
       ...(typeof raw.message === 'string' && raw.message.trim()
         ? { message: raw.message.trim() }
@@ -142,7 +151,9 @@ export function normalizePairedChecks(
   return { rules, warnings };
 }
 
-function normalizeGlobs(value: PairedCheckConfig['if'] | undefined): readonly string[] {
+function normalizeGlobs(
+  value: PairedCheckConfig['if'] | PairedCheckConfig['ifAdded'] | undefined,
+): readonly string[] {
   const list = typeof value === 'string' ? [value] : Array.isArray(value) ? value : [];
   return list
     .filter((g): g is string => typeof g === 'string')

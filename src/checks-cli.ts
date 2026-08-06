@@ -89,6 +89,7 @@ function listChecks(
       pairedChecks: pairedRules.map((r) => ({
         name: r.name,
         if: r.ifGlobs,
+        ifAdded: r.ifAddedGlobs,
         then: r.thenGlobs,
         blocking: r.blocking,
         ...(r.message !== undefined ? { message: r.message } : {}),
@@ -129,7 +130,11 @@ function renderPairedGroup(rules: readonly PairedCheckRule[]): void {
   for (const r of rules) {
     const intent = r.blocking ? 'blocking' : 'warn-only';
     logger.dim(`  ${r.name.padEnd(22)} ${intent} · paired-change`);
-    logger.dim(`    if ${r.ifGlobs.join(', ')}  ⇒  then ${r.thenGlobs.join(', ')}`);
+    const triggers = [
+      ...(r.ifGlobs.length ? [`if ${r.ifGlobs.join(', ')}`] : []),
+      ...(r.ifAddedGlobs.length ? [`ifAdded ${r.ifAddedGlobs.join(', ')}`] : []),
+    ].join(' | ');
+    logger.dim(`    ${triggers}  ⇒  then ${r.thenGlobs.join(', ')}`);
     if (r.message) logger.dim(`    ↳ ${r.message}`);
   }
 }
