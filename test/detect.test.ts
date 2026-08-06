@@ -1,6 +1,9 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
+import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
-import { detect } from '../src/detect';
+import { execFileSync } from 'child_process';
+import { detect, explainNoLanguages } from '../src/detect';
 
 const FIX = (name: string) => path.join(__dirname, 'fixtures', name);
 
@@ -134,5 +137,58 @@ describe('detect()', () => {
     it('returns no test runner', () => {
       expect(stack.testRunner).toBeUndefined();
     });
+  });
+});
+
+describe('explainNoLanguages — two truths, two messages (the empty-branch class)', () => {
+  function repo(): string {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-nolang-'));
+    execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: dir });
+    execFileSync('git', ['config', 'user.email', 't@t'], { cwd: dir });
+    execFileSync('git', ['config', 'user.name', 't'], { cwd: dir });
+    return dir;
+  }
+  const dirs: string[] = [];
+  afterEach(() => {
+    for (const d of dirs.splice(0)) fs.rmSync(d, { recursive: true, force: true });
+  });
+
+  it('an (almost) empty branch says so and points at other branches — never "unsupported"', () => {
+    const dir = repo();
+    dirs.push(dir);
+    fs.writeFileSync(path.join(dir, 'README.md'), '# scaffold');
+    execFileSync('git', ['add', '-A'], { cwd: dir });
+    execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'x'], {
+      cwd: dir,
+    });
+    execFileSync('git', ['branch', 'working'], { cwd: dir });
+    execFileSync('git', ['branch', 'development'], { cwd: dir });
+    const msg = explainNoLanguages(dir);
+    expect(msg).toContain('no source on the checked-out branch');
+    expect(msg).toContain("'main'");
+    expect(msg).toContain('NOT a claim that your stack is unsupported');
+    expect(msg).toContain('3 branches');
+  });
+
+  it('unsupported source names what was seen (checkable, not a shrug)', () => {
+    const dir = repo();
+    dirs.push(dir);
+    for (let i = 0; i < 15; i++) {
+      fs.writeFileSync(path.join(dir, `mod${i}.zig`), `const x = ${i};`);
+    }
+    execFileSync('git', ['add', '-A'], { cwd: dir });
+    execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'x'], {
+      cwd: dir,
+    });
+    const msg = explainNoLanguages(dir);
+    expect(msg).toContain('no supported language among 15 files');
+    expect(msg).toContain('.zig');
+    expect(msg).toContain('language pack');
+  });
+
+  it('a non-git directory degrades to the generic message, never a throw', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-nolang-plain-'));
+    dirs.push(dir);
+    expect(explainNoLanguages(dir)).toContain('no languages detected');
   });
 });

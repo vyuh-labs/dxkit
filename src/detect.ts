@@ -1,4 +1,5 @@
 import * as fs from 'fs';
+import { execFileSync } from 'child_process';
 import * as path from 'path';
 import { DetectedStack, ToolRequirement } from './types';
 import { buildRequiredTools } from './analyzers/tools/tool-registry';
@@ -286,6 +287,83 @@ function detectFramework(cwd: string): string | undefined {
 // and the `vyuh-dxkit tools` subcommand read from the same source of truth.
 function detectRequiredTools(languages: DetectedStack['languages']): ToolRequirement[] {
   return buildRequiredTools(languages);
+}
+
+/**
+ * Why did detection find NO languages here? Two different truths hid under
+ * one message (the class found live on a Unity repo whose default branch
+ * held four files while 2,000+ C# files lived on other branches — "no
+ * supported languages detected" read as "your stack is unsupported" when
+ * the stack IS supported and the branch was simply empty):
+ *
+ *   - the checked-out branch is (nearly) EMPTY — say the file count and,
+ *     when other branches exist, suggest onboarding the one that carries
+ *     the code;
+ *   - source IS present but no pack claims its extensions — name what was
+ *     seen, so "unsupported" is a checkable claim, not a shrug.
+ *
+ * One explainer, consumed by every surface that reports the empty result
+ * (init's detect step, describe's honesty notes). Best-effort git probes;
+ * any failure degrades to the generic message, never a throw.
+ */
+export function explainNoLanguages(cwd: string): string {
+  try {
+    const git = (args: string[]): string =>
+      execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+    const files = git(['ls-files']).split('\n').filter(Boolean);
+    const branch = (() => {
+      try {
+        return git(['rev-parse', '--abbrev-ref', 'HEAD']).trim();
+      } catch {
+        return 'HEAD';
+      }
+    })();
+    const branchCount = (() => {
+      try {
+        return git(['branch', '-a', '--format=%(refname:short)']).split('\n').filter(Boolean)
+          .length;
+      } catch {
+        return 0;
+      }
+    })();
+
+    if (files.length <= 10) {
+      const hint =
+        branchCount > 1
+          ? ` This repo has ${branchCount} branches — if the code lives on another branch, ` +
+            `check that one out and run dxkit there (the guardrail diffs against the branch ` +
+            `it is installed on).`
+          : '';
+      return (
+        `no source on the checked-out branch — '${branch}' holds only ${files.length} ` +
+        `file(s), so there is nothing to detect a language from (this is NOT a claim that ` +
+        `your stack is unsupported).${hint}`
+      );
+    }
+
+    // Source exists but no pack matched: name what was seen so the claim is
+    // checkable.
+    const histogram = new Map<string, number>();
+    for (const f of files) {
+      const dot = f.lastIndexOf('.');
+      if (dot <= 0 || f.lastIndexOf('/') > dot) continue;
+      const ext = f.slice(dot);
+      histogram.set(ext, (histogram.get(ext) ?? 0) + 1);
+    }
+    const top = [...histogram.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map(([ext, n]) => `${ext}×${n}`)
+      .join(', ');
+    return (
+      `no supported language among ${files.length} files on '${branch}'` +
+      (top ? ` (most common extensions: ${top})` : '') +
+      ` — if one of these is your stack, a language pack for it does not exist yet ` +
+      `(see docs/configuration/language-packs.md).`
+    );
+  } catch {
+    return 'no languages detected — minimal config';
+  }
 }
 
 export function detect(cwd: string): DetectedStack {

@@ -608,7 +608,13 @@ export async function run(argv: string[]): Promise<void> {
           detected.testRunner ? detected.testRunner.framework : null,
         ].filter(Boolean);
         if (langs.length === 0) {
-          detectStep.warn('no languages detected — minimal config');
+          // The truthful cause, not the flat message: an empty branch and an
+          // unsupported stack are different problems with different remedies
+          // (the live class: a Unity repo whose default branch held 4 files
+          // read as "unsupported" while 2,000+ C# files sat on other
+          // branches).
+          const { explainNoLanguages } = await import('./detect');
+          detectStep.warn(explainNoLanguages(cwd));
         } else {
           detectStep.succeed(facts.join(' · '));
         }
