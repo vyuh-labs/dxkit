@@ -55,6 +55,22 @@ export interface RemediateTask {
    *  the primary signal for the ledger). */
   readonly verify: 'floor' | 'guardrail';
   /**
+   * The task's completion SHAPE — it decides the default salvage posture
+   * (`salvageForTask`), because the two shapes need opposite defaults:
+   *
+   *   - `'bounded'` — a binary completion test exists (floor green,
+   *     findings closed). The agent can FINISH, so `verified` is reachable
+   *     and discarding a rare budget-cut partial is a defensible default.
+   *   - `'open-ended'` — a score hinge, no completion test. There is always
+   *     more to document/test, so the agent never stops because it is DONE;
+   *     it stops because a cap cut it off. Every outcome is
+   *     `budget-exhausted`, so `salvage: discard` GUARANTEES its verified,
+   *     gate-passing work is thrown away every run (observed live: 454
+   *     verified doc lines, guardrail PASSED, discarded). Open-ended tasks
+   *     therefore default to `draft-pr` salvage.
+   */
+  readonly completion: 'bounded' | 'open-ended';
+  /**
    * $0 deterministic fast-exit: when the ENTRY floor (already captured on
    * the pristine tree before any agent spawns) is green, this task has
    * nothing to fix — return `no-op` without spawning the agent. Only
@@ -110,6 +126,7 @@ export const REMEDIATE_TASKS: readonly RemediateTask[] = [
     tier: 'standard',
     tierWhy: 'real diagnosis + repair across build config and test code',
     verify: 'floor',
+    completion: 'bounded',
     skipWhenEntryFloorGreen: true,
     prompt:
       `Run ${dxkitInRepo('debt --json')}.
@@ -127,6 +144,7 @@ message. When you believe you are done, re-run the failing commands and then
     tier: 'standard',
     tierWhy: 'cross-file reasoning; majors can require real code changes',
     verify: 'guardrail',
+    completion: 'bounded',
     prompt:
       `Run \`./node_modules/.bin/vyuh-dxkit debt --json\` and \`vyuh-dxkit vulnerabilities\`.
 Your task is the dependency-vulnerability findings: upgrade or patch the
@@ -149,6 +167,7 @@ in docs/DXKIT-REMEDIATION-NOTES.md so the reviewer sees what was compared.` + SH
     tier: 'light',
     tierWhy: 'mechanical, pattern-per-finding work',
     verify: 'guardrail',
+    completion: 'bounded',
     prompt:
       `Run \`./node_modules/.bin/vyuh-dxkit debt --json\` (fall back to \`npx
 vyuh-dxkit debt --json\`) and review the custom-check (lint) findings — the
@@ -166,6 +185,7 @@ is a bug, not a cleanup.` + SHARED_RULES,
     tier: 'standard',
     tierWhy: 'design judgment about behavior worth pinning, not boilerplate',
     verify: 'floor',
+    completion: 'open-ended',
     prompt:
       `Run ${dxkitInRepo('test-gaps --json')}. Work the CRITICAL bucket top-down, then
 HIGH as budget allows: for each listed file, READ it first, then write tests
@@ -183,6 +203,7 @@ coverage thresholds or edit test configuration to inflate numbers.` + SHARED_RUL
     tier: 'standard',
     tierWhy: 'grounded technical writing over real code, not boilerplate',
     verify: 'guardrail',
+    completion: 'open-ended',
     scoreHinge: { improve: 'documentation', holdSteady: ['quality'] },
     prompt:
       `Run ${dxkitInRepo('health --json')} and read the Documentation dimension's
@@ -216,6 +237,7 @@ export function customDispatchTask(prompt: string): RemediateTask {
     tier: 'standard',
     tierWhy: 'human-dispatched; pin agent.model (or the dispatch model input) to change',
     verify: 'guardrail',
+    completion: 'open-ended',
     prompt: prompt + SHARED_RULES,
   };
 }

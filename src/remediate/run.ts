@@ -22,146 +22,32 @@
  * dxkit-authored prompts only. Landing (the standing PR) is composed by the
  * CLI/workflow layer on top of this runner's outcome.
  */
-import type { AnalysisTrustContext } from '../analysis-trust';
-import { runCorrectnessFloor, type CorrectnessFloorResult } from '../analyzers/correctness/run';
-import {
-  attributeFloorFailures,
-  type AttributedFloorFailure,
-  type FloorBaseCheck,
-} from '../analyzers/correctness/attribution';
+import { runCorrectnessFloor } from '../analyzers/correctness/run';
+import { attributeFloorFailures, type FloorBaseCheck } from '../analyzers/correctness/attribution';
 import { detectActiveLanguages } from '../languages';
 import { renderRemediateLedger } from './ledger-render';
-import { guardrailVerdictFor, toFloorBaseChecks, type GuardrailGateResult } from '../lanes/verify';
-import { resolveModelSetting, type AgentDriver, type AgentRunResult } from './driver';
+import { guardrailVerdictFor, toFloorBaseChecks } from '../lanes/verify';
+import { resolveModelSetting, type AgentRunResult } from './driver';
 import { AGENT_DRIVERS, knownDriverIds } from './registry';
 import type { RemediateTask } from './tasks';
-import { resolveDispatchedTask, type DispatchOverrides } from './dispatch';
+import { resolveDispatchedTask } from './dispatch';
 import { resumePromptNote } from './resume';
 import { realGit } from './git-ops';
-import {
-  evaluateScoreHinge,
-  healthHingeScores,
-  type HingeEvidence,
-  type HingeScores,
-} from './score-hinge';
-import type { RemediateConfig } from './config';
+import { evaluateScoreHinge, healthHingeScores } from './score-hinge';
+import { salvageForTask } from './config';
+import type { AgentEnvelope, RemediateResult, RemediateRunOptions } from './outcome';
 
-export type RemediateOutcome =
-  | 'verified' // diff produced, floor net-new-clean, guardrail PASSED — ready to land
-  | 'no-op' // agent ran, no diff (nothing to fix)
-  | 'floor-red' // diff breaks the net-new floor — never lands
-  | 'guardrail-red' // guardrail blocked, refused, or could not run — never lands
-  | 'score-red' // the task's score hinge did not hold (goal not met) — never lands
-  | 'budget-exhausted' // a cap hit; partial diff (salvage policy decides its fate)
-  | 'agent-never-ran' // CLI/auth/env failure — infra, not a code outcome
-  | 'sweep-failed' // agent committed work but leftovers could not be swept
-  | 'refused'; // trust/config refusal, disclosed
-
-export interface AgentEnvelope {
-  readonly driver: string;
-  /** Driver-native model argument + how it was chosen (ledger disclosure). */
-  readonly model: string;
-  readonly modelSource: 'auto-tier' | 'pinned-tier' | 'pinned-native';
-  readonly modelWarning?: string;
-  /** Concrete id the run reported, or absent ("not reported by driver"). */
-  readonly resolvedModelId?: string;
-  readonly turns?: number;
-  readonly costUsd?: number;
-  readonly budget: {
-    readonly maxTurns: number;
-    readonly maxMinutes: number;
-    readonly maxUsd: number;
-  };
-  /** Caps the driver cannot enforce — disclosed, never silent. */
-  readonly unenforceableCaps: readonly string[];
-}
-
-export interface RemediateResult {
-  readonly outcome: RemediateOutcome;
-  readonly task?: RemediateTask['id'];
-  readonly note?: string;
-  readonly envelope?: AgentEnvelope;
-  /** True when the run was cut short (wall-clock or turn cap) — the ledger
-   *  must say the task was budget-bounded, not finished. */
-  readonly partial?: boolean;
-  readonly floor?: CorrectnessFloorResult;
-  readonly floorAttribution?: readonly AttributedFloorFailure[];
-  readonly guardrailVerdict?: string;
-  /** Score-hinge evidence (tasks that declare one): the entry vs post-agent
-   *  dimension scores the land decision was made on. Present on success AND
-   *  failure — the ledger shows the delta either way. */
-  readonly scoreHinge?: HingeEvidence;
-  /** HEAD before/after the agent — the commit range a lander pushes. */
-  readonly baseHead?: string;
-  readonly head?: string;
-  /** Dispatch-campaign disclosure (E3): who fired it, the verbatim custom
-   *  prompt (when the `custom` task ran), and any clamped overrides. In the
-   *  ledger = in the PR body, so the reviewer sees exactly what was asked. */
-  readonly dispatch?: {
-    readonly actor?: string;
-    readonly prompt?: string;
-    readonly clamped: readonly string[];
-  };
-  /** Present when this run CONTINUED a prior budget-bounded attempt
-   *  (resume-from-salvage) — disclosed in the ledger/PR body. */
-  readonly resume?: { readonly attempt: number };
-  /** The verification ledger — PR body / job summary markdown. */
-  readonly ledger: string;
-}
-
-export interface RemediateGit {
-  head(): string;
-  /** Commit uncommitted leftovers (excluding dxkit runtime state); returns
-   *  an error string when the sweep commit failed. */
-  sweepLeftovers(): string | undefined;
-  /** Any commits in base..HEAD? */
-  hasDiff(baseHead: string): boolean;
-}
-
-export interface RemediateRunOptions {
-  readonly cwd: string;
-  /** REQUIRED typed trust context — the runner executes an agent CLI. */
-  readonly trust: AnalysisTrustContext;
-  readonly taskId: string;
-  readonly config: RemediateConfig;
-  /** Credentials for the driver (CI: from repo secrets). Local default is
-   *  empty — the claude-code driver then runs subscription-mode. */
-  readonly agentEnv?: Readonly<Record<string, string>>;
-  /** Injected for tests. */
-  readonly drivers?: readonly AgentDriver[];
-  readonly git?: RemediateGit;
-  readonly runFloor?: () => CorrectnessFloorResult;
-  readonly runGuardrail?: () => Promise<GuardrailGateResult>;
-  /** Injected for tests: replaces the health-score probe behind a task's
-   *  score hinge. */
-  readonly hingeScores?: (hinge: NonNullable<RemediateTask['scoreHinge']>) => Promise<HingeScores>;
-  /** Progress hook — called as each phase begins so the CLI layer can emit
-   *  log groups + heartbeats (a 35-minute silent step is indistinguishable
-   *  from a hang; "working" must be observable from the job log). */
-  readonly onPhase?: (phase: RemediatePhase) => void;
-  /** Dispatch-campaign overrides (E2/E3), read from env by the CLI layer.
-   *  Carries the custom task's prompt, the clamp disclosures, and the
-   *  dispatcher for the ledger. */
-  readonly dispatch?: DispatchOverrides;
-  /** Pre-captured entry floor (resume path): the CLI snapshots the PRISTINE
-   *  default tree BEFORE checking out a salvage branch, so attribution stays
-   *  anchored to the original base — a broken partial reads NET-NEW. */
-  readonly entryFloor?: CorrectnessFloorResult;
-  /** Present when this run continues a prior budget-bounded attempt. */
-  readonly resume?: { readonly attempt: number };
-}
-
-/** The runner's observable phases, in order. */
-export type RemediatePhase =
-  | 'entry-floor'
-  | 'agent'
-  | 'sweep'
-  | 'verify-floor'
-  | 'guardrail'
-  | 'score-hinge';
-
-// The ledger renderer lives in `./ledger-render` (module-size split);
-// re-exported so consumers keep one import surface.
+// The outcome vocabulary lives in `./outcome` and the ledger renderer in
+// `./ledger-render` (module-size splits); both are re-exported so consumers
+// keep one import surface.
+export type {
+  AgentEnvelope,
+  RemediateGit,
+  RemediateOutcome,
+  RemediatePhase,
+  RemediateResult,
+  RemediateRunOptions,
+} from './outcome';
 export { renderRemediateLedger };
 
 export async function runRemediateTask(opts: RemediateRunOptions): Promise<RemediateResult> {
@@ -171,7 +57,7 @@ export async function runRemediateTask(opts: RemediateRunOptions): Promise<Remed
   const finish = (r: Omit<RemediateResult, 'ledger' | 'dispatch' | 'resume'>): RemediateResult => {
     const withDispatch = {
       ...dispatchDisclosure,
-      ...(opts.resume ? { resume: opts.resume } : {}),
+      ...(opts.resume ? { resume: { attempt: opts.resume.attempt } } : {}),
       ...r,
     };
     return { ...withDispatch, ledger: renderRemediateLedger(withDispatch) };
@@ -219,23 +105,45 @@ export async function runRemediateTask(opts: RemediateRunOptions): Promise<Remed
 
   const choice = resolveModelSetting(driver, opts.config.agent.model, task.tier);
   const budget = opts.config.agent.budget;
+  // The ONE salvage resolver (config.ts): explicit policy wins; 'auto'
+  // follows the task's declared completion shape. The CLI's land decision
+  // reads the same function, so the note here and the landing agree.
+  const effectiveSalvage = salvageForTask(opts.config, task);
+  // A cap below 'enforced' is a DISCLOSED limitation, phrased by what the
+  // driver CAN do. Claiming an unenforced cap as a cap is the $14.71 class:
+  // maxUsd read post-hoc while max_turns silently governed real spend.
   const unenforceableCaps: string[] = [];
-  if (!driver.budgetSupport.turns) {
+  if (driver.budgetSupport.turns !== 'enforced') {
     unenforceableCaps.push(
       `maxTurns is not enforceable by ${driver.id}; the wall-clock cap (${budget.maxMinutes} min) applies`,
     );
   }
-  if (!driver.budgetSupport.cost) {
+  if (driver.budgetSupport.cost === 'none') {
     unenforceableCaps.push(
       `maxUsd is not enforceable by ${driver.id} (no spend reporting); the wall-clock cap applies`,
     );
+  } else if (driver.budgetSupport.cost === 'reported') {
+    unenforceableCaps.push(
+      `maxUsd ($${budget.maxUsd}) is ADVISORY for ${driver.id}: the CLI reports spend only ` +
+        `after the run and cannot stop mid-run on cost. Real spend is bounded by the ` +
+        `enforced turn cap (${budget.maxTurns}) and the wall clock (${budget.maxMinutes} min); ` +
+        `an overrun is disclosed and the attempt marked partial`,
+    );
   }
+
+  // Auth-path disclosure (driver-generic): a declared credential the runner
+  // actually injected = billed API spend; none = the CLI's stored login
+  // (subscription), whose reported costs are notional API-equivalents.
+  const auth: AgentEnvelope['auth'] = driver.credentialEnv.some((name) => opts.agentEnv?.[name])
+    ? 'api-key'
+    : 'subscription';
 
   const envelopeBase = {
     driver: driver.id,
     model: choice.native,
     modelSource: choice.source,
     ...(choice.warning ? { modelWarning: choice.warning } : {}),
+    auth,
     budget,
     unenforceableCaps,
   };
@@ -292,7 +200,9 @@ export async function runRemediateTask(opts: RemediateRunOptions): Promise<Remed
     `reserve the final minutes to commit ALL remaining work and record where you stopped ` +
     `in docs/DXKIT-REMEDIATION-NOTES.md — work committed before the cap survives; ` +
     `uncommitted edits are swept into a single unlabeled-context commit.`;
-  const resumeNote = opts.resume ? resumePromptNote(opts.resume.attempt) : '';
+  const resumeNote = opts.resume
+    ? resumePromptNote(opts.resume.attempt, opts.resume.blockingContext)
+    : '';
   const agentResult: AgentRunResult = await driver.run({
     cwd: opts.cwd,
     prompt: task.prompt + budgetNote + resumeNote,
@@ -304,15 +214,24 @@ export async function runRemediateTask(opts: RemediateRunOptions): Promise<Remed
   const envelope: AgentEnvelope = {
     ...envelopeBase,
     ...(agentResult.resolvedModelId ? { resolvedModelId: agentResult.resolvedModelId } : {}),
+    ...(agentResult.cliVersion ? { cliVersion: agentResult.cliVersion } : {}),
     ...(agentResult.turns !== undefined ? { turns: agentResult.turns } : {}),
     ...(agentResult.costUsd !== undefined ? { costUsd: agentResult.costUsd } : {}),
+    ...(agentResult.failure ? { failure: agentResult.failure.reason } : {}),
   };
+  // Job-log evidence for every post-run exit (never rendered into the
+  // ledger): a non-clean outcome must be diagnosable from the run page.
+  const evidenceTail = agentResult.transcriptTail
+    ? { transcriptTail: agentResult.transcriptTail }
+    : {};
 
   if (agentResult.neverRan) {
     return finish({
       outcome: 'agent-never-ran',
       task: task.id,
       envelope,
+      floor: entryFloor,
+      ...evidenceTail,
       note: `agent never ran: ${agentResult.neverRan.reason}`,
     });
   }
@@ -322,18 +241,25 @@ export async function runRemediateTask(opts: RemediateRunOptions): Promise<Remed
   // never leak into the landing layer unreviewed.
   opts.onPhase?.('sweep');
   const sweepError = git.sweepLeftovers();
+  // Drop attempt-introduced runtime artifacts (regenerable scan state the
+  // agent committed mid-run) BEFORE the diff question — an attempt whose
+  // only content was scan output must read as a no-op, and a real attempt
+  // must not carry `.dxkit/reports/*` into its PR. Disclosed below.
+  const scrubbed = git.scrubRuntimeArtifacts(baseHead);
   const hasDiff = git.hasDiff(baseHead);
 
+  // Reported spend exceeding the (advisory) cap is an honest post-hoc claim
+  // — "the run overran maxUsd" — for any driver that at least REPORTS cost.
   const overUsd =
-    driver.budgetSupport.cost &&
+    driver.budgetSupport.cost !== 'none' &&
     agentResult.costUsd !== undefined &&
     agentResult.costUsd > budget.maxUsd;
-  // A cap dxkit cannot enforce is a cap dxkit may not claim was HIT — the
-  // same refusal the cost clause makes. A driver that reports turns without
-  // enforcing them would otherwise mislabel a natural completion as
-  // budget-exhausted while the envelope discloses the cap as unenforceable.
+  // A cap dxkit cannot enforce is a cap dxkit may not claim was HIT — a
+  // driver that merely reports turns without enforcing them would mislabel
+  // a natural completion as budget-exhausted while the envelope discloses
+  // the cap as unenforceable.
   const overTurns =
-    driver.budgetSupport.turns &&
+    driver.budgetSupport.turns === 'enforced' &&
     agentResult.turns !== undefined &&
     agentResult.turns >= budget.maxTurns;
   const partial = agentResult.timedOut || overUsd || overTurns;
@@ -348,6 +274,8 @@ export async function runRemediateTask(opts: RemediateRunOptions): Promise<Remed
         outcome: 'agent-never-ran',
         task: task.id,
         envelope,
+        floor: entryFloor,
+        ...evidenceTail,
         note: `agent left uncommitted work the sweep could not commit: ${sweepError}`,
       });
     }
@@ -355,6 +283,8 @@ export async function runRemediateTask(opts: RemediateRunOptions): Promise<Remed
       outcome: 'sweep-failed',
       task: task.id,
       envelope,
+      floor: entryFloor,
+      ...evidenceTail,
       ...(partial ? { partial } : {}),
       note:
         `the agent committed work, but the runner could not sweep its remaining uncommitted ` +
@@ -366,12 +296,42 @@ export async function runRemediateTask(opts: RemediateRunOptions): Promise<Remed
   }
 
   if (!hasDiff) {
+    // A benign no-op requires the agent's run to have ENDED CLEAN. An
+    // errored run with no diff is a failure — reporting it as "nothing to
+    // fix" is the green-job-over-a-dead-agent class, one guard further out
+    // than the driver's never-ran taxonomy (defense in depth: any driver
+    // that misses its own failure shape still cannot produce a green no-op
+    // here). A budget-cut run (timedOut / cap hit) stays a no-op with the
+    // `partial` flag: "ran out of budget before committing anything" is a
+    // true statement the ledger already makes.
+    if (!agentResult.completed && !partial) {
+      return finish({
+        outcome: 'agent-failed',
+        task: task.id,
+        envelope,
+        floor: entryFloor,
+        ...evidenceTail,
+        note:
+          `the agent run ended in an error and produced no committed change` +
+          `${agentResult.failure ? `: ${agentResult.failure.reason}` : ''}. ` +
+          'Nothing to verify; nothing lands.',
+        baseHead,
+        head: git.head(),
+      });
+    }
     return finish({
       outcome: 'no-op',
       task: task.id,
       envelope,
+      floor: entryFloor,
+      ...evidenceTail,
+      ...(scrubbed.length > 0 ? { scrubbedArtifacts: scrubbed } : {}),
       ...(partial ? { partial } : {}),
-      note: 'agent ran and produced no committed change.',
+      note:
+        scrubbed.length > 0
+          ? 'agent ran and produced no committed change beyond regenerable dxkit scan state ' +
+            '(dropped, disclosed below).'
+          : 'agent ran and produced no committed change.',
       baseHead,
       head: git.head(),
     });
@@ -402,6 +362,8 @@ export async function runRemediateTask(opts: RemediateRunOptions): Promise<Remed
     guardrailVerdict: guardrail.verdict,
     baseHead,
     head: git.head(),
+    ...evidenceTail,
+    ...(scrubbed.length > 0 ? { scrubbedArtifacts: scrubbed } : {}),
     ...(partial ? { partial } : {}),
   };
 
@@ -430,16 +392,30 @@ export async function runRemediateTask(opts: RemediateRunOptions): Promise<Remed
       guardrail.blocking && guardrail.blocking.length > 0
         ? `\n\nBlocking findings:\n${guardrail.blocking.map((b) => `- ${b}`).join('\n')}`
         : '';
+    // Salvage disposition for a RAN-and-BLOCKED verdict: under draft-pr
+    // salvage the blocked attempt may be pushed as a RED draft (its own
+    // required guardrail check keeps it unmergeable), so the work and the
+    // exact blocking reasons survive the ephemeral runner and the next run
+    // can RESUME from them instead of starting over — guardrail-red is
+    // where the most valuable partial work used to die. An UNRUNNABLE
+    // guardrail stays absolute: an unverified diff is never pushed.
+    const salvageNote =
+      guardrail.ran && effectiveSalvage === 'draft-pr'
+        ? ' Salvage policy: draft-pr — the BLOCKED attempt may be pushed as a red DRAFT ' +
+          '(unmergeable while the guardrail check is red) so the next run can resume from it.'
+        : '';
     return finish({
       outcome: 'guardrail-red',
       ...common,
       note:
         (guardrail.ran
-          ? `the guardrail did not pass (${guardrail.verdict}) — nothing lands. The attempt ` +
+          ? `the guardrail did not pass (${guardrail.verdict}) — nothing merges. The attempt ` +
             'diff is uploaded as a run artifact when this ran under Actions; locally the ' +
             'branch stays for inspection.'
           : `the guardrail could not run (${guardrail.verdict}) — nothing lands. An ` +
-            'agent-authored diff is never pushed unverified.') + evidence,
+            'agent-authored diff is never pushed unverified.') +
+        salvageNote +
+        evidence,
     });
   }
 
@@ -465,7 +441,7 @@ export async function runRemediateTask(opts: RemediateRunOptions): Promise<Remed
 
   if (partial) {
     const salvage =
-      opts.config.salvage === 'draft-pr'
+      effectiveSalvage === 'draft-pr'
         ? 'salvage policy: draft-pr — the verified partial work may land as a DRAFT.'
         : 'salvage policy: discard — the partial work is not landed (branch left for inspection).';
     return finish({

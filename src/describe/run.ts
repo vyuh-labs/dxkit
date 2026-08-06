@@ -75,7 +75,14 @@ export async function runDescribe(
   readBundle: () => string | undefined = readVisNetworkBundle,
 ): Promise<DescribeResult> {
   const input = await gatherDescribeInput(cwd);
-  const card = buildRepoCard(input);
+  let card = buildRepoCard(input);
+  if (card.stack.languages.length === 0) {
+    // "unknown stack" hides two different truths (an empty branch vs an
+    // unsupported stack) — append the ONE explainer's checkable cause to the
+    // honesty notes (Rule 2: same explainer init's detect step prints).
+    const { explainNoLanguages } = await import('../detect');
+    card = { ...card, notes: [...card.notes, explainNoLanguages(cwd)] };
+  }
 
   if (opts.json && !opts.html) {
     return { stdout: JSON.stringify(card, null, 2), wrotePath: null, zeroWrite: true };

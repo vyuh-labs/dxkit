@@ -3,6 +3,7 @@
  * ceiling (the org guard for the per-task matrix, where a failing task no
  * longer starves siblings and every task may spend its own cap).
  */
+import { REMEDIATE_TASKS } from '../../src/remediate/tasks';
 import { describe, it, expect, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -10,6 +11,7 @@ import * as path from 'path';
 import {
   budgetForTask,
   resolveRemediateConfig,
+  salvageForTask,
   tasksWithinSpendCeiling,
   DEFAULT_REMEDIATE_BUDGET,
   type RemediateConfig,
@@ -107,5 +109,37 @@ describe('resolveRemediateConfig parsing', () => {
     const config = resolveRemediateConfig(dir);
     expect(config.maxSpendPerRun).toBe(0);
     expect(config.taskBudgets).toEqual({});
+  });
+});
+
+describe('salvageForTask — the one salvage resolver (task-shape defaults)', () => {
+  const auto = { salvage: 'auto' as const };
+
+  it('auto follows the task completion shape: open-ended draft-pr, bounded discard', () => {
+    // Open-ended tasks never finish (no completion test) — discard would
+    // structurally throw away their verified work every run (observed live:
+    // 454 verified doc lines, guardrail PASSED, discarded).
+    expect(salvageForTask(auto, 'write-docs')).toBe('draft-pr');
+    expect(salvageForTask(auto, 'improve-tests')).toBe('draft-pr');
+    expect(salvageForTask(auto, 'custom')).toBe('draft-pr');
+    expect(salvageForTask(auto, 'fix-build')).toBe('discard');
+    expect(salvageForTask(auto, 'fix-vulns')).toBe('discard');
+    expect(salvageForTask(auto, 'fix-lint')).toBe('discard');
+  });
+
+  it('an explicit policy value overrides every task', () => {
+    expect(salvageForTask({ salvage: 'discard' }, 'write-docs')).toBe('discard');
+    expect(salvageForTask({ salvage: 'draft-pr' }, 'fix-build')).toBe('draft-pr');
+  });
+
+  it('every registered task declares its completion shape', () => {
+    for (const t of REMEDIATE_TASKS) {
+      expect(['bounded', 'open-ended']).toContain(t.completion);
+    }
+    // Fast-exit tasks are bounded by construction: skipWhenEntryFloorGreen
+    // IS a completion test.
+    for (const t of REMEDIATE_TASKS) {
+      if (t.skipWhenEntryFloorGreen) expect(t.completion).toBe('bounded');
+    }
   });
 });

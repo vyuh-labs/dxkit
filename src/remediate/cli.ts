@@ -34,6 +34,7 @@ import { prepareResume, type ResumeDecision } from './resume';
 import {
   budgetForTask,
   resolveRemediateConfig,
+  salvageForTask,
   tasksWithinSpendCeiling,
   type RemediateConfig,
 } from './config';
@@ -44,9 +45,16 @@ import { runRemediateTask, type RemediateResult } from './run';
 import { landRemediateHead, remediateBranchFor } from './land';
 import { appendLaneEvent, LANE_LEDGER_SCHEMA_VERSION } from '../lanes/ledger';
 
-// `remediate plan` lives in `./plan-cli` (module-size split); re-exported so
-// consumers keep one import surface.
+// `remediate plan` lives in `./plan-cli` and the configured sequencing loop
+// in `./configured-loop` (module-size splits); re-exported so consumers keep
+// one import surface.
 export { runRemediatePlan, type RemediatePlanOptions } from './plan-cli';
+export {
+  runConfiguredLoop,
+  type ConfiguredLoopOps,
+  type ConfiguredLoopResult,
+} from './configured-loop';
+import { headCommit, resetHardTo, runConfiguredLoop } from './configured-loop';
 
 export interface TaskRun {
   readonly result: RemediateResult;
@@ -87,8 +95,13 @@ async function executeTask(
   const task = remediateTaskById(taskId);
   const policyBudget = task ? budgetForTask(config, task.id) : config.agent.budget;
   const dispatch = readDispatchOverrides(process.env, policyBudget, config);
+  // The concrete salvage decision for THIS task (the one resolver: explicit
+  // policy wins, 'auto' follows the task's completion shape) — threaded into
+  // the runner's config so the ledger note and the landing below agree.
+  const salvage = task ? salvageForTask(config, task) : 'discard';
   const taskConfig: RemediateConfig = {
     ...config,
+    salvage,
     agent: {
       ...config.agent,
       budget: dispatch.any ? dispatch.budget : policyBudget,
@@ -102,13 +115,14 @@ async function executeTask(
   let entryFloor: CorrectnessFloorResult | undefined;
   let resume: ResumeDecision = { resumed: false };
   if (land === 'pr' && task && config.resume) {
+    // (salvage below is the task-resolved decision — resume needs draft-pr)
     entryFloor = runCorrectnessFloor({
       cwd,
       changedFiles: [],
       scope: 'full',
       packs: detectActiveLanguages(cwd),
     });
-    resume = prepareResume(cwd, task.id, config);
+    resume = prepareResume(cwd, task.id, { resume: config.resume, salvage });
     if (resume.note) logger.warn(`resume: ${resume.note}`);
     if (resume.resumed) {
       logger.info(`resuming budget-bounded attempt #${resume.attempt} from the salvage branch`);
@@ -129,15 +143,27 @@ async function executeTask(
       dispatch,
       ...(entryFloor !== undefined ? { entryFloor } : {}),
       ...(resume.resumed && resume.attempt !== undefined
-        ? { resume: { attempt: resume.attempt } }
+        ? {
+            resume: {
+              attempt: resume.attempt,
+              ...(resume.blockingContext ? { blockingContext: resume.blockingContext } : {}),
+            },
+          }
         : {}),
     });
   } finally {
     reporter.stop();
   }
 
-  const draftSalvage = result.outcome === 'budget-exhausted' && config.salvage === 'draft-pr';
-  const landEligible = result.outcome === 'verified' || draftSalvage;
+  const draftSalvage = result.outcome === 'budget-exhausted' && salvage === 'draft-pr';
+  // Guardrail-red under draft-pr salvage: the BLOCKED attempt is pushed as a
+  // RED draft — its own required guardrail check keeps it unmergeable, so
+  // "nothing merges" holds while the work + blocking findings survive the
+  // ephemeral runner and the next run can RESUME from them (guardrail-red
+  // was the outcome where the most valuable partial work died). Only a
+  // RAN-and-blocked verdict qualifies; an unrunnable guardrail never pushes.
+  const blockedSalvage = result.outcome === 'guardrail-red' && salvage === 'draft-pr';
+  const landEligible = result.outcome === 'verified' || draftSalvage || blockedSalvage;
   if (land !== 'pr' || !landEligible) {
     return finalizeTaskRun(cwd, taskId, {
       result,
@@ -170,7 +196,8 @@ async function executeTask(
     lane: 'remediate',
     task: taskId,
     outcome: 'landed',
-    ...(draftSalvage ? { partial: true } : {}),
+    ...(draftSalvage || blockedSalvage ? { partial: true } : {}),
+    ...(blockedSalvage ? { blocked: true } : {}),
     ...(result.envelope?.costUsd !== undefined ? { costUsd: result.envelope.costUsd } : {}),
     ...(result.envelope?.resolvedModelId
       ? { resolvedModelId: result.envelope.resolvedModelId }
@@ -181,15 +208,23 @@ async function executeTask(
     cwd,
     taskId,
     defaultBranch,
-    prTitle: `dxkit remediate: ${taskId}${draftSalvage ? ' (partial, budget-bounded)' : ''}`,
+    prTitle:
+      `dxkit remediate: ${taskId}` +
+      (blockedSalvage
+        ? ' (blocked: guardrail-red — do not merge)'
+        : draftSalvage
+          ? ' (partial, budget-bounded)'
+          : ''),
     prBody: result.ledger,
-    draft: draftSalvage,
+    draft: draftSalvage || blockedSalvage,
     ledgerPath,
   });
   return finalizeTaskRun(cwd, taskId, {
     result,
     ...(landResult.prUrl ? { prUrl: landResult.prUrl } : {}),
     landed: true,
+    // A blocked salvage is NOT clean: the draft exists for inspection and
+    // resume, but the task did not end well — the job stays red.
     clean: result.outcome === 'verified' || draftSalvage,
   });
 }
@@ -212,6 +247,19 @@ function finalizeTaskRun(cwd: string, taskId: string, run: TaskRun): TaskRun {
     );
   } catch {
     // the record is evidence plumbing, never a failure
+  }
+  if (!run.clean) {
+    // A non-clean outcome must be diagnosable from the run page: the agent
+    // phase group otherwise closes with ZERO output (the driver captures the
+    // CLI's streams), so the failure's own evidence — the driver-reported
+    // cause and the transcript tail — surfaces in the LOG here. Log only,
+    // never the ledger/PR body.
+    if (run.result.envelope?.failure) {
+      logger.warn(`driver-reported failure: ${run.result.envelope.failure}`);
+    }
+    if (run.result.transcriptTail) {
+      logger.warn(`agent transcript (last lines):\n${run.result.transcriptTail}`);
+    }
   }
   if (process.env.GITHUB_ACTIONS === 'true' && !run.clean) {
     const first = (run.result.note ?? run.result.outcome).split('\n')[0];
@@ -260,6 +308,8 @@ function taskRunJson(run: TaskRun): Record<string, unknown> {
     // format-patches into a run artifact when nothing landed.
     baseHead: r.baseHead ?? null,
     head: r.head ?? null,
+    // Failure evidence (machine-readable record only — never the PR body).
+    transcriptTail: r.transcriptTail ?? null,
     ledger: r.ledger,
   };
 }
@@ -289,71 +339,6 @@ export async function runRemediate(cwd: string, opts: RemediateOptions): Promise
 export interface RemediateConfiguredOptions {
   readonly land?: 'pr' | 'none';
   readonly json?: boolean;
-}
-
-/** The seams the configured loop drives — injectable so the sequencing
- *  POLICY is unit-testable without git or an agent. */
-export interface ConfiguredLoopOps {
-  execute(taskId: string): Promise<TaskRun>;
-  /** Current commit, or null when unreadable. */
-  head(): string | null;
-  /** Hard-reset the tree to a commit; false on failure. */
-  resetTo(head: string): boolean;
-  report(taskId: string, run: TaskRun): void;
-}
-
-export interface ConfiguredLoopResult {
-  readonly runs: ReadonlyArray<{ readonly taskId: string; readonly run: TaskRun }>;
-  /** Tasks NOT run because an earlier task left unlanded work in the tree
-   *  (or a reset failed) — disclosed, never silent. */
-  readonly skipped: readonly string[];
-  readonly failed: boolean;
-}
-
-/**
- * The sequencing policy of `remediate configured` (X-1): tasks share one
- * tree, so isolation between them is explicit —
- *
- *   - after a LANDED task, the tree resets to the initial head (the work
- *     lives on the pushed standing branch), so the next task's PR carries
- *     ONLY its own diff;
- *   - a task that left UNLANDED work in the tree (floor-red, guardrail-red,
- *     a discarded partial, a refused landing) STOPS the loop: resetting
- *     would destroy the work the ledger promises stays for inspection, and
- *     running the next task on a polluted tree would stack diffs into its
- *     PR. The remaining tasks are named as skipped; the next scheduled run
- *     picks them up on a fresh checkout.
- */
-export async function runConfiguredLoop(
-  tasks: readonly string[],
-  ops: ConfiguredLoopOps,
-): Promise<ConfiguredLoopResult> {
-  const initialHead = ops.head();
-  const runs: Array<{ taskId: string; run: TaskRun }> = [];
-  let skipped: string[] = [];
-  let failed = false;
-
-  for (let i = 0; i < tasks.length; i++) {
-    const taskId = tasks[i];
-    const run = await ops.execute(taskId);
-    ops.report(taskId, run);
-    runs.push({ taskId, run });
-    if (!run.clean) failed = true;
-
-    const moved = initialHead !== null && ops.head() !== initialHead;
-    if (!moved) continue;
-
-    const remaining = tasks.slice(i + 1);
-    if (run.landed) {
-      if (ops.resetTo(initialHead!)) continue;
-      skipped = remaining; // a failed reset means a polluted tree — stop
-      failed = true;
-      break;
-    }
-    skipped = remaining;
-    break;
-  }
-  return { runs, skipped, failed };
 }
 
 /**
@@ -418,34 +403,6 @@ export async function runRemediateConfigured(
     );
   }
   if (outcome.failed) process.exitCode = 1;
-}
-
-/** Current commit sha, or null when unreadable. */
-function headCommit(cwd: string): string | null {
-  try {
-    return execFileSync('git', ['rev-parse', 'HEAD'], {
-      cwd,
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-    }).trim();
-  } catch {
-    return null;
-  }
-}
-
-/** Hard-reset to a commit (used only after a LANDED task — the work is on
- *  the pushed standing branch). False on failure. */
-function resetHardTo(cwd: string, head: string): boolean {
-  try {
-    execFileSync('git', ['reset', '--hard', head], {
-      cwd,
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 /** Credentials the configured driver declares, read from THIS process env

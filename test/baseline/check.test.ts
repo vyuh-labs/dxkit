@@ -4,10 +4,11 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync } from 'fs'
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { createBaseline } from '../../src/baseline/create';
-import { runGuardrailCheck } from '../../src/baseline/check';
+import { runGuardrailCheck, schemeMismatchRemedy } from '../../src/baseline/check';
 import { renderConsole, renderJson, renderMarkdown } from '../../src/baseline/check-renderers';
 import { computeFlowBindingFingerprint } from '../../src/analyzers/tools/fingerprint-contract';
 import { trustedLocalContext } from '../../src/analysis-trust';
+import { CURRENT_IDENTITY_SCHEME } from '../../src/baseline/types';
 
 /**
  * End-to-end exercise of the guardrail-check orchestrator. The
@@ -661,7 +662,7 @@ describe('runGuardrailCheck — identity-scheme migration guard', () => {
     const created = await createBaseline({ cwd: dir });
     if (!created.path) throw new Error('expected committed-mode baseline');
     const bl = JSON.parse(readFileSync(created.path, 'utf8'));
-    expect(bl.identityScheme).toBe('v2');
+    expect(bl.identityScheme).toBe(CURRENT_IDENTITY_SCHEME);
   });
 
   it('rejects a committed baseline minted under an older scheme, with an actionable message', async () => {
@@ -798,7 +799,7 @@ describe('runGuardrailCheck — flow integration gate seam', () => {
       JSON.stringify({
         schemaVersion: 'dxkit-allowlist/v1',
         mode: 'full',
-        identityScheme: 'v2',
+        identityScheme: CURRENT_IDENTITY_SCHEME,
         entries: [
           {
             fingerprint: fp,
@@ -839,4 +840,30 @@ describe('runGuardrailCheck — flow integration gate seam', () => {
     expect(result.flowGate?.findings.map((f) => f.path)).toContain('/dead');
     expect(result.blocks).toBe(true);
   }, 300_000);
+});
+
+describe('schemeMismatchRemedy — the remedy matches the migration STATE', () => {
+  it('anchor stale + local already migrated -> baseline publish (never a "run update" loop)', () => {
+    const remedy = schemeMismatchRemedy(
+      'v2',
+      { used: 'anchor', anchorRef: 'dxkit-baselines', note: 'x' },
+      CURRENT_IDENTITY_SCHEME,
+    );
+    expect(remedy).toContain('baseline publish');
+    expect(remedy).toContain('dxkit-baselines');
+    expect(remedy).toContain('already migrated');
+    expect(remedy).not.toContain('vyuh-dxkit update');
+  });
+
+  it('everything else keeps the generic update remedy', () => {
+    for (const [anchorSource, treeScheme] of [
+      [undefined, null],
+      [{ used: 'anchor', anchorRef: 'dxkit-baselines', note: 'x' }, 'v2'],
+      [{ used: 'tree-fallback', anchorRef: 'dxkit-baselines', note: 'x' }, CURRENT_IDENTITY_SCHEME],
+    ] as const) {
+      const remedy = schemeMismatchRemedy('v2', anchorSource as never, treeScheme as never);
+      expect(remedy).toContain('update');
+      expect(remedy).not.toContain('already migrated');
+    }
+  });
 });

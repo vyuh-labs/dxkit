@@ -302,8 +302,26 @@ export async function runBaselineRefresh(
     cwd,
     exec: opts.exec ?? makeExec(cwd),
     ...(opts.now !== undefined ? { now: opts.now } : {}),
+    // The finding-id set from the baseline this refresh just captured, so a
+    // lapsing entry whose finding was FIXED reads as prunable bookkeeping,
+    // never as a returning finding (the false-alarm class: a "lapses in 2
+    // days" issue about an advisory the repo had already closed). Unreadable
+    // baseline → null → every entry treated live (fail-open).
+    currentFindingIds: freshFindingIds(cwd, opts.name ?? DEFAULT_BASELINE_NAME),
   });
   return { ...result, expiryNotice };
+}
+
+/** Finding ids from the freshest local baseline capture, or null when none
+ *  is readable (anchor-only repos without a tree file, first runs). */
+function freshFindingIds(cwd: string, name: string): ReadonlySet<string> | null {
+  try {
+    const file = readBaselineFile(pathForBaseline(cwd, name));
+    if (!file) return null;
+    return new Set(file.findings.map((f) => f.id));
+  } catch {
+    return null;
+  }
 }
 
 /**

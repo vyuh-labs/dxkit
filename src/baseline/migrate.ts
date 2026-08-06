@@ -180,7 +180,7 @@ export function buildIdentityRemap(
 /**
  * Detect whether a repo's committed artifacts (baseline + allowlist) were
  * written under an OLDER identity scheme than the current one, returning
- * the scheme to migrate FROM (today only `'v1'`), or `null` when
+ * the scheme to migrate FROM (the OLDEST stale scheme found), or `null` when
  * everything is already current / there's nothing to migrate. A
  * lightweight probe — reads the stamped `identityScheme` (absent ⇒ `'v1'`)
  * without re-scanning. Used by `vyuh-dxkit update` to decide whether to
@@ -205,7 +205,15 @@ export function detectStaleScheme(
   const allowlist = loadAllowlist(cwd);
   if (allowlist && allowlist.entries.length > 0) found.add(allowlist.identityScheme ?? 'v1');
 
-  if (found.has('v1') && CURRENT_IDENTITY_SCHEME !== 'v1') return 'v1';
+  // Oldest stale scheme wins: a repo can only be migrated forward from the
+  // furthest-behind artifact it holds. Generalized when v3 landed — the
+  // v1-only check here was itself the "today only v1" hardcode this
+  // function's contract warned about.
+  const order: readonly IdentitySchemeVersion[] = ['v1', 'v2', 'v3'];
+  for (const scheme of order) {
+    if (scheme === CURRENT_IDENTITY_SCHEME) break;
+    if (found.has(scheme)) return scheme;
+  }
   return null;
 }
 

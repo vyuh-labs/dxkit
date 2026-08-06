@@ -347,22 +347,33 @@ describe('classify — block-rule overrides', () => {
     expect(r2.blocks).toBe(false);
   });
 
-  it('blocks a new untested file overlapping changed lines', () => {
+  it('blocks a test-gap on a file the diff ADDED (the only cause a developer owns)', () => {
     const ctx: ClassifyContext = {
       kind: 'test-gap',
-      overlapsChangedLines: true,
+      derivedMembership: true,
+      fileAddedInDiff: true,
     };
     const result = classify(pair('added'), DEFAULT_BROWNFIELD_POLICY, ctx);
     expect(result.blocks).toBe(true);
     expect(result.reasons.some((r) => r.detail.includes('newUntestedChangedSource'))).toBe(true);
   });
 
-  it('block-rule does not fire for the same kind outside changed lines', () => {
+  it('block-rule does not fire for the same kind on a file that already existed', () => {
     const ctx: ClassifyContext = {
       kind: 'test-gap',
-      overlapsChangedLines: false,
+      derivedMembership: true,
+      fileAddedInDiff: false,
     };
     const result = classify(pair('added'), DEFAULT_BROWNFIELD_POLICY, ctx);
+    expect(result.reasons.some((r) => r.code === 'block-rule')).toBe(false);
+    expect(result.blocks).toBe(false);
+  });
+
+  it('block-rule does not fire on the dead overlapsChangedLines predicate (a test-gap has no line)', () => {
+    const result = classify(pair('added'), DEFAULT_BROWNFIELD_POLICY, {
+      kind: 'test-gap',
+      overlapsChangedLines: true,
+    });
     expect(result.reasons.some((r) => r.code === 'block-rule')).toBe(false);
   });
 });

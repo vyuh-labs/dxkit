@@ -45,6 +45,7 @@ import { readFlowConfig } from './analyzers/flow/config';
 import { discoverExtensions } from './extensions/manifest';
 import { mergeIntoPolicyFile } from './baseline/policy-write';
 import { detectEnforcement, type EnforcementState } from './enforcement';
+import { DXKIT_RUNTIME_ARTIFACT_PATHS } from './runtime-artifacts';
 
 /**
  * Detect the consumer repo's default branch so workflow templates
@@ -1084,12 +1085,20 @@ export function installCiRemediate(cwd: string, opts: InstallerOpts = {}): ShipI
   const taskOptionLines = knownTaskIds()
     .map((id) => `          - ${id}`)
     .join('\n');
+  // The agent CLI install is rendered from the driver's PINNED declaration
+  // (Rule 15): an unattended lane must not float its executor, and bumping
+  // the CLI is a one-line driver change, never a template edit. A driver
+  // with no installable CLI (cli: null) renders a disclosed no-op.
+  const agentCliInstall = driver?.cli
+    ? `npm install -g ${driver.cli.package}@${driver.cli.version}`
+    : `echo "driver '${config.agent.driver}' declares no installable CLI"`;
   const result = installWorkflow(cwd, 'dxkit-remediate.yml', opts, {
     [CI_RUNTIME_SETUP_KEY]: renderCiRuntimeSetup(cwd),
     __DXKIT_DEFAULT_BRANCH__: resolveDefaultBranch(cwd),
     __DXKIT_REMEDIATE_CRON__: cronFromCadence(config.schedule),
     __DXKIT_REMEDIATE_CREDENTIAL_ENV__: credentialLines,
     __DXKIT_REMEDIATE_TASK_OPTIONS__: taskOptionLines,
+    __DXKIT_REMEDIATE_AGENT_CLI_INSTALL__: agentCliInstall,
     __DXKIT_BOT_NAME__: BOT_IDENTITY.name,
     __DXKIT_BOT_EMAIL__: BOT_IDENTITY.email,
   });
@@ -1266,13 +1275,10 @@ export function installPrReview(cwd: string, opts: InstallerOpts = {}): ShipInst
 }
 
 export const GITIGNORE_HEADER = '# dxkit — runtime outputs (analyzer reports + dashboard)';
-export const GITIGNORE_ENTRIES = [
-  '.dxkit/reports/',
-  '.dxkit/dashboard.html',
-  '.dxkit/cache/',
-  '.dxkit/loop/',
-  'graphify-out/',
-];
+// Derived from the ONE runtime-artifact list (Rule 2) — the remediate
+// runner's sweep/scrub reads the same paths, so what init gitignores and
+// what the lane refuses to land can never drift apart.
+export const GITIGNORE_ENTRIES = [...DXKIT_RUNTIME_ARTIFACT_PATHS];
 
 /**
  * Seed `.gitignore` with dxkit's runtime-output paths and write a

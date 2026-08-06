@@ -8,9 +8,13 @@
  *     never an env var that happened to be exported in this shell;
  *   - tier → rolling CLI alias (`haiku`/`sonnet`/`opus`), never a dated
  *     model id, so a model-generation rollover needs no dxkit release;
- *   - "agent never ran" detection: a non-zero exit with zero turns means the
- *     CLI died before the agent started (auth, bad flag) — reported as its
- *     own outcome, never read downstream as "agent made no change";
+ *   - "agent never ran" detection, BOTH shapes: a non-zero exit with zero
+ *     turns (CLI died before the agent started — bad flag), and an API-level
+ *     failure with no work done (invalid key, exhausted credit — the CLI
+ *     reports `num_turns: 1` for the failed call itself, which defeated the
+ *     original zero-turns guard and shipped a green job over a dead agent).
+ *     Reported as its own outcome with the CLI's human-readable cause,
+ *     never read downstream as "agent made no change";
  *   - a wall-clock kill is salvage territory, not failure: work the agent
  *     already committed is finished work (the runner decides what to do
  *     with it).
@@ -96,6 +100,43 @@ interface ClaudeJsonResult {
    *  runs have reported neither `modelId` nor `model`, leaving the envelope
    *  at "concrete id not reported by driver"). */
   readonly modelUsage?: Record<string, unknown>;
+  /** Why the run terminated (`"api_error"` on an auth/credit failure). */
+  readonly terminal_reason?: string;
+  /** On a failed run this is the CLI's human-readable cause ("Credit
+   *  balance is too low"); on a successful run it is the agent's final
+   *  message. Read ONLY when the run failed. */
+  readonly result?: string;
+  /** TRAP — the CLI reports `subtype: "success"` even on a FAILED run
+   *  (observed on credit exhaustion, CLI 2.1.222). Never key on it. */
+  readonly subtype?: string;
+}
+
+/**
+ * Both observed API-level failure shapes — invalid key AND credit
+ * exhaustion — share this signature on CLI 2.1.222:
+ *
+ *     is_error: true, terminal_reason: "api_error", num_turns: 1,
+ *     total_cost_usd: 0, modelUsage: {}, exit 1  (subtype: "success"!)
+ *
+ * `num_turns: 1` is why a `!turns` guard can never catch it: the failed
+ * call itself counts as a turn.
+ */
+function apiLevelFailure(result: ClaudeJsonResult): boolean {
+  return result.is_error === true || result.terminal_reason === 'api_error';
+}
+
+/** Evidence real agent work happened: turns beyond the failed call itself,
+ *  or actual spend. Distinguishes "never ran" from "died mid-run". */
+function madeProgress(result: ClaudeJsonResult): boolean {
+  const turns = typeof result.num_turns === 'number' ? result.num_turns : 0;
+  const cost = typeof result.total_cost_usd === 'number' ? result.total_cost_usd : 0;
+  return turns > 1 || cost > 0;
+}
+
+/** The CLI's own human-readable failure cause, bounded for a ledger line. */
+function failureCause(result: ClaudeJsonResult, fallback: string): string {
+  const cause = typeof result.result === 'string' ? result.result.trim() : '';
+  return cause ? cause.slice(0, 300) : fallback;
 }
 
 /** The concrete model id(s) a result actually used, or undefined. Falls back
@@ -116,8 +157,17 @@ const TIER_ALIAS: Record<ModelTier, string> = {
 export function makeClaudeCodeDriver(exec: AgentExec = realAgentExec): AgentDriver {
   return {
     id: 'claude-code',
-    budgetSupport: { turns: true, cost: true },
+    // The honest declaration: `--max-turns` genuinely stops the run; cost is
+    // only REPORTED in the closing JSON — the CLI cannot stop mid-run on
+    // spend, so maxUsd is a post-hoc classification, never an enforcement
+    // (the $14.71-against-$5 incident). The dispatch layer clamps max_turns
+    // against the committed spend authority because turns are the lever
+    // that actually bounds spend here.
+    budgetSupport: { turns: 'enforced', cost: 'reported' },
     credentialEnv: ['ANTHROPIC_API_KEY'],
+    // The pinned executor the managed workflow installs. Bump deliberately
+    // (one line, one place) — never float `latest` under an unattended lane.
+    cli: { package: '@anthropic-ai/claude-code', version: '2.1.222' },
 
     resolveModel(tier: ModelTier): string {
       return TIER_ALIAS[tier];
@@ -156,6 +206,16 @@ export function makeClaudeCodeDriver(exec: AgentExec = realAgentExec): AgentDriv
       Object.assign(env, opts.env);
       env.DXKIT_LOOP_ACTIVE = '1'; // arm the Stop-gate: the loop verifies itself
 
+      // The executor's own build, for the envelope (run provenance). Best
+      // effort — an unparseable probe leaves the field absent, disclosed by
+      // the ledger, never a failure.
+      const versionProbe = exec('claude', ['--version'], {
+        cwd: opts.cwd,
+        env,
+        timeoutMs: 30_000,
+      });
+      const cliVersion = versionProbe.stdout.match(/(\d+\.\d+\.\d+)/)?.[1];
+
       const outcome = exec(
         'claude',
         [
@@ -173,9 +233,10 @@ export function makeClaudeCodeDriver(exec: AgentExec = realAgentExec): AgentDriv
       );
 
       const tail = (outcome.stderr || outcome.stdout).trim().split('\n').slice(-6).join('\n');
+      const provenance = cliVersion ? { cliVersion } : {};
 
       if (outcome.timedOut) {
-        return { completed: false, timedOut: true, transcriptTail: tail };
+        return { completed: false, timedOut: true, transcriptTail: tail, ...provenance };
       }
 
       let result: ClaudeJsonResult = {};
@@ -186,22 +247,50 @@ export function makeClaudeCodeDriver(exec: AgentExec = realAgentExec): AgentDriv
       }
 
       const turns = typeof result.num_turns === 'number' ? result.num_turns : undefined;
-      if (outcome.code !== 0 && !turns) {
+      // Never-ran, both shapes: the CLI died before the agent started
+      // (non-zero exit, zero turns) OR the API call itself failed with no
+      // work done (invalid key, exhausted credit — `num_turns: 1` there, so
+      // a turn-count guard alone can never catch it; this shipped a green
+      // job over a dead agent).
+      const apiFailed = apiLevelFailure(result);
+      if ((outcome.code !== 0 && !turns) || (apiFailed && !madeProgress(result))) {
+        const fallback = `claude exit ${outcome.code ?? 'null'}: ${tail || '(no stderr)'}`;
+        const detail = result.terminal_reason ? ` (${result.terminal_reason})` : '';
         return {
           completed: false,
           timedOut: false,
-          neverRan: { reason: `claude exit ${outcome.code ?? 'null'}: ${tail || '(no stderr)'}` },
+          neverRan: {
+            reason: apiFailed ? `${failureCause(result, fallback)}${detail}` : fallback,
+          },
           transcriptTail: tail,
+          ...provenance,
         };
       }
 
+      const completed = outcome.code === 0 && result.is_error !== true;
+      // An error AFTER real work: verification decides the committed work's
+      // fate; the failure itself is disclosed, and a no-diff errored run is
+      // a failure outcome downstream, never a benign no-op.
+      const failure =
+        !completed && (apiFailed || outcome.code !== 0)
+          ? {
+              failure: {
+                reason: apiFailed
+                  ? failureCause(result, `claude exit ${outcome.code ?? 'null'}`) +
+                    (result.terminal_reason ? ` (${result.terminal_reason})` : '')
+                  : `claude exit ${outcome.code ?? 'null'}`,
+              },
+            }
+          : {};
       return {
-        completed: outcome.code === 0 && result.is_error !== true,
+        completed,
         turns,
         costUsd: typeof result.total_cost_usd === 'number' ? result.total_cost_usd : undefined,
         resolvedModelId: resolvedModelFrom(result),
         timedOut: false,
         transcriptTail: tail,
+        ...provenance,
+        ...failure,
       };
     },
   };

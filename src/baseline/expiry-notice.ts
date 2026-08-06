@@ -94,6 +94,17 @@ export interface ExpiryNoticeOptions {
   readonly now?: Date;
   /** Horizon override; defaults to the shared constant. */
   readonly horizonDays?: number;
+  /**
+   * The freshly captured finding-id set, when the caller has one (the
+   * refresh just re-scanned). A lapsing entry whose fingerprint is ABSENT
+   * from it suppresses nothing any more — its finding was FIXED — so it is
+   * reported as prunable, never as a returning finding (the notice
+   * previously manufactured urgency about completed work: a "lapses in 2
+   * days, the finding returns" alarm for an advisory the repo had already
+   * fixed). `null`/absent = unknown (no fresh scan in hand) → every entry
+   * is treated as live, the fail-open direction.
+   */
+  readonly currentFindingIds?: ReadonlySet<string> | null;
 }
 
 const TITLE_PREFIX = 'dxkit: allowlist suppressions expiring';
@@ -108,7 +119,7 @@ function titleFor(count: number): string {
  */
 export function expiryNoticeBody(
   soon: ReadonlyArray<SoonToExpire>,
-  opts: { readonly horizonDays: number },
+  opts: { readonly horizonDays: number; readonly resolved?: ReadonlyArray<SoonToExpire> },
 ): string {
   const owners = [...new Set(soon.map((s) => s.entry.addedBy).filter(Boolean))];
   const soonest = Math.min(...soon.map((s) => s.daysRemaining));
@@ -139,6 +150,19 @@ export function expiryNoticeBody(
         `${soon[0]!.entry.expiresAt} — not spread out.`,
       '',
     );
+  }
+  if (opts.resolved && opts.resolved.length > 0) {
+    lines.push(
+      `**Already resolved (${opts.resolved.length}) — no finding returns when these lapse.** ` +
+        'The latest scan no longer contains the finding each of these suppressed (the work ' +
+        'was done), so the entry is stale bookkeeping, not a pending surprise. Remove at ' +
+        `leisure: \`${dxkitCli('allowlist remove')} --fingerprint <id>\` (or let \`${dxkitCli('allowlist prune')}\` sweep them once expired).`,
+      '',
+    );
+    for (const { entry } of opts.resolved) {
+      lines.push(`- \`${entry.fingerprint}\` (${entry.kind}, expires ${entry.expiresAt})`);
+    }
+    lines.push('');
   }
   lines.push(
     '**Two lanes.**',
@@ -190,9 +214,22 @@ export function syncExpiryNotice(opts: ExpiryNoticeOptions): ExpiryNoticeResult 
   const horizonDays = opts.horizonDays ?? SOON_TO_EXPIRE_DAYS;
   const now = opts.now ?? new Date();
   const file = loadAllowlist(opts.cwd);
-  const soon = file
+  const lapsing = file
     ? auditAllowlist(file, { now, soonToExpireDays: horizonDays }).soonToExpire
     : [];
+  // Cross-check lapsing entries against the freshest finding set when the
+  // caller has one: an entry whose finding no longer EXISTS suppresses
+  // nothing — nothing "returns" when it lapses. Alarm only about live
+  // findings; stale entries are reported as prunable. Unknown current set
+  // (no fresh scan) treats everything as live — fail-open.
+  const ids = opts.currentFindingIds ?? null;
+  const soon = ids ? lapsing.filter((s) => ids.has(s.entry.fingerprint)) : lapsing;
+  const resolved = ids ? lapsing.filter((s) => !ids.has(s.entry.fingerprint)) : [];
+  const resolvedNote =
+    resolved.length > 0
+      ? ` (${resolved.length} other lapsing entr${resolved.length === 1 ? 'y' : 'ies'} already ` +
+        `resolved — stale bookkeeping, prunable, no finding returns)`
+      : '';
 
   const existing = findOpenNotice(opts.exec);
 
@@ -201,7 +238,7 @@ export function syncExpiryNotice(opts: ExpiryNoticeOptions): ExpiryNoticeResult 
       return {
         outcome: 'nothing-to-report',
         lapsing: 0,
-        note: `No allowlist suppression expires within ${horizonDays} days.`,
+        note: `No live allowlist suppression expires within ${horizonDays} days.${resolvedNote}`,
       };
     }
     // The self-close. A notice that outlives its facts teaches people to ignore
@@ -212,12 +249,12 @@ export function syncExpiryNotice(opts: ExpiryNoticeOptions): ExpiryNoticeResult 
       lapsing: 0,
       issueUrl: existing.url,
       note:
-        `Nothing lapses within ${horizonDays} days any more — closed the expiry notice ` +
-        `(${existing.url}).`,
+        `Nothing live lapses within ${horizonDays} days any more — closed the expiry notice ` +
+        `(${existing.url}).${resolvedNote}`,
     };
   }
 
-  const body = expiryNoticeBody(soon, { horizonDays });
+  const body = expiryNoticeBody(soon, { horizonDays, resolved });
   const title = titleFor(soon.length);
 
   if (existing) {

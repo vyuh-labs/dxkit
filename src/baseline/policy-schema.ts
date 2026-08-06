@@ -190,6 +190,14 @@ export function buildPolicySchema(version: string): Schema {
               items: { type: 'string' },
               description: 'Globs that trigger the rule when the change touches them.',
             },
+            ifAdded: {
+              type: 'array',
+              items: { type: 'string' },
+              description:
+                'Globs that trigger the rule only when the change ADDED a matching file ' +
+                '(created; renames excluded) — for norms about new artifacts, e.g. a new ' +
+                'component must ship with a guide. A rule needs `if` and/or `ifAdded`.',
+            },
             then: {
               type: 'array',
               items: { type: 'string' },
@@ -308,25 +316,25 @@ export function buildPolicySchema(version: string): Schema {
           maxDispatchBudget: {
             type: 'number',
             description:
-              'The most a workflow_dispatch campaign may raise maxUsd to (0/absent = ' +
-              'dispatch can lower spend but never raise it beyond the policy cap).',
+              'The dispatch spend authority: the most a workflow_dispatch campaign may raise ' +
+              'maxUsd to, and the same authority clamps max_turns proportionally (turns govern ' +
+              'real spend when the driver cannot enforce cost mid-run). 0/absent = dispatch ' +
+              'can lower budgets but never raise them beyond the policy caps.',
           },
           resume: {
             type: 'boolean',
             description:
-              'Opt-in: continue a prior budget-bounded attempt from its draft-PR salvage ' +
-              'branch instead of starting over (requires salvage: "draft-pr"; capped ' +
-              'resumes; entry floor stays anchored to the pristine base).',
+              'Opt-in: continue a prior budget-bounded or guardrail-blocked attempt from its ' +
+              'draft-PR salvage branch instead of starting over (requires the effective ' +
+              'per-task salvage to be draft-pr; capped resumes with a durable attempt ' +
+              'counter; entry floor stays anchored to the pristine base).',
           },
         },
         'Agentic remediation: a scheduled agent inside the verified frame.',
       ),
       graph: obj(
         {
-          refresh: {
-            type: 'string',
-            description: 'Code-graph transport for CI (e.g. "cache"); set by init/update.',
-          },
+          refresh: stringProp('graph.refresh'),
         },
         'Code-graph plumbing.',
       ),

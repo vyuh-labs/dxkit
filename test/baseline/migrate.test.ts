@@ -18,7 +18,7 @@ import {
   addEntry,
 } from '../../src/allowlist/file';
 import { pathForBaseline } from '../../src/baseline/baseline-file';
-import type { BaselineEntry } from '../../src/baseline/types';
+import { CURRENT_IDENTITY_SCHEME, type BaselineEntry } from '../../src/baseline/types';
 import { trustedLocalContext } from '../../src/analysis-trust';
 
 describe('buildIdentityRemap (pure)', () => {
@@ -40,9 +40,17 @@ describe('buildIdentityRemap (pure)', () => {
   });
 
   it('does not map version-independent kinds (id unchanged across schemes)', () => {
-    const id = identityFor({ kind: 'test-gap', file: 'a.ts', risk: 'high' }, 'v2');
-    const entry: BaselineEntry = { id, kind: 'test-gap', file: 'a.ts', risk: 'high' };
+    const id = identityFor({ kind: 'god-file', file: 'a.ts' }, 'v2');
+    const entry: BaselineEntry = { id, kind: 'god-file', file: 'a.ts' };
     expect(buildIdentityRemap([entry], 'v1').size).toBe(0);
+  });
+
+  it('maps test-gap (risk-hashed v2 → file-only v3)', () => {
+    const currentId = identityFor({ kind: 'test-gap', file: 'a.ts', risk: 'high' });
+    const entry: BaselineEntry = { id: currentId, kind: 'test-gap', file: 'a.ts', risk: 'high' };
+    const v2 = identityFor({ kind: 'test-gap', file: 'a.ts', risk: 'high' }, 'v2');
+    expect(v2).not.toBe(currentId);
+    expect(buildIdentityRemap([entry], 'v2').get(v2)).toBe(currentId);
   });
 
   it('maps dep-vuln (installed-version v1 → version-independent v2)', () => {
@@ -95,7 +103,7 @@ describe('migrateIdentity (end-to-end)', () => {
   });
   afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
-  it('remaps a v1 allowlist entry onto v2 and leaves the guardrail working', async () => {
+  it('remaps a v1 allowlist entry onto the current scheme and leaves the guardrail working', async () => {
     // Baseline once to discover the secret finding's metadata + v2 id.
     await createBaseline({ cwd: dir });
     const blPath = pathForBaseline(dir, 'main');
@@ -139,19 +147,19 @@ describe('migrateIdentity (end-to-end)', () => {
     // Migrate.
     const result = await migrateIdentity({ cwd: dir, from: 'v1' });
     expect(result.fromScheme).toBe('v1');
-    expect(result.toScheme).toBe('v2');
+    expect(result.toScheme).toBe(CURRENT_IDENTITY_SCHEME);
     expect(result.allowlistRemapped).toBe(1);
     expect(result.allowlistUnmapped).toHaveLength(0);
 
-    // The allowlist now carries the v2 id + is stamped v2.
+    // The allowlist now carries the current-scheme id + stamp.
     const migrated = loadAllowlist(dir)!;
-    expect(migrated.identityScheme).toBe('v2');
+    expect(migrated.identityScheme).toBe(CURRENT_IDENTITY_SCHEME);
     expect(migrated.entries[0].fingerprint).toBe(secret.id);
 
     // The regenerated baseline is stamped v2, and the guardrail now runs
     // (no scheme-mismatch error) and passes with no net-new.
     const migratedBaseline = JSON.parse(readFileSync(blPath, 'utf8'));
-    expect(migratedBaseline.identityScheme).toBe('v2');
+    expect(migratedBaseline.identityScheme).toBe(CURRENT_IDENTITY_SCHEME);
     const check = await runGuardrailCheck({ trust: trustedLocalContext(), cwd: dir });
     expect(check.blocks).toBe(false);
   }, 300_000);

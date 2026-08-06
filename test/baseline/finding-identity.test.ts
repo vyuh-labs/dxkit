@@ -509,10 +509,14 @@ const FIXTURES: ReadonlyArray<IdentityFixture> = [
     expected: 'persisted',
   },
   {
-    name: 'test-gap/risk-escalated — identity changes (regression signal)',
+    // v3 (Rule 9): the tier is threshold-derived from line count, so it no
+    // longer mints identity — a tier move is the SAME finding re-scored,
+    // never a resolved+net-new pair (a reformat across the 500-line
+    // boundary shipped exactly that).
+    name: 'test-gap/risk-escalated — identity stable (risk is display, not identity)',
     prior: { kind: 'test-gap', file: 'src/services/payments.ts', risk: 'medium' },
     current: { kind: 'test-gap', file: 'src/services/payments.ts', risk: 'critical' },
-    expected: 'changed',
+    expected: 'persisted',
   },
   {
     name: 'test-gap/file-renamed — identity changes',
@@ -1049,7 +1053,7 @@ describe('identityFor — per-kind deterministic identity', () => {
       identityFor(
         { kind: 'secret', tool: 'gitleaks', rule: 'generic-api-key', file: 'a.ts', line: 1 },
         // @ts-expect-error — verifying runtime guard on a hypothetical future version
-        'v3',
+        'v4',
       ),
     ).toThrow(/Unsupported identity-scheme version/);
   });

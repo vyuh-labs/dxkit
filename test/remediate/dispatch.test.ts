@@ -65,12 +65,49 @@ describe('readDispatchOverrides', () => {
       BUDGET,
       { maxDispatchBudget: 0 },
     );
-    expect(d.budget.maxTurns).toBe(120);
+    // 120 turns exceeds policy (80) with no declared spend authority — the
+    // turn clamp holds (turns govern real spend; see the clamp tests below).
+    expect(d.budget.maxTurns).toBe(BUDGET.maxTurns);
     expect(d.budget.maxMinutes).toBe(BUDGET.maxMinutes); // junk ignored
     expect(d.model).toBe('sonnet-tier');
     expect(d.customPrompt).toContain('docstring');
     expect(d.actor).toBe('octocat');
     expect(d.any).toBe(true);
+  });
+});
+
+describe('the turn clamp (the $14.71 back door)', () => {
+  it('without a declared ceiling, dispatch can LOWER turns but never raise them', () => {
+    const lower = readDispatchOverrides({ [DISPATCH_ENV.maxTurns]: '20' }, BUDGET, {
+      maxDispatchBudget: 0,
+    });
+    expect(lower.budget.maxTurns).toBe(20);
+    expect(lower.clamped).toEqual([]);
+
+    // The incident dispatch: max_turns=200 against 80-turn/$5 policy. The
+    // old passthrough made turns an unclamped back door around the spend
+    // ceiling ($14.71 actually spent against the "clamped" $5 cap).
+    const raise = readDispatchOverrides({ [DISPATCH_ENV.maxTurns]: '200' }, BUDGET, {
+      maxDispatchBudget: 0,
+    });
+    expect(raise.budget.maxTurns).toBe(BUDGET.maxTurns);
+    expect(raise.clamped[0]).toContain('max_turns override 200 clamped to 80');
+    expect(raise.clamped[0]).toContain('maxDispatchBudget');
+  });
+
+  it('declared spend authority raises the turn ceiling proportionally', () => {
+    // $15 authority over a $5 policy cap = 3x → up to 240 turns.
+    const within = readDispatchOverrides({ [DISPATCH_ENV.maxTurns]: '200' }, BUDGET, {
+      maxDispatchBudget: 15,
+    });
+    expect(within.budget.maxTurns).toBe(200);
+    expect(within.clamped).toEqual([]);
+
+    const beyond = readDispatchOverrides({ [DISPATCH_ENV.maxTurns]: '500' }, BUDGET, {
+      maxDispatchBudget: 15,
+    });
+    expect(beyond.budget.maxTurns).toBe(240);
+    expect(beyond.clamped[0]).toContain('clamped to 240');
   });
 });
 
@@ -94,6 +131,7 @@ function fakeGit(): RemediateGit {
   return {
     head: () => head,
     sweepLeftovers: () => undefined,
+    scrubRuntimeArtifacts: () => [],
     hasDiff: () => {
       head = 'head1111';
       return true;
@@ -104,8 +142,9 @@ function fakeGit(): RemediateGit {
 function fakeDriver(): AgentDriver & { lastRun?: Parameters<AgentDriver['run']>[0] } {
   const driver: AgentDriver & { lastRun?: Parameters<AgentDriver['run']>[0] } = {
     id: 'fake-agent',
-    budgetSupport: { turns: true, cost: true },
+    budgetSupport: { turns: 'enforced', cost: 'reported' },
     credentialEnv: [],
+    cli: null,
     resolveModel: (tier) => `fake-${tier}`,
     available: () => ({ ok: true }),
     run: async (opts) => {

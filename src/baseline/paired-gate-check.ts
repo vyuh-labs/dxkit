@@ -27,7 +27,7 @@
  * waives it (the per-finding escape hatch, ideally `deferred` with an expiry).
  */
 
-import { computeChangedPaths } from './changed-files';
+import { computeAddedFiles, computeChangedPaths } from './changed-files';
 import { computePairedChangeFingerprint } from '../analyzers/tools/fingerprint-contract';
 import { globToRegex } from '../analyzers/tools/suppressions';
 import { normalizePairedChecks, type PairedCheckRule } from '../analyzers/custom-checks/config';
@@ -121,15 +121,28 @@ function skip(
   };
 }
 
-/** Evaluate one rule against the changed-path set. Pure. */
+/**
+ * Evaluate one rule against the changed-path set (and, for `ifAdded`
+ * clauses, the ADDED-file set). Pure.
+ *
+ * `addedPaths === null` means the added set could not be computed — an
+ * `ifAdded` clause is then NOT evaluated (bias toward the false negative:
+ * firing would treat every changed path as potentially added and
+ * over-demand the companion). The caller discloses the skip per rule.
+ */
 export function evaluatePairedRule(
   rule: PairedCheckRule,
   changedPaths: readonly string[],
+  addedPaths: readonly string[] | null,
 ): PairedChangeFinding | null {
   const ifRes = rule.ifGlobs.map(globToRegex);
+  const ifAddedRes = rule.ifAddedGlobs.map(globToRegex);
   const thenRes = rule.thenGlobs.map(globToRegex);
   const ifMatched = changedPaths.filter((p) => ifRes.some((re) => re.test(p)));
-  if (ifMatched.length === 0) return null;
+  const ifAddedMatched =
+    addedPaths === null ? [] : addedPaths.filter((p) => ifAddedRes.some((re) => re.test(p)));
+  const triggered = [...ifMatched, ...ifAddedMatched.filter((p) => !ifMatched.includes(p))];
+  if (triggered.length === 0) return null;
   const thenTouched = changedPaths.some((p) => thenRes.some((re) => re.test(p)));
   if (thenTouched) return null;
   return {
@@ -137,7 +150,7 @@ export function evaluatePairedRule(
     check: rule.name,
     blocking: rule.blocking,
     ...(rule.message !== undefined ? { message: rule.message } : {}),
-    ifMatched: ifMatched.slice(0, MAX_IF_MATCHED_SAMPLE),
+    ifMatched: triggered.slice(0, MAX_IF_MATCHED_SAMPLE),
     thenGlobs: rule.thenGlobs,
   };
 }
@@ -189,6 +202,9 @@ export function evaluatePairedGateForGuardrail(opts: {
   readonly now?: Date;
   readonly verbose?: boolean;
   readonly changedPathsProvider?: (cwd: string, base: string) => ReadonlyArray<string> | null;
+  /** Injected for tests; defaults to the ONE added-file projection
+   *  (`computeAddedFiles` — the same base->working-tree diff concept). */
+  readonly addedPathsProvider?: (cwd: string, base: string) => ReadonlySet<string> | null;
 }): PairedGateOutcome {
   const cwd = opts.cwd;
   let step = 'policy-read';
@@ -205,10 +221,32 @@ export function evaluatePairedGateForGuardrail(opts: {
     // a declared rule silently skipped would be the invisible-gate class, so
     // the skip is disclosed on the outcome.
     if (changedPaths === null) return skip('no-changed-set', warnings);
+    // The ADDED-file projection, computed only when some rule declares an
+    // `ifAdded` clause. `null` = unknown; the clause is then not evaluated
+    // (false-negative bias) and the skip is disclosed per rule below.
+    const needsAdded = rules.some((r) => r.ifAddedGlobs.length > 0);
+    const addedSet = needsAdded
+      ? (opts.addedPathsProvider ?? ((c: string, b: string) => computeAddedFiles(c, b)))(
+          cwd,
+          opts.baseRef,
+        )
+      : null;
+    const addedPaths = addedSet === null ? null : [...addedSet];
+    const evalWarnings = [...warnings];
+    if (needsAdded && addedPaths === null) {
+      for (const r of rules) {
+        if (r.ifAddedGlobs.length > 0) {
+          evalWarnings.push(
+            `rule '${r.name}': the added-file set could not be computed, so its \`ifAdded\` ` +
+              `clause was not evaluated this run (never fired blind)`,
+          );
+        }
+      }
+    }
 
     step = 'evaluate-rules';
     const violations = rules
-      .map((rule) => evaluatePairedRule(rule, changedPaths))
+      .map((rule) => evaluatePairedRule(rule, changedPaths, addedPaths))
       .filter((f): f is PairedChangeFinding => f !== null);
 
     const { active, suppressed } = partitionByAllowlist(
@@ -223,7 +261,7 @@ export function evaluatePairedGateForGuardrail(opts: {
         `    [paired] ${active.length} paired-change violation(s) — ${blocks ? 'blocking' : 'warning'}\n`,
       );
     }
-    return { ran: true, warnings, findings: active, suppressed, blocks, warns };
+    return { ran: true, warnings: evalWarnings, findings: active, suppressed, blocks, warns };
   } catch (err) {
     // Fail-open: a git failure, an unreadable policy — the gate did not run,
     // but it says WHY rather than swallowing the throw.

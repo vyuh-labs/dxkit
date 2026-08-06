@@ -50,25 +50,51 @@ campaigns (below) and can never be scheduled from policy.
 ## Budgets (from `.dxkit/policy.json`)
 
 - `remediate.agent.budget`: `maxTurns` (default 80), `maxMinutes` (30),
-  `maxUsd` (5). Caps are enforced by the runner, not the agent's
-  self-report; a cap the driver cannot enforce is disclosed in the ledger.
+  `maxUsd` (5). What each cap can actually DO depends on the driver and is
+  declared per dimension (`enforced` / `reported` / `none`) and disclosed
+  in the ledger. For `claude-code`: `maxTurns` and `maxMinutes` are
+  enforced; **`maxUsd` is advisory** — the CLI reports spend only after
+  the run and cannot stop mid-run on cost, so real spend is bounded by
+  the turn cap and wall clock (an overrun is disclosed and the attempt
+  marked partial).
 - `remediate.taskBudgets.<id>`: per-task overrides merged over the shared
   budget.
 - `remediate.maxSpendPerRun` (0 = no ceiling): run-level USD ceiling;
   tasks beyond it are deferred to the next firing, in declaration order,
-  and named.
-- `remediate.maxDispatchBudget` (0 = undeclared): the most a dispatch
-  override may raise `maxUsd` to.
+  and named. `remediate plan` prints the per-run projection (the sum of
+  the matrix tasks' caps) either way — each matrix task is its own
+  invocation with its own cap, so one firing may spend the sum.
+- `remediate.maxDispatchBudget` (0 = undeclared): the dispatch spend
+  authority. It clamps the `max_usd` override AND the `max_turns`
+  override (proportionally against the policy budget) — turns govern real
+  spend when the driver cannot enforce cost mid-run, so an unclamped turn
+  override would be a back door around the ceiling.
 
 ## Salvage and resume
 
-`remediate.salvage` defaults to `discard`: a partial diff from a
-budget-killed run is dropped. With `draft-pr`, the partial lands as a
-draft PR marked partial. With `remediate.resume: true` (opt-in), the next
-run continues from that salvage branch instead of starting over, up to 2
-attempts per branch before falling back to a fresh run. The entry floor
-still snapshots the pristine default tree first, so a broken partial
-reads as net-new and can never grandfather its own breakage.
+`remediate.salvage` defaults to `auto`: the decision follows each task's
+declared completion shape. Open-ended tasks (`write-docs`,
+`improve-tests`) have no completion test — the agent stops when a cap
+cuts it off, never because it is done — so `discard` would throw away
+their verified, gate-passing work every run; they default to `draft-pr`.
+Bounded tasks (`fix-build`, `fix-vulns`, `fix-lint`) can genuinely
+finish, so they keep the conservative `discard`. Pin `discard` or
+`draft-pr` in policy to override every task.
+
+Under `draft-pr`, a budget-cut partial lands as a draft PR marked
+partial, and a guardrail-BLOCKED attempt lands as a red draft titled "do
+not merge" — its own required guardrail check keeps it unmergeable, so
+nothing merges while the work and the exact blocking findings survive
+the ephemeral runner. An unrunnable guardrail never pushes anything.
+
+With `remediate.resume: true` (opt-in), the next run continues from that
+salvage branch instead of starting over, up to 2 attempts per branch
+before falling back to a fresh run (the attempt counter is pushed with
+the branch, so a no-op resume still consumes an attempt). A resumed
+attempt after a guardrail block gets the prior blocking findings in its
+prompt, so it starts from "close these", not from scratch. The entry
+floor still snapshots the pristine default tree first, so a broken
+partial reads as net-new and can never grandfather its own breakage.
 
 ## Dispatch campaigns
 

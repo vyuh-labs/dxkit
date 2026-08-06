@@ -68,12 +68,13 @@ import { hydrateAnchorFromBranch, loadAnchorFromBranch } from './anchor';
 import { gatherFromRef } from './ref-baseline';
 import {
   type GatherScope,
+  DERIVED_MEMBERSHIP_KINDS,
   FULL_SCOPE,
   KIND_OBSERVATION_SCOPE,
   scopeForPolicy,
   scopeForRefBasedDiff,
 } from './gather-scope';
-import { computeChangedFiles, createChangedLineIndex } from './changed-files';
+import { computeAddedFiles, computeChangedFiles, createChangedLineIndex } from './changed-files';
 import { changedFilesTouchDependencyManifest, detectActiveLanguages } from '../languages';
 import { describeRecallDrift, diffRecall } from './recall';
 import type { RecallDrift } from './recall';
@@ -312,6 +313,31 @@ export interface AnchorSourceDisclosure {
   readonly used: 'anchor' | 'tree-fallback';
   readonly anchorRef: string;
   readonly note: string;
+}
+
+/**
+ * The scheme-mismatch remedy, state-aware (exported for tests). A repo whose
+ * LOCAL baseline is already current-scheme while the gate read a
+ * stale-scheme ANCHOR gets the real next step (`baseline publish`) —
+ * telling a user who just ran `update` to "run update" is a loop.
+ */
+export function schemeMismatchRemedy(
+  baselineScheme: string,
+  anchorSource: AnchorSourceDisclosure | undefined,
+  treeScheme: string | null,
+): string {
+  if (anchorSource?.used === 'anchor' && treeScheme === CURRENT_IDENTITY_SCHEME) {
+    return (
+      `The LOCAL baseline is already migrated to ${CURRENT_IDENTITY_SCHEME}, but this ` +
+      `gate reads the '${anchorSource.anchorRef}' anchor branch, which still holds ` +
+      `${baselineScheme}. Run \`${dxkitCli('baseline publish')}\` to land the migrated ` +
+      `baseline on the anchor (and commit .dxkit/allowlist.json).`
+    );
+  }
+  return (
+    `Run \`${dxkitCli('update')}\` to migrate the baseline + allowlist ` +
+    `automatically, or \`${dxkitCli('baseline create --force')}\` to re-anchor manually.`
+  );
 }
 
 /**
@@ -791,12 +817,26 @@ export async function runGuardrailCheck(
   if (mode.mode !== 'ref-based') {
     const baselineScheme = baseline.identityScheme ?? 'v1';
     if (baselineScheme !== CURRENT_IDENTITY_SCHEME) {
+      // The remedy must match the STATE (observed on the live migration
+      // test): on an anchor-transport repo, `update` migrates the LOCAL
+      // baseline but the gate reads the ANCHOR — telling a user who just
+      // ran update to "run update" is a loop. When the source was the
+      // anchor and the tree copy is already current-scheme, the real next
+      // step is `baseline publish`.
+      let treeScheme: string | null = null;
+      if (anchorSource?.used === 'anchor' && baselinePath && fs.existsSync(baselinePath)) {
+        try {
+          treeScheme = readBaselineFile(baselinePath).identityScheme ?? 'v1';
+        } catch {
+          /* unreadable tree copy — keep the generic remedy */
+        }
+      }
+      const remedy = schemeMismatchRemedy(baselineScheme, anchorSource, treeScheme);
       throw new Error(
         `Baseline "${baseline.name}" was captured under finding-identity scheme ` +
           `${baselineScheme}, but this dxkit mints ${CURRENT_IDENTITY_SCHEME}. The identity ` +
           `scheme changed between versions; diffing across schemes would flag every existing ` +
-          `finding as net-new. Run \`${dxkitCli('update')}\` to migrate the baseline + allowlist ` +
-          `automatically, or \`${dxkitCli('baseline create --force')}\` to re-anchor manually.`,
+          `finding as net-new. ${remedy}`,
       );
     }
   }
@@ -915,6 +955,21 @@ export async function runGuardrailCheck(
     return manifestUntouchedMemo;
   };
 
+  // Derived-membership attribution (the #25 class): for a kind whose per-file
+  // finding set is computed from repo-global signals (DERIVED_MEMBERSHIP_KINDS
+  // — today test-gap), an `added` finding keeps developer attribution only
+  // when its FILE was added by the diff. Same diff basis as everything above
+  // (baseline anchor → working tree). Memoized: one `git diff --diff-filter=A`
+  // per run, and only when an added derived-membership pair actually asks.
+  // `null` (attribution unavailable) reads as UNKNOWN → no demotion.
+  let addedFilesMemo: ReadonlySet<string> | null | undefined;
+  const addedFiles = (): ReadonlySet<string> | null => {
+    if (addedFilesMemo === undefined) {
+      addedFilesMemo = baseSha ? computeAddedFiles(cwd, baseSha) : null;
+    }
+    return addedFilesMemo;
+  };
+
   // Load the per-finding allowlist once. An active (unexpired) entry
   // whose fingerprint matches a would-block finding waives the block —
   // this is what makes "I reviewed and accepted this finding" actually
@@ -1010,6 +1065,15 @@ export async function runGuardrailCheck(
     const reachable =
       pair.currentId !== undefined && reachableByCurrentId.has(pair.currentId) ? true : undefined;
 
+    // Derived-membership kinds: was this finding's file ADDED by the diff?
+    // Only asked for added pairs of a declared kind, so runs with none never
+    // pay the git diff. `null` added-set (attribution unavailable) leaves the
+    // flag ABSENT — unknown never demotes.
+    const derivedMembership =
+      pair.status === 'added' && DERIVED_MEMBERSHIP_KINDS.has(anchorEntry.kind);
+    const added = derivedMembership && file !== undefined ? addedFiles() : null;
+    const fileAddedInDiff = added !== null ? added.has(file!) : undefined;
+
     // Only a `removed` pair can be a not-observed candidate: an unobserved
     // check produces no current findings, so no other pair status exists.
     const notObserved = pair.status === 'removed' ? notObservedReasonFor(anchorEntry) : undefined;
@@ -1024,6 +1088,8 @@ export async function runGuardrailCheck(
       ...(fileChangedInDiff ? { fileChangedInDiff: true } : {}),
       ...(kindAbsentFromBaseline ? { kindAbsentFromBaseline: true } : {}),
       ...(overlapsChangedLines !== undefined ? { overlapsChangedLines } : {}),
+      ...(derivedMembership ? { derivedMembership: true } : {}),
+      ...(fileAddedInDiff !== undefined ? { fileAddedInDiff } : {}),
       ...(malicious ? { malicious } : {}),
       ...(reachable ? { reachable } : {}),
       ...(notObserved !== undefined ? { notObserved } : {}),

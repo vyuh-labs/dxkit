@@ -69,7 +69,7 @@ export function identityFor(
   input: IdentityInput,
   version: IdentitySchemeVersion = CURRENT_IDENTITY_SCHEME,
 ): FindingId {
-  if (version !== 'v1' && version !== 'v2') {
+  if (version !== 'v1' && version !== 'v2' && version !== 'v3') {
     throw new Error(`Unsupported identity-scheme version: ${version}`);
   }
   switch (input.kind) {
@@ -83,7 +83,8 @@ export function identityFor(
       // falls back to the line-window hash when no anchor was resolvable,
       // which keeps identity defined for every finding (just less
       // motion-stable) AND means an anchorless v2 id equals the v1 id.
-      if (version === 'v2' && input.contentAnchor !== undefined) {
+      // v2+ (unchanged in v3): content-anchored when an anchor exists.
+      if (version !== 'v1' && input.contentAnchor !== undefined) {
         // Secrets discriminate on a tool-independent constant, not the
         // per-tool rule: the same leak found by different scanners (under
         // different rule names) must share one identity. Code/config keep
@@ -119,7 +120,11 @@ export function identityFor(
     case 'coverage-gap':
       return computeCoverageGapIdentity(input.file, input.symbol, input.lineRange);
     case 'test-gap':
-      return computeTestGapIdentity(input.file, input.risk);
+      // v3 drops the threshold-derived risk tier from the hash (Rule 9);
+      // v1/v2 keep their formula for migration.
+      return version === 'v3'
+        ? computeTestGapIdentity(input.file)
+        : computeTestGapIdentityV2(input.file, input.risk);
     case 'hygiene':
       return computeHygieneIdentity(input.file, input.line, input.marker);
     case 'test-file-degradation':
@@ -277,14 +282,24 @@ function computeCoverageGapIdentity(
 }
 
 /**
- * Identity for a test-gap source file. Risk tier is part of identity:
- * a file moving between tiers (CRITICAL → HIGH, or vice versa) is
- * semantically a fresh finding — the prior tier's identity disappears,
- * the new tier's identity arrives. Guardrails will fire on the
- * net-new tier, which is the correct signal for regressions.
+ * v1/v2 identity for a test-gap source file — PRESERVED byte-for-byte for
+ * migration (a shipped scheme's id function is never deleted). It hashed
+ * the risk tier, which turned out to be a Rule 9 violation: the tier is
+ * threshold-derived from LINE COUNT (`high` requires > 500 lines), so a
+ * reformat crossing the boundary minted a fresh identity — "resolved" +
+ * "net-new" from formatting alone.
  */
-function computeTestGapIdentity(file: string, risk: TestGapRisk): FindingId {
+function computeTestGapIdentityV2(file: string, risk: TestGapRisk): FindingId {
   const input = `test-gap\0v1\0${file}\0${risk}`;
+  return createHash('sha1').update(input).digest('hex').slice(0, 16);
+}
+
+/** v3 identity for a test-gap source file: the FILE is the finding. The
+ *  risk tier stays stored on the entry (display + prior-scheme migration)
+ *  but no longer mints identity — a tier move is a re-scored property of
+ *  the same finding, never a fresh one. */
+function computeTestGapIdentity(file: string): FindingId {
+  const input = `test-gap\0v3\0${file}`;
   return createHash('sha1').update(input).digest('hex').slice(0, 16);
 }
 

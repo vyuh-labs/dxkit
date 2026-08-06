@@ -37,11 +37,32 @@ describe('driver registry contract', () => {
         // rolling aliases, never dated snapshot ids (the deprecation rule)
         expect(native).not.toMatch(/\d{8}/);
       }
-      expect(typeof driver.budgetSupport.turns).toBe('boolean');
-      expect(typeof driver.budgetSupport.cost).toBe('boolean');
+      // Three-valued capability per dimension — 'reported' is not 'enforced'
+      // (conflating them shipped a $14.71 spend against a $5 cap).
+      expect(['enforced', 'reported', 'none']).toContain(driver.budgetSupport.turns);
+      expect(['enforced', 'reported', 'none']).toContain(driver.budgetSupport.cost);
       expect(Array.isArray(driver.credentialEnv)).toBe(true);
+      // The executor declaration: an exact pinned version (an unattended
+      // lane never floats its CLI) or an explicit null — never absent.
+      expect(driver.cli === null || /^\d+\.\d+\.\d+$/.test(driver.cli.version)).toBe(true);
     });
   }
+
+  it('claude-code pins its installable CLI (the workflow renders from this)', () => {
+    const cli = driverById('claude-code')!.cli;
+    expect(cli?.package).toBe('@anthropic-ai/claude-code');
+    expect(cli?.version).toMatch(/^\d+\.\d+\.\d+$/);
+  });
+
+  it('claude-code declares cost as REPORTED, never enforced (the honest cap)', () => {
+    // The CLI cannot stop mid-run on spend; declaring cost 'enforced' here
+    // is the $14.71-against-$5 class. Flipping this to 'enforced' requires
+    // an actual mid-run enforcement mechanism in the driver.
+    expect(driverById('claude-code')!.budgetSupport).toEqual({
+      turns: 'enforced',
+      cost: 'reported',
+    });
+  });
 });
 
 describe('resolveModelSetting (the three accepted shapes)', () => {

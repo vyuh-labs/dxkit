@@ -52,11 +52,20 @@ write-access-gated by GitHub itself.
 
 ## Estimating spend
 
-The caps are hard, so the worst case is arithmetic, not a prediction:
+The worst case is arithmetic, but be precise about which caps are hard:
+`maxTurns` and `maxMinutes` are enforced by the runner/CLI; **`maxUsd` is
+advisory for the claude-code driver** (spend is reported after the run,
+not stopped mid-run — the ledger says so). Real spend is bounded by the
+turn cap, so the projection uses observed cost-per-turn, and dispatch
+turn overrides are clamped against `remediate.maxDispatchBudget` so a
+one-off campaign cannot silently raise the ceiling.
 
-> worst-case monthly spend = enabled tasks × runs per month × per-task cap
-> (default $5), additionally capped by `remediate.maxSpendPerRun` each run.
+> worst-case monthly spend ≈ enabled tasks × runs per month × per-task
+> cap (default $5, turn-bounded), additionally capped by
+> `remediate.maxSpendPerRun` each run.
 
+`remediate plan` prints the per-run projection (the sum of the matrix
+tasks' caps — each matrix task is its own invocation with its own cap).
 Example: 3 enabled tasks on the default weekly schedule, default caps:
 3 × 4 × $5 = $60/month ceiling. Real runs usually land far below their cap
 (a typical fix task spends $1–3), and every PR body discloses the actual
@@ -75,10 +84,13 @@ run artifact for inspection. The other tasks in a matrix run are isolated
 Read the task's job summary first — it names the outcome. The shapes:
 
 - **`guardrail-red` / floor failed** — the frame held: the agent's change
-  did not verify, so nothing landed. The attempt's diff is attached to the
-  run as an artifact (Actions run page, Artifacts section); download it if
-  you want to see what the agent tried. No action required; the next
-  scheduled run retries from a clean tree.
+  did not verify, so nothing merges. The attempt's diff is attached to the
+  run as an artifact (Actions run page, Artifacts section). Under
+  `draft-pr` salvage a guardrail-blocked attempt is additionally pushed as
+  a red draft PR titled "do not merge" (its own guardrail check keeps it
+  unmergeable), so the work and the blocking findings survive the runner
+  and a resumed attempt can continue from them. Otherwise no action is
+  required; the next scheduled run retries from a clean tree.
 - **Budget-bounded, not finished** — the task hit its spend / turn / time
   cap mid-work. Also lands nothing. If it happens repeatedly on the same
   task, raise that task's budget (`remediate.taskBudgets`) or enable
@@ -86,6 +98,14 @@ Read the task's job summary first — it names the outcome. The shapes:
   attempt-counted) can continue next run instead of starting over.
 - **Skipped: "an earlier task left unlanded work in the tree"** — task
   isolation working as designed; the skipped tasks run next time.
+- **`agent-never-ran`** — the agent CLI/API failed before any work
+  happened: an invalid or credit-exhausted `ANTHROPIC_API_KEY`, a missing
+  CLI, a bad flag. The job is red and the ledger names the provider's own
+  cause (for example `agent never ran: Credit balance is too low`) — fix
+  the key or credit on the provider side; no dxkit change is involved.
+- **`agent-failed`** — the run started, then ended in an error with no
+  committed change. The ledger carries the driver-reported cause and the
+  job log carries the agent's last output lines.
 - **Degraded credentials, disclosed in the log** — the run fell back to
   `GITHUB_TOKEN` (missing or expired `DXKIT_BOT_TOKEN`): the PR opens but
   gets no CI checks, or with the Actions PR-creation setting off, the

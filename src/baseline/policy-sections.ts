@@ -34,8 +34,14 @@ import type { FindingSeverity } from './types';
 export interface PairedCheckConfig {
   /** Stable rule name — the finding's whole identity (Rule 9). Required. */
   readonly name?: string;
-  /** Glob(s) selecting the trigger surface. Required, at least one. */
+  /** Glob(s) selecting the trigger surface among CHANGED paths (edits,
+   *  additions, deletions). A rule needs `if` and/or `ifAdded`. */
   readonly if?: string | readonly string[];
+  /** Glob(s) selecting the trigger surface among files the change ADDED
+   *  (created; renames are not additions). For norms about NEW artifacts —
+   *  "a new component ships with a guide" — where a plain `if` would
+   *  over-demand the companion on every EDIT of an existing file. */
+  readonly ifAdded?: string | readonly string[];
   /** Glob(s) selecting the required companion surface. Required, at least one. */
   readonly then?: string | readonly string[];
   /** Human-facing explanation rendered with a violation. */

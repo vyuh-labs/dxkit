@@ -66,6 +66,24 @@ export interface ClassifyContext {
    *  ChangedFiles` and similar rules; absent context is treated as
    *  "we don't know, assume outside changed lines." */
   readonly overlapsChangedLines?: boolean;
+  /**
+   * True when this finding's KIND has derived membership (its per-file
+   * finding set is computed from repo-global signals — see
+   * `DERIVED_MEMBERSHIP_KINDS` in `gather-scope.ts`). For such a kind an
+   * EDIT cannot introduce a finding: the file's state predates the diff and
+   * only dxkit's visibility of it moved. `added` therefore keeps developer
+   * attribution only when `fileAddedInDiff` is true; otherwise it demotes
+   * to `uncertain` (warn, never block).
+   */
+  readonly derivedMembership?: boolean;
+  /**
+   * True when the finding's file did NOT exist at the diff base (a tracked
+   * addition or an untracked file); false when it existed (edited or
+   * untouched). Absent = UNKNOWN (attribution unavailable) — the classifier
+   * never demotes on an unknown, so an attribution failure keeps the
+   * conservative `added`.
+   */
+  readonly fileAddedInDiff?: boolean;
   /** True when the diff (baseline anchor → working tree) touched NO dependency
    *  manifest of any active pack. For an `added` dep-vuln this rules the
    *  developer out as the delta's cause — the dependency set is unchanged, so
@@ -212,6 +230,25 @@ export function classify(
           'advisory was published after the baseline was captured. Fix the vulnerability to ' +
           'unblock, or defer time-boxed: vyuh-dxkit allowlist defer --from-last-check ' +
           '--reason="…"',
+      });
+    } else if (context.derivedMembership && context.fileAddedInDiff === false) {
+      // Derived-membership attribution (the #25 class): this kind's per-file
+      // finding set is computed from repo-global signals (coverage /
+      // reachability / filename heuristics), so a finding can appear on a
+      // file the diff never touched — or touched trivially — because an
+      // edit ELSEWHERE shifted the signal (removing a dead import contracts
+      // the tests' reachable set). The file existed at base, so the
+      // developer did not introduce its untested-ness; the gap predates the
+      // diff and only dxkit's visibility changed. Strict `=== false` — an
+      // UNKNOWN added-set (attribution failure) never demotes.
+      status = 'uncertain';
+      reasons.push({
+        code: 'derived-membership-shift',
+        detail:
+          `${context.kind} membership is derived from repo-wide signals (test coverage / ` +
+          `import-graph reachability), and this diff did not ADD the file — the gap predates ` +
+          `the diff or dxkit's visibility of it changed. Demoted to a warning; an edit ` +
+          `cannot introduce a ${context.kind} finding, only a new file can`,
       });
     } else if (context.configDiffers && !context.fileChangedInDiff) {
       // Config drift only explains a finding that appeared WITHOUT a code
@@ -404,11 +441,15 @@ function evaluateBlockRules(
   if (rules.newProhibitedLicense && context.kind === 'license') {
     return 'newProhibitedLicense';
   }
-  if (
-    rules.newUntestedChangedSource &&
-    context.kind === 'test-gap' &&
-    context.overlapsChangedLines === true
-  ) {
+  // A net-new test gap the developer can actually have caused: a file this
+  // diff ADDED, shipping without a test. The rule's original predicate
+  // (`overlapsChangedLines === true`) was structurally DEAD — a test-gap
+  // finding is whole-file and carries no line, so the overlap was always
+  // undefined and the rule could never fire (the T1.2 armed-but-dead class).
+  // The added-file predicate is also the only honest one for a
+  // derived-membership kind: an EDIT never introduces a test gap (see
+  // `derived-membership-shift` above), so firing on edits would misattribute.
+  if (rules.newUntestedChangedSource && context.kind === 'test-gap' && context.fileAddedInDiff) {
     return 'newUntestedChangedSource';
   }
   if (

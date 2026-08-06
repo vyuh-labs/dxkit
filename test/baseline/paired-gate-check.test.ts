@@ -62,7 +62,7 @@ describe('evaluatePairedRule — the pure per-rule predicate', () => {
   const rule = rules[0];
 
   it('fires when if is touched and then is not', () => {
-    const f = evaluatePairedRule(rule, ['src/models/user.ts', 'README.md']);
+    const f = evaluatePairedRule(rule, ['src/models/user.ts', 'README.md'], []);
     expect(f).not.toBeNull();
     expect(f!.check).toBe('model-needs-migration');
     expect(f!.blocking).toBe(true);
@@ -71,18 +71,74 @@ describe('evaluatePairedRule — the pure per-rule predicate', () => {
   });
 
   it('is silent when the companion change is present', () => {
-    expect(evaluatePairedRule(rule, ['src/models/user.ts', 'migrations/0042_user.sql'])).toBeNull();
+    expect(
+      evaluatePairedRule(rule, ['src/models/user.ts', 'migrations/0042_user.sql'], []),
+    ).toBeNull();
   });
 
   it('is silent when the trigger surface is untouched', () => {
-    expect(evaluatePairedRule(rule, ['src/routes/user.ts'])).toBeNull();
+    expect(evaluatePairedRule(rule, ['src/routes/user.ts'], [])).toBeNull();
   });
 
   it('matches ** across directory levels and caps the evidence sample', () => {
     const paths = Array.from({ length: 9 }, (_, i) => `src/models/nested/deep/m${i}.ts`);
-    const f = evaluatePairedRule(rule, paths);
+    const f = evaluatePairedRule(rule, paths, []);
     expect(f).not.toBeNull();
     expect(f!.ifMatched.length).toBeLessThanOrEqual(5);
+  });
+});
+
+describe('evaluatePairedRule — the ifAdded trigger (norms about NEW artifacts)', () => {
+  const { rules } = normalizePairedChecks([
+    {
+      name: 'component-needs-guide',
+      ifAdded: 'src/components/**',
+      then: 'docs/guides/**',
+      message: 'a new component ships with a guide',
+    },
+  ]);
+  const rule = rules[0];
+
+  it('fires when a matching file was ADDED and the companion is untouched', () => {
+    const f = evaluatePairedRule(
+      rule,
+      ['src/components/NewThing.tsx'],
+      ['src/components/NewThing.tsx'],
+    );
+    expect(f).not.toBeNull();
+    expect(f!.check).toBe('component-needs-guide');
+    expect(f!.ifMatched).toEqual(['src/components/NewThing.tsx']);
+  });
+
+  it('does NOT fire on an EDIT of an existing component (the over-demand class)', () => {
+    // The changed set contains the component, the added set does not — an
+    // edit must not demand a new guide.
+    expect(evaluatePairedRule(rule, ['src/components/OldThing.tsx'], [])).toBeNull();
+  });
+
+  it('is satisfied by a companion change like any other rule', () => {
+    expect(
+      evaluatePairedRule(
+        rule,
+        ['src/components/NewThing.tsx', 'docs/guides/new-thing.md'],
+        ['src/components/NewThing.tsx'],
+      ),
+    ).toBeNull();
+  });
+
+  it('an UNKNOWN added set never fires the clause (false-negative bias)', () => {
+    expect(evaluatePairedRule(rule, ['src/components/NewThing.tsx'], null)).toBeNull();
+  });
+
+  it('a rule may declare both if and ifAdded — either triggers', () => {
+    const both = normalizePairedChecks([
+      { name: 'either', if: 'api/**', ifAdded: 'src/components/**', then: 'docs/**' },
+    ]).rules[0];
+    expect(evaluatePairedRule(both, ['api/users.ts'], [])).not.toBeNull();
+    expect(
+      evaluatePairedRule(both, ['src/components/X.tsx'], ['src/components/X.tsx']),
+    ).not.toBeNull();
+    expect(evaluatePairedRule(both, ['unrelated.md'], [])).toBeNull();
   });
 });
 
@@ -218,6 +274,58 @@ describe('evaluatePairedGateForGuardrail — fail-open, always says why', () => 
       });
       expect(out.findings).toHaveLength(1);
       expect(out.blocks).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('evaluatePairedGateForGuardrail — the ifAdded clause end to end', () => {
+  const ADDED_RULE = {
+    name: 'component-needs-guide',
+    ifAdded: 'src/components/**',
+    then: 'docs/guides/**',
+  };
+
+  it('fires through the gate when the added set matches', () => {
+    const dir = repoWith({ pairedChecks: [ADDED_RULE] });
+    try {
+      const out = evaluatePairedGateForGuardrail({
+        cwd: dir,
+        baseRef: 'HEAD',
+        changedPathsProvider: () => ['src/components/NewThing.tsx'],
+        addedPathsProvider: () => new Set(['src/components/NewThing.tsx']),
+      });
+      expect(out.ran).toBe(true);
+      expect(out.findings).toHaveLength(1);
+      expect(out.blocks).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('an edit-only diff does not fire, and an UNKNOWN added set discloses the unevaluated clause', () => {
+    const dir = repoWith({ pairedChecks: [ADDED_RULE] });
+    try {
+      const edit = evaluatePairedGateForGuardrail({
+        cwd: dir,
+        baseRef: 'HEAD',
+        changedPathsProvider: () => ['src/components/OldThing.tsx'],
+        addedPathsProvider: () => new Set(),
+      });
+      expect(edit.ran).toBe(true);
+      expect(edit.findings).toHaveLength(0);
+
+      const unknown = evaluatePairedGateForGuardrail({
+        cwd: dir,
+        baseRef: 'HEAD',
+        changedPathsProvider: () => ['src/components/NewThing.tsx'],
+        addedPathsProvider: () => null,
+      });
+      expect(unknown.ran).toBe(true);
+      expect(unknown.findings).toHaveLength(0);
+      expect(unknown.warnings.join(' ')).toContain('ifAdded');
+      expect(unknown.warnings.join(' ')).toContain('never fired blind');
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

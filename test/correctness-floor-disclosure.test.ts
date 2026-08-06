@@ -130,3 +130,26 @@ describe('floorDisclosureMarkdown', () => {
     expect(githubAnnotations(o)).toHaveLength(3);
   });
 });
+
+describe('command-less checks (in-process — the empty-backticks repro class)', () => {
+  it('names the CLI entry instead of rendering empty backticks', () => {
+    const inProcess: CorrectnessCheckResult = {
+      pack: 'typescript' as CorrectnessCheckResult['pack'],
+      label: 'import-resolution',
+      bin: '',
+      args: [],
+      status: 'fail',
+    };
+    const o = outcome({
+      result: { ran: true, blocks: false, checks: [inProcess] },
+      blocks: false,
+      attributed: [{ check: inProcess, attribution: 'net-new' }],
+    });
+    const md = floorDisclosureMarkdown(o)!;
+    expect(md).not.toContain('repro: ``');
+    expect(md).toContain('floor check');
+    expect(md).toContain('(in-process check)');
+    const ann = githubAnnotations(o)[0];
+    expect(ann).toContain('floor check re-runs this in-process check');
+  });
+});
