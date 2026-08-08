@@ -37,7 +37,20 @@ export interface RepoSubject {
   readonly cwd: string;
 }
 
-export type GateSubject = RepoSubject;
+/**
+ * A bare directory with no git history (4.4.0 WP2) — a freshly generated
+ * package, an exported tree. Git-derived engine signals degrade
+ * declaratively: changed-line attribution reads UNKNOWN (never a
+ * demotion), the matcher falls back to set-diff, the base-ref additive
+ * gates skip with `no-base-ref` disclosed.
+ */
+export interface TreeSubject {
+  readonly kind: 'tree';
+  /** Absolute path to the tree root. */
+  readonly dir: string;
+}
+
+export type GateSubject = RepoSubject | TreeSubject;
 
 /**
  * Engine-level options — the subset of the guardrail surface's options

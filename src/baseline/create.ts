@@ -49,7 +49,7 @@ import { PRODUCERS, runProducers, runRecallContexts } from './producers';
 import type { ProducerContext } from './producers';
 import { recallInputsUnion } from './recall';
 import type { RecallMap } from './recall';
-import { resolveSalt } from '../analyzers/tools/salt';
+import { resolveSalt, resolveSaltOrUnavailable } from '../analyzers/tools/salt';
 import type { SaltMode } from '../analyzers/tools/salt';
 import { sanitizeFile } from './sanitize';
 import { resolveEffectiveAllowlist } from '../allowlist/effective';
@@ -281,11 +281,12 @@ export async function gatherCurrentScan(options: {
     root: cwd,
   };
 
-  // Salt resolves once; threaded into every producer that needs to
-  // compute HMACs. The mode lands on the baseline file so the
-  // matcher can re-derive the same salt at check time (or warn when
-  // it can't).
-  const { mode: saltMode, salt } = resolveSalt(cwd);
+  // Salt resolves once; threaded into every HMAC-computing producer, mode
+  // stamped on the file. Fail-open (4.4.0 WP2): a gate over a bare tree has
+  // no git root, so the scan proceeds under the DECLARED `unavailable` mode
+  // — located secrets still gate in full; only the HMAC companions are
+  // skipped. `createBaseline` re-asserts a real salt below.
+  const { mode: saltMode, salt } = resolveSaltOrUnavailable(cwd);
 
   // Build the producer context once. Every analyzer's gather runs
   // here (or earlier inside readOrBuildAnalysisResult) so producers
@@ -435,6 +436,10 @@ export async function createBaseline(
     // surface a clear "ref-based mode active; no file written" log.
     return { mode };
   }
+
+  // A COMMITTED baseline needs a re-derivable salt (its HMAC companions must
+  // compute identically at check time) — the write path keeps the hard error.
+  resolveSalt(cwd);
 
   const filePath = pathForBaseline(cwd, name);
   if (!options.force && fs.existsSync(filePath)) {

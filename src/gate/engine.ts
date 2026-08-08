@@ -29,6 +29,7 @@ import { gatherCurrentScan } from '../baseline/create';
 import { entriesToLocated } from '../baseline/entry-to-located';
 import { gitAwareMatch } from '../baseline/git-aware-match';
 import type { LocatedIdentity } from '../baseline/git-aware-match';
+import { priorClassOf } from '../baseline/modes';
 import type { ResolvedMode } from '../baseline/modes';
 import type { BrownfieldPolicy } from '../baseline/policy';
 import { FULL_SCOPE, scopeForPolicy, scopeForRefBasedDiff } from '../baseline/gather-scope';
@@ -57,7 +58,7 @@ import { entryToAllowlistable } from '../baseline/allowlist-match';
 import { classifyPairs } from './classify-pairs';
 import { diffEnvelopes, keepUnderChangedOnly, pairBlocks } from './context';
 import { collectNotObservedDisclosures, partitionForRefBasedDiff } from './observation';
-import { acquirePrior, assertPriorSchemeComparable } from './prior';
+import { acquirePrior, assertPriorSchemeComparable, emptyPriorFromScan } from './prior';
 import type { GuardrailCheckResult } from './result';
 import type { GateEngineOptions, GateSubject } from './types';
 
@@ -74,7 +75,16 @@ export async function runGate(
   policy: BrownfieldPolicy,
   options: GateEngineOptions,
 ): Promise<GuardrailCheckResult> {
-  const cwd = subject.cwd;
+  // The analysis root. A `tree` subject is a bare directory: every
+  // git-derived signal below (changed-line attribution, relocation
+  // matching, base-ref gates) degrades DECLARATIVELY — attribution reads
+  // UNKNOWN (never a demotion), the matcher falls back to set-diff, and
+  // the base-ref gates skip with `no-base-ref` disclosed.
+  const cwd = subject.kind === 'repo' ? subject.cwd : subject.dir;
+  // Every prior-semantics branch keys on the declared class of the mode
+  // (committed / dir-gathered / empty), never on mode strings — a new
+  // mode declares its class once in modes.ts and every branch follows.
+  const priorClass = priorClassOf(mode.mode);
 
   // Incremental scanning in ref-based mode: the changed set is the diff of
   // the ref against the working HEAD, known upfront from `mode.ref`. We scope
@@ -131,7 +141,7 @@ export async function runGate(
   // kinds are recorded so the "not gated in ref-based mode" disclosure
   // survives the optimization.
   let refScopeSkippedKinds: ReadonlyArray<BaselineEntry['kind']> = [];
-  if (mode.mode === 'ref-based') {
+  if (priorClass === 'dir-gathered') {
     const adjusted = scopeForRefBasedDiff(gatherScope);
     gatherScope = adjusted.scope;
     refScopeSkippedKinds = adjusted.skippedKinds;
@@ -139,9 +149,14 @@ export async function runGate(
 
   // Acquire the prior side through the ONE seam, then guard comparability
   // (a stale-scheme committed baseline refuses with the remedy named).
-  const prior = await acquirePrior(cwd, mode, options, refIncrementalFiles, gatherScope);
-  const { baseline, baselinePath, anchorSource } = prior;
-  assertPriorSchemeComparable(prior, mode);
+  // The `fresh` (empty) prior is the one arm deferred: it derives from
+  // the current scan, so it's built right after the gather below —
+  // still by prior.ts, the one prior home.
+  const acquired =
+    priorClass === 'empty'
+      ? undefined
+      : await acquirePrior(cwd, mode, options, refIncrementalFiles, gatherScope);
+  if (acquired) assertPriorSchemeComparable(acquired, mode);
 
   const scope = gatherScope;
   // Incremental scanning: scope the current side's semgrep to changed files.
@@ -156,8 +171,8 @@ export async function runGate(
   const incrementalFiles =
     mode.mode === 'ref-based'
       ? refIncrementalFiles
-      : options.incremental && baseline.repo.commitSha
-        ? (computeChangedFiles(cwd, baseline.repo.commitSha) ?? undefined)
+      : options.incremental && acquired?.baseline.repo.commitSha
+        ? (computeChangedFiles(cwd, acquired.baseline.repo.commitSha) ?? undefined)
         : undefined;
   const current = await gatherCurrentScan({
     cwd,
@@ -173,13 +188,22 @@ export async function runGate(
     trust: options.trust,
   });
 
-  // In ref-based mode the prior side came from a detached worktree that
-  // can't gather the build-artifact-dependent kinds; drop them from both
-  // sides so the diff stays symmetric (see partitionForRefBasedDiff).
+  // The empty prior materializes here, from the current scan's own
+  // envelope (recall matches by construction — Rule 19 composes, never
+  // disabled). Every other class arrived through acquirePrior above.
+  const prior = acquired ?? emptyPriorFromScan(current, options.name);
+  const { baseline, baselinePath, anchorSource } = prior;
+
+  // Under a dir-gathered prior (a materialized ref, a supplied tree) the
+  // prior side can't produce the build-artifact-dependent kinds; drop
+  // them from both sides so the diff stays symmetric (see
+  // partitionForRefBasedDiff). An empty prior excludes NOTHING: there is
+  // no prior-side asymmetry to protect against, and the gate's whole
+  // point is full observation of the subject tree.
   const partitioned = partitionForRefBasedDiff(
     baseline.findings,
     current.findings,
-    mode.mode === 'ref-based',
+    priorClass === 'dir-gathered',
   );
   const { diffablePrior, diffableCurrent } = partitioned;
   // Union in the kinds whose analyzers were scope-skipped up front: their
@@ -274,7 +298,16 @@ export async function runGate(
   // committed baseline's anchor SHA in committed mode (flow-binding has no
   // committed prior side — the base flow model is gathered fresh from that
   // commit either way, so the gate works in both modes).
-  const flowBaseRef = mode.mode === 'ref-based' ? mode.ref : baseline.repo.commitSha;
+  // Gate-only priors have no base COMMIT at all (an empty prior, a bare
+  // supplied tree), so the base-ref gates skip with `no-base-ref` —
+  // disclosed by their own outcome shape, never silently run against a
+  // meaningless ref.
+  const flowBaseRef =
+    mode.mode === 'ref-based'
+      ? mode.ref
+      : priorClass === 'committed'
+        ? baseline.repo.commitSha
+        : undefined;
   const flowGate = await evaluateFlowGateForGuardrail({
     cwd,
     ...(flowBaseRef ? { baseRef: flowBaseRef } : {}),
@@ -344,7 +377,7 @@ export async function runGate(
   // mechanically correct either way; this reframes it and names the honest
   // remedy (workflow-aware via the provenance module).
   const baselineSuspect =
-    mode.mode !== 'ref-based'
+    priorClass === 'committed'
       ? detectBaselineSuspect({
           addedFiles: filteredPairs
             .filter((p) => p.classification.status === 'added' && p.file !== undefined)
@@ -412,9 +445,10 @@ export async function runGate(
       ? { commentDeferInstalled: true as const }
       : {}),
     // Capture-deferral (Rule 20): classes the committed baseline could not
-    // observe at capture. Committed modes only — ref-based has no committed
-    // baseline to complete, so the "completing on CI" framing does not apply.
-    ...(mode.mode !== 'ref-based' && baseline.deferred && baseline.deferred.length > 0
+    // observe at capture. Committed prior class only — a re-gathered or
+    // empty prior has no committed baseline to complete, so the
+    // "completing on CI" framing does not apply.
+    ...(priorClass === 'committed' && baseline.deferred && baseline.deferred.length > 0
       ? { deferredCapture: baseline.deferred }
       : {}),
     ...(flowGate.ran || flowGate.skipped !== 'no-base-ref' ? { flowGate } : {}),

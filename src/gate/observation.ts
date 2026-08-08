@@ -8,6 +8,7 @@
  */
 
 import type { BaselineEntry, FindingId, FindingSeverity } from '../baseline/types';
+import { priorClassOf } from '../baseline/modes';
 import type { ResolvedMode } from '../baseline/modes';
 import type { GatherScope } from '../baseline/gather-scope';
 import { KIND_OBSERVATION_SCOPE } from '../baseline/gather-scope';
@@ -19,10 +20,12 @@ import type { ClassifiedPair, GuardrailCheckResult, NotObservedDisclosure } from
  * removed-direction attribution reads for scope- and scanner-level causes
  * (`custom-check` has its own richer record at the seam, `CustomChecksUnobserved`).
  *
- * Committed modes only: a ref-based diff gathers BOTH sides in this same
- * environment, so an un-run scanner produces zero findings on each and no
- * removed pair exists to mislabel (and the structurally-excluded kinds carry
- * their own `refExcludedKinds` disclosure).
+ * Committed prior class only: a re-gathered prior (a materialized ref, a
+ * supplied tree) diffs BOTH sides in this same environment, so an un-run
+ * scanner produces zero findings on each and no removed pair exists to
+ * mislabel (and the structurally-excluded kinds carry their own
+ * `refExcludedKinds` disclosure); an empty prior has no removed direction
+ * at all.
  *
  * Two causes, in order:
  *   1. the kind's gather was scoped out (`KIND_OBSERVATION_SCOPE`);
@@ -38,7 +41,7 @@ export function kindNotObservedReason(
     readonly provenance: SecurityAggregate['provenance'];
   },
 ): string | undefined {
-  if (ctx.mode === 'ref-based') return undefined;
+  if (priorClassOf(ctx.mode) !== 'committed') return undefined;
   const offFlag = KIND_OBSERVATION_SCOPE[kind].find((flag) => !ctx.scope[flag]);
   if (offFlag !== undefined) {
     return `not gathered this run (the ${offFlag} gather is outside this run's scope)`;

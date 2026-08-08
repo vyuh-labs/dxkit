@@ -30,14 +30,15 @@
 
 import * as fs from 'fs';
 import { dxkitCli } from '../self-invocation';
-import { scanToBaselineFile } from '../baseline/create';
+import { gatherCurrentScan, scanToBaselineFile } from '../baseline/create';
+import type { CurrentScan } from '../baseline/create';
 import {
   DEFAULT_BASELINE_NAME,
   pathForBaseline,
   readBaselineFile,
 } from '../baseline/baseline-file';
 import type { BaselineFile } from '../baseline/baseline-file';
-import { DEFAULT_ANCHOR_REF } from '../baseline/modes';
+import { DEFAULT_ANCHOR_REF, priorClassOf } from '../baseline/modes';
 import type { ResolvedMode } from '../baseline/modes';
 import { loadPolicyFromCwd } from '../baseline/policy';
 import type { BaselineSection } from '../baseline/policy';
@@ -54,6 +55,26 @@ export interface AcquiredPrior {
   baseline: BaselineFile;
   baselinePath?: string;
   anchorSource?: AnchorSourceDisclosure;
+}
+
+/**
+ * The `fresh` prior (4.4.0 WP2): zero findings, with the CURRENT scan's
+ * own envelope. Built AFTER the current gather (the engine calls this in
+ * place of `acquirePrior` for the empty prior class), through the ONE
+ * `CurrentScan → BaselineFile` converter. Using the current envelope is
+ * the load-bearing choice: recall matches BY CONSTRUCTION (same run,
+ * same environment), so Rule 19 composes — the drift machinery is
+ * inapplicable-by-construction rather than disabled, and every finding
+ * classifies `added` because the prior finding set is empty, never
+ * because attribution was bypassed.
+ */
+export function emptyPriorFromScan(current: CurrentScan, name?: string): AcquiredPrior {
+  return {
+    baseline: scanToBaselineFile(current, {
+      name: name ?? DEFAULT_BASELINE_NAME,
+      findings: [],
+    }),
+  };
 }
 
 /**
@@ -101,7 +122,7 @@ function safeBaselineSection(cwd: string): BaselineSection | undefined {
  * written before this field existed reads as the original 'v1'.)
  */
 export function assertPriorSchemeComparable(prior: AcquiredPrior, mode: ResolvedMode): void {
-  if (mode.mode === 'ref-based') return;
+  if (priorClassOf(mode.mode) !== 'committed') return;
   const baselineScheme = prior.baseline.identityScheme ?? 'v1';
   if (baselineScheme === CURRENT_IDENTITY_SCHEME) return;
   // The remedy must match the STATE (observed on the live migration
@@ -131,7 +152,12 @@ export function assertPriorSchemeComparable(prior: AcquiredPrior, mode: Resolved
   );
 }
 
-/** Acquire the prior side of the gate diff for a resolved mode. */
+/**
+ * Acquire the prior side of the gate diff for a resolved mode. The
+ * `fresh` (empty) prior is the one arm NOT served here — it derives
+ * from the current scan, so the engine calls `emptyPriorFromScan`
+ * after the current gather instead (same module, one prior home).
+ */
 export async function acquirePrior(
   cwd: string,
   mode: ResolvedMode,
@@ -139,6 +165,33 @@ export async function acquirePrior(
   incrementalFiles?: ReadonlyArray<string>,
   scope: GatherScope = FULL_SCOPE,
 ): Promise<AcquiredPrior> {
+  if (mode.mode === 'fresh') {
+    // Programming error, not a user error: the engine owns the ordering.
+    throw new Error('fresh prior derives from the current scan — call emptyPriorFromScan.');
+  }
+  if (mode.mode === 'tree-baseline') {
+    if (!mode.baselineDir) {
+      throw new Error('tree-baseline mode requires a resolved baselineDir; got undefined.');
+    }
+    // The dir-shaped prior collapse (Rule 2): a supplied tree goes through
+    // the SAME two canonical calls the ref arm uses — `gatherCurrentScan`
+    // over a directory, projected by the ONE `scanToBaselineFile`
+    // converter — the only difference being that no worktree needs
+    // materializing first.
+    const treeScan = await gatherCurrentScan({
+      cwd: mode.baselineDir,
+      verbose: options.verbose,
+      scope,
+      skipRemediation: true,
+      trust: options.trust,
+    });
+    return {
+      baseline: scanToBaselineFile(treeScan, {
+        name: options.name ?? DEFAULT_BASELINE_NAME,
+        findings: treeScan.findings,
+      }),
+    };
+  }
   if (mode.mode !== 'ref-based') {
     const baselinePath =
       options.baselinePath ?? pathForBaseline(cwd, options.name ?? DEFAULT_BASELINE_NAME);

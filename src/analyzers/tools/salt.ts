@@ -42,8 +42,16 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 /** Resolution path that produced the salt. Stamped on every baseline
- * file so the guardrail check knows what the matcher needs. */
-export type SaltMode = 'env-var' | 'file' | 'deterministic';
+ * file so the guardrail check knows what the matcher needs.
+ * `'unavailable'` is the DECLARED no-salt state (4.4.0 WP2): a bare
+ * tree with no git root, no salt file, no env var — the scan proceeds
+ * (a gate on a generated package must not demand git), the located
+ * `secret` kind still gates in full, and only the salt-dependent
+ * `secret-hmac` companions are skipped, recorded on the envelope
+ * rather than silently absent. `resolveSalt` never returns it (hard
+ * error preserved for baseline commands); only
+ * `resolveSaltOrUnavailable` does. */
+export type SaltMode = 'env-var' | 'file' | 'deterministic' | 'unavailable';
 
 export interface ResolvedSalt {
   readonly mode: SaltMode;
@@ -96,6 +104,22 @@ export function resolveSalt(cwd: string): ResolvedSalt {
       'Cannot derive a baseline salt: not a git repository (or no root commit reachable). ' +
         'Set DXKIT_BASELINE_SALT or initialize a git repo before running baseline commands.',
     );
+  }
+}
+
+/**
+ * Fail-open sibling of `resolveSalt` for the SCAN path (4.4.0 WP2):
+ * returns the declared `'unavailable'` state instead of throwing, so a
+ * gate over a bare tree can run. Callers that REQUIRE a salt (the
+ * committed `baseline create` write — its HMAC companions must be
+ * re-derivable at check time) assert on the mode and surface
+ * `resolveSalt`'s original error; the one message lives there.
+ */
+export function resolveSaltOrUnavailable(cwd: string): ResolvedSalt {
+  try {
+    return resolveSalt(cwd);
+  } catch {
+    return { mode: 'unavailable', salt: '' };
   }
 }
 

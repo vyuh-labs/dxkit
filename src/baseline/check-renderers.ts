@@ -26,6 +26,7 @@
  */
 
 import * as logger from '../logger';
+import type { BaselineMode } from './modes';
 import type {
   AnchorSourceDisclosure,
   ClassifiedPair,
@@ -1262,12 +1263,14 @@ export interface GuardrailJsonPayload {
     /** D4d: under the `branch` anchor transport, which file actually loaded —
      *  the side-branch anchor, or the tree copy as a disclosed fallback. */
     readonly anchorSource?: AnchorSourceDisclosure;
-    /** Resolved baseline mode (`committed-full` / `committed-
-     *  sanitized` / `ref-based`) + its audit trail. Surfaced so
+    /** Resolved prior mode (committed / ref-based / the gate-only
+     *  fresh + tree-baseline priors) + its audit trail. Surfaced so
      *  agents + dashboards can see WHY the run picked a given
-     *  posture without re-deriving from policy + visibility. */
+     *  posture without re-deriving from policy + visibility. Typed off
+     *  the ONE mode union in modes.ts — never a re-listed literal set
+     *  (the pre-4.4.0 shape silently excluded new modes). */
     readonly mode: {
-      readonly value: 'committed-full' | 'committed-sanitized' | 'ref-based';
+      readonly value: BaselineMode;
       readonly source: string;
       readonly explanation: string;
       readonly ref?: string;
