@@ -114,6 +114,13 @@ const SECURITY_BLOCK_RULES: BrownfieldBlockRules = {
   // `licenses.prohibited` list (no list ⇒ no findings ⇒ the rule never
   // fires), so arming it costs an unconfigured repo nothing.
   newProhibitedLicense: true,
+  // Same doctrine (4.4.0): a custom check the policy declared
+  // `blocking: true` is the repo's own invariant — its net-new failure
+  // blocks under every posture, and the rule is inert until such a check
+  // is configured. Pack lint defaults `blocking: false`, so the
+  // security-only promise ("lint warns, never wedges an unattended
+  // loop") is unchanged unless a repo explicitly hardens lint.
+  newBlockingCustomCheckFailure: true,
   // Open-ended debt — OFF in security-only (warn, never block).
   newUntestedChangedSource: false,
   newSevereQualityIssueInChangedFiles: false,

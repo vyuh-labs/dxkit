@@ -65,11 +65,44 @@ export type CustomCheckParse =
  * (`policyCheckToSpec`) or a pack's lint provider (`lintProviderToSpec`) — the
  * runner never distinguishes the two.
  */
+/**
+ * A declarative TEXT RULE (4.4.0 WP2 / P1-5 stage 1): a regex dxkit
+ * itself evaluates over the tree's files — no command, no spawn. The
+ * third consumer of the one custom-check seam (after user commands and
+ * pack lint): its findings mint the same located `custom-check`
+ * identity, grandfather through the same baseline producer, and gate
+ * through the same classifier. Because nothing executes, a text rule is
+ * safe on UNTRUSTED trees (the gate's default posture) and on every
+ * language — including stacks with no pack (the ABAP stage-1 path).
+ */
+export interface CustomCheckTextRule {
+  /** The regex, evaluated per line. Compiled with the `flags` below; an
+   *  invalid pattern yields ONE binary misconfig finding at run time
+   *  (the parseLocated discipline), never a crash and never a silent
+   *  pass. */
+  readonly pattern: string;
+  /** Regex flags (default none; `i` is the common one). The `g`/`y`
+   *  flags are stripped — matching is per line already. */
+  readonly flags?: string;
+  /** Glob scope (paired-check semantics: `**`, `*`, `?`), matched
+   *  against repo-relative POSIX paths. Empty/absent scans every
+   *  non-excluded file. */
+  readonly globs?: readonly string[];
+}
+
+/** Sentinel `command.bin` for text-rule specs — never executed; the
+ *  runner dispatches to the in-process scanner instead. */
+export const TEXT_RULE_BIN = 'dxkit-text-rule';
+
 export interface CustomCheckSpec {
   /** Stable label — the durable identity key (Rule 9). User checks use their
    *  declared `name`; lint uses `lint:<pack>`. */
   readonly name: string;
   readonly command: CustomCheckCommand;
+  /** Present for a declarative text rule: the runner evaluates it
+   *  in-process (no spawn, no trust gate) and `command` is the
+   *  `TEXT_RULE_BIN` sentinel. */
+  readonly textRule?: CustomCheckTextRule;
   /** Whether a NET-NEW failure blocks (true) or only warns (false). Carried onto
    *  each finding so the guardrail folds a non-blocking net-new finding to warn. */
   readonly blocking: boolean;

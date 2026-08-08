@@ -36,15 +36,28 @@ export interface CustomCheckConfig {
    *  reserved for pack-declared built-in lint. */
   readonly name: string;
   /** The command: a single string (whitespace-split; no shell — for a pipeline
-   *  use a script) or an argv array. */
-  readonly command: string | readonly string[];
+   *  use a script) or an argv array. Exactly one of `command` / `pattern` per
+   *  check. */
+  readonly command?: string | readonly string[];
+  /** Declarative TEXT RULE (4.4.0): a regex dxkit evaluates per line over the
+   *  tree itself — no command, no spawn, so it runs even where command checks
+   *  are trust-gated off (untrusted trees, bare generated packages) and on
+   *  stacks with no language pack. One located finding per matching line. */
+  readonly pattern?: string;
+  /** Regex flags for `pattern` (e.g. `'i'`). `g`/`y` are stripped. */
+  readonly flags?: string;
+  /** Glob scope for `pattern` (paired-check semantics: `**`, `*`, `?`),
+   *  matched against repo-relative POSIX paths. Absent/empty scans every
+   *  non-excluded file. */
+  readonly globs?: readonly string[];
   /** Net-new failure blocks (default true) or only warns (false). */
   readonly blocking?: boolean;
-  /** Exit code meaning "pass" (default 0). */
+  /** Exit code meaning "pass" (default 0). Command checks only. */
   readonly expectedExit?: number;
   /** Output→findings extraction. `'exit'` (default): one binary finding per
    *  failure. `{ regex }`: one located finding per matching line, via named
-   *  `(?<file>)(?<line>)(?<rule>)(?<message>)` capture groups. */
+   *  `(?<file>)(?<line>)(?<rule>)(?<message>)` capture groups. Command checks
+   *  only. */
   readonly parse?: 'exit' | { readonly regex: string };
 }
 

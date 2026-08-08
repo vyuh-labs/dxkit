@@ -72,6 +72,14 @@ export interface WalkPathsOpts {
    * in `basenames`. Defaults to `[]` (extension-only matching).
    */
   basenames?: string[];
+
+  /**
+   * Return EVERY (non-excluded) file regardless of extension or
+   * basename. For consumers whose scope is glob-declared rather than
+   * extension-declared (the text-rule scanner — its policy globs may
+   * target any file shape, `.abap` included). Default `false`.
+   */
+  includeAllFiles?: boolean;
 }
 
 // Memoization keyed by `(cwd, opts-fingerprint)`. Mirrors
@@ -92,14 +100,15 @@ export function clearWalkPathsCache(): void {
  */
 export function walkPaths(cwd: string, opts: WalkPathsOpts): string[] {
   const respectIgnore = opts.respectIgnore ?? true;
+  const includeAllFiles = opts.includeAllFiles ?? false;
   const extensions = new Set(opts.extensions.map((e) => (e.startsWith('.') ? e : `.${e}`)));
   const basenames = new Set(opts.basenames ?? []);
-  const cacheKey = `${cwd}\0${[...extensions].sort().join(',')}\0${[...basenames].sort().join(',')}\0${respectIgnore}`;
+  const cacheKey = `${cwd}\0${[...extensions].sort().join(',')}\0${[...basenames].sort().join(',')}\0${respectIgnore}\0${includeAllFiles}`;
   const hit = walkCache.get(cacheKey);
   if (hit) return hit;
 
   const out: string[] = [];
-  walkDir(cwd, '', { extensions, basenames, respectIgnore }, out);
+  walkDir(cwd, '', { extensions, basenames, respectIgnore, includeAllFiles }, out);
   out.sort();
   walkCache.set(cacheKey, out);
   return out;
@@ -109,6 +118,7 @@ interface ResolvedOpts {
   extensions: Set<string>;
   basenames: Set<string>;
   respectIgnore: boolean;
+  includeAllFiles: boolean;
 }
 
 function walkDir(cwd: string, relDir: string, opts: ResolvedOpts, out: string[]): void {
@@ -136,7 +146,8 @@ function walkDir(cwd: string, relDir: string, opts: ResolvedOpts, out: string[])
     if (!ent.isFile()) continue;
 
     const ext = path.extname(ent.name);
-    const matches = opts.extensions.has(ext) || opts.basenames.has(ent.name);
+    const matches =
+      opts.includeAllFiles || opts.extensions.has(ext) || opts.basenames.has(ent.name);
     if (!matches) continue;
     if (opts.respectIgnore && isExcludedPath(cwd, relPath)) continue;
 

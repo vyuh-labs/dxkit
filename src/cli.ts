@@ -428,6 +428,10 @@ export async function run(argv: string[]): Promise<void> {
       'changed-only': { type: 'boolean', default: false },
       incremental: { type: 'boolean', default: false },
       untrusted: { type: 'boolean', default: false },
+      // `gate <dir> --trusted` — consent to EXECUTE the judged tree's code
+      // (correctness floor + command-shaped custom checks). Off by default:
+      // a gate must not run code from a tree it is merely judging.
+      trusted: { type: 'boolean', default: false },
       // evaluate: the zero-write trial (ref pair or last-N-landings replay).
       // --base is shared with the reviewers flags below.
       head: { type: 'string' },
@@ -2912,6 +2916,30 @@ export async function run(argv: string[]): Promise<void> {
           `vyuh-dxkit baseline merge-fragment <fragment.json…> [--name <name>]`,
       );
       process.exit(1);
+      break;
+    }
+
+    case 'gate': {
+      // The one-shot tree gate (4.4.0 / P0-1): judge a directory — no git,
+      // no init — under fresh or tree-baseline prior, with the correctness
+      // floor when --trusted consents to executing the tree's own code.
+      // Exit codes are gate-owned: 0 passed / 1 blocked / 2 cannot gate.
+      const dir = resolveRepoPath(positionals[1]);
+      const { runGateCommand, renderGateOutcome, gateFailureHint } = await import('./gate-cli');
+      try {
+        const outcome = await runGateCommand(dir, {
+          baselineDir: values.baseline as string | undefined,
+          policyPath: values.policy as string | undefined,
+          json: !!values.json,
+          trusted: !!values.trusted,
+          verbose: !!values.verbose,
+        });
+        process.stdout.write(renderGateOutcome(outcome, !!values.json) + '\n');
+        process.exit(outcome.exitCode);
+      } catch (err) {
+        logger.fail(gateFailureHint(err as Error));
+        process.exit(2);
+      }
       break;
     }
 

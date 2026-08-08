@@ -168,6 +168,24 @@ export function buildPolicySchema(version: string): Schema {
               description: 'Command string (whitespace-split, no shell) or argv array.',
               anyOf: [{ type: 'string' }, { type: 'array', items: { type: 'string' } }],
             },
+            pattern: {
+              type: 'string',
+              description:
+                'Declarative TEXT RULE: a regex dxkit evaluates per line over the tree itself — ' +
+                'no command, no spawn (safe on untrusted trees; works on any language). One ' +
+                'located finding per matching line. Declare `pattern` OR `command`, never both.',
+            },
+            flags: {
+              type: 'string',
+              description: "Regex flags for `pattern` (e.g. 'i'). g/y are stripped.",
+            },
+            globs: {
+              type: 'array',
+              items: { type: 'string' },
+              description:
+                'Glob scope for `pattern` (`**`, `*`, `?`), matched against repo-relative POSIX ' +
+                'paths. Absent scans every non-excluded file.',
+            },
             blocking: { type: 'boolean', description: 'Net-new failure blocks (default true).' },
             expectedExit: { type: 'number', description: 'Exit code meaning pass (default 0).' },
             parse: {
@@ -176,7 +194,7 @@ export function buildPolicySchema(version: string): Schema {
               anyOf: [{ type: 'string', enum: ['exit'] }, obj({ regex: { type: 'string' } })],
             },
           },
-          'One user-declared invariant, run as a first-class gate citizen.',
+          'One user-declared invariant (a command, or a declarative text rule), run as a first-class gate citizen.',
         ),
       },
       pairedChecks: {
