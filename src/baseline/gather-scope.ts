@@ -307,6 +307,9 @@ export const BLOCK_RULE_EVIDENCE: Record<
   // The license inventory is the whole evidence: every minted `license`
   // finding is already a prohibited-list match, so no second signal exists.
   newProhibitedLicense: ['licenses'],
+  // The seam's gather is the whole evidence: the block intent rides on
+  // each finding (`entry.blocking`), so no second signal exists.
+  newBlockingCustomCheckFailure: ['customChecks'],
 });
 
 /**
