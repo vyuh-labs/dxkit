@@ -3,7 +3,7 @@
  * ceiling (the org guard for the per-task matrix, where a failing task no
  * longer starves siblings and every task may spend its own cap).
  */
-import { REMEDIATE_TASKS } from '../../src/remediate/tasks';
+import { customDispatchTask, REMEDIATE_TASKS } from '../../src/remediate/tasks';
 import { describe, it, expect, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -55,6 +55,13 @@ describe('budgetForTask', () => {
     });
     // A task with no override gets the shared budget untouched.
     expect(budgetForTask(config, 'fix-vulns')).toEqual(DEFAULT_REMEDIATE_BUDGET);
+  });
+
+  it('accepts a raw id string: custom (outside the registry) gets the shared budget', () => {
+    // The executor holds only the id string — it must not branch on "is this
+    // a registry task" to pick a budget (#274's sibling derivation).
+    expect(budgetForTask(cfg({}), 'custom')).toEqual(DEFAULT_REMEDIATE_BUDGET);
+    expect(budgetForTask(cfg({}), 'no-such-task')).toEqual(DEFAULT_REMEDIATE_BUDGET);
   });
 });
 
@@ -130,6 +137,38 @@ describe('salvageForTask — the one salvage resolver (task-shape defaults)', ()
   it('an explicit policy value overrides every task', () => {
     expect(salvageForTask({ salvage: 'discard' }, 'write-docs')).toBe('discard');
     expect(salvageForTask({ salvage: 'draft-pr' }, 'fix-build')).toBe('draft-pr');
+  });
+
+  it('custom honors explicit policy and auto — never a structural discard (#274)', () => {
+    // The live class: a registry-lookup guard in the CLI executor forced
+    // 'discard' for custom, overriding BOTH an explicit draft-pr policy and
+    // 'auto' — a verified, guardrail-PASSED docs run was thrown away.
+    expect(salvageForTask({ salvage: 'draft-pr' }, 'custom')).toBe('draft-pr');
+    expect(salvageForTask(auto, 'custom')).toBe('draft-pr');
+    expect(salvageForTask({ salvage: 'discard' }, 'custom')).toBe('discard');
+  });
+
+  it('PARITY: the id-string arm and the resolved-task arm agree for every task', () => {
+    // The CLI executor passes the raw id string; the runner passes the
+    // resolved task object. Both hit this one resolver — this pins that the
+    // two call shapes cannot diverge (the Rule 2.30 net for #274).
+    const policies = [
+      { salvage: 'auto' },
+      { salvage: 'draft-pr' },
+      { salvage: 'discard' },
+    ] as const;
+    for (const policy of policies) {
+      for (const t of REMEDIATE_TASKS) {
+        expect(salvageForTask(policy, t.id)).toBe(salvageForTask(policy, t));
+      }
+      expect(salvageForTask(policy, 'custom')).toBe(
+        salvageForTask(policy, customDispatchTask('any prompt')),
+      );
+    }
+  });
+
+  it('an unknown id string (typo — the runner will refuse it) reads bounded → discard', () => {
+    expect(salvageForTask(auto, 'no-such-task')).toBe('discard');
   });
 
   it('every registered task declares its completion shape', () => {
