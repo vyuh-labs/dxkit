@@ -61,10 +61,42 @@ export interface TaskRun {
   readonly prUrl?: string;
   /** Why a land-eligible outcome was NOT landed (the branch guard). */
   readonly landRefused?: string;
+  /** The landing itself FAILED (push refused by rules/permissions, PR
+   *  creation failed): the disclosed cause + remedy. The attempt record
+   *  and ledger still render — a refused push loses the delivery, never
+   *  the evidence (#273). */
+  readonly landingBlocked?: string;
   /** The landing ran (branch pushed, PR opened/updated). */
   readonly landed: boolean;
   /** Truthful per-task success: verified/no-op, or a landed salvage draft. */
   readonly clean: boolean;
+}
+
+/**
+ * Phrase a landing failure for the record + job log: the git/gh output is
+ * the evidence, and a rules/permissions-shaped refusal names the remedy —
+ * the class exists on every GitHub repo (a GITHUB_TOKEN push touching
+ * workflow files is refused without the `workflows` permission), not only
+ * where a push ruleset restricts paths.
+ */
+function describeLandingFailure(err: unknown): string {
+  const e = err as { message?: string; stderr?: string | Buffer };
+  const stderr = (e.stderr ?? '').toString().trim();
+  const message = (e.message ?? String(err)).split('\n')[0];
+  const evidence = stderr ? `${message}\n${stderr}` : message;
+  const rulesShaped =
+    /\b403\b|GH006|GH013|protected branch|ruleset|refusing to allow|permission/i.test(evidence);
+  const remedy = rulesShaped
+    ? '\nThis looks like a repository-rules or token-permissions refusal. Remedies: grant ' +
+      'the workflow token the permission the push needs (e.g. the `workflows` permission ' +
+      'for workflow-file changes), add a ruleset bypass for the bot, or keep the task ' +
+      'away from the restricted paths (a prompt-level constraint like "do not touch ' +
+      '.github/" holds in practice).'
+    : '';
+  return (
+    `the landing push/PR was refused — the verified work did NOT land, but the attempt ` +
+    `record and ledger carry the evidence (branch state left for inspection).\n${evidence}${remedy}`
+  );
 }
 
 /** Current branch name, or 'HEAD' for a detached (CI) checkout. */
@@ -80,13 +112,31 @@ function currentBranch(cwd: string): string {
   }
 }
 
+/**
+ * Injection seams for the executor — tests only; production callers pass
+ * nothing. The executor is the layer where two live deliver-layer defects
+ * sat with zero coverage (#273 landing crash, #274 salvage bypass): the
+ * runner and the lander are each unit-tested through their own seams, but
+ * the wiring BETWEEN them (salvage resolution, the landing guard, the
+ * pre-push evidence record, the landing wrap) was untestable without
+ * spawning a real agent.
+ */
+export interface ExecutorSeams {
+  readonly runTask?: typeof runRemediateTask;
+  readonly landHead?: typeof landRemediateHead;
+  readonly branch?: (cwd: string) => string;
+  readonly defaultBranch?: (cwd: string) => string;
+}
+
 /** Run one task through the runner and (optionally) land it — the ONE
- *  executor `--task` and `configured` both use. */
-async function executeTask(
+ *  executor `--task` and `configured` both use. Exported for tests via the
+ *  seams above; the CLI entries below are the production callers. */
+export async function executeTask(
   cwd: string,
   config: RemediateConfig,
   taskId: string,
   land: 'pr' | 'none',
+  seams: ExecutorSeams = {},
 ): Promise<TaskRun> {
   // Per-task budget: the override-merged budget rides a task-scoped config
   // copy, so the runner's enforcement + ledger see the effective caps.
@@ -131,7 +181,7 @@ async function executeTask(
   const reporter = startPhaseReporter(`remediate:${taskId}`);
   let result: RemediateResult;
   try {
-    result = await runRemediateTask({
+    result = await (seams.runTask ?? runRemediateTask)({
       cwd,
       trust: trustedLocalContext(),
       taskId,
@@ -174,8 +224,8 @@ async function executeTask(
 
   // Landing guard (the standing branch is built from HEAD): a named
   // non-default branch would push unrelated commits into the standing PR.
-  const defaultBranch = detectDefaultBranch(cwd);
-  const branch = currentBranch(cwd);
+  const defaultBranch = (seams.defaultBranch ?? detectDefaultBranch)(cwd);
+  const branch = (seams.branch ?? currentBranch)(cwd);
   if (branch !== 'HEAD' && branch !== defaultBranch) {
     return finalizeTaskRun(cwd, taskId, {
       result,
@@ -204,21 +254,41 @@ async function executeTask(
       : {}),
     ...(result.envelope ? { driver: result.envelope.driver } : {}),
   });
-  const landResult = landRemediateHead({
-    cwd,
-    taskId,
-    defaultBranch,
-    prTitle:
-      `dxkit remediate: ${taskId}` +
-      (blockedSalvage
-        ? ' (blocked: guardrail-red — do not merge)'
-        : draftSalvage
-          ? ' (partial, budget-bounded)'
-          : ''),
-    prBody: result.ledger,
-    draft: draftSalvage || blockedSalvage,
-    ledgerPath,
-  });
+  // Evidence BEFORE delivery (#273): the attempt record — with the commit
+  // range the workflow's patch-artifact fallback needs — is written before
+  // the push, landed:false, and flipped by the finalize below on success. A
+  // refused push (ruleset, token permissions) must lose the delivery, never
+  // the 18 minutes of verified evidence: the crash-shaped alternative left
+  // no record, no ledger, and an empty patch artifact.
+  writeAttemptRecord(cwd, taskId, { result, landed: false, clean: false });
+  let landResult: ReturnType<typeof landRemediateHead>;
+  try {
+    landResult = (seams.landHead ?? landRemediateHead)({
+      cwd,
+      taskId,
+      defaultBranch,
+      prTitle:
+        `dxkit remediate: ${taskId}` +
+        (blockedSalvage
+          ? ' (blocked: guardrail-red — do not merge)'
+          : draftSalvage
+            ? ' (partial, budget-bounded)'
+            : ''),
+      prBody: result.ledger,
+      draft: draftSalvage || blockedSalvage,
+      ledgerPath,
+    });
+  } catch (err) {
+    // A landing failure is a DISCLOSED outcome, never a crash: the ledger,
+    // record, and step summary all render as usual — the GateFailure
+    // discipline applied to the land layer.
+    return finalizeTaskRun(cwd, taskId, {
+      result,
+      landed: false,
+      clean: false,
+      landingBlocked: describeLandingFailure(err),
+    });
+  }
   return finalizeTaskRun(cwd, taskId, {
     result,
     ...(landResult.prUrl ? { prUrl: landResult.prUrl } : {}),
@@ -237,16 +307,9 @@ async function executeTask(
  * the run page without opening logs.
  */
 function finalizeTaskRun(cwd: string, taskId: string, run: TaskRun): TaskRun {
-  try {
-    const dir = path.join(cwd, '.dxkit', 'cache');
-    fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(
-      path.join(dir, `remediate-${taskId}.json`),
-      JSON.stringify(taskRunJson(run), null, 2) + '\n',
-      'utf8',
-    );
-  } catch {
-    // the record is evidence plumbing, never a failure
+  writeAttemptRecord(cwd, taskId, run);
+  if (run.landingBlocked) {
+    logger.warn(run.landingBlocked);
   }
   if (!run.clean) {
     // A non-clean outcome must be diagnosable from the run page: the agent
@@ -262,12 +325,29 @@ function finalizeTaskRun(cwd: string, taskId: string, run: TaskRun): TaskRun {
     }
   }
   if (process.env.GITHUB_ACTIONS === 'true' && !run.clean) {
-    const first = (run.result.note ?? run.result.outcome).split('\n')[0];
+    const first = (run.landingBlocked ?? run.result.note ?? run.result.outcome).split('\n')[0];
     process.stdout.write(
       `::warning title=remediate ${taskId} did not land::${run.result.outcome}: ${first}\n`,
     );
   }
   return run;
+}
+
+/** The machine-readable attempt record — written pre-push (landed:false)
+ *  AND at every finalize, so the evidence exists no matter where the
+ *  landing dies. Best-effort plumbing, never a failure. */
+function writeAttemptRecord(cwd: string, taskId: string, run: TaskRun): void {
+  try {
+    const dir = path.join(cwd, '.dxkit', 'cache');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, `remediate-${taskId}.json`),
+      JSON.stringify(taskRunJson(run), null, 2) + '\n',
+      'utf8',
+    );
+  } catch {
+    // the record is evidence plumbing, never a failure
+  }
 }
 
 /** Append a ledger to the GitHub Actions step summary when running in CI. */
@@ -286,6 +366,7 @@ function reportTaskRun(run: TaskRun, json: boolean): void {
   logger.info(`outcome: ${run.result.outcome}`);
   if (run.result.note) logger.info(run.result.note);
   if (run.landRefused) logger.warn(run.landRefused);
+  if (run.landingBlocked) logger.warn(run.landingBlocked);
   if (run.prUrl) logger.success(`standing PR: ${run.prUrl}`);
   console.log(''); // slop-ok
   process.stdout.write(run.result.ledger + '\n');
@@ -303,6 +384,7 @@ function taskRunJson(run: TaskRun): Record<string, unknown> {
     branch: r.task ? remediateBranchFor(r.task) : null,
     prUrl: run.prUrl ?? null,
     landRefused: run.landRefused ?? null,
+    landingBlocked: run.landingBlocked ?? null,
     landed: run.landed,
     // The commit range of the attempt — what the workflow's evidence step
     // format-patches into a run artifact when nothing landed.
