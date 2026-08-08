@@ -426,8 +426,11 @@ const javaDepVulnsProvider: DepVulnsProvider = {
     const outcome = await gatherOsvScannerDepVulnsResult(cwd, 'java', 'Maven', JAVA_DEP_MANIFESTS);
     return outcome.kind === 'success' ? outcome.envelope : null;
   },
-  async gatherOutcome(cwd) {
-    return gatherOsvScannerDepVulnsResult(cwd, 'java', 'Maven', JAVA_DEP_MANIFESTS);
+  supportsOfflineSnapshot: true,
+  async gatherOutcome(cwd, opts) {
+    return gatherOsvScannerDepVulnsResult(cwd, 'java', 'Maven', JAVA_DEP_MANIFESTS, {
+      ...(opts?.advisoryDb ? { advisoryDb: opts.advisoryDb } : {}),
+    });
   },
 };
 

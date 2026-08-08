@@ -158,7 +158,14 @@ export interface AggregateProvenance {
   external?: { tools: string[]; ran: boolean };
   tlsBypass: { ran: boolean; patternCount: number };
   fileFindings: { ran: boolean };
-  depVulns: { tool: string | null; available: boolean; unavailableReason: string };
+  depVulns: {
+    tool: string | null;
+    available: boolean;
+    unavailableReason: string;
+    /** Snapshot version when the audit ran offline (4.4.0 P1-4) — the
+     * dep-vuln recall input + the verdict's name for the feed state. */
+    advisoryDbVersion?: string;
+  };
 }
 
 /**
@@ -302,6 +309,7 @@ export interface SecurityAggregateInput {
     tool: string | null;
     available: boolean;
     unavailableReason: string;
+    advisoryDbVersion?: string;
   };
   /** The repo's allowlist, loaded by the caller (the aggregator stays
    * pure / does no I/O). When present, each code/secret/config finding
@@ -759,6 +767,9 @@ export function buildSecurityAggregate(input: SecurityAggregateInput): SecurityA
       tool: input.depVulns.tool,
       available: input.depVulns.available,
       unavailableReason: input.depVulns.unavailableReason,
+      ...(input.depVulns.advisoryDbVersion !== undefined
+        ? { advisoryDbVersion: input.depVulns.advisoryDbVersion }
+        : {}),
     },
   };
 

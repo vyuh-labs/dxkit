@@ -131,6 +131,13 @@ export interface AnalyzeHealthOptions {
    */
   incrementalFiles?: ReadonlyArray<string>;
   /**
+   * Offline advisory snapshot (4.4.0 P1-4): audit dependencies against this
+   * pre-downloaded local database with zero network egress. Threaded to the
+   * pack seam at the one adapter below; packs without offline support are
+   * skipped with a disclosed cause at the dispatch.
+   */
+  advisoryDb?: { readonly dir: string; readonly version: string };
+  /**
    * When true, skip the Tier-2 dependency *remediation* enrichment (structured
    * `upgradePlan` via `osv-scanner fix`, which runs the package manager). The
    * guardrail/gate path sets this: the verdict and finding identity never read
@@ -310,6 +317,7 @@ export async function gatherAnalysisResultBody(
       // Pack seam stays a boolean (DepVulnGatherOptions is a frozen-in-place
       // pack contract); derived here, at the one adapter.
       untrusted: !options.trust.repoExecutionAllowed,
+      ...(options.advisoryDb ? { advisoryDb: options.advisoryDb } : {}),
     }),
   );
 

@@ -34,6 +34,7 @@ import {
 } from './osv';
 import { isMaliciousAdvisory } from '../security/malicious';
 import { fileExists, runWithExit } from './runner';
+import type { AdvisoryDbSpec } from '../security/advisory-db';
 import { findTool, TOOL_DEFS } from './tool-registry';
 import type {
   DepVulnFinding,
@@ -185,11 +186,40 @@ export function parseOsvScannerFindings(
  * `database_specific.severity` strings. resolveCvssScores looks up
  * via CVE alias when the primary record lacks a vector.
  */
+
+/** Options for the shared osv-scanner gather (4.4.0 P1-4). */
+export interface OsvScannerGatherOpts {
+  /** Offline advisory snapshot: scan against this local DB with ALL
+   *  network features disabled (`--offline`), never OSV.dev. */
+  readonly advisoryDb?: AdvisoryDbSpec;
+  /** Test seam — injected exec (mirrors the CommandExec pattern). */
+  readonly exec?: typeof runWithExit;
+}
+
+/**
+ * Build the scan invocation — pure + exported so the offline shape is
+ * unit-testable without a binary. Snapshot mode: `--offline` (the
+ * umbrella flag — vulnerabilities from the local DB, zero network) and
+ * the DB directory via `OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY` (env-only
+ * in v2.4.0; no flag exists).
+ */
+export function buildOsvScannerScanCommand(
+  scannerPath: string,
+  manifest: string,
+  advisoryDb?: AdvisoryDbSpec,
+): { cmd: string; env?: Record<string, string> } {
+  const offline = advisoryDb ? ' --offline' : '';
+  return {
+    cmd: `${scannerPath} scan source --lockfile ${manifest} --format json${offline}`,
+    ...(advisoryDb ? { env: { OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY: advisoryDb.dir } } : {}),
+  };
+}
 export async function gatherOsvScannerDepVulnsResult(
   cwd: string,
   packId: LanguageId,
   ecosystem: string,
   manifestCandidates: string[],
+  opts?: OsvScannerGatherOpts,
 ): Promise<DepVulnGatherOutcome> {
   let manifest: string | null = null;
   for (const rel of manifestCandidates) {
@@ -210,11 +240,9 @@ export async function gatherOsvScannerDepVulnsResult(
     return { kind: 'unavailable', reason: 'osv-scanner not installed' };
   }
 
-  const { code, stdout: raw } = runWithExit(
-    `${scanner.path} scan source --lockfile ${manifest} --format json`,
-    cwd,
-    180000,
-  );
+  const { cmd, env } = buildOsvScannerScanCommand(scanner.path, manifest, opts?.advisoryDb);
+  const exec = opts?.exec ?? runWithExit;
+  const { code, stdout: raw } = exec(cmd, cwd, 180000, env ? { env } : undefined);
   if (code !== 0 && code !== 1) {
     return {
       kind: 'unavailable',
@@ -228,7 +256,11 @@ export async function gatherOsvScannerDepVulnsResult(
 
   const { counts, findings, vulnsForCvss } = parseOsvScannerFindings(raw, ecosystem, packId);
 
-  if (findings.length > 0) {
+  // Snapshot mode is ZERO-egress: the CVSS alias-fallback is an OSV.dev
+  // HTTP lookup, so it is skipped entirely — findings keep the severity
+  // data the local database carried, and the envelope says which feed
+  // state produced them (the enrichment field + snapshot version).
+  if (findings.length > 0 && !opts?.advisoryDb) {
     const resolved = await resolveCvssScores(vulnsForCvss);
     for (const f of findings) {
       const score = resolved.get(f.id);
@@ -239,7 +271,8 @@ export async function gatherOsvScannerDepVulnsResult(
   const envelope: DepVulnResult = {
     schemaVersion: 1,
     tool: 'osv-scanner',
-    enrichment: 'osv.dev',
+    enrichment: opts?.advisoryDb ? `offline-snapshot@${opts.advisoryDb.version}` : 'osv.dev',
+    ...(opts?.advisoryDb ? { advisoryDbVersion: opts.advisoryDb.version } : {}),
     counts,
     findings,
   };

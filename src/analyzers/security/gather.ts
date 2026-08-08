@@ -305,6 +305,24 @@ async function gatherOutcomeWithDeadline(
   opts: DepVulnGatherOptions | undefined,
   label: string,
 ): Promise<DepVulnGatherOutcome> {
+  // Snapshot mode (4.4.0 P1-4) gates HERE, at the one dispatch primitive.
+  // An UNUSABLE snapshot (missing dir) makes every pack's audit unavailable
+  // with the cause — never a fallback to the network, never an empty local
+  // database reading as "no vulnerabilities".
+  if (opts?.advisoryDb?.error) {
+    return { kind: 'unavailable', reason: opts.advisoryDb.error };
+  }
+  // And a provider that has not declared zero-egress snapshot support is
+  // SKIPPED with a disclosed cause — running its networked scanner would
+  // silently break the air-gap guarantee the flag exists to give.
+  if (opts?.advisoryDb && pack.capabilities?.depVulns?.supportsOfflineSnapshot !== true) {
+    return {
+      kind: 'unavailable',
+      reason:
+        `advisory snapshot mode: the ${pack.id} dependency scanner has no offline mode — ` +
+        `audit skipped to preserve zero egress (never run against the network in snapshot mode)`,
+    };
+  }
   const deadlineOutcome = await withDeadline(
     pack.capabilities!.depVulns!.gatherOutcome(dir, opts),
     DEFAULT_PROVIDER_DEADLINE_MS,
@@ -675,6 +693,12 @@ export async function buildSecurityAggregateForHealth(
       tool: depVulnsEnvelope?.tool ?? null,
       available: depVulnsAvailable,
       unavailableReason: depVulnsUnavailableReason,
+      // Snapshot mode (P1-4): which feed state observed the tree. Flows
+      // into the dep-vuln recall input so a snapshot update reads as feed
+      // movement (Rule 19), never a developer's regression.
+      ...(depVulnsEnvelope?.advisoryDbVersion !== undefined
+        ? { advisoryDbVersion: depVulnsEnvelope.advisoryDbVersion }
+        : {}),
     },
     // Loaded here (the aggregator does no I/O) so both the health score
     // and the standalone vuln-scan — which share this one aggregate via

@@ -133,6 +133,13 @@ export function runWithExit(
   cmd: string,
   cwd: string,
   timeoutMs = 30000,
+  opts?: {
+    /** Extra environment for the child, merged over process.env. The one
+     *  use today: `OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY` for the offline
+     *  advisory snapshot (4.4.0 P1-4) — the variable is env-only in
+     *  osv-scanner v2.4.0 (no flag exists). */
+    readonly env?: Readonly<Record<string, string>>;
+  },
 ): { code: number | null; stdout: string } {
   try {
     const stdout = execSync(cmd, {
@@ -141,6 +148,7 @@ export function runWithExit(
       stdio: ['pipe', 'pipe', 'pipe'],
       timeout: timeoutMs,
       maxBuffer: 64 * 1024 * 1024,
+      ...(opts?.env ? { env: { ...process.env, ...opts.env } } : {}),
     }).trim();
     return { code: 0, stdout };
   } catch (err: unknown) {
