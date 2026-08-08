@@ -153,7 +153,11 @@ __DXKIT_CI_RUNTIME_SETUP__
         if: steps.perm.outputs.authorized == 'true' && steps.pr.outputs.same_repo == 'true'
         run: |
           if [ -x ./node_modules/.bin/vyuh-dxkit ]; then DXKIT=./node_modules/.bin/vyuh-dxkit; else DXKIT=vyuh-dxkit; fi
-          "$DXKIT" guardrail check --untrusted --json > /dev/null 2>guardrail-stderr.log || true
+          # Scratch output goes OUTSIDE the repo ($RUNNER_TEMP): the defer's
+          # same-tree contract hashes every untracked file, so a stray log or
+          # redirect target inside the checkout perturbs the working-tree
+          # signature and makes the defer refuse structurally (#282).
+          "$DXKIT" guardrail check --untrusted --json > /dev/null 2>"$RUNNER_TEMP/guardrail-stderr.log" || true
 
       - name: Apply the comment command
         if: steps.perm.outputs.authorized == 'true' && steps.pr.outputs.same_repo == 'true'
@@ -166,9 +170,9 @@ __DXKIT_CI_RUNTIME_SETUP__
           DXKIT_COMMENT_PR: ${{ github.event.issue.number }}
         run: |
           if [ -x ./node_modules/.bin/vyuh-dxkit ]; then DXKIT=./node_modules/.bin/vyuh-dxkit; else DXKIT=vyuh-dxkit; fi
-          "$DXKIT" allowlist comment-defer > comment-defer.json
-          echo "action=$(jq -r .action comment-defer.json)" >> "$GITHUB_OUTPUT"
-          jq -r .replyMarkdown comment-defer.json > comment-defer-reply.md
+          "$DXKIT" allowlist comment-defer > "$RUNNER_TEMP/comment-defer.json"
+          echo "action=$(jq -r .action "$RUNNER_TEMP/comment-defer.json")" >> "$GITHUB_OUTPUT"
+          jq -r .replyMarkdown "$RUNNER_TEMP/comment-defer.json" > "$RUNNER_TEMP/comment-defer-reply.md"
 
       - name: Commit the allowlist to the PR branch
         if: steps.apply.outputs.action == 'deferred'
@@ -193,4 +197,4 @@ __DXKIT_CI_RUNTIME_SETUP__
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.issue.number }}
         run: |
-          gh pr comment "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --body-file comment-defer-reply.md
+          gh pr comment "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/comment-defer-reply.md"
