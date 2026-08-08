@@ -260,18 +260,28 @@ describe('discriminator parity with the ref-based dep-audit skip (Rule 2.30)', (
     }
   });
 
-  it('check.ts consumes the ONE helper for both the skip and the discriminator (source pin)', () => {
+  it('the engine consumes the ONE helper for both the skip and the discriminator (source pin)', () => {
     // Strip comments first (the languages-contract lesson: a grep that
-    // matches a comment reports coverage that does not exist).
-    const src = fs
-      .readFileSync(path.join(__dirname, '..', '..', 'src', 'baseline', 'check.ts'), 'utf8')
-      .replace(/\/\*[\s\S]*?\*\//g, '')
-      .replace(/^\s*\/\/.*$/gm, '');
-    const calls = src.match(/changedFilesTouchDependencyManifest\(/g) ?? [];
-    // Exactly two consumers: the ref-based skip and the D4 discriminator.
-    expect(calls.length).toBe(2);
+    // matches a comment reports coverage that does not exist). Since the
+    // 4.4.0 WP1 engine split the two consumers live in src/gate/: the
+    // ref-based incremental skip in engine.ts, the D4 discriminator in
+    // classify-pairs.ts — one call each, and none left behind in the
+    // guardrail surface (check.ts).
+    const read = (...rel: string[]): string =>
+      fs
+        .readFileSync(path.join(__dirname, '..', '..', 'src', ...rel), 'utf8')
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .replace(/^\s*\/\/.*$/gm, '');
+    const engine = read('gate', 'engine.ts');
+    const classifyStage = read('gate', 'classify-pairs.ts');
+    const surface = read('baseline', 'check.ts');
+    expect(engine.match(/changedFilesTouchDependencyManifest\(/g) ?? []).toHaveLength(1);
+    expect(classifyStage.match(/changedFilesTouchDependencyManifest\(/g) ?? []).toHaveLength(1);
+    expect(surface.match(/changedFilesTouchDependencyManifest\(/g) ?? []).toHaveLength(0);
     // And no second manifest-pattern matcher smuggled in beside the helper.
-    expect(src).not.toMatch(/matchesManifestPattern\(/);
-    expect(src).not.toMatch(/allDependencyManifestPatterns\(/);
+    for (const src of [engine, classifyStage, surface]) {
+      expect(src).not.toMatch(/matchesManifestPattern\(/);
+      expect(src).not.toMatch(/allDependencyManifestPatterns\(/);
+    }
   });
 });
