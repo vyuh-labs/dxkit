@@ -647,7 +647,7 @@ for f in $FINGERPRINT_HELPER_ALLOWLIST; do
   ALLOW_FILTER_FP="$ALLOW_FILTER_FP -e ^${f}:"
 done
 
-ROGUE_HASH=$(grep -rnE "createHash[[:space:]]*\(" src/analyzers/ src/baseline/ src/allowlist/ 2>/dev/null \
+ROGUE_HASH=$(grep -rnE "createHash[[:space:]]*\(" src/analyzers/ src/baseline/ src/allowlist/ src/gate/ 2>/dev/null \
   | grep -v "// fingerprint-helper-ok" \
   | grep -v -E ':[[:space:]]*(//|\*)' \
   | { [ -n "$ALLOW_FILTER_FP" ] && grep -v $ALLOW_FILTER_FP || cat; })
@@ -674,7 +674,7 @@ for f in $LINE_BUCKET_ALLOWLIST; do
   ALLOW_FILTER_LB="$ALLOW_FILTER_LB -e ^${f}:"
 done
 
-ROGUE_BUCKET=$(grep -rnE "Math\.floor\([^/]*\/[[:space:]]*[0-9]+[[:space:]]*\)[[:space:]]*\*[[:space:]]*[0-9]+" src/analyzers/ src/baseline/ 2>/dev/null \
+ROGUE_BUCKET=$(grep -rnE "Math\.floor\([^/]*\/[[:space:]]*[0-9]+[[:space:]]*\)[[:space:]]*\*[[:space:]]*[0-9]+" src/analyzers/ src/baseline/ src/gate/ 2>/dev/null \
   | grep -v "// fingerprint-helper-ok" \
   | grep -v -E ':[[:space:]]*(//|\*)' \
   | { [ -n "$ALLOW_FILTER_LB" ] && grep -v $ALLOW_FILTER_LB || cat; })
@@ -1493,7 +1493,7 @@ fi
 # through captureGateFailure() in src/baseline/gate-failopen.ts so the outcome
 # carries the step + message. The `skip(mode, 'error')` overload enforces this at
 # compile time; this bans the silent shape at commit time as a second net.
-RULE_GATE_SWALLOW=$(grep -rnE "\}[[:space:]]*catch[[:space:]]*\{" src/baseline/ 2>/dev/null \
+RULE_GATE_SWALLOW=$(grep -rnE "\}[[:space:]]*catch[[:space:]]*\{" src/baseline/ src/gate/ 2>/dev/null \
   | grep -E 'gate-check\.ts:' \
   | grep -v "// failopen-ok")
 if [ -n "$RULE_GATE_SWALLOW" ]; then
