@@ -136,6 +136,9 @@ describe('sdk surface freeze (Rule 18)', () => {
       'inventory.v1',
       'findings.v1',
       'export.v1',
+      // 4.4.0 (sdk 0.3.0): the machine-readable gate verdict + receipt —
+      // what dxkit EMITS, deliberately outside the WireDoc ingest union.
+      'verdict.v1',
     ]);
   });
 

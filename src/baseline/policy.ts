@@ -199,6 +199,16 @@ export interface ReportsPolicy {
  */
 export interface BrownfieldPolicy {
   readonly mode: 'brownfield';
+  /**
+   * Optional author-declared policy NAME (P0-3, 4.4.0): a stable id
+   * (`acme.dod.pkg`) + version (`1`) the verdict carries alongside the
+   * content hash, so two policy versions produce distinguishable
+   * verdicts BY NAME and an embedded policy document can be re-verified
+   * against the same DoD. Naming is declaration-only — it never changes
+   * what the policy does.
+   */
+  readonly id?: string;
+  readonly version?: string;
   /** Statuses that fail the guardrail check (non-zero exit code). */
   readonly block: ReadonlyArray<FindingStatus>;
   /** Statuses that emit a warning but don't fail. */
@@ -397,6 +407,11 @@ export const DEFAULT_BROWNFIELD_POLICY: BrownfieldPolicy = Object.freeze({
 /** Conventional location for a per-repo brownfield policy. Loaded
  *  automatically by `resolvePolicy` when present. */
 export const DEFAULT_POLICY_FILENAME = path.join('.dxkit', 'policy.json');
+
+// Policy NAMING (the verdict.v1 content hash) lives in `./policy-naming`
+// — split at the large-file bar, re-exported here so `from './policy'`
+// stays the single import surface for policy concepts.
+export { policyContentHash } from './policy-naming';
 
 /**
  * Load a brownfield policy with the three-step resolution order

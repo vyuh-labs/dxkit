@@ -29,12 +29,8 @@ import type { GuardrailCheckResult } from './gate/result';
 import { resolveGateMode } from './baseline/modes';
 import { resolvePolicy } from './baseline/policy';
 import { trustContextFromFlag } from './analysis-trust';
-import {
-  renderConsole,
-  renderJson,
-  verdictCounts,
-  type VerdictCounts,
-} from './baseline/check-renderers';
+import { renderConsole, verdictCounts, type VerdictCounts } from './baseline/check-renderers';
+import { buildWireVerdict } from './gate/verdict';
 import {
   describeCorrectnessFloor,
   runCorrectnessFloor,
@@ -191,34 +187,21 @@ export async function runGateCommand(
   };
 }
 
-/** Render the outcome for the console (human) or stdout JSON. */
+/**
+ * Render the outcome: human console text, or the frozen `verdict.v1`
+ * wire document (P0-2 — stable JSON on stdout; the workbench renders,
+ * dxkit decides). `guardrail check --json` keeps its own payload shape
+ * untouched this release.
+ */
 export function renderGateOutcome(outcome: GateCommandOutcome, json: boolean): string {
   if (json) {
-    const payload = {
-      ...renderJson(outcome.result),
-      gate: {
-        verdict: outcome.verdict,
-        exitCode: outcome.exitCode,
-        floor: outcome.floor
-          ? {
-              ran: outcome.floor.ran,
-              blocks: outcome.floorNetNew.length > 0,
-              netNew: outcome.floorNetNew.map((f) => ({
-                check: f.check,
-                attribution: f.attribution,
-                ...(f.netNewFindings !== undefined ? { findings: f.netNewFindings } : {}),
-              })),
-              checks: outcome.floor.checks.map((c) => ({
-                pack: c.pack,
-                label: c.label,
-                status: c.status,
-              })),
-            }
-          : { skipped: outcome.floorSkipped?.cause, cause: outcome.floorSkipped?.detail },
-      },
-    };
-    return JSON.stringify(payload, null, 2);
+    return JSON.stringify(buildWireVerdict(outcome, renderGateReceipt(outcome)), null, 2);
   }
+  return renderGateReceipt(outcome);
+}
+
+/** The human receipt — also embedded verbatim in the verdict.v1 doc. */
+function renderGateReceipt(outcome: GateCommandOutcome): string {
   const lines: string[] = [renderConsole(outcome.result)];
   if (outcome.floor) {
     lines.push('', describeCorrectnessFloor(outcome.floor));

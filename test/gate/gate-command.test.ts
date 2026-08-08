@@ -204,23 +204,46 @@ describe('the correctness floor under --trusted', () => {
   );
 });
 
-describe('the --json payload', () => {
+describe('the --json payload is verdict.v1 (P0-2)', () => {
   it(
-    'carries the gate verdict + floor disclosure in machine shape',
+    'emits the frozen wire document: engine, policy hash, status, checks with causes, floor, receipt',
     async () => {
       const dir = makeTree({
         'README.md': '# generated package\n',
-        '.dxkit/policy.json': securityPolicyJson(),
+        'code/handlers.js': '// TODO wire discounts\n',
+        '.dxkit/policy.json': securityPolicyJson({
+          id: 'test.dod',
+          version: '1',
+          checks: [{ name: 'no_placeholder', pattern: '\\bTODO\\b', globs: ['code/**'] }],
+        }),
       });
       const outcome = await runGateCommand(dir, {});
-      const parsed = JSON.parse(renderGateOutcome(outcome, true));
-      expect(parsed.gate.verdict).toMatch(/^PASSED/);
-      expect(parsed.gate.exitCode).toBe(0);
-      expect(parsed.gate.floor.skipped).toBe('untrusted');
-      expect(typeof parsed.gate.floor.cause).toBe('string');
-      // The engine payload rides along unchanged (WP3 swaps this wrapper
-      // for verdict.v1; guardrail check --json is untouched either way).
-      expect(parsed.verdict).toBeDefined();
+      const doc = JSON.parse(renderGateOutcome(outcome, true));
+      expect(doc.schema).toBe('verdict.v1');
+      expect(doc.engine.name).toBe('dxkit');
+      expect(doc.engine.version).toMatch(/^\d+\.\d+\.\d+/);
+      // The policy is named: hash always, id@version when declared (P0-3).
+      expect(typeof doc.policy.hash).toBe('string');
+      expect(doc.policy.hash.length).toBeGreaterThan(0);
+      expect(doc.policy.id).toBe('test.dod');
+      expect(doc.policy.version).toBe('1');
+      expect(doc.status).toBe('blocked');
+      expect(doc.exitCode).toBe(1);
+      expect(doc.mode).toBe('fresh');
+      // The text-rule finding rides with its durable identity + block flag.
+      const finding = doc.findings.find(
+        (f: { kind: string; blocking: boolean }) => f.kind === 'custom-check' && f.blocking,
+      );
+      expect(finding.fingerprint).toMatch(/^[0-9a-f]{16}$/);
+      expect(finding.file).toBe('code/handlers.js');
+      // Every skipped check carries a cause — never a bare skip.
+      const skipped = doc.checks.filter((c: { status: string }) => c.status === 'skipped');
+      expect(skipped.every((c: { cause?: string }) => typeof c.cause === 'string')).toBe(true);
+      // The floor did not run (untrusted) — declared, with the cause.
+      expect(doc.floor.ran).toBe(false);
+      expect(doc.floor.skippedWithCause).toContain('untrusted');
+      // The human receipt is embedded verbatim.
+      expect(doc.receipt).toContain('Gate verdict: BLOCKED');
     },
     HEAVY,
   );
