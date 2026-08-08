@@ -70,19 +70,79 @@ import { execSync } from 'child_process';
 import { detectRepoVisibility } from './visibility';
 import type { RepoVisibility } from './visibility';
 
-/** The three modes. Keep this union ordered the same way as
- *  `BASELINE_MODES` (declared below) so help text + arch checks
- *  match. */
-export type BaselineMode = 'committed-full' | 'committed-sanitized' | 'ref-based';
+/** The five modes. The first three are the REPO modes a guardrail can
+ *  resolve (CLI flag / policy / visibility default — keep them ordered
+ *  the same way as `BASELINE_MODES` below so help text + arch checks
+ *  match). The last two are GATE-ONLY priors (4.4.0 WP2), constructed
+ *  exclusively by `resolveGateMode` for the `gate` surface:
+ *
+ *   - **`fresh`** — the empty prior. Everything in the subject tree is
+ *     net-new BY CONSTRUCTION and the verdict says so; Rule 19's drift
+ *     machinery is inapplicable-by-construction (the prior envelope IS
+ *     the current envelope), never disabled.
+ *   - **`tree-baseline`** — the prior is a full gather of a supplied
+ *     directory (`ResolvedMode.baselineDir`): the generated-vs-edited
+ *     diff (H2). Shares the ref-based arm's gather + projection.
+ */
+export type BaselineMode =
+  | 'committed-full'
+  | 'committed-sanitized'
+  | 'ref-based'
+  | 'fresh'
+  | 'tree-baseline';
 
-/** Canonical enumeration of the mode strings. Consumers wanting to
- *  iterate every mode (CLI flag validation, help text, doctor)
- *  import this rather than re-listing the union members. */
+/** Canonical enumeration of the REPO mode strings — the modes a
+ *  guardrail surface may select via `--mode` / `baseline.mode` policy.
+ *  Consumers wanting to iterate them (CLI flag validation, help text,
+ *  doctor, the policy schema enum) import this rather than re-listing
+ *  the union members. The gate-only priors are deliberately NOT here:
+ *  a repo policy cannot pin `fresh`, and `guardrail check --mode=fresh`
+ *  is a flag error — they exist only through `resolveGateMode`. */
 export const BASELINE_MODES: ReadonlyArray<BaselineMode> = Object.freeze([
   'committed-full',
   'committed-sanitized',
   'ref-based',
 ]);
+
+/** The gate-only prior modes (see `BaselineMode`). */
+export const GATE_ONLY_MODES: ReadonlyArray<BaselineMode> = Object.freeze([
+  'fresh',
+  'tree-baseline',
+]);
+
+/**
+ * How a mode's PRIOR side comes into being — the classification every
+ * engine branch keys on (never the mode strings themselves, so a new
+ * mode declares its semantics once here and every branch follows):
+ *
+ *   - `'committed'` — read from a committed baseline file (anchor
+ *     transport aware). Scheme-guarded; capture-time disclosures
+ *     (deferredCapture, baseline-suspect) apply.
+ *   - `'dir-gathered'` — re-gathered by THIS run from a directory (a
+ *     materialized git ref, or a supplied tree). Same-environment and
+ *     always current-scheme, so scheme/drift guards don't apply — but
+ *     the directory lacks build artifacts, so the artifact-dependent
+ *     kinds are excluded from both sides and DISCLOSED
+ *     (`partitionForRefBasedDiff`).
+ *   - `'empty'` — no prior at all (`fresh`). Nothing is excluded and
+ *     nothing can drift; every finding is `added` by construction and
+ *     the verdict declares it.
+ */
+export type PriorClass = 'committed' | 'dir-gathered' | 'empty';
+
+/** The one mode → prior-class mapping. */
+export function priorClassOf(mode: BaselineMode): PriorClass {
+  switch (mode) {
+    case 'committed-full':
+    case 'committed-sanitized':
+      return 'committed';
+    case 'ref-based':
+    case 'tree-baseline':
+      return 'dir-gathered';
+    case 'fresh':
+      return 'empty';
+  }
+}
 
 /**
  * WHERE a committed baseline's anchor is stored — see
@@ -146,7 +206,8 @@ export type ModeSource =
   | 'auto-public'
   | 'auto-private'
   | 'auto-internal'
-  | 'auto-unknown';
+  | 'auto-unknown'
+  | 'gate';
 
 /** Resolution outcome carrying the chosen mode + the audit trail
  *  + the resolved ref (for ref-based). Consumers read
@@ -161,6 +222,10 @@ export interface ResolvedMode {
    *  policy, or the repo's default-branch upstream tracking ref.
    *  Undefined when mode is not ref-based. */
   readonly ref?: string;
+  /** Directory whose gather is the prior when `mode === 'tree-baseline'`
+   *  (the `gate --baseline <dir>` arm). Absolute path. Undefined for
+   *  every other mode. */
+  readonly baselineDir?: string;
 }
 
 /** Input shape for the resolver. Every field is optional so the
@@ -256,6 +321,30 @@ export function probeOriginHeadRef(cwd: string): string | undefined {
   }
 }
 
+/**
+ * Resolve the prior mode for a `gate` surface run (4.4.0 WP2). Kept
+ * beside `resolveBaselineMode` on purpose — Rule 11: mode picking has
+ * ONE home, and the gate-only priors exist only through this door.
+ * `baselineDir` supplied → `tree-baseline` (generated-vs-edited diff);
+ * absent → `fresh` (the empty prior; everything net-new by
+ * construction).
+ */
+export function resolveGateMode(opts: { readonly baselineDir?: string }): ResolvedMode {
+  if (opts.baselineDir !== undefined) {
+    return {
+      mode: 'tree-baseline',
+      source: 'gate',
+      explanation: `mode=tree-baseline (gate --baseline ${opts.baselineDir})`,
+      baselineDir: opts.baselineDir,
+    };
+  }
+  return {
+    mode: 'fresh',
+    source: 'gate',
+    explanation: 'mode=fresh (gate: empty prior — everything net-new by construction)',
+  };
+}
+
 function explanationFor(mode: BaselineMode, source: ModeSource): string {
   switch (source) {
     case 'cli':
@@ -270,6 +359,10 @@ function explanationFor(mode: BaselineMode, source: ModeSource): string {
       return `mode=${mode} (auto: gh detected an internal repo)`;
     case 'auto-unknown':
       return `mode=${mode} (auto: visibility not detectable via gh; defaulting to private posture)`;
+    case 'gate':
+      // resolveGateMode stamps its own explanation; this arm exists for
+      // exhaustiveness only.
+      return `mode=${mode} (gate surface)`;
   }
 }
 

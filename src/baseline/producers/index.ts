@@ -246,6 +246,12 @@ const SECRET_HMAC_PRODUCER: BaselineProducer = {
   name: 'secret-hmac',
   contributes: ['secret-hmac'],
   produce(ctx) {
+    // Salt mode `unavailable` (a bare tree — 4.4.0 WP2): no HMAC can be
+    // computed, so the companion kind is skipped, DECLARED on the
+    // envelope (`saltMode: 'unavailable'`). The located `secret` twin
+    // still gates in full — the companion is cross-file relocation
+    // assist, never the gate itself.
+    if (ctx.salt === '') return [];
     return rawSecretsToBaselineEntries({ rawSecrets: ctx.rawSecrets, salt: ctx.salt });
   },
   recallContexts(ctx) {
