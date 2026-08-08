@@ -67,6 +67,15 @@ itself to the same honesty contract the run itself is held to.
   may carry a different prompt than the salvaged attempt), never a
   silent guard.
 
+- **Every agent prompt now explicitly bans `.github/` writes.** The
+  ground rules said "do not touch CI/workflow files", but issue and PR
+  templates under `.github/` do not read as CI files to an agent — one
+  wrote them, and the refused push cost the whole run. The ban is now
+  explicit in every task prompt, including the custom dispatch task, with
+  a write-the-proposal-in-notes escape hatch. Prompt-level constraints of
+  this shape were validated live: the one run that carried the ban
+  complied fully and verified end-to-end.
+
 ### Internal
 
 - The remediate executor is split out of the CLI module and gains
