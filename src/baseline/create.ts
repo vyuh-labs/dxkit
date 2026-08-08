@@ -41,7 +41,7 @@ import type { BaselineAnalysisMeta, BaselineFile, BaselineRepoState } from './ba
 import { assessCaptureDeferral, type DeferredCaptureClass } from './deferral';
 import { resolveBaselineMode } from './modes';
 import type { ResolvedMode } from './modes';
-import { loadPolicyFromCwd, prohibitedLicensePatterns } from './policy';
+import { loadPolicyFromCwd, prohibitedLicensePatterns, type BrownfieldPolicy } from './policy';
 import { customCheckRecallInputs, gatherCustomChecks } from '../analyzers/custom-checks/gather';
 import type { CustomChecksUnobserved } from '../analyzers/custom-checks/gather';
 export type { CustomChecksUnobserved };
@@ -235,6 +235,10 @@ export function scanToBaselineFile(
 export async function gatherCurrentScan(options: {
   readonly cwd: string;
   readonly verbose?: boolean;
+  /** The RESOLVED policy governing this scan (4.4.0). A caller that resolved
+   *  one (--policy override, loop preset) MUST pass it so the custom-check
+   *  seam sees the document the verdict is judged under. Default: the tree's. */
+  readonly policy?: BrownfieldPolicy;
   /** Restrict the gather to the analyzers a scope needs (defaults to
    *  `FULL_SCOPE`). Only the loop Stop-gate passes a policy-derived scope;
    *  `createBaseline` / CI gather everything. See `gather-scope.ts`. */
@@ -281,11 +285,9 @@ export async function gatherCurrentScan(options: {
     root: cwd,
   };
 
-  // Salt resolves once; threaded into every HMAC-computing producer, mode
-  // stamped on the file. Fail-open (4.4.0 WP2): a gate over a bare tree has
-  // no git root, so the scan proceeds under the DECLARED `unavailable` mode
-  // — located secrets still gate in full; only the HMAC companions are
-  // skipped. `createBaseline` re-asserts a real salt below.
+  // Salt resolves once; mode stamped on the file. Fail-open (4.4.0): a bare
+  // tree scans under the DECLARED `unavailable` mode (located secrets still
+  // gate; HMAC companions skip). `createBaseline` re-asserts a real salt.
   const { mode: saltMode, salt } = resolveSaltOrUnavailable(cwd);
 
   // Build the producer context once. Every analyzer's gather runs
@@ -304,8 +306,8 @@ export async function gatherCurrentScan(options: {
   // lint.enabled) — `gatherCustomCheckFindings` no-ops (no spawn) otherwise, so
   // a repo without custom checks pays nothing. Scoped out of gathers that a
   // policy can't block on (the loop Stop-gate's fast path), matching the other
-  // producer inputs.
-  const policy = loadPolicyFromCwd(cwd);
+  // producer inputs. The caller's RESOLVED policy wins; tree's own = fallback.
+  const policy = options.policy ?? loadPolicyFromCwd(cwd);
   const customCheckGather = scope.customChecks
     ? gatherCustomChecks({ cwd, policy, trust: options.trust })
     : undefined;
@@ -437,9 +439,7 @@ export async function createBaseline(
     return { mode };
   }
 
-  // A COMMITTED baseline needs a re-derivable salt (its HMAC companions must
-  // compute identically at check time) — the write path keeps the hard error.
-  resolveSalt(cwd);
+  resolveSalt(cwd); // a COMMITTED baseline needs a re-derivable salt — hard error kept
 
   const filePath = pathForBaseline(cwd, name);
   if (!options.force && fs.existsSync(filePath)) {

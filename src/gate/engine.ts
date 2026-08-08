@@ -177,6 +177,11 @@ export async function runGate(
   const current = await gatherCurrentScan({
     cwd,
     verbose: options.verbose,
+    // The ONE resolved policy governs the whole run — the custom-check
+    // seam must see the same document the verdict is judged under (a
+    // --policy override reaching findings but not checks was the WP4
+    // class this closes).
+    policy,
     scope,
     incrementalFiles,
     // The guardrail verdict never reads dep `upgradePlan` (it's excluded from

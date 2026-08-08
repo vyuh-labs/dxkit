@@ -175,6 +175,108 @@ export interface WireExportReceipt {
   detail?: string;
 }
 
+// ── verdict.v1 ──────────────────────────────────────────────────────────────
+
+/**
+ * The engine identity a verdict names — reproducibility's first field: a
+ * receipt that cannot say what produced it cannot be re-verified.
+ */
+export interface WireVerdictEngine {
+  name: string;
+  version: string;
+}
+
+/**
+ * The policy the verdict was judged under. `hash` is always present (the
+ * policy content hash the engine actually used); `id` + `version` are the
+ * author-declared name of the policy document when it carries one — a
+ * verdict under `acme.dod/1` is distinguishable from one under
+ * `acme.dod/2` by name, not just by hash.
+ */
+export interface WireVerdictPolicy {
+  id?: string;
+  version?: string;
+  hash: string;
+}
+
+/** The three-way outcome. `cannot_gate` is the refusal tier: the engine
+ *  could not attribute a block-rule-class delta, so it refuses to certify
+ *  rather than guessing (never rendered as a pass). */
+export type WireVerdictStatus = 'passed' | 'blocked' | 'cannot_gate';
+
+/** One finding that counts toward the verdict (blocking or warning). */
+export interface WireVerdictFinding {
+  /** dxkit finding kind (`secret`, `custom-check`, `dep-vuln`, …). */
+  kind: string;
+  severity?: WireSeverity;
+  /** Rule / check label when the kind carries one. */
+  rule?: string;
+  /** Repo-relative POSIX path, when located. */
+  file?: string;
+  /** 1-based line, when located. */
+  line?: number;
+  message?: string;
+  /** The durable canonical identity (Rule 9) — stable across runs and
+   *  environments; the handle allowlists and baselines key on. */
+  fingerprint: string;
+  /** True = counts toward `blocked`; false = a warning. */
+  blocking: boolean;
+}
+
+/**
+ * One named check's outcome. `skipped` is NEVER silent: it always carries
+ * `cause` (the shared acceptance philosophy — a skipped check is not a
+ * passed check, and the verdict says why it did not run).
+ */
+export interface WireVerdictCheck {
+  /** Stable check id (`custom:no_placeholder`, `deps.vulnerabilities`,
+   *  `gate.flow`, `floor.typescript:syntax`, …). */
+  id: string;
+  status: 'passed' | 'failed' | 'skipped';
+  /** REQUIRED when status is `skipped`. */
+  cause?: string;
+}
+
+/** The correctness floor's slice of the verdict. */
+export interface WireVerdictFloor {
+  ran: boolean;
+  /** Present when `ran` is false — the declared cause. */
+  skippedWithCause?: string;
+  /** Per-command outcomes when the floor ran. */
+  checks?: WireVerdictCheck[];
+}
+
+/**
+ * `verdict.v1` — the machine-readable gate verdict + receipt (the fleet
+ * verification-receipt's unsigned core). Emitted by `vyuh-dxkit gate
+ * --json`; consumed by workbenches that render the soundness panel
+ * themselves ("we render, dxkit decides"). Reproducible by construction:
+ * it names the engine, the policy (id/version/hash), and the prior mode
+ * that produced it.
+ */
+export interface WireVerdictDoc {
+  schema: 'verdict.v1';
+  engine: WireVerdictEngine;
+  policy: WireVerdictPolicy;
+  status: WireVerdictStatus;
+  /** The gate's exit-code contract: 0 passed / 1 blocked / 2 cannot_gate. */
+  exitCode: 0 | 1 | 2;
+  /** Prior mode the subject was judged under (`fresh`, `tree-baseline`,
+   *  `committed-full`, `ref-based`, …) — attribution semantics differ by
+   *  prior, so an honest receipt names it. */
+  mode: string;
+  findings: WireVerdictFinding[];
+  checks: WireVerdictCheck[];
+  floor: WireVerdictFloor;
+  /** Populated when `status` is `cannot_gate`: what could not be
+   *  attributed and the remedy. */
+  refusals?: { reason: string; remedy?: string }[];
+  /** The human rendering, embeddable in an exported package. */
+  receipt: string;
+  /** Emitter-specific payload; carried through, never load-bearing. */
+  meta?: Record<string, unknown>;
+}
+
 // ── The schema-id registry ──────────────────────────────────────────────────
 
 /**
@@ -182,9 +284,17 @@ export interface WireExportReceipt {
  * (new kinds, new versions), never removed. Pinned by the main repo's
  * `test/sdk-surface-freeze.test.ts`.
  */
-export const WIRE_SCHEMA_IDS = ['contract.v1', 'inventory.v1', 'findings.v1', 'export.v1'] as const;
+export const WIRE_SCHEMA_IDS = [
+  'contract.v1',
+  'inventory.v1',
+  'findings.v1',
+  'export.v1',
+  'verdict.v1',
+] as const;
 
 export type WireSchemaId = (typeof WIRE_SCHEMA_IDS)[number];
 
-/** The union of every wire document an extension can emit. */
+/** The union of every wire document an extension can emit. Deliberately
+ *  EXCLUDES `verdict.v1`: a verdict is what dxkit EMITS about a tree,
+ *  never a document an extension feeds in. */
 export type WireDoc = WireContractDoc | WireInventoryDoc | WireFindingsDoc | WireExportReceipt;

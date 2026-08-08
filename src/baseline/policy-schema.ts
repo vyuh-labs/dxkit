@@ -68,6 +68,19 @@ export function buildPolicySchema(version: string): Schema {
     additionalProperties: true,
     properties: {
       $schema: { type: 'string', description: 'Editor-schema stamp; written by the scaffold.' },
+      id: {
+        type: 'string',
+        description:
+          'Optional stable policy NAME (e.g. acme.dod.pkg). Carried on every verdict.v1 ' +
+          'document alongside the content hash, so verdicts under different policies are ' +
+          'distinguishable by name. Declaration-only — never changes what the policy does.',
+      },
+      version: {
+        type: 'string',
+        description:
+          'Optional policy document version (paired with `id`). Bump when the DoD changes; ' +
+          'two versions produce verdicts naming their own version.',
+      },
       baseline: obj(
         {
           mode: stringProp('baseline.mode'),
