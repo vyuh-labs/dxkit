@@ -5,6 +5,77 @@ All notable changes to `@vyuhlabs/dxkit` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.3.8] - 2026-08-08
+
+The deliver-layer hotfix. Four live remediation-lane runs surfaced four
+defects, and in every one the agent's work was verified sound — the frame
+around it then lost, discarded, or misattributed that work. Each fix lands
+at the root of its class with the regression pinned by tests: the layer
+that classifies, attributes, lands, and salvages an agent run now holds
+itself to the same honesty contract the run itself is held to.
+
+### Fixed
+
+- **A finding on a modified line no longer misattributes as net-new
+  (#271).** A modified line is a -/+ replacement hunk with no line-map
+  image, so a located finding sitting on one split into removed + added —
+  and the added side blocked as a "new" finding the developer never
+  introduced. Any bulk formatter or codemod tripped this (observed: a
+  lint fix that resolved thousands of findings, blocked on rows that had
+  merely been restyled). The git-aware matcher gains a modified-hunk
+  endpoint pass: an unmatched prior finding inside a replacement hunk's
+  old span pairs with an unmatched current finding of the same rule
+  inside the same hunk's new span, and only when that pairing is
+  unambiguous — exactly one candidate on each side. Ambiguity stays
+  split, pure deletions and additions never pair, and the new
+  `git-hunk-pair` reason carries confidence below the line-survived tier,
+  so the pairing can soften a verdict but never hide a genuinely new
+  finding.
+- **A wall-clock kill is classified by the deadline, not the exit
+  encoding (#272).** The agent CLI traps the timeout SIGTERM and exits
+  143 gracefully, which read as a plain failed exit, fell into the
+  "agent never ran" branch, and returned before the leftover sweep — a
+  30-minute run's stranded work discarded, salvage never engaged, and the
+  reason line blaming an unrelated stderr warning. The exec now measures
+  its own elapsed time and classifies a kill-shaped death at or past the
+  deadline as a timeout, whatever the encoding; a natural failure exit
+  before the deadline is never reclassified. And one layer out, the
+  runner no longer honors a never-ran claim before looking at the tree:
+  the sweep runs first, and a claim contradicted by committed work or
+  uncommittable leftovers demotes to a disclosed failure — verification
+  decides the work's fate, because a future CLI can always invent a new
+  exit encoding, and the tree cannot lie.
+- **A refused landing push is a disclosed outcome, and evidence precedes
+  delivery (#273).** A push refused by repository rules or token
+  permissions crashed the frame after verification: no attempt record,
+  no ledger rendered, an empty evidence artifact. The attempt record —
+  with the commit range the patch-artifact fallback reads — is now
+  written before the push and flipped on success, and a landing failure
+  becomes a `landingBlocked` outcome carrying git's own words, with the
+  remedy named when the refusal is rules-shaped (grant the token the
+  permission, add a ruleset bypass, or keep the task away from the
+  restricted paths). The ledger, record, and step summary render as
+  usual: a refused push loses the delivery, never the evidence.
+- **A custom dispatch task honors the salvage policy (#274).** The
+  executor re-derived task facts from a registry lookup that is
+  deliberately empty for `custom`, so salvage hard-fell to `discard` —
+  overriding both an explicit `draft-pr` policy and `auto` — and a
+  verified, guardrail-passed docs run was thrown away. Both derivations
+  now route the raw id through the one resolvers, which already handle
+  `custom` (open-ended, so `auto` salvages as a draft PR). Resume for
+  custom is now a deliberate, disclosed unavailability (a later dispatch
+  may carry a different prompt than the salvaged attempt), never a
+  silent guard.
+
+### Internal
+
+- The remediate executor is split out of the CLI module and gains
+  injection seams plus executor-level tests — this wiring layer between
+  the runner and the lander is where two of the four defects sat with
+  zero coverage. The salvage-threading, pre-push-record, and
+  landing-refusal behaviors are each pinned at exactly the layer that
+  shipped them.
+
 ## [4.3.7] - 2026-08-06
 
 The honesty release: one class of defect, fixed across every surface it
