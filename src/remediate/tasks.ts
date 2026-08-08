@@ -103,6 +103,12 @@ export const SHARED_RULES = `
 Ground rules (non-negotiable):
 - Work ONLY on this task. Do not fix unrelated debt, do not refactor beyond
   what the task needs, do not touch CI/workflow files.
+- Never create or edit ANYTHING under the .github/ directory — not
+  workflows, not issue/PR templates, not configs. Repository rules and
+  token permissions commonly refuse bot pushes touching those paths, and a
+  refused push means NONE of your work lands. If the task seems to need a
+  .github/ change, write the proposal in
+  docs/DXKIT-REMEDIATION-NOTES.md instead.
 - NEVER run \`vyuh-dxkit baseline create\` or edit \`.dxkit/baselines/\` — the
   gate must attribute your work honestly, and refreshing the baseline to
   clear a block is forbidden.
