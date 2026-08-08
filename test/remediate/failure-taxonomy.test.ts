@@ -268,8 +268,13 @@ describe('runner: an errored no-diff run is agent-failed, never a benign no-op',
   });
 
   it('agent-never-ran carries the entry floor too (the ledger names pre-existing debt)', async () => {
+    // diff: false — a genuinely never-ran agent leaves a clean tree; a
+    // never-ran claim over a tree WITH work is the #272 contradiction case
+    // (pinned in run.test.ts) and no longer returns this outcome.
     const r = await runRemediateTask(
-      base(fakeDriver({ completed: false, neverRan: { reason: 'Credit balance is too low' } })),
+      base(fakeDriver({ completed: false, neverRan: { reason: 'Credit balance is too low' } }), {
+        git: fakeGit({ diff: false }),
+      }),
     );
     expect(r.outcome).toBe('agent-never-ran');
     expect(r.note).toContain('agent never ran: Credit balance is too low');
