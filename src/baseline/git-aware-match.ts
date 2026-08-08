@@ -66,6 +66,14 @@ const LINE_FUZZ_RANGE = 2;
  *  a content-hash pair demotes to `'uncertain'`; for critical
  *  findings (threshold 0.75), it passes through cleanly. */
 const CONFIDENCE_CONTENT_HASH = 0.8;
+/** Confidence assigned to a modified-hunk endpoint pair (#271): the
+ *  line itself changed, so there is no line-map image and no byte
+ *  identity — the evidence is the hunk STRUCTURE plus an unambiguous
+ *  same-rule 1:1 within it. Below git-line-fuzz (the line survived
+ *  there; here it was rewritten), so low-severity pairs demote to
+ *  `'uncertain'` under the default thresholds while the pairing still
+ *  prevents the false net-new BLOCK that split pairs produced. */
+const CONFIDENCE_HUNK_PAIR = 0.85;
 
 /**
  * Per-finding identity plus the locator info needed to query git.
@@ -135,24 +143,8 @@ export function mapLineThroughDiff(opts: {
   if (!oldFile || !newFile) {
     throw new Error('mapLineThroughDiff requires `file` or both `oldFile` + `newFile`');
   }
-  let diff: string;
-  try {
-    diff = execFileSync(
-      'git',
-      [
-        'diff',
-        '--unified=0',
-        '--no-color',
-        '--find-renames',
-        opts.baseSha,
-        opts.headSha,
-        '--',
-        oldFile,
-        ...(newFile !== oldFile ? [newFile] : []),
-      ],
-      { cwd: opts.cwd, encoding: 'utf8' },
-    );
-  } catch {
+  const diff = fetchFileDiff(opts.cwd, opts.baseSha, opts.headSha, oldFile, newFile);
+  if (diff === null) {
     // File missing in one revision, git not available, sha unreachable — any
     // of these defeats the mapping. Caller treats null as "unmatched."
     return null;
@@ -162,6 +154,60 @@ export function mapLineThroughDiff(opts: {
     return opts.baseLine;
   }
   return walkHunks(diff, opts.baseLine);
+}
+
+/** The ONE per-file diff fetch both the line mapper and the hunk-pair pass
+ *  read (`--unified=0`, rename-aware). Null when git cannot produce it. */
+function fetchFileDiff(
+  cwd: string,
+  baseSha: string,
+  headSha: string,
+  oldFile: string,
+  newFile: string,
+): string | null {
+  try {
+    return execFileSync(
+      'git',
+      [
+        'diff',
+        '--unified=0',
+        '--no-color',
+        '--find-renames',
+        baseSha,
+        headSha,
+        '--',
+        oldFile,
+        ...(newFile !== oldFile ? [newFile] : []),
+      ],
+      { cwd, encoding: 'utf8' },
+    );
+  } catch {
+    return null;
+  }
+}
+
+interface HunkSpan {
+  readonly oldStart: number;
+  readonly oldCount: number;
+  readonly newStart: number;
+  readonly newCount: number;
+}
+
+/** All `@@ -A,B +C,D @@` spans of a `--unified=0` diff, in order. Pure
+ *  function over the diff text (the same header grammar `walkHunks` walks). */
+function parseHunkSpans(diff: string): HunkSpan[] {
+  const hunkRe = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/gm;
+  const spans: HunkSpan[] = [];
+  let match: RegExpExecArray | null;
+  while ((match = hunkRe.exec(diff)) !== null) {
+    spans.push({
+      oldStart: parseInt(match[1], 10),
+      oldCount: match[2] !== undefined ? parseInt(match[2], 10) : 1,
+      newStart: parseInt(match[3], 10),
+      newCount: match[4] !== undefined ? parseInt(match[4], 10) : 1,
+    });
+  }
+  return spans;
 }
 
 /**
@@ -222,6 +268,13 @@ function walkHunks(diff: string, baseLine: number): number | null {
  *      policy's per-severity thresholds naturally tune whether to
  *      trust this layer.
  *
+ *   1.75. Modified-hunk endpoint pairing (#271): a prior finding ON a
+ *      line the diff modified (a -/+ replacement hunk — no line-map
+ *      image, no surviving context bytes) pairs with a current finding
+ *      of the same rule inside the same hunk's new span, conservative
+ *      1:1 (an ambiguous bucket stays split). Confidence 0.85 — below
+ *      git-line-fuzz: the line was rewritten, not moved.
+ *
  *   2. Multiset exact-identity diff over whatever remains. Catches:
  *        - findings without a file-line locator (dep-vuln, license,
  *          symbol-based coverage-gap, duplication)
@@ -249,10 +302,12 @@ export function gitAwareMatch(
   const pairs: MatchPair[] = [];
   const priorMatched = new Set<LocatedIdentity>();
   const currentMatched = new Set<LocatedIdentity>();
+  // Shared by Pass 1, 1b, and the hunk-pair pass below.
+  const renames = reachability.ok
+    ? readRenameMap(opts.cwd, opts.baseSha, headSha)
+    : new Map<string, string>();
 
   if (reachability.ok) {
-    const renames = readRenameMap(opts.cwd, opts.baseSha, headSha);
-
     // Index current findings by (file, rule, line). One key holds at
     // most one entry — the multiset diff in pass 2 picks up any
     // collisions left after location pairing.
@@ -437,6 +492,109 @@ export function gitAwareMatch(
           },
         ],
       });
+    }
+  }
+
+  // Pass 1.75 — modified-hunk endpoint pairing (#271). A located finding ON
+  // a line the diff MODIFIED cannot relocate through the line map: a
+  // modified line is a -/+ hunk pair with no image, so Pass 1 maps it to
+  // null and the finding splits into removed + added — and the added side
+  // false-blocks as net-new (Rule 19 cause #4, "the finding MOVED", read as
+  // cause #1, "the developer introduced it"). Bites any bulk formatter or
+  // codemod. Content hashes don't reach it either: the surrounding bytes
+  // changed by definition. Here the two endpoints re-pair through the hunk
+  // STRUCTURE: an unmatched prior finding inside a hunk's replaced span
+  // pairs with an unmatched current finding of the SAME rule inside the
+  // SAME hunk's new span — and ONLY when the pairing is unambiguous
+  // (exactly one candidate on each side of that hunk+rule bucket). An
+  // ambiguous or unmatched candidate stays split: bias hard toward false
+  // NEGATIVE on the pairing, never invent a match. Pure deletions
+  // (newCount 0) never pair — there is nothing on the other side.
+  if (reachability.ok) {
+    const priorsByFile = new Map<string, LocatedIdentity[]>();
+    for (const p of prior) {
+      if (priorMatched.has(p)) continue;
+      if (!p.file || p.line === undefined || !p.rule) continue;
+      const bucket = priorsByFile.get(p.file);
+      if (bucket) bucket.push(p);
+      else priorsByFile.set(p.file, [p]);
+    }
+    const currentsByFile = new Map<string, LocatedIdentity[]>();
+    for (const c of current) {
+      if (currentMatched.has(c)) continue;
+      if (!c.file || c.line === undefined || !c.rule) continue;
+      const bucket = currentsByFile.get(c.file);
+      if (bucket) bucket.push(c);
+      else currentsByFile.set(c.file, [c]);
+    }
+    for (const [file, priors] of priorsByFile) {
+      const effectivePath = renames.get(file) ?? file;
+      const pathChanged = effectivePath !== file;
+      const currents = currentsByFile.get(effectivePath);
+      if (!currents || currents.length === 0) continue;
+      const diff = fetchFileDiff(opts.cwd, opts.baseSha, headSha, file, effectivePath);
+      if (!diff || !diff.trim()) continue;
+      // Replacement hunks only: a -/+ pair with both sides non-empty.
+      const hunks = parseHunkSpans(diff).filter((h) => h.oldCount > 0 && h.newCount > 0);
+      if (hunks.length === 0) continue;
+
+      const bucketKey = (hunkIdx: number, rule: string): string => `${hunkIdx}\0${rule}`;
+      const priorBuckets = new Map<string, LocatedIdentity[]>();
+      for (const p of priors) {
+        const idx = hunks.findIndex(
+          (h) => p.line! >= h.oldStart && p.line! <= h.oldStart + h.oldCount - 1,
+        );
+        if (idx === -1) continue;
+        const key = bucketKey(idx, p.rule!);
+        const bucket = priorBuckets.get(key);
+        if (bucket) bucket.push(p);
+        else priorBuckets.set(key, [p]);
+      }
+      if (priorBuckets.size === 0) continue;
+      const currentBuckets = new Map<string, LocatedIdentity[]>();
+      for (const c of currents) {
+        const idx = hunks.findIndex(
+          (h) => c.line! >= h.newStart && c.line! <= h.newStart + h.newCount - 1,
+        );
+        if (idx === -1) continue;
+        const key = bucketKey(idx, c.rule!);
+        const bucket = currentBuckets.get(key);
+        if (bucket) bucket.push(c);
+        else currentBuckets.set(key, [c]);
+      }
+
+      for (const [key, ps] of priorBuckets) {
+        const cs = currentBuckets.get(key);
+        // The conservative 1:1: a singleton on BOTH sides, or no pair.
+        if (!cs || ps.length !== 1 || cs.length !== 1) continue;
+        const p = ps[0];
+        const c = cs[0];
+        priorMatched.add(p);
+        currentMatched.add(c);
+        const reasons: MatchReason[] = [
+          {
+            code: 'git-hunk-pair',
+            detail:
+              `finding sits on a MODIFIED line: git pairs ${p.file}:${p.line} with ` +
+              `${c.file}:${c.line} through the same replacement hunk (same rule, ` +
+              `unambiguous 1:1) — a modified line has no line-map image, so without ` +
+              `this pass the pair reads as removed+added`,
+          },
+        ];
+        if (pathChanged) {
+          reasons.unshift({
+            code: 'git-rename',
+            detail: `file renamed: ${file} → ${effectivePath}`,
+          });
+        }
+        pairs.push({
+          priorId: p.id,
+          currentId: c.id,
+          status: pathChanged ? 'relocated' : 'persisted',
+          confidence: CONFIDENCE_HUNK_PAIR,
+          reasons,
+        });
+      }
     }
   }
 

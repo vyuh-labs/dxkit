@@ -546,3 +546,156 @@ describe('gitAwareMatch', () => {
     expect(pair.reasons[0].detail).toContain('a.ts:4');
   });
 });
+
+describe('gitAwareMatch — modified-hunk endpoint pairing (#271)', () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = makeRepo();
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  function findingAt(file: string, line: number, rule = 'quotes'): LocatedIdentity {
+    return {
+      id: identityFor({ kind: 'code', tool: 'eslint', rule, file, line }),
+      file,
+      line,
+      rule,
+    };
+  }
+
+  /** Base: ten lines, a lint finding on line 10. Head: three lines deleted
+   *  above AND the finding line itself rewritten (the quote-fix shape from
+   *  the live incident) — so the finding lands on line 7 with new content.
+   *  No line-map image (the line was modified), no content-hash (the bytes
+   *  changed): only the hunk structure can re-pair the endpoints. */
+  function writeBaseAndModifiedHead(): { base: string; head: string } {
+    writeFileSync(
+      join(dir, 'a.ts'),
+      lines(
+        'line-1',
+        'line-2',
+        'line-3',
+        'line-4',
+        'line-5',
+        'line-6',
+        'line-7',
+        'line-8',
+        'line-9',
+        'const s = "double";',
+      ),
+    );
+    const base = commit(dir, 'initial');
+    writeFileSync(
+      join(dir, 'a.ts'),
+      lines('line-1', 'line-5', 'line-6', 'line-7', 'line-8', 'line-9', "const s = 'single';"),
+    );
+    const head = commit(dir, 'delete three lines, fix the quotes');
+    return { base, head };
+  }
+
+  it('pairs a finding on a MODIFIED line through the replacement hunk (the live class)', () => {
+    const { base, head } = writeBaseAndModifiedHead();
+    const prior = [findingAt('a.ts', 10)];
+    const current = [findingAt('a.ts', 7)];
+    expect(prior[0].id).not.toBe(current[0].id); // buckets differ — pass 2 cannot save this
+
+    const result = gitAwareMatch(prior, current, { cwd: dir, baseSha: base, headSha: head });
+    expect(result.added).toEqual([]);
+    expect(result.removed).toEqual([]);
+    const [pair] = result.pairs;
+    expect(pair.status).toBe('persisted');
+    expect(pair.confidence).toBe(0.85); // below git-line-fuzz: rewritten, not moved
+    expect(pair.reasons[0].code).toBe('git-hunk-pair');
+    expect(pair.reasons[0].detail).toContain('a.ts:10');
+    expect(pair.reasons[0].detail).toContain('a.ts:7');
+  });
+
+  it('the live shape end-to-end: unmodified lines relocate git-line-exact WHILE the modified line hunk-pairs', () => {
+    const { base, head } = writeBaseAndModifiedHead();
+    // line 9 ('line-9') survives untouched: maps 9 → 6 through the deletion.
+    const prior = [findingAt('a.ts', 10), findingAt('a.ts', 9, 'no-console')];
+    const current = [findingAt('a.ts', 7), findingAt('a.ts', 6, 'no-console')];
+
+    const result = gitAwareMatch(prior, current, { cwd: dir, baseSha: base, headSha: head });
+    expect(result.added).toEqual([]);
+    expect(result.removed).toEqual([]);
+    const codes = result.pairs.map((p) => p.reasons[0].code).sort();
+    expect(codes).toEqual(['git-hunk-pair', 'git-line-exact']);
+  });
+
+  it('an AMBIGUOUS bucket (two same-rule candidates in one hunk) stays split — never invent a match', () => {
+    writeFileSync(
+      join(dir, 'a.ts'),
+      lines(
+        'line-1',
+        'line-2',
+        'line-3',
+        'line-4',
+        'line-5',
+        'line-6',
+        'line-7',
+        'line-8',
+        'line-9',
+        'const a = "x";',
+        'const b = "y";',
+      ),
+    );
+    const base = commit(dir, 'initial');
+    writeFileSync(
+      join(dir, 'a.ts'),
+      lines(
+        'line-1',
+        'line-5',
+        'line-6',
+        'line-7',
+        'line-8',
+        'line-9',
+        "const a = 'x';",
+        "const b = 'y';",
+      ),
+    );
+    const head = commit(dir, 'delete three lines, fix both quote lines');
+
+    // Two same-rule findings inside ONE replacement hunk on each side: a
+    // 1:1 pairing would be a guess (which prior is which current?), so the
+    // pass must refuse — the pairs stay removed+added (false-negative bias).
+    const prior = [findingAt('a.ts', 10), findingAt('a.ts', 11)];
+    const current = [findingAt('a.ts', 7), findingAt('a.ts', 8)];
+    for (const p of prior) for (const c of current) expect(p.id).not.toBe(c.id);
+
+    const result = gitAwareMatch(prior, current, { cwd: dir, baseSha: base, headSha: head });
+    expect(result.removed.length).toBe(2);
+    expect(result.added.length).toBe(2);
+    expect(result.pairs.every((p) => p.reasons[0]?.code !== 'git-hunk-pair')).toBe(true);
+  });
+
+  it('different rules in one hunk never cross-pair', () => {
+    const { base, head } = writeBaseAndModifiedHead();
+    const prior = [findingAt('a.ts', 10, 'quotes')];
+    const current = [findingAt('a.ts', 7, 'semi')];
+
+    const result = gitAwareMatch(prior, current, { cwd: dir, baseSha: base, headSha: head });
+    expect(result.removed.length).toBe(1);
+    expect(result.added.length).toBe(1);
+  });
+
+  it('a pure deletion never pairs with an unrelated addition elsewhere in the file', () => {
+    writeFileSync(join(dir, 'a.ts'), lines('one', 'const gone = "x";', 'three', 'four', 'five'));
+    const base = commit(dir, 'initial');
+    writeFileSync(join(dir, 'a.ts'), lines('one', 'three', 'four', 'five', 'const fresh = "y";'));
+    const head = commit(dir, 'delete line 2, append a NEW finding line');
+
+    // The deletion hunk has no new span (newCount 0) and the addition hunk
+    // has no old span (oldCount 0): neither is a replacement, so the removed
+    // finding and the genuinely new finding must NOT pair — pairing them
+    // would grandfather a real net-new finding.
+    const prior = [findingAt('a.ts', 2)];
+    const current = [findingAt('a.ts', 5)];
+    const result = gitAwareMatch(prior, current, { cwd: dir, baseSha: base, headSha: head });
+    expect(result.removed.length).toBe(1);
+    expect(result.added.length).toBe(1);
+    expect(result.pairs.every((p) => p.reasons[0]?.code !== 'git-hunk-pair')).toBe(true);
+  });
+});
