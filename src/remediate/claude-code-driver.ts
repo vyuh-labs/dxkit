@@ -49,6 +49,22 @@ const MAX_CAPTURE = 16 * 1024 * 1024;
  * Real spawn. A timeout kill surfaces as `timedOut`, distinct from a
  * non-zero exit; captured output rides the error object either way.
  *
+ * Timeout classification is DEADLINE-FIRST, not signal-encoding-first
+ * (#272): the deadline is this exec's own fact, so it measures elapsed
+ * time itself and classifies a kill-shaped death at/past the deadline as
+ * `timedOut` — corroborated by any of the encodings a SIGTERM produces:
+ *
+ *   - signal-death: the child died to the signal (`signal: 'SIGTERM'`,
+ *     no exit status) — the only encoding the original predicate knew;
+ *   - graceful-catch: the child traps SIGTERM and exits 128+15=143
+ *     (observed on claude CLI 2.1.222) — `status: 143`, `signal: null`,
+ *     and no result JSON, which made the run read as "agent never ran"
+ *     and discard 30 minutes of stranded work before the sweep.
+ *
+ * A natural non-zero exit before the deadline is never a timeout, and a
+ * real failure exit (e.g. 1) is never reclassified even when the race
+ * lands it past the deadline — biased toward false NEGATIVE.
+ *
  * DECLARED EXCEPTION to the bounded-exec seam (Rule 2 discipline: an
  * exception is stated, never silent): `makeCommandExec` merges stdout and
  * stderr into one stream, but this driver's never-ran taxonomy REQUIRES
@@ -58,6 +74,7 @@ const MAX_CAPTURE = 16 * 1024 * 1024;
  * agent spawn keeps its own exec with the same timeout-kill semantics.
  */
 export const realAgentExec: AgentExec = (bin, args, opts) => {
+  const startedAt = Date.now();
   try {
     const stdout = execFileSync(bin, args as string[], {
       cwd: opts.cwd,
@@ -75,11 +92,17 @@ export const realAgentExec: AgentExec = (bin, args, opts) => {
       stdout?: string;
       stderr?: string;
     };
+    const status = typeof e.status === 'number' ? e.status : null;
+    const signalDeath = e.signal === 'SIGTERM' && status === null;
+    // Kill-shaped: died to a signal (no status), or exited with the
+    // SIGTERM convention code. A plain failure exit is not kill-shaped.
+    const killShaped = signalDeath || e.signal === 'SIGTERM' || status === 143 || status === null;
+    const pastDeadline = Date.now() - startedAt >= opts.timeoutMs;
     return {
-      code: typeof e.status === 'number' ? e.status : null,
+      code: status,
       stdout: e.stdout ?? '',
       stderr: e.stderr ?? String(e.message ?? ''),
-      timedOut: e.signal === 'SIGTERM' && typeof e.status !== 'number',
+      timedOut: signalDeath || (pastDeadline && killShaped),
     };
   }
 };

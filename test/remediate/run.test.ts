@@ -151,9 +151,55 @@ describe('refusal + infra arms (each truthful and distinct)', () => {
       completed: false,
       neverRan: { reason: 'claude exit 1: bad auth' },
     });
-    const r = await runRemediateTask(base(driver));
+    // A genuinely never-ran agent leaves a clean tree — the claim stands.
+    const r = await runRemediateTask(base(driver, { git: fakeGit({ diff: false }) }));
     expect(r.outcome).toBe('agent-never-ran');
     expect(r.note).toContain('bad auth');
+  });
+
+  it('the sweep runs BEFORE a never-ran claim is honored (#272: evidence first)', async () => {
+    let swept = false;
+    const git: RemediateGit = {
+      head: () => 'base0000',
+      sweepLeftovers: () => {
+        swept = true;
+        return undefined;
+      },
+      scrubRuntimeArtifacts: () => [],
+      hasDiff: () => false,
+    };
+    const driver = fakeDriver({ completed: false, neverRan: { reason: 'exit 143' } });
+    const r = await runRemediateTask(base(driver, { git }));
+    expect(r.outcome).toBe('agent-never-ran');
+    expect(swept).toBe(true);
+  });
+
+  it('a never-ran claim CONTRADICTED by committed work is demoted — verification decides (#272)', async () => {
+    // The live class: a wall-clock-killed run the driver misread as "never
+    // ran" returned early and discarded 30 minutes of committed work. The
+    // tree is the arbiter: work means the agent ran, whatever the driver's
+    // exit-encoding taxonomy concluded. The claim demotes to a disclosed
+    // failure and the verified frame decides the work's fate.
+    const driver = fakeDriver({
+      completed: false,
+      neverRan: { reason: 'claude exit 143: (no stderr)' },
+    });
+    const r = await runRemediateTask(base(driver, { git: fakeGit({ diff: true }) }));
+    expect(r.outcome).not.toBe('agent-never-ran');
+    expect(r.outcome).toBe('verified'); // green floor + PASSED guardrail in `base`
+    expect(r.envelope?.failure).toContain('contradicted');
+    expect(r.ledger).toBeTruthy();
+  });
+
+  it('a never-ran claim with UNCOMMITTABLE leftovers is also contradicted — nothing is discarded silently', async () => {
+    const driver = fakeDriver({ completed: false, neverRan: { reason: 'exit 143' } });
+    const r = await runRemediateTask(
+      base(driver, { git: fakeGit({ diff: false, sweepError: 'index locked' }) }),
+    );
+    // The sweep-failed arm (agent left uncommitted work it could not commit)
+    // reports the evidence rather than the driver's claim.
+    expect(r.note).toContain('uncommitted work');
+    expect(r.envelope?.failure).toContain('contradicted');
   });
 });
 
