@@ -19,7 +19,6 @@
  * registering a producer there, never an edit here.
  */
 
-import * as fs from 'fs';
 import * as path from 'path';
 import { gatherAnalysisResultBody } from '../analyzers/health';
 import { readOrBuildAnalysisResult } from '../analyzers/cache';
@@ -31,16 +30,9 @@ import { coverageFromToolStatuses } from './coverage';
 import type { ScanCoverage } from './coverage';
 import { clearToolVersionCache } from './tool-versions';
 export { clearToolVersionCache };
-import {
-  BASELINE_SCHEMA_VERSION,
-  DEFAULT_BASELINE_NAME,
-  pathForBaseline,
-  writeBaselineFile,
-} from './baseline-file';
+import { BASELINE_SCHEMA_VERSION } from './baseline-file';
 import type { BaselineAnalysisMeta, BaselineFile, BaselineRepoState } from './baseline-file';
 import { assessCaptureDeferral, type DeferredCaptureClass } from './deferral';
-import { resolveBaselineMode } from './modes';
-import type { ResolvedMode } from './modes';
 import { loadPolicyFromCwd, prohibitedLicensePatterns, type BrownfieldPolicy } from './policy';
 import { customCheckRecallInputs, gatherCustomChecks } from '../analyzers/custom-checks/gather';
 import type { CustomChecksUnobserved } from '../analyzers/custom-checks/gather';
@@ -49,17 +41,14 @@ import { PRODUCERS, runProducers, runRecallContexts } from './producers';
 import type { ProducerContext } from './producers';
 import { recallInputsUnion } from './recall';
 import type { RecallMap } from './recall';
-import { resolveSalt, resolveSaltOrUnavailable } from '../analyzers/tools/salt';
+import { resolveSaltOrUnavailable } from '../analyzers/tools/salt';
 import type { SaltMode } from '../analyzers/tools/salt';
-import { sanitizeFile } from './sanitize';
-import { resolveEffectiveAllowlist } from '../allowlist/effective';
-import { entryToAllowlistable, partitionByActiveAllowlist } from './allowlist-match';
 import type { RichBaselineEntry } from './types';
 import { CURRENT_IDENTITY_SCHEME } from './types';
 import type { SecurityAggregate } from '../analyzers/security/aggregator';
-import { captureFloorDebt, type FloorDebt } from './floor-debt';
+import { type FloorDebt } from './floor-debt';
 import { hashContent, readRepoState, buildAnalysisMeta } from './envelope-meta';
-import { trustedLocalContext, type AnalysisTrustContext } from '../analysis-trust';
+import { type AnalysisTrustContext } from '../analysis-trust';
 
 // The committed WRITE orchestrator (`createBaseline` + its option/result
 // types) lives in `./create-write` — split at the large-file bar; re-
