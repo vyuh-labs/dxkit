@@ -38,6 +38,19 @@ export const GATE_COMMANDS = [
     planConfig: planBaselineMode,
   },
   {
+    id: 'gate',
+    audience: 'user',
+    group: 'gate',
+    summary: 'One-shot verdict on a directory — no git, no init (fresh or tree-baseline prior)',
+    typicalRuntime: '< 60 sec on a package-sized tree',
+    docsBlurb:
+      'The embeddable tree gate: judge a freshly generated package or exported tree in one ' +
+      'call. Everything is net-new by construction under the fresh prior; `--baseline <dir>` ' +
+      'diffs an edited tree against its generated original. Runs the correctness floor ' +
+      '(compile + tests) only with `--trusted` consent — dxkit never executes code from a ' +
+      'tree it is merely judging. Exit 0 passed / 1 blocked / 2 cannot gate.',
+  },
+  {
     id: 'guardrail',
     audience: 'user',
     group: 'gate',

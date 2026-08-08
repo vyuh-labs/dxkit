@@ -133,6 +133,16 @@ export function recallInputsForSpecs(specs: readonly CustomCheckSpec[]): Record<
     // its recall would fabricate comparability, the same lie the env filter
     // above this function exists to kill. Unobserved reads as absent.
     if (spec.unavailable) continue;
+    // A text rule's recall is the rule itself: pattern + flags + globs.
+    // Nothing else determines what it can see (no binary, no exit code).
+    if (spec.textRule) {
+      inputs[`${spec.name}/text`] = `rule:${hashText(
+        [spec.textRule.pattern, spec.textRule.flags ?? '', ...(spec.textRule.globs ?? [])].join(
+          '\0',
+        ),
+      )}`;
+      continue;
+    }
     inputs[`${spec.name}/cmd`] = normalizeCommandForRecall(spec.command.bin, spec.command.args);
     inputs[`${spec.name}/parse`] =
       spec.parse.mode === 'regex'

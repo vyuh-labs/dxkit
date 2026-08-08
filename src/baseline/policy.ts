@@ -140,6 +140,16 @@ export interface BrownfieldBlockRules {
    *  minted `license` finding IS a prohibited-license match (the inventory
    *  itself never becomes findings), so the rule needs no severity tier. */
   readonly newProhibitedLicense?: boolean;
+  /** Block a net-new failure from a custom check the policy declared
+   *  `blocking: true` (a user command check or a declarative text rule —
+   *  4.4.0). Armed under every posture on the license-rule doctrine: an
+   *  explicitly-blocking check is the repo's own declared invariant, and
+   *  it is inert until one is configured, so arming costs an unconfigured
+   *  repo nothing. Distinct from the generic `block: ['added']` path —
+   *  this is what lets a security-posture DoD block on its declared rules
+   *  without also blocking every added quality finding. A `blocking:
+   *  false` check (pack lint's default) never fires it. */
+  readonly newBlockingCustomCheckFailure?: boolean;
 }
 
 /**
@@ -379,6 +389,7 @@ export const DEFAULT_BROWNFIELD_POLICY: BrownfieldPolicy = Object.freeze({
     newUntestedChangedSource: true,
     newSevereQualityIssueInChangedFiles: true,
     newProhibitedLicense: true,
+    newBlockingCustomCheckFailure: true,
   }),
   addedRequiresChangedLines: Object.freeze(['code', 'hygiene']),
 });

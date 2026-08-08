@@ -28,7 +28,7 @@
  * (Rule 9), which is what makes cross-surface comparison sound.
  */
 import { execFileSync } from 'child_process';
-import { mkdtempSync, mkdirSync, writeFileSync } from 'fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { createBaseline } from '../../src/baseline/create';
@@ -36,6 +36,9 @@ import { runGuardrailCheck } from '../../src/baseline/check';
 import type { GuardrailCheckResult } from '../../src/baseline/check';
 import { verdictCounts } from '../../src/baseline/check-renderers';
 import { trustedLocalContext } from '../../src/analysis-trust';
+import { runGate } from '../../src/gate/engine';
+import { resolveGateMode } from '../../src/baseline/modes';
+import { resolvePolicy } from '../../src/baseline/policy';
 
 /** The tag every scenario stamps on its base state. Ref-shaped surfaces
  *  (guardrail ref-based today, gate tree-baseline later) resolve the prior
@@ -203,6 +206,44 @@ export const guardrailRefBasedSurface: GateSurface = {
       cliRef: scenario.baseRef,
     });
     return projectGuardrailResult(this.name, result);
+  },
+};
+
+/** Materialize the scenario's base tag as a bare directory (what a
+ *  consumer would hand `gate --baseline`): `git archive` — read-only,
+ *  no worktree (that primitive stays in ref-baseline.ts). */
+export function materializeBaseTree(scenario: BuiltScenario): string {
+  const out = mkdtempSync(join(tmpdir(), 'dxkit-parity-base-'));
+  execFileSync(
+    'bash',
+    ['-c', `git -C '${scenario.dir}' archive ${scenario.baseRef} | tar -x -C '${out}'`],
+    { stdio: ['ignore', 'pipe', 'pipe'] },
+  );
+  return out;
+}
+
+/**
+ * The gate surface (WP2): subject = the scenario's working tree judged
+ * as a bare TREE, prior = the base tag materialized to a directory
+ * (`tree-baseline`). This is the surface WP0 reserved the seam for —
+ * the engine judging the same (prior, current) pair through the
+ * dir-shaped prior arm instead of the git ref arm.
+ */
+export const gateTreeBaselineSurface: GateSurface = {
+  name: 'gate-tree-baseline',
+  async run(scenario) {
+    const baseDir = materializeBaseTree(scenario);
+    try {
+      const result = await runGate(
+        { kind: 'tree', dir: scenario.dir },
+        resolveGateMode({ baselineDir: baseDir }),
+        resolvePolicy(undefined, scenario.dir),
+        { trust: trustedLocalContext() },
+      );
+      return projectGuardrailResult(this.name, result);
+    } finally {
+      rmSync(baseDir, { recursive: true, force: true });
+    }
   },
 };
 

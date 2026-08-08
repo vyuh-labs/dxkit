@@ -34,6 +34,7 @@ import {
   type ExecutionEnvironment,
 } from '../../execution';
 import { binaryFinding, parseLocated, parseStructuredLocated } from './parse';
+import { runTextRule } from './text-rule';
 import type {
   CustomCheckFinding,
   CustomCheckResult,
@@ -74,6 +75,18 @@ export function runCustomChecks(opts: RunCustomChecksOptions): CustomChecksRunRe
   const findings: CustomCheckFinding[] = [];
 
   for (const spec of opts.specs) {
+    // Text rules dispatch BEFORE the trust gate (4.4.0 WP2): they spawn
+    // nothing — dxkit itself reads files and evaluates a regex — so the
+    // untrusted-content boundary (which exists to stop EXECUTION of
+    // attacker-controlled code) does not apply, the same way the other
+    // pure analyzers already scan untrusted trees. This is what lets a
+    // default-untrusted `gate` still enforce policy text rules.
+    if (spec.textRule) {
+      const result = runTextRule(opts.cwd, spec);
+      results.push(result);
+      findings.push(...result.findings);
+      continue;
+    }
     // Trust tier FIRST (4.2): untrusted content never spawns a repo-declared
     // command — decided before every other boundary, disclosed per spec.
     if (!opts.trust.repoExecutionAllowed) {

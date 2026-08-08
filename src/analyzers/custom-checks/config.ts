@@ -25,6 +25,7 @@ import type {
 } from '../../languages/capabilities/lint-gate';
 import { activeLintGateProviders } from '../../languages';
 import type { ExecutionRequirement } from '../../execution';
+import { TEXT_RULE_BIN } from './types';
 import type { CustomCheckCommand, CustomCheckParse, CustomCheckSpec } from './types';
 
 /** The reserved prefix for pack-declared built-in lint checks. */
@@ -65,9 +66,37 @@ export function normalizeCustomChecks(
       warnings.push(`duplicate check name '${name}' — only the first is used`);
       continue;
     }
+    // A declarative text rule (4.4.0): `pattern` instead of `command` —
+    // dxkit evaluates it in-process (no spawn). Exactly one of the two:
+    // both declared is a misconfig worth SAYING, not silently resolving.
+    const pattern = typeof raw.pattern === 'string' ? raw.pattern : undefined;
+    if (pattern !== undefined && raw.command !== undefined) {
+      warnings.push(
+        `check '${name}' declares both \`command\` and \`pattern\` — declare one per check; skipped`,
+      );
+      continue;
+    }
+    if (pattern !== undefined) {
+      seenNames.add(name);
+      specs.push({
+        name,
+        command: { bin: TEXT_RULE_BIN, args: [] },
+        textRule: {
+          pattern,
+          ...(typeof raw.flags === 'string' ? { flags: raw.flags } : {}),
+          ...(Array.isArray(raw.globs)
+            ? { globs: raw.globs.filter((g): g is string => typeof g === 'string') }
+            : {}),
+        },
+        blocking: raw.blocking !== false, // default true
+        expectedExit: 0,
+        parse: { mode: 'exit' },
+      });
+      continue;
+    }
     const command = parseCommand(raw.command);
     if (!command) {
-      warnings.push(`check '${name}' has no runnable \`command\` and was skipped`);
+      warnings.push(`check '${name}' has no runnable \`command\` (or \`pattern\`) and was skipped`);
       continue;
     }
     seenNames.add(name);

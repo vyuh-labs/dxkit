@@ -25,6 +25,7 @@ import {
 } from '../baseline/changed-files';
 import { changedFilesTouchDependencyManifest, detectActiveLanguages } from '../languages';
 import { describeRecallDrift } from '../baseline/recall';
+import { isSanitized } from '../baseline/sanitize';
 import type { BaselineEntry, FindingId, MatchResult } from '../baseline/types';
 import type { ClassifiedPair, EnvelopeDrift } from './result';
 import {
@@ -230,6 +231,14 @@ export function classifyPairs(input: ClassifyPairsInput): ClassifyPairsOutput {
     // check produces no current findings, so no other pair status exists.
     const notObserved = pair.status === 'removed' ? notObservedReasonFor(anchorEntry) : undefined;
 
+    // The declared block intent of a custom-check finding, feeding the
+    // `newBlockingCustomCheckFailure` rule. Sanitized entries carry no
+    // intent — the flag stays absent and the rule never fires on them.
+    const customCheckBlocking =
+      anchorEntry.kind === 'custom-check' && !isSanitized(anchorEntry)
+        ? anchorEntry.blocking
+        : undefined;
+
     const context: ClassifyContext = {
       severity,
       kind: anchorEntry.kind,
@@ -244,6 +253,7 @@ export function classifyPairs(input: ClassifyPairsInput): ClassifyPairsOutput {
       ...(fileAddedInDiff !== undefined ? { fileAddedInDiff } : {}),
       ...(malicious ? { malicious } : {}),
       ...(reachable ? { reachable } : {}),
+      ...(customCheckBlocking !== undefined ? { customCheckBlocking } : {}),
       ...(notObserved !== undefined ? { notObserved } : {}),
       // Only asked for added dep-vuln pairs, so a run with none never pays the
       // git diff (and other kinds never see the flag).

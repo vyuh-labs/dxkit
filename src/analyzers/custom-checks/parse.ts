@@ -125,11 +125,14 @@ export function parseStructuredLocated(
 }
 
 /**
- * The one validating boundary both parse modes exit through: enforce the
- * repo-relative-POSIX `file` post-condition, sanitize line/rule/message,
- * dedupe identical (file, line, rule), and apply the itemization ceiling.
+ * The one validating boundary every located-finding source exits through:
+ * enforce the repo-relative-POSIX `file` post-condition, sanitize
+ * line/rule/message, dedupe identical (file, line, rule), and apply the
+ * itemization ceiling. Exported for the text-rule scanner (the third
+ * seam consumer) — it mints located findings without a command, and they
+ * MUST leave through this same boundary rather than a re-implementation.
  */
-function validateLocated(
+export function validateLocated(
   check: string,
   blocking: boolean,
   raw: readonly RawLocatedFinding[],

@@ -95,6 +95,11 @@ export interface ClassifyContext {
   readonly manifestUntouched?: boolean;
   /** True when an `added` dep-vuln is on a reachable code path. */
   readonly reachable?: boolean;
+  /** For a `custom-check` finding: the user/pack-declared block intent
+   *  (`entry.blocking`), feeding the `newBlockingCustomCheckFailure`
+   *  rule. Absent for every other kind and for sanitized entries (intent
+   *  stripped — the rule then never fires; the generic list decides). */
+  readonly customCheckBlocking?: boolean;
   /**
    * Set (to the human-phrased cause) when the CURRENT side never observed
    * this finding's check/kind — its command skipped (untrusted tree, unmet
@@ -440,6 +445,19 @@ function evaluateBlockRules(
   // inventory never becomes findings), so kind alone is the whole predicate.
   if (rules.newProhibitedLicense && context.kind === 'license') {
     return 'newProhibitedLicense';
+  }
+  // A custom check the policy declared `blocking: true` (4.4.0): the block
+  // intent rides on the finding itself, threaded here as
+  // `customCheckBlocking`. Only a strict `true` fires — a sanitized entry
+  // (intent stripped) or a `blocking: false` check never does; those keep
+  // the generic `block` list's verdict and applyCustomCheckIntent's
+  // demotion respectively.
+  if (
+    rules.newBlockingCustomCheckFailure &&
+    context.kind === 'custom-check' &&
+    context.customCheckBlocking === true
+  ) {
+    return 'newBlockingCustomCheckFailure';
   }
   // A net-new test gap the developer can actually have caused: a file this
   // diff ADDED, shipping without a test. The rule's original predicate
