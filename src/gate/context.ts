@@ -11,6 +11,7 @@ import type { SecurityAggregate } from '../analyzers/security/aggregator';
 import type { CurrentScan } from '../baseline/create';
 import type { BaselineFile } from '../baseline/baseline-file';
 import { diffCoverage } from '../baseline/coverage';
+import { priorClassOf } from '../baseline/modes';
 import type { ResolvedMode } from '../baseline/modes';
 import { diffRecall } from '../baseline/recall';
 import { isSanitized } from '../baseline/sanitize';
@@ -127,16 +128,18 @@ export function diffEnvelopes(
     recallDrift,
     ...(baseline.capturedIn ? { baselineCapturedIn: baseline.capturedIn } : {}),
     ...(refreshLaneInstalled !== undefined ? { refreshLaneInstalled } : {}),
-    // Ref-based mode: the prior side is a fresh gather in a bare worktree,
-    // so its "coverage" records artifact-dependent tools (a node_modules
-    // linter, the coverage report) as missing BY CONSTRUCTION — not as a
-    // fact about any capture. Diffing that against the real tree produced a
-    // guaranteed-noise warning ("eslint was NOT available at baseline …
-    // findings may surface as new") for categories the ref-based diff
-    // ALREADY excludes and discloses (REF_UNRELIABLE_KINDS). Committed
-    // modes keep the diff — there it is load-bearing (a baseline captured
-    // without gitleaks genuinely never baselined secrets).
-    coverageDrift: mode === 'ref-based' ? [] : diffCoverage(baseline.coverage, current.coverage),
+    // Non-committed prior classes: the prior side is a fresh gather (a bare
+    // worktree, a supplied tree) or empty, so its "coverage" records
+    // artifact-dependent tools (a node_modules linter, the coverage report)
+    // as missing BY CONSTRUCTION — not as a fact about any capture. Diffing
+    // that against the real tree produced a guaranteed-noise warning
+    // ("eslint was NOT available at baseline … findings may surface as new")
+    // for categories the dir-gathered diff ALREADY excludes and discloses
+    // (REF_UNRELIABLE_KINDS). Committed priors keep the diff — there it is
+    // load-bearing (a baseline captured without gitleaks genuinely never
+    // baselined secrets).
+    coverageDrift:
+      priorClassOf(mode) !== 'committed' ? [] : diffCoverage(baseline.coverage, current.coverage),
   };
 }
 

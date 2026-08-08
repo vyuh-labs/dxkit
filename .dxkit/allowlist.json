@@ -428,6 +428,14 @@
       "addedBy": "siddarth.ch1990@gmail.com",
       "addedAt": "2026-07-19",
       "expiresAt": "2026-10-17"
+    },
+    {
+      "fingerprint": "b464ed123cea6f77",
+      "kind": "secret",
+      "category": "false-positive",
+      "reason": "the KIND_DEFAULT_SEVERITY table's severity word for the secret kind (moved from check.ts to gate/observation.ts in the 4.4.0 engine split) — a record key named 'secret' with the value 'high', matched by the generic hardcoded-secret pattern; not a credential",
+      "addedBy": "siddarth.ch1990@gmail.com",
+      "addedAt": "2026-08-08"
     }
   ],
   "identityScheme": "v2"
