@@ -113,7 +113,7 @@
     "vyuh"
   ],
   "dependencies": {
-    "@vyuhlabs/dxkit-sdk": "^0.2.0",
+    "@vyuhlabs/dxkit-sdk": "^0.3.0",
     "hosted-git-info": "^9.0.2",
     "jsonc-parser": "^3.3.1",
     "tree-sitter-wasms": "0.1.13",

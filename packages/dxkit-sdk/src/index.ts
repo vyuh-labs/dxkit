@@ -38,6 +38,13 @@ export type {
   WireSchemaId,
   WireServedRoute,
   WireSeverity,
+  WireVerdictCheck,
+  WireVerdictDoc,
+  WireVerdictEngine,
+  WireVerdictFinding,
+  WireVerdictFloor,
+  WireVerdictPolicy,
+  WireVerdictStatus,
 } from './wire';
 export type {
   ContributionKind,
