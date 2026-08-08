@@ -30,6 +30,7 @@ import { resolveGateMode } from './baseline/modes';
 import { resolvePolicy } from './baseline/policy';
 import { trustContextFromFlag } from './analysis-trust';
 import { renderConsole, verdictCounts, type VerdictCounts } from './baseline/check-renderers';
+import { isAdvisoryDbError, resolveAdvisoryDb } from './analyzers/security/advisory-db';
 import { buildWireVerdict } from './gate/verdict';
 import {
   describeCorrectnessFloor,
@@ -52,6 +53,10 @@ export interface GateCommandOptions {
   readonly json?: boolean;
   /** Consent to EXECUTE the tree's code (floor + command checks). */
   readonly trusted?: boolean;
+  /** Offline advisory snapshot: `<path>` or `<path>@<version>` (P1-4).
+   *  Air-gap mode — the dep audit reads the local database with zero
+   *  egress; an unusable snapshot is a disclosed dep-vuln skip. */
+  readonly advisoryDb?: string;
   readonly verbose?: boolean;
   /** Test seam: injected floor runner (the ExecutorSeams pattern). */
   readonly seams?: {
@@ -108,8 +113,21 @@ export async function runGateCommand(
   // --trusted is the consent flag; its ABSENCE is the untrusted posture.
   const trust = trustContextFromFlag(!options.trusted);
 
+  // Offline advisory snapshot (P1-4): resolve through the ONE spec module.
+  // An unusable value still travels (with its error), so the dispatch skips
+  // the dep audit WITH the cause disclosed — snapshot mode never silently
+  // falls back to the network the flag exists to avoid.
+  let advisoryDb: { dir: string; version: string; error?: string } | undefined;
+  if (options.advisoryDb !== undefined) {
+    const resolved = resolveAdvisoryDb(options.advisoryDb, subjectDir);
+    advisoryDb = isAdvisoryDbError(resolved)
+      ? { dir: '', version: 'unusable', error: resolved.error }
+      : resolved;
+  }
+
   const result = await runGate({ kind: 'tree', dir: subjectDir }, mode, policy, {
     trust,
+    ...(advisoryDb ? { advisoryDb } : {}),
     ...(options.verbose !== undefined ? { verbose: options.verbose } : {}),
   });
   const counts = verdictCounts(result);

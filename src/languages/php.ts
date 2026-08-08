@@ -13,6 +13,7 @@ import { walkSourceFiles } from '../analyzers/tools/walk-source-files';
 import type { ExecutionRequirement } from '../execution';
 import type {
   CapabilityProvider,
+  DepVulnGatherOptions,
   DepVulnsProvider,
   RunTestsOutcome,
 } from './capabilities/provider';
@@ -75,12 +76,17 @@ const PHP_LOCKFILE_EXECUTION: ExecutionRequirement = {
 
 // ─── Dep-vulns (osv-scanner over composer.lock, ecosystem Packagist) ────────
 
-async function gatherPhpDepVulnsResult(cwd: string): Promise<DepVulnGatherOutcome> {
+async function gatherPhpDepVulnsResult(
+  cwd: string,
+  opts?: DepVulnGatherOptions,
+): Promise<DepVulnGatherOutcome> {
   // Ecosystem string + extraction verified against a live osv-scanner 2.4.0
   // run on a known-vulnerable lock (guzzle 7.4.0 → 4 GHSAs) before this
   // pack shipped — the swift 2.3.8 lesson (a scanner that parses nothing
   // reads as CLEAN).
-  return gatherOsvScannerDepVulnsResult(cwd, 'php', 'Packagist', ['composer.lock']);
+  return gatherOsvScannerDepVulnsResult(cwd, 'php', 'Packagist', ['composer.lock'], {
+    ...(opts?.advisoryDb ? { advisoryDb: opts.advisoryDb } : {}),
+  });
 }
 
 const phpDepVulnsProvider: DepVulnsProvider = {
@@ -94,8 +100,9 @@ const phpDepVulnsProvider: DepVulnsProvider = {
     const outcome = await gatherPhpDepVulnsResult(cwd);
     return outcome.kind === 'success' ? outcome.envelope : null;
   },
-  async gatherOutcome(cwd) {
-    return gatherPhpDepVulnsResult(cwd);
+  supportsOfflineSnapshot: true,
+  async gatherOutcome(cwd, opts) {
+    return gatherPhpDepVulnsResult(cwd, opts);
   },
 };
 
