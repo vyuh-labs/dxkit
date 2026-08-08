@@ -193,8 +193,15 @@ export interface DepVulnFinding {
 export interface DepVulnResult extends CapabilityEnvelope {
   /** Severity-tier counts. Always populated; zeros allowed. */
   counts: SeverityCounts;
-  /** Source of severity classification, when enrichment is involved. */
-  enrichment: 'osv.dev' | null;
+  /** Source of severity classification, when enrichment is involved.
+   *  `'osv.dev'` (live), `offline-snapshot@<version>` (4.4.0 P1-4 —
+   *  air-gap snapshot mode, zero egress), or null. */
+  enrichment: string | null;
+  /** Advisory snapshot version when the scan ran in offline snapshot
+   *  mode (4.4.0 P1-4). Feeds provenance → the dep-vuln recall input →
+   *  the verdict, so a snapshot update is attributed as feed movement,
+   *  never as a developer's regression. */
+  advisoryDbVersion?: string;
   /** Optional per-finding detail. Deep-mode reports populate this. */
   findings?: DepVulnFinding[];
 }

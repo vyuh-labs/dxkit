@@ -432,6 +432,9 @@ export async function run(argv: string[]): Promise<void> {
       // (correctness floor + command-shaped custom checks). Off by default:
       // a gate must not run code from a tree it is merely judging.
       trusted: { type: 'boolean', default: false },
+      // `gate <dir> --advisory-db <path>[@version]` — offline advisory
+      // snapshot (air-gap): dep audit against a local database, zero egress.
+      'advisory-db': { type: 'string' },
       // evaluate: the zero-write trial (ref pair or last-N-landings replay).
       // --base is shared with the reviewers flags below.
       head: { type: 'string' },
@@ -2932,6 +2935,7 @@ export async function run(argv: string[]): Promise<void> {
           policyPath: values.policy as string | undefined,
           json: !!values.json,
           trusted: !!values.trusted,
+          advisoryDb: values['advisory-db'] as string | undefined,
           verbose: !!values.verbose,
         });
         process.stdout.write(renderGateOutcome(outcome, !!values.json) + '\n');

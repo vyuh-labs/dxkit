@@ -11,6 +11,7 @@ import { walkSourceFiles } from '../analyzers/tools/walk-source-files';
 import type { ExecutionRequirement } from '../execution';
 import type {
   CapabilityProvider,
+  DepVulnGatherOptions,
   DepVulnsProvider,
   RunTestsOutcome,
 } from './capabilities/provider';
@@ -132,7 +133,10 @@ const SWIFTLINT_EXECUTION: ExecutionRequirement = {
  * reason surfaces (docs + runbook). Re-evaluate when an advisory database
  * covers CocoaPods.
  */
-async function gatherSwiftDepVulnsResult(cwd: string): Promise<DepVulnGatherOutcome> {
+async function gatherSwiftDepVulnsResult(
+  cwd: string,
+  opts?: DepVulnGatherOptions,
+): Promise<DepVulnGatherOutcome> {
   const hasSpmLock = fileExists(cwd, 'Package.resolved');
   const hasPodLock = fileExists(cwd, 'Podfile.lock');
   if (!hasSpmLock && !hasPodLock) {
@@ -149,7 +153,9 @@ async function gatherSwiftDepVulnsResult(cwd: string): Promise<DepVulnGatherOutc
         'CocoaPods ecosystem), so pod dependencies are UNAUDITED, not clean',
     };
   }
-  return gatherOsvScannerDepVulnsResult(cwd, 'swift', 'SwiftURL', ['Package.resolved']);
+  return gatherOsvScannerDepVulnsResult(cwd, 'swift', 'SwiftURL', ['Package.resolved'], {
+    ...(opts?.advisoryDb ? { advisoryDb: opts.advisoryDb } : {}),
+  });
 }
 
 const swiftDepVulnsProvider: DepVulnsProvider = {
@@ -173,8 +179,9 @@ const swiftDepVulnsProvider: DepVulnsProvider = {
     const outcome = await gatherSwiftDepVulnsResult(cwd);
     return outcome.kind === 'success' ? outcome.envelope : null;
   },
-  async gatherOutcome(cwd) {
-    return gatherSwiftDepVulnsResult(cwd);
+  supportsOfflineSnapshot: true,
+  async gatherOutcome(cwd, opts) {
+    return gatherSwiftDepVulnsResult(cwd, opts);
   },
 };
 

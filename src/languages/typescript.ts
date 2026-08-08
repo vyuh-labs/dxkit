@@ -366,6 +366,16 @@ async function gatherTsDepVulnsResult(
         'run your package manager install to generate one',
     };
   }
+  // Offline snapshot mode (4.4.0 P1-4): npm audit is a registry query with
+  // no offline mode, so EVERY lockfile flavor routes to osv-scanner against
+  // the local database — zero egress, including the malicious overlay's
+  // (the snapshot carries the same OSV MAL-* entries).
+  if (opts?.advisoryDb) {
+    return gatherOsvScannerDepVulnsResult(cwd, 'typescript', 'npm', [lock.lockfile], {
+      advisoryDb: opts.advisoryDb,
+    });
+  }
+
   if (lock.pm !== 'npm') {
     // osv-scanner's npm ecosystem covers pnpm/yarn/bun lockfiles. Point it at the
     // detected lockfile only, so a repo with a stray package-lock.json isn't
@@ -614,6 +624,7 @@ const tsDepVulnsProvider: DepVulnsProvider = {
     const outcome = await gatherTsDepVulnsResult(cwd);
     return outcome.kind === 'success' ? outcome.envelope : null;
   },
+  supportsOfflineSnapshot: true,
   async gatherOutcome(cwd, opts) {
     return gatherTsDepVulnsResult(cwd, opts);
   },

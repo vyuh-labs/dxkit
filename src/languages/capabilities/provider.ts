@@ -113,10 +113,34 @@ export interface DepVulnGatherOptions {
    * your own repo) leave it unset and keep full coverage.
    */
   readonly untrusted?: boolean;
+  /**
+   * Offline advisory snapshot (4.4.0 P1-4 — air-gap): audit against this
+   * pre-downloaded local database with ZERO network egress. Only providers
+   * that declare `supportsOfflineSnapshot: true` receive it — the dispatch
+   * SKIPS every other pack's audit with a disclosed cause rather than let
+   * a networked scanner silently break the air-gap guarantee.
+   */
+  readonly advisoryDb?: {
+    readonly dir: string;
+    readonly version: string;
+    /** Set when the supplied snapshot was UNUSABLE (missing directory).
+     *  The dispatch then reports the audit unavailable with this cause
+     *  for every pack — snapshot mode never falls back to the network,
+     *  and never lets an empty database read as "no vulnerabilities". */
+    readonly error?: string;
+  };
 }
 
 export interface DepVulnsProvider extends CapabilityProvider<DepVulnResult> {
   gatherOutcome(cwd: string, opts?: DepVulnGatherOptions): Promise<DepVulnGatherOutcome>;
+  /**
+   * Declares that this provider honors `DepVulnGatherOptions.advisoryDb`
+   * with zero egress (4.4.0 P1-4). Undeclared/false ⇒ in snapshot mode the
+   * dispatch skips this pack's audit with a disclosed cause — the honest
+   * outcome for a scanner with no offline mode (pip-audit, npm audit).
+   * Optional-additive on the frozen-in-place contract (freeze-test pinned).
+   */
+  readonly supportsOfflineSnapshot?: boolean;
   /**
    * What the audit NEEDS from the environment that runs it (CLAUDE.md
    * Rule 20). REQUIRED. Registry tools (osv-scanner, pip-audit) are NOT

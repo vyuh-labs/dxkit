@@ -191,6 +191,7 @@ export async function runGate(
     // Hosted PR gates set --untrusted so dep audits never execute the scanned
     // source (e.g. Python skips `pip-audit .` project-build).
     trust: options.trust,
+    ...(options.advisoryDb ? { advisoryDb: options.advisoryDb } : {}),
   });
 
   // The empty prior materializes here, from the current scan's own

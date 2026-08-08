@@ -319,8 +319,11 @@ const kotlinDepVulnsProvider: DepVulnsProvider = {
     );
     return outcome.kind === 'success' ? outcome.envelope : null;
   },
-  async gatherOutcome(cwd) {
-    return gatherOsvScannerDepVulnsResult(cwd, 'kotlin', 'Maven', KOTLIN_DEP_MANIFESTS);
+  supportsOfflineSnapshot: true,
+  async gatherOutcome(cwd, opts) {
+    return gatherOsvScannerDepVulnsResult(cwd, 'kotlin', 'Maven', KOTLIN_DEP_MANIFESTS, {
+      ...(opts?.advisoryDb ? { advisoryDb: opts.advisoryDb } : {}),
+    });
   },
 };
 

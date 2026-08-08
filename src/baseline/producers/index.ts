@@ -233,11 +233,25 @@ const SECURITY_PRODUCER: BaselineProducer = {
       ...(p?.tlsBypass.ran ? ['tls-bypass-registry'] : []),
       ...(p?.external?.ran ? p.external.tools : []),
     ];
+    // Offline snapshot mode (4.4.0 P1-4): the advisory feed STATE is a
+    // dep-vuln recall input — a newer snapshot sees more advisories, and
+    // that delta is feed movement (Rule 19 cause #5), never the
+    // developer's regression. Live mode contributes nothing here (the
+    // rolling OSV.dev feed is the `newly_published_advisory` machinery's
+    // concern, not a comparable input).
+    const depVulnRecall = toolRecall('dep-vuln', splitTools(p?.depVulns.tool), ctx.cwd);
+    const depVuln: RecallContext =
+      p?.depVulns.advisoryDbVersion !== undefined
+        ? {
+            ...depVulnRecall,
+            inputs: { ...depVulnRecall.inputs, 'osv-advisory-db': p.depVulns.advisoryDbVersion },
+          }
+        : depVulnRecall;
     return new Map<IdentityKind, RecallContext>([
       ['secret', toolRecall('secret', secrets, ctx.cwd)],
       ['code', toolRecall('code', code, ctx.cwd)],
       ['config', toolRecall('config', secrets, ctx.cwd)],
-      ['dep-vuln', toolRecall('dep-vuln', splitTools(p?.depVulns.tool), ctx.cwd)],
+      ['dep-vuln', depVuln],
     ]);
   },
 };

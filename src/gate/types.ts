@@ -112,6 +112,14 @@ export interface GateEngineOptions {
    */
   readonly trust: AnalysisTrustContext;
   /**
+   * Offline advisory snapshot (4.4.0 P1-4 — air-gap): audit dependencies
+   * against this pre-downloaded local database with ZERO network egress.
+   * The version is a Rule 19 recall input and is named in the verdict;
+   * packs without offline support are skipped with a disclosed cause at
+   * the one dispatch primitive — never a silent fallback to the network.
+   */
+  readonly advisoryDb?: { readonly dir: string; readonly version: string };
+  /**
    * Loop-seam override for the flow integration gate's posture (`block` /
    * `warn` / `off`), winning over `.dxkit/policy.json:flow.mode`. The loop
    * Stop-gate derives it from the active preset (`security-only` → `warn`,
