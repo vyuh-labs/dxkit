@@ -86,7 +86,14 @@ export interface RemediateConfig {
  */
 export function salvageForTask(
   config: Pick<RemediateConfig, 'salvage'>,
-  task: Pick<RemediateTask, 'completion'> | RemediateTaskId,
+  // Accepts the resolved task OR its raw id string. The string arm exists so
+  // callers that hold only an id (the CLI executor, where 'custom' is
+  // deliberately outside the registry) route through THIS resolver instead of
+  // re-deriving from a registry lookup — the lookup-returns-undefined path is
+  // exactly how the executor's second derivation forced 'discard' on a
+  // verified custom run (#274). An id that resolves to nothing and is not
+  // 'custom' reads as bounded → discard (conservative).
+  task: Pick<RemediateTask, 'completion'> | string,
 ): 'discard' | 'draft-pr' {
   if (config.salvage !== 'auto') return config.salvage;
   const shape =
@@ -100,9 +107,12 @@ export function salvageForTask(
 
 /** The effective budget for one task: the per-task override merged over the
  *  shared agent budget — the ONE derivation every surface (runner, plan,
- *  matrix trim) reads. */
-export function budgetForTask(config: RemediateConfig, taskId: RemediateTaskId): RemediateBudget {
-  const override = config.taskBudgets[taskId] ?? {};
+ *  matrix trim) reads. Accepts a raw id string so the executor never branches
+ *  on "is this a registry task" to pick a budget: an id with no override slot
+ *  ('custom', or a typo the runner will refuse anyway) gets the shared agent
+ *  budget. */
+export function budgetForTask(config: RemediateConfig, taskId: string): RemediateBudget {
+  const override = config.taskBudgets[taskId as RemediateTaskId] ?? {};
   return {
     maxTurns: positiveNumber(override.maxTurns, config.agent.budget.maxTurns),
     maxMinutes: positiveNumber(override.maxMinutes, config.agent.budget.maxMinutes),

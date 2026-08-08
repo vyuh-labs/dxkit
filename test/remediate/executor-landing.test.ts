@@ -166,6 +166,44 @@ describe('executeTask landing layer (#273)', () => {
     expect(record.prUrl).toBe('https://example.test/pr/1');
   });
 
+  it("custom's salvage decision reaches the runner AND lands as a draft (#274, executor level)", async () => {
+    // The live bug sat exactly here: the executor's registry-lookup guard
+    // baked 'discard' into the runner's config for 'custom' before the one
+    // resolver ever saw it. Now pinned at the wiring layer: under
+    // salvage 'auto', custom resolves open-ended → draft-pr, the runner
+    // receives that decision, and a budget-exhausted custom outcome lands
+    // as a DRAFT instead of being thrown away.
+    const cwd = tempRepo();
+    let salvageSeenByRunner: string | undefined;
+    let draftSeenByLander: boolean | undefined;
+    const run = await executeTask(
+      cwd,
+      config('auto'),
+      'custom',
+      'pr',
+      seams({
+        runTask: async (opts) => {
+          salvageSeenByRunner = opts.config.salvage;
+          return {
+            outcome: 'budget-exhausted',
+            task: 'custom',
+            ledger: 'THE VERIFICATION LEDGER',
+            baseHead: 'aaaa1111',
+            head: 'bbbb2222',
+          };
+        },
+        landHead: (opts) => {
+          draftSeenByLander = opts.draft;
+          return { outcome: 'pr-opened', mode: 'pr', prUrl: 'https://example.test/pr/2' };
+        },
+      }),
+    );
+    expect(salvageSeenByRunner).toBe('draft-pr');
+    expect(draftSeenByLander).toBe(true);
+    expect(run.landed).toBe(true);
+    expect(run.clean).toBe(true); // a landed budget-bounded draft is the clean outcome
+  });
+
   it('the branch guard still refuses a feature-branch landing (unchanged behavior)', async () => {
     const cwd = tempRepo();
     const run = await executeTask(

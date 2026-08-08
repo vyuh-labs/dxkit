@@ -211,7 +211,7 @@ export async function runRemediateTask(opts: RemediateRunOptions): Promise<Remed
     env: opts.agentEnv ?? {},
   });
 
-  const envelope: AgentEnvelope = {
+  let envelope: AgentEnvelope = {
     ...envelopeBase,
     ...(agentResult.resolvedModelId ? { resolvedModelId: agentResult.resolvedModelId } : {}),
     ...(agentResult.cliVersion ? { cliVersion: agentResult.cliVersion } : {}),
@@ -225,20 +225,14 @@ export async function runRemediateTask(opts: RemediateRunOptions): Promise<Remed
     ? { transcriptTail: agentResult.transcriptTail }
     : {};
 
-  if (agentResult.neverRan) {
-    return finish({
-      outcome: 'agent-never-ran',
-      task: task.id,
-      envelope,
-      floor: entryFloor,
-      ...evidenceTail,
-      note: `agent never ran: ${agentResult.neverRan.reason}`,
-    });
-  }
-
   // Sweep uncommitted leftovers into a loudly-labeled commit — work the
   // budget kill stranded mid-edit is still evidence, and a dirty tree must
-  // never leak into the landing layer unreviewed.
+  // never leak into the landing layer unreviewed. The sweep runs BEFORE the
+  // driver's never-ran claim is honored: a classification must never decide
+  // the fate of evidence it has not looked at (#272 — a wall-clock kill the
+  // driver misread as "never ran" returned early here and discarded 30
+  // minutes of stranded work). A genuinely never-ran agent leaves nothing
+  // to sweep, so this is a no-op on that path.
   opts.onPhase?.('sweep');
   const sweepError = git.sweepLeftovers();
   // Drop attempt-introduced runtime artifacts (regenerable scan state the
@@ -247,6 +241,33 @@ export async function runRemediateTask(opts: RemediateRunOptions): Promise<Remed
   // must not carry `.dxkit/reports/*` into its PR. Disclosed below.
   const scrubbed = git.scrubRuntimeArtifacts(baseHead);
   const hasDiff = git.hasDiff(baseHead);
+
+  if (agentResult.neverRan) {
+    // The tree is the arbiter of "ran": commits past baseHead, or leftovers
+    // the sweep touched, are work — and work means the agent RAN, whatever
+    // the driver's classification concluded (a future CLI can always invent
+    // a new exit encoding; the tree cannot lie). Uncontradicted, the claim
+    // stands; contradicted, the claim is demoted to a disclosed failure and
+    // verification decides the work's fate — the lane's law applied to the
+    // driver's own report.
+    if (!hasDiff && !sweepError) {
+      return finish({
+        outcome: 'agent-never-ran',
+        task: task.id,
+        envelope,
+        floor: entryFloor,
+        ...evidenceTail,
+        note: `agent never ran: ${agentResult.neverRan.reason}`,
+      });
+    }
+    envelope = {
+      ...envelope,
+      failure:
+        `driver classified the run as "agent never ran" (${agentResult.neverRan.reason}), ` +
+        `but the tree carries work from this attempt — the claim is contradicted by ` +
+        `evidence, so verification decides the work's fate`,
+    };
+  }
 
   // Reported spend exceeding the (advisory) cap is an honest post-hoc claim
   // — "the run overran maxUsd" — for any driver that at least REPORTS cost.

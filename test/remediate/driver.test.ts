@@ -5,7 +5,11 @@ import {
   type AgentDriver,
   type ModelTier,
 } from '../../src/remediate/driver';
-import { makeClaudeCodeDriver, type AgentExec } from '../../src/remediate/claude-code-driver';
+import {
+  makeClaudeCodeDriver,
+  realAgentExec,
+  type AgentExec,
+} from '../../src/remediate/claude-code-driver';
 import { AGENT_DRIVERS, driverById, knownDriverIds } from '../../src/remediate/registry';
 import { REMEDIATE_TASKS, remediateTaskById, SHARED_RULES } from '../../src/remediate/tasks';
 
@@ -253,5 +257,45 @@ describe('claude-code driver (exec injected)', () => {
     expect(r.neverRan).toBeUndefined();
     expect(r.completed).toBe(false);
     expect(r.turns).toBe(9);
+  });
+});
+
+describe('realAgentExec — deadline-first timeout classification (#272)', () => {
+  // Real child processes, deliberately: the classification lives in the REAL
+  // exec (the injected-exec tests above bypass it by design), and the two
+  // SIGTERM encodings can only be produced by an actual kill.
+
+  it('signal-death: a child killed by the timeout SIGTERM is timedOut', () => {
+    const r = realAgentExec('sleep', ['2'], { cwd: '/tmp', env: {}, timeoutMs: 250 });
+    expect(r.timedOut).toBe(true);
+    expect(r.code).toBeNull();
+  });
+
+  it('graceful-catch: a child that traps SIGTERM and exits 143 is timedOut, never never-ran-shaped', () => {
+    // The claude CLI (2.1.222) traps SIGTERM and exits 143 with no result
+    // JSON — signal null, status 143. The signal-only predicate read this as
+    // a plain failed exit, which fell into the never-ran branch downstream
+    // and discarded the stranded work. The background+wait shape matters:
+    // bash defers traps until the foreground command exits, and the orphaned
+    // sleep must not hold our pipes open.
+    const r = realAgentExec(
+      'bash',
+      ['-c', 'trap "exit 143" TERM; sleep 2 >/dev/null 2>&1 & wait'],
+      { cwd: '/tmp', env: {}, timeoutMs: 250 },
+    );
+    expect(r.timedOut).toBe(true);
+    expect(r.code).toBe(143);
+  });
+
+  it('a natural failure exit before the deadline is NEVER a timeout (false-negative bias)', () => {
+    const r = realAgentExec('bash', ['-c', 'exit 7'], { cwd: '/tmp', env: {}, timeoutMs: 5000 });
+    expect(r.timedOut).toBe(false);
+    expect(r.code).toBe(7);
+  });
+
+  it('a clean exit is a clean exit', () => {
+    const r = realAgentExec('bash', ['-c', 'echo ok'], { cwd: '/tmp', env: {}, timeoutMs: 5000 });
+    expect(r).toMatchObject({ code: 0, timedOut: false });
+    expect(r.stdout).toContain('ok');
   });
 });

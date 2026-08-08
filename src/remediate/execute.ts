@@ -106,13 +106,17 @@ export async function executeTask(
   // copy, so the runner's enforcement + ledger see the effective caps.
   // Dispatch-campaign overrides (env-transported, clamped) layer on top —
   // the runner receives the disclosure and folds it into the ledger.
-  const task = remediateTaskById(taskId);
-  const policyBudget = task ? budgetForTask(config, task.id) : config.agent.budget;
+  // Both derivations take the RAW id string — never `task ? … : fallback`.
+  // 'custom' is deliberately outside the registry, so a registry-lookup
+  // guard here is a second, weaker derivation of the same concept the
+  // resolvers already own (the #274 class: it forced salvage to 'discard'
+  // on a verified custom run, overriding explicit policy).
+  const policyBudget = budgetForTask(config, taskId);
   const dispatch = readDispatchOverrides(process.env, policyBudget, config);
   // The concrete salvage decision for THIS task (the one resolver: explicit
   // policy wins, 'auto' follows the task's completion shape) — threaded into
   // the runner's config so the ledger note and the landing below agree.
-  const salvage = task ? salvageForTask(config, task) : 'discard';
+  const salvage = salvageForTask(config, taskId);
   const taskConfig: RemediateConfig = {
     ...config,
     salvage,
@@ -128,15 +132,25 @@ export async function executeTask(
   // partial reads NET-NEW and can never grandfather its own breakage.
   let entryFloor: CorrectnessFloorResult | undefined;
   let resume: ResumeDecision = { resumed: false };
-  if (land === 'pr' && task && config.resume) {
-    // (salvage below is the task-resolved decision — resume needs draft-pr)
+  if (land === 'pr' && config.resume && taskId === 'custom') {
+    // DELIBERATE, not a registry-lookup accident: a custom dispatch carries a
+    // human-supplied prompt, and a later dispatch may carry a DIFFERENT one —
+    // resuming would continue a prior attempt's goal under this run's prompt
+    // and ledger. Disclosed here, never a silent guard (#274's second half).
+    logger.warn(
+      'resume: unavailable for custom dispatch tasks — a later dispatch may carry a ' +
+        'different prompt than the salvaged attempt; starting fresh.',
+    );
+  }
+  if (land === 'pr' && config.resume && taskId !== 'custom' && remediateTaskById(taskId)) {
+    // (salvage above is the task-resolved decision — resume needs draft-pr)
     entryFloor = runCorrectnessFloor({
       cwd,
       changedFiles: [],
       scope: 'full',
       packs: detectActiveLanguages(cwd),
     });
-    resume = prepareResume(cwd, task.id, { resume: config.resume, salvage });
+    resume = prepareResume(cwd, taskId, { resume: config.resume, salvage });
     if (resume.note) logger.warn(`resume: ${resume.note}`);
     if (resume.resumed) {
       logger.info(`resuming budget-bounded attempt #${resume.attempt} from the salvage branch`);
