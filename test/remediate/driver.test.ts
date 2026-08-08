@@ -11,7 +11,12 @@ import {
   type AgentExec,
 } from '../../src/remediate/claude-code-driver';
 import { AGENT_DRIVERS, driverById, knownDriverIds } from '../../src/remediate/registry';
-import { REMEDIATE_TASKS, remediateTaskById, SHARED_RULES } from '../../src/remediate/tasks';
+import {
+  customDispatchTask,
+  REMEDIATE_TASKS,
+  remediateTaskById,
+  SHARED_RULES,
+} from '../../src/remediate/tasks';
 
 /**
  * The driver seam is the "other agents later" promise: these tests pin the
@@ -129,6 +134,22 @@ describe('task registry', () => {
     expect(SHARED_RULES).toContain('docs/DXKIT-REMEDIATION-NOTES.md');
     expect(remediateTaskById('fix-lint')?.tier).toBe('light');
     expect(remediateTaskById('unknown-task')).toBeUndefined();
+  });
+
+  it('every prompt bans .github/ writes — registry tasks AND the custom dispatch task', () => {
+    // Validated live twice, in both directions: a write-docs agent wrote
+    // .github/ templates and the landing push was refused by a path ruleset
+    // (all work lost pre-#273); a custom run with an in-prompt ban complied
+    // fully and verified end-to-end. Prompt-level constraint is the
+    // mitigation with an evidence base — the learned restricted-paths layer
+    // is the 4.3.8 root treatment.
+    for (const t of REMEDIATE_TASKS) {
+      expect(t.prompt).toContain('.github/');
+      expect(t.prompt).toContain('Never create or edit ANYTHING under');
+    }
+    expect(customDispatchTask('write some docs').prompt).toContain(
+      'Never create or edit ANYTHING under',
+    );
   });
 });
 
