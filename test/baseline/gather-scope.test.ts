@@ -155,6 +155,7 @@ describe('scopeForPolicy', () => {
       newUntestedChangedSource: false,
       newSevereQualityIssueInChangedFiles: false,
       newProhibitedLicense: false,
+      newBlockingCustomCheckFailure: false,
     };
     for (const rule of Object.keys(BLOCK_RULE_EVIDENCE) as Array<keyof BrownfieldBlockRules>) {
       const evidence = BLOCK_RULE_EVIDENCE[rule];
