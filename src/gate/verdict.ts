@@ -159,6 +159,10 @@ export function buildWireVerdict(outcome: GateCommandOutcome, receipt: string): 
       warningCount: counts.warning,
       blockingCount: counts.blocking,
       floorNetNew: outcome.floorNetNew.length,
+      // Scanner provenance (P2-7): every tool that observed this tree,
+      // name → version — the "scanner@version named in the verdict" ask,
+      // extension engines included (the recall seam collected them).
+      tools: result.current.tools,
       // Snapshot mode (P1-4): the feed state that observed the tree —
       // "snapshot version named in the verdict" is this field plus the
       // recall input it mirrors.
