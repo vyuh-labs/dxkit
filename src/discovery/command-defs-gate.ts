@@ -51,6 +51,7 @@ export const GATE_COMMANDS = [
       'tree it is merely judging. `--workspace` judges N member trees as ONE estate wave: ' +
       'composed served mesh, unresolved cross-member calls, dead routes, and declared ' +
       'flow.v1 flows (`--flows <dir>`). Exit 0 passed / 1 blocked / 2 cannot gate.',
+    skill: 'dxkit-gate',
   },
   {
     id: 'guardrail',

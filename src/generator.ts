@@ -212,6 +212,11 @@ export const DXKIT_SKILLS = [
   // enables the scheduled workflow, and reads the outcome ledger. Drives
   // `vyuh-dxkit remediate` + the policy.json:remediate config.
   'dxkit-remediate',
+  // dxkit-gate (4.4.0): the one-shot tree gate. Judges a bare directory
+  // (generated package, exported tree, workspace wave) under fresh or
+  // tree-baseline prior and reads the verdict.v1 result — the agent-facing
+  // surface of the embeddable gate engine.
+  'dxkit-gate',
 ] as const;
 
 interface GenerateResult {
