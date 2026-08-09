@@ -248,6 +248,13 @@ export function remediationFor(kind: BaselineEntry['kind']): string {
         'needs none — allowlist with category=deferred and a short expiry so the ' +
         'exception stays visible and time-boxed.'
       );
+    case 'broken-flow':
+      return (
+        'A declared end-to-end flow (flow.v1) has a step the estate no longer ' +
+        'serves. Restore or re-route the missing endpoint, update the flow ' +
+        'declaration if the estate genuinely changed shape, or allowlist with ' +
+        'category=deferred and a short expiry while the wave iterates.'
+      );
     case 'license':
       return (
         "A dependency's license matches this repo's prohibited list " +
@@ -299,6 +306,7 @@ function entryLocator(entry: BaselineEntry): { file?: string; line?: number } {
     case 'duplication':
     case 'code-reimplementation':
     case 'paired-change':
+    case 'broken-flow':
     case 'license':
       // A symmetric PAIR of anchors (or a diff-scoped rule, or a
       // contract-domain package identity), no single canonical file:line →

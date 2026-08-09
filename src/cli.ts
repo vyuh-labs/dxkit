@@ -435,6 +435,9 @@ export async function run(argv: string[]): Promise<void> {
       // `gate <dir> --advisory-db <path>[@version]` — offline advisory
       // snapshot (air-gap): dep audit against a local database, zero egress.
       'advisory-db': { type: 'string' },
+      // `gate <dir> --workspace [--flows <dir>]` — the estate wave (WP7).
+      workspace: { type: 'boolean', default: false },
+      flows: { type: 'string' },
       // evaluate: the zero-write trial (ref pair or last-N-landings replay).
       // --base is shared with the reviewers flags below.
       head: { type: 'string' },
@@ -2928,6 +2931,26 @@ export async function run(argv: string[]): Promise<void> {
       // floor when --trusted consents to executing the tree's own code.
       // Exit codes are gate-owned: 0 passed / 1 blocked / 2 cannot gate.
       const dir = resolveRepoPath(positionals[1]);
+      // `--workspace`: the estate WAVE (4.4.0 WP7) — N member trees as one
+      // composition, with declared flows from `--flows <dir>`.
+      if (values.workspace) {
+        const { runWaveCommand, renderWaveOutcome } = await import('./gate-wave');
+        const { gateFailureHint } = await import('./gate-cli');
+        try {
+          const waveOutcome = await runWaveCommand(dir, {
+            flowsDir: values.flows as string | undefined,
+            policyPath: values.policy as string | undefined,
+            trusted: !!values.trusted,
+            json: !!values.json,
+            verbose: !!values.verbose,
+          });
+          process.stdout.write(renderWaveOutcome(waveOutcome, !!values.json) + '\n');
+          process.exit(waveOutcome.exitCode);
+        } catch (err) {
+          logger.fail(gateFailureHint(err as Error));
+          process.exit(2);
+        }
+      }
       const { runGateCommand, renderGateOutcome, gateFailureHint } = await import('./gate-cli');
       try {
         const outcome = await runGateCommand(dir, {

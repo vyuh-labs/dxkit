@@ -98,6 +98,11 @@ const ENTRIES: Record<BaselineEntry['kind'], BaselineEntry> = {
     check: 'model-needs-migration',
     blocking: true,
   },
+  'broken-flow': {
+    id: FP,
+    kind: 'broken-flow',
+    flow: 'order-to-invoice',
+  },
   license: {
     id: FP,
     kind: 'license',

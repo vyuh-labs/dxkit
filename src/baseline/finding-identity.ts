@@ -25,6 +25,7 @@ import {
   computeCodeReimplementationFingerprint,
   computeFlowBindingFingerprint,
   computeModelSchemaDriftFingerprint,
+  computeBrokenFlowFingerprint,
   computePairedChangeFingerprint,
   computeProhibitedLicenseFingerprint,
 } from '../analyzers/tools/fingerprint-contract';
@@ -170,6 +171,11 @@ export function identityFor(
       // (would churn as the diff iterates) and never the globs (editing a
       // committed rule's patterns is policy evolution, not a new violation).
       return computePairedChangeFingerprint(input.check);
+    case 'broken-flow':
+      // The declared flow ID is the whole identity (the paired-change
+      // doctrine) — never the failing step set (churns as the estate
+      // iterates toward completion).
+      return computeBrokenFlowFingerprint(input.flow);
     case 'license':
       // Version-independent (the dep-vuln doctrine): `(package, licenseType)`
       // — a routine bump under the same prohibited license keeps one

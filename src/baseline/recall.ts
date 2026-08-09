@@ -160,6 +160,7 @@ export const RECALL_EPOCHS: Readonly<Record<IdentityKind, number>> = Object.free
   'model-schema-drift': 1,
   'code-reimplementation': 1,
   'paired-change': 1,
+  'broken-flow': 1,
   license: 1,
   // 2 — the output-capture fix. Before it, a check's output was truncated to a
   // 4000-byte DISPLAY tail before being parsed, and a located-finding cap
