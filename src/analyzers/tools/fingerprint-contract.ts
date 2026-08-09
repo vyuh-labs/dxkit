@@ -178,3 +178,18 @@ export const PAIRED_CHANGE_CANONICAL_RULE = 'canonical:paired-change';
 export function computePairedChangeFingerprint(check: string): string {
   return computeContentFingerprint(PAIRED_CHANGE_CANONICAL_RULE, '', check);
 }
+
+/** Canonical rule for a broken declared flow (4.4.0 WP7 — the wave gate). */
+export const BROKEN_FLOW_CANONICAL_RULE = 'canonical:broken-flow';
+
+/**
+ * Durable identity for a broken declared flow (the `broken-flow` kind).
+ * The declared flow's ID is the whole identity — the paired-change
+ * doctrine verbatim: the flow is the estate's own committed declaration,
+ * its id is its address, and one allowlist decision covers the flow
+ * however the failing STEP set varies (steps churning per iteration must
+ * never churn identity). Location-free, environment-independent.
+ */
+export function computeBrokenFlowFingerprint(flowId: string): string {
+  return computeContentFingerprint(BROKEN_FLOW_CANONICAL_RULE, '', flowId);
+}

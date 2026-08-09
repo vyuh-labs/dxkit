@@ -196,6 +196,9 @@ export const KIND_OBSERVATION_SCOPE: Record<
   'code-reimplementation': [],
   'custom-check': [],
   'paired-change': [],
+  // Wave-gate-minted (4.4.0 WP7): the wave surface carries its own
+  // disclosure; no full-scan gather observes it.
+  'broken-flow': [],
   license: ['licenses'],
 });
 

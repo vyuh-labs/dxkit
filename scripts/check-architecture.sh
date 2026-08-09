@@ -1357,6 +1357,7 @@ RULE_FLOW_GATHER=$(grep -rn "gatherFlowModel(" src/ --include=*.ts 2>/dev/null \
   | grep -v "^src/analyzers/flow/gather.ts:" \
   | grep -v "^src/analyzers/flow/publish.ts:" \
   | grep -v "^src/baseline/flow-gate-check.ts:" \
+  | grep -v "^src/gate-wave.ts:" \
   | grep -v -E ':[[:space:]]*(//|\*)' \
   | grep -v "gatherRepoFlowModel(" \
   | grep -v "gatherSystemFlowModel(" \
@@ -1452,6 +1453,7 @@ RULE_FLOWGATHER=$(grep -rn "gatherFlowModel(" src/ 2>/dev/null \
   | grep -v "^src/baseline/flow-gate-check.ts:" \
   | grep -v "^src/analyzers/flow/publish.ts:" \
   | grep -v "^src/flow-cli.ts:" \
+  | grep -v "^src/gate-wave.ts:" \
   | grep -v -E ':[[:space:]]*(//|\*)' \
   | grep -v "// flow-gather-ok")
 if [ -n "$RULE_FLOWGATHER" ]; then

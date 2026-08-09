@@ -162,6 +162,7 @@ export const CATEGORIES_BY_KIND: Readonly<Record<IdentityKind, readonly Allowlis
   // time-boxed so the exception stays visible) or accepted-risk; false-positive
   // when the rule's globs misfire on a file that isn't really the `if` surface.
   'paired-change': ['false-positive', 'accepted-risk', 'deferred'],
+  'broken-flow': ['false-positive', 'accepted-risk', 'deferred'],
 
   // Prohibited license: accepted-risk (legal signed off on this dependency —
   // e.g. a GPL tool used at build time only) or deferred (migration under

@@ -136,6 +136,7 @@ export type IdentityInput =
   | CodeReimplementationIdentityInput
   | CustomCheckIdentityInput
   | PairedChangeIdentityInput
+  | BrokenFlowIdentityInput
   | LicenseIdentityInput;
 
 /**
@@ -537,6 +538,19 @@ export interface PairedChangeIdentityInput {
 }
 
 /**
+ * A broken declared flow (4.4.0 WP7 — the estate wave gate): a `flow.v1`
+ * flow with a step the composed served mesh cannot resolve. Identity is
+ * the flow's declared ID alone (the paired-change name-only doctrine —
+ * the failing STEP set churns as the estate iterates; the declaration's
+ * address does not).
+ */
+export interface BrokenFlowIdentityInput {
+  readonly kind: 'broken-flow';
+  /** The declared flow id from the `flow.v1` document. */
+  readonly flow: string;
+}
+
+/**
  * A prohibited-license finding — a dependency whose license matches the
  * repo's `licenses.prohibited` list. Only MATCHES become findings (the
  * license inventory itself never enters the baseline), so the kind stays
@@ -738,6 +752,14 @@ export type BaselineEntry =
     }
   | {
       id: FindingId;
+      kind: 'broken-flow';
+      /** The declared flow id — the whole identity (Rule 9). */
+      flow: string;
+      /** Failing steps at mint time. Display metadata, never identity. */
+      missingSteps?: string[];
+    }
+  | {
+      id: FindingId;
       kind: 'license';
       /** Package name — identity input. */
       package: string;
@@ -800,6 +822,7 @@ export interface SanitizedBaselineEntry {
     | 'code-reimplementation'
     | 'custom-check'
     | 'paired-change'
+    | 'broken-flow'
     | 'license';
   readonly sanitized: true;
 }

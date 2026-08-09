@@ -225,6 +225,9 @@ export const KIND_DEFAULT_SEVERITY: Readonly<Record<BaselineEntry['kind'], Findi
     // A paired-change violation. Same doctrine as custom-check: block intent
     // is rule-declared (`blocking`), never severity-derived.
     'paired-change': 'medium',
+    // A broken declared flow (4.4.0 WP7): a statically proven estate
+    // contract break — the flow-binding / model-schema-drift tier.
+    'broken-flow': 'high',
     // A prohibited-license dependency. High — a statically proven policy
     // violation (the flow-binding / model-schema-drift tier); the block
     // decision itself comes from the `newProhibitedLicense` rule, not from

@@ -24,8 +24,12 @@ import { type ConsumedBinding } from './contract';
 import { buildServedMatcher, servedMatch } from './model';
 
 /** Why a binding is broken: the endpoint was never served (a new call to a
- *  non-existent route, or a typo), or a route that WAS served got removed. */
-export type BrokenReason = 'no-route' | 'route-removed';
+ *  non-existent route, or a typo), a route that WAS served got removed, or —
+ *  wave mode (4.4.0 WP7) — a served route NO member consumes
+ *  (`dead-route`: the estate DoD says every surviving route has a consumer;
+ *  the finding's `file` is the SERVING file, and the fingerprint scheme is
+ *  the same `(method, path, file)` triple). */
+export type BrokenReason = 'no-route' | 'route-removed' | 'dead-route';
 
 /** One net-new broken integration the gate surfaces. */
 export interface BrokenIntegration {
