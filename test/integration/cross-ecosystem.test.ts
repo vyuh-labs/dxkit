@@ -94,7 +94,8 @@ interface BenchmarkLanguage {
       | 'pmd'
       | 'rubocop'
       | 'swiftlint'
-      | 'phpcs';
+      | 'phpcs'
+      | 'abaplint';
     /** External binary the linter shells out to (used for `it.skipIf` gating). */
     requires: string;
   };
@@ -216,6 +217,15 @@ const BENCHMARK_LANGUAGES: readonly BenchmarkLanguage[] = [
     lint: { file: 'bad_lint.php', expectedTool: 'phpcs', requires: 'php' },
     dup: { file: 'duplications.php' },
     untested: { file: 'untested_module.php' },
+  },
+  {
+    name: 'ABAP',
+    dir: 'abap',
+    secret: { file: 'zcl_secrets.clas.abap' },
+    // abaplint is a pure npm CLI — gate on the binary itself.
+    lint: { file: 'zcl_bad_lint.clas.abap', expectedTool: 'abaplint', requires: 'abaplint' },
+    dup: { file: 'zcl_duplications.clas.abap' },
+    untested: { file: 'zcl_untested_module.clas.abap' },
   },
 ];
 

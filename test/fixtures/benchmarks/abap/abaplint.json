@@ -1,0 +1,14 @@
+{
+  "global": { "files": "/**/*.{abap,asddls,acds}" },
+  "syntax": {
+    "version": { "release": "Newest" },
+    "errorNamespace": "^(Z|Y|LCL_|TY_|LIF_)"
+  },
+  "rules": {
+    "parser_error": true,
+    "structure": true,
+    "check_syntax": true,
+    "cds_parser_error": true,
+    "contains_tab": true
+  }
+}

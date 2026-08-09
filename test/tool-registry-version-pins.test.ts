@@ -34,6 +34,11 @@ import { TOOL_DEFS } from '../src/analyzers/tools/tool-registry';
 const PINNED_TOOLS: Record<string, string> = {
   gitleaks: 'v8.24.0',
   'osv-scanner': 'v2.4.0',
+  // 4.4.0 WP6: exact pin is LOAD-BEARING for abaplint — upstream states it
+  // does not follow semver and ships several releases a week; the lint
+  // gate's recallInputs probe the running version so a re-pin reads as
+  // tooling drift (Rule 19). Re-pin deliberately, never float.
+  abaplint: '@abaplint/cli@2.120.19',
   pmd: '7.24.0',
   detekt: 'v1.23.6',
   ktlint: '1.5.0',

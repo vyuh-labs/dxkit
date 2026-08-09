@@ -20,7 +20,8 @@ export type LanguageId =
   | 'java'
   | 'ruby'
   | 'swift'
-  | 'php';
+  | 'php'
+  | 'abap';
 
 /** Tool required for analysis — consumed by devstack for devcontainer packaging. */
 export interface ToolRequirement {

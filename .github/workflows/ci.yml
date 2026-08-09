@@ -94,6 +94,9 @@ jobs:
       - uses: ruby/setup-ruby@v1 # rubocop (Ruby lint, Phase 10k.2.5) needs a managed Ruby toolchain
         with:
           ruby-version: '3.3'
+      - name: Install abaplint # lint + syntax floor (4.4.0 WP6) — pure npm CLI, exact pin (upstream has no semver)
+        run: npm install -g @abaplint/cli@2.120.19
+
       - name: Install rubocop # lint (Phase 10k.2.5) — Ruby static analyzer (JSON output)
         run: |
           gem install rubocop --no-document
