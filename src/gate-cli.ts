@@ -6,7 +6,7 @@
  * tree, prior = `fresh` (empty — everything net-new by construction) or
  * `tree-baseline` (`--baseline <dir>`, the generated-vs-edited diff),
  * policy = `--policy <file>` or the tree's own `.dxkit/policy.json` or
- * the compiled-in default. On top of the finding diff it runs the
+ * the security-only fallback. On top of the finding diff it runs the
  * correctness floor ("does it compile, do its tests pass") — the part
  * of a verdict findings cannot carry.
  *
@@ -27,7 +27,8 @@ import * as path from 'path';
 import { runGate } from './gate/engine';
 import type { GuardrailCheckResult } from './gate/result';
 import { resolveGateMode } from './baseline/modes';
-import { resolvePolicy } from './baseline/policy';
+import { DEFAULT_BROWNFIELD_POLICY, resolvePolicy } from './baseline/policy';
+import { DEFAULT_LOOP_PRESET, policyForPreset } from './baseline/presets';
 import { trustContextFromFlag } from './analysis-trust';
 import { renderConsole, verdictCounts, type VerdictCounts } from './baseline/check-renderers';
 import { isAdvisoryDbError, resolveAdvisoryDb } from './analyzers/security/advisory-db';
@@ -49,7 +50,8 @@ export interface GateCommandOptions {
   /** Prior tree for the generated-vs-edited diff (H2). Absent = fresh. */
   readonly baselineDir?: string;
   /** Explicit policy document (P0-3). Falls back to the tree's own
-   *  `.dxkit/policy.json`, then the compiled-in default. */
+   *  `.dxkit/policy.json`, then the security-only posture (a fresh
+   *  prior + the fully armed default would block any tree on debt). */
   readonly policyPath?: string;
   readonly json?: boolean;
   /** Consent to EXECUTE the tree's code (floor + command checks). */
@@ -168,7 +170,17 @@ export async function runGateCommand(
   const baselineDir =
     options.baselineDir !== undefined ? path.resolve(options.baselineDir) : undefined;
   const mode = resolveGateMode(baselineDir !== undefined ? { baselineDir } : {});
-  const policy = resolvePolicy(options.policyPath, subjectDir);
+  // The nothing-configured fallback is the SECURITY-ONLY posture, not the
+  // fully armed compiled default: under a fresh prior every finding is
+  // net-new, so armed test-gap/quality rules would block any real tree on
+  // debt no DoD ever asked about. Same cost-bounded default every other
+  // unattended surface gets (loop preset, evaluate trial). An explicit
+  // --policy or a tree-committed policy.json always wins.
+  const policy = resolvePolicy(
+    options.policyPath,
+    subjectDir,
+    policyForPreset(DEFAULT_LOOP_PRESET, DEFAULT_BROWNFIELD_POLICY).policy,
+  );
   // --trusted is the consent flag; its ABSENCE is the untrusted posture.
   const trust = trustContextFromFlag(!options.trusted);
 
