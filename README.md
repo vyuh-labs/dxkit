@@ -13,10 +13,35 @@ It works on the repo you have today. Existing debt is baselined and
 attributed on day one, so the gate is green immediately and every verdict
 after that is about what actually changed.
 
+**In controlled agent-loop runs, ungated agents stopped with a seeded
+regression still in the tree in 11 of 16 runs. With the gate armed: 0 of 16.** ([methodology and artifacts](docs/benchmarks.md))
+
 <p align="center">
   <img src=".github/assets/loop-stop-gate-demo.gif" width="820" alt="dxkit blocks a coding-agent loop on a net-new regression, returns the finding to the agent, and allows the stop after the agent repairs it." />
 </p>
 <p align="center"><sub>Recorded from a real run on a synthetic repository, shortened for readability. Blocked and repaired inside the same warm loop.</sub></p>
+
+## Sixty seconds to a verdict
+
+Nothing to install into your project, nothing written, no git required:
+
+```bash
+npx -y @vyuhlabs/dxkit@latest gate .           # one-shot verdict on any directory
+npx -y @vyuhlabs/dxkit@latest learn --serve    # the whole product on one offline page
+```
+
+`gate` judges a bare tree — code an agent just generated, an exported
+package, a whole workspace of services (`--workspace`) — and exits 0
+passed, 1 blocked (each finding named with its durable fingerprint), or 2
+refused-with-reason. It is the same engine as the repo guardrail below,
+pointed at a directory instead of a git history, and it is embeddable: a
+codegen or conversion pipeline can call it on every tree it emits
+([embedding guide](docs/learn/gate-embedding.md),
+[wave gating](docs/learn/wave-gating.md)).
+
+On a repository you already work in, start with `evaluate` (below) instead:
+it replays your recent merges through the gate rather than judging years of
+existing debt as if it were new.
 
 ## Start in one command
 
@@ -83,11 +108,29 @@ agent, and the agent repaired it before stopping clean.
 The gate and the recorded fixtures replay offline without an API key;
 reproducing the original agent runs requires the documented model environment.
 
-dxkit also gates its own development. Its CI guardrail
-[blocked PR #134](https://github.com/vyuh-labs/dxkit/pull/134) on real
-findings (three files past the repo's size budget and a test fixture that a
-broken benchmark run had leaked into the tree). The failed and passing runs
-are in that PR's checks history. We fixed the findings, not the gate.
+The middle row is why guidance alone is not enough — and why dxkit is a
+**complement** to agent rulesets and prompt packs, not a replacement.
+Guidance makes agents write better code, and you should keep whatever
+guidance works for you; a self-check prompt still left 9 of 16 regressions
+in the tree, because advice cannot verify itself. The gate is the proof
+half: deterministic, outside the model, and unbribable by a confident
+summary.
+
+### Blocked, for real
+
+- **dxkit gates its own development.** Its CI guardrail
+  [blocked PR #134](https://github.com/vyuh-labs/dxkit/pull/134) on real
+  findings (three files past the repo's size budget and a test fixture a
+  broken benchmark run had leaked into the tree). The failed and passing
+  runs are in that PR's checks history. We fixed the findings, not the gate.
+- **A lint-cleanup agent introduced vulnerabilities; the gate caught it.**
+  In a production remediation run, an agent tasked with cleaning up lint
+  findings shipped security regressions in its "cleanup". The guardrail
+  blocked the PR and returned the exact findings; nothing landed.
+- **Advisories published the same hour.** During one of dxkit's own release
+  checks, the gate flagged two dependency advisories that had been published
+  earlier that day — after the baseline was captured — and routed them to
+  the decision lane instead of silently absorbing or silently blocking.
 
 <p>
   <a href="https://www.npmjs.com/package/@vyuhlabs/dxkit"><img alt="npm" src="https://img.shields.io/npm/v/@vyuhlabs/dxkit"></a>
@@ -319,6 +362,30 @@ npx vyuh-dxkit jobs          # what's installed: triggers, schedules, last runs
 npx vyuh-dxkit policy set    # cadence, budgets, which tasks are enabled
 ```
 
+## Embed it: a verdict engine for pipelines that emit code
+
+Everything above gates a repository over time. The same engine also ships
+as a one-call verdict for systems that produce code: a generation pipeline,
+a conversion factory, an on-prem review image.
+
+```bash
+vyuh-dxkit gate ./emitted-package --policy dod.json --json     # fresh tree: everything is net-new
+vyuh-dxkit gate ./edited --baseline ./original --json          # diff a tree against its original
+vyuh-dxkit gate ./wave --workspace --flows flows --json        # N services judged as one estate
+```
+
+The `--json` output is the frozen `verdict.v1` schema: status, exit code,
+the policy's identity (id, version, content hash), every finding with its
+fingerprint, every skipped check with its cause, and a receipt your
+pipeline can store as evidence. The gate never executes code from a tree it
+is merely judging (`--trusted` is explicit consent), `init --gate-only`
+scaffolds just the policy file, `tools bom` prints the scanner
+bill-of-materials for image review, and `--advisory-db` runs the dependency
+audit against an offline snapshot. The full walkthrough is the
+[embedding guide](docs/learn/gate-embedding.md); judging many trees as one
+composition (unresolved cross-service calls, dead routes, declared
+end-to-end flows) is [wave gating](docs/learn/wave-gating.md).
+
 ## Show your team: the whole product, one page
 
 ```bash
@@ -425,7 +492,7 @@ either kind; `extensions dev` validates in seconds. See
 
 ## Languages
 
-dxkit covers 10 ecosystems. Detection is automatic from your manifests and
+dxkit covers 11 ecosystems. Detection is automatic from your manifests and
 source; each language brings its own native linter, dependency-audit tool, and
 coverage parser, layered on the universal scanners.
 

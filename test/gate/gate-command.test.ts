@@ -123,6 +123,35 @@ describe('gate <dir> (fresh prior, default untrusted)', () => {
     },
     HEAVY,
   );
+
+  it(
+    'no policy at all → the security-only fallback: an untested source file warns, never blocks (WP-P front door)',
+    async () => {
+      // No --policy and no committed .dxkit/policy.json. Under the fresh
+      // prior every finding is net-new, so the fully armed compiled default
+      // (newUntestedChangedSource et al) would BLOCK this trivial tree on a
+      // test-gap — the shape that made a first-touch `gate .` read as a
+      // false positive. The fallback is the cost-bounded security-only
+      // posture instead; the gap still surfaces, as a warning.
+      const dir = makeTree({
+        'README.md': '# generated package\n',
+        'src/index.js': 'module.exports = (a, b) => a + b;\n',
+      });
+      const outcome = await runGateCommand(dir, {});
+      expect(outcome.verdict).toMatch(/^PASSED/);
+      expect(outcome.exitCode).toBe(0);
+      const gap = outcome.result.pairs.find((p) => p.kind === 'test-gap');
+      expect(gap).toBeDefined();
+      expect(gap?.classification.blocks).toBe(false);
+      // The verdict names the exact fallback policy it judged under.
+      const doc = JSON.parse(renderGateOutcome(outcome, true));
+      const { policyContentHash } = await import('../../src/baseline/policy');
+      expect(doc.policy.hash).toBe(
+        policyContentHash(policyForPreset('security-only', DEFAULT_BROWNFIELD_POLICY).policy),
+      );
+    },
+    HEAVY,
+  );
 });
 
 describe('the correctness floor under --trusted', () => {
