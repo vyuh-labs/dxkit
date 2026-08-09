@@ -42,7 +42,8 @@ import {
   type AttributedFloorFailure,
   type FloorBaseCheck,
 } from './analyzers/correctness/attribution';
-import { detectActiveLanguages } from './languages';
+import { discoverNestedDepRoots } from './analyzers/security/nested-dep-roots';
+import { LANGUAGES, allDependencyManifestPatterns, detectActiveLanguages } from './languages';
 
 export interface GateCommandOptions {
   /** Prior tree for the generated-vs-edited diff (H2). Absent = fresh. */
@@ -96,6 +97,64 @@ function toBaseCheck(c: CorrectnessFloorResult['checks'][number]): FloorBaseChec
 }
 
 /**
+ * Run the floor across every project root in the tree: the subject root
+ * PLUS each nested directory holding a pack-declared dependency
+ * manifest. A generated package routinely nests its runnable project
+ * under a subdirectory (`code/` in the package-export convention), and
+ * a root-only floor silently ran ZERO checks over it — `ran: true,
+ * checks: []` read as healthy while the seeded failing test never
+ * executed (caught by the acceptance matrix). Discovery reuses the ONE
+ * nested-root primitive dep audits already use
+ * (`discoverNestedDepRoots`, exact manifest basenames, exclusion-aware)
+ * — never a second walker. Nested checks carry their root as a label
+ * prefix so attribution keys (`pack:label`) stay collision-free across
+ * roots on both sides of a tree-baseline diff.
+ */
+function runFloorAcrossRoots(
+  runFloor: typeof runCorrectnessFloor,
+  dir: string,
+): CorrectnessFloorResult {
+  const manifestBasenames = allDependencyManifestPatterns(LANGUAGES).filter(
+    (p) => !p.includes('*') && !p.includes('/'),
+  );
+  const nestedRoots = discoverNestedDepRoots(dir, manifestBasenames).roots;
+  const results: Array<{ prefix: string; result: CorrectnessFloorResult }> = [
+    {
+      prefix: '',
+      result: runFloor({
+        cwd: dir,
+        changedFiles: [],
+        scope: 'full',
+        packs: detectActiveLanguages(dir),
+      }),
+    },
+  ];
+  for (const rel of nestedRoots) {
+    const abs = path.join(dir, rel);
+    results.push({
+      prefix: `${rel}:`,
+      result: runFloor({
+        cwd: abs,
+        changedFiles: [],
+        scope: 'full',
+        packs: detectActiveLanguages(abs),
+      }),
+    });
+  }
+  const merged: CorrectnessFloorResult = {
+    ran: results.some((r) => r.result.ran),
+    blocks: results.some((r) => r.result.blocks),
+    checks: results.flatMap(({ prefix, result }) =>
+      result.checks.map((c) => (prefix ? { ...c, label: `${prefix}${c.label}` } : c)),
+    ),
+    ...(results.find((r) => r.result.scopeEscalated)?.result.scopeEscalated
+      ? { scopeEscalated: results.find((r) => r.result.scopeEscalated)!.result.scopeEscalated }
+      : {}),
+  };
+  return merged;
+}
+
+/**
  * Run the gate over a tree. Pure composition of existing machinery —
  * the engine judges, the floor runner executes, the ONE attribution
  * comparator decides fault, and the ONE verdict derivation plus the
@@ -142,26 +201,16 @@ export async function runGateCommand(
   let floorSkipped: FloorSkip | undefined;
   if (trust.repoExecutionAllowed) {
     const runFloor = options.seams?.runFloor ?? runCorrectnessFloor;
-    floor = runFloor({
-      cwd: subjectDir,
-      changedFiles: [],
-      scope: 'full',
-      packs: detectActiveLanguages(subjectDir),
-    });
+    floor = runFloorAcrossRoots(runFloor, subjectDir);
     // Attribution through the ONE comparator (Rule 2): fresh mode has no
     // base — everything is this tree's own fault by construction
     // (absentMeans 'net-new'). Tree-baseline mode captures the base
-    // tree's floor with the same runner, so a failure the generated
-    // baseline already had is pre-existing, never blamed on the edit.
+    // tree's floor with the same runner + the same root discovery, so a
+    // failure the generated baseline already had is pre-existing, never
+    // blamed on the edit.
     let base: FloorBaseCheck[] | null = null;
     if (baselineDir !== undefined) {
-      const baseFloor = runFloor({
-        cwd: baselineDir,
-        changedFiles: [],
-        scope: 'full',
-        packs: detectActiveLanguages(baselineDir),
-      });
-      base = baseFloor.checks.map(toBaseCheck);
+      base = runFloorAcrossRoots(runFloor, baselineDir).checks.map(toBaseCheck);
     }
     floorNetNew = attributeFloorFailures(floor, base, { absentMeans: 'net-new' }).filter(
       (a) => a.attribution === 'net-new',

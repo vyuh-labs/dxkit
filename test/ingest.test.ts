@@ -46,6 +46,7 @@ function flags(over: Partial<DetectedStack['languages']>): DetectedStack['langua
     ruby: false,
     swift: false,
     php: false,
+    abap: false,
     ...over,
   };
 }

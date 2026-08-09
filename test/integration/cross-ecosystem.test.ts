@@ -94,7 +94,8 @@ interface BenchmarkLanguage {
       | 'pmd'
       | 'rubocop'
       | 'swiftlint'
-      | 'phpcs';
+      | 'phpcs'
+      | 'abaplint';
     /** External binary the linter shells out to (used for `it.skipIf` gating). */
     requires: string;
   };
@@ -216,6 +217,15 @@ const BENCHMARK_LANGUAGES: readonly BenchmarkLanguage[] = [
     lint: { file: 'bad_lint.php', expectedTool: 'phpcs', requires: 'php' },
     dup: { file: 'duplications.php' },
     untested: { file: 'untested_module.php' },
+  },
+  {
+    name: 'ABAP',
+    dir: 'abap',
+    secret: { file: 'zcl_secrets.clas.abap' },
+    // abaplint is a pure npm CLI — gate on the binary itself.
+    lint: { file: 'zcl_bad_lint.clas.abap', expectedTool: 'abaplint', requires: 'abaplint' },
+    dup: { file: 'zcl_duplications.clas.abap' },
+    untested: { file: 'zcl_untested_module.clas.abap' },
   },
 ];
 
@@ -851,7 +861,13 @@ describe('matrix — coverage (D021 sub-piece 4)', () => {
   for (const lang of BENCHMARK_LANGUAGES) {
     it(`${lang.name}: coverage capability declares runTests()`, async () => {
       const { getLanguage } = await import('../../src/languages');
+      // Declared no-coverage packs (a reason, never an omission — the
+      // DEFERRED_KINDS discipline): the cell then pins the ABSENCE.
+      const noCoverage: Record<string, string> = {
+        ABAP: 'coverage needs ABAP Unit in a live SAP system — deliberately declined (docs/decisions/abap-tooling.md)',
+      };
       const idMap: Record<string, string> = {
+        ABAP: 'abap',
         Python: 'python',
         Go: 'go',
         Rust: 'rust',
@@ -867,6 +883,10 @@ describe('matrix — coverage (D021 sub-piece 4)', () => {
       expect(id, `${lang.name}: missing id mapping in matrix coverage row`).toBeDefined();
       const pack = getLanguage(id as Parameters<typeof getLanguage>[0]);
       expect(pack, `${lang.name}: pack not found in registry`).toBeDefined();
+      if (noCoverage[lang.name]) {
+        expect(pack!.capabilities?.coverage, noCoverage[lang.name]).toBeUndefined();
+        return;
+      }
       const runTests = pack!.capabilities?.coverage?.runTests;
       expect(
         typeof runTests,

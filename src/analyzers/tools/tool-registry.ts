@@ -643,6 +643,31 @@ export const TOOL_DEFS: Record<string, ToolDefinition> = {
       windows: 'pip install --user "graphifyy==0.9.25"',
     },
   },
+  abaplint: {
+    name: 'abaplint',
+    description: 'ABAP linter + parser (the ABAP pack: lint gate AND syntax floor)',
+    // EXACT pin, deliberately: upstream states outright that it does not
+    // follow semver and ships several releases a week. A version bump is a
+    // deliberate re-pin here, and the lint gate's recallInputs probe the
+    // running version so an upgrade reads as tooling drift (Rule 19), never
+    // as a developer's regression. Decision record:
+    // docs/decisions/abap-tooling.md (MIT, all-MIT dependency chain;
+    // registry-tool posture — installed on the user's machine, never
+    // redistributed).
+    install: 'npm install -g @abaplint/cli@2.120.19',
+    check: 'abaplint --version',
+    for: 'abap',
+    layer: 'language',
+    binaries: ['abaplint'],
+    versionCheck: 'abaplint --version',
+    installCommands: {
+      macos:
+        'mkdir -p ~/.local/share/dxkit && cd ~/.local/share/dxkit && npm install @abaplint/cli@2.120.19 && mkdir -p ~/.local/bin && ln -sf ~/.local/share/dxkit/node_modules/.bin/abaplint ~/.local/bin/abaplint',
+      linux:
+        'mkdir -p ~/.local/share/dxkit && cd ~/.local/share/dxkit && npm install @abaplint/cli@2.120.19 && mkdir -p ~/.local/bin && ln -sf ~/.local/share/dxkit/node_modules/.bin/abaplint ~/.local/bin/abaplint',
+      windows: 'npm install -g @abaplint/cli@2.120.19',
+    },
+  },
   jscpd: {
     name: 'jscpd',
     description: 'Copy-paste / duplicate code detector',

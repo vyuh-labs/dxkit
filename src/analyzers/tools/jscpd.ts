@@ -64,6 +64,16 @@ export type DuplicationGatherOutcome =
  * LANGUAGES) takes effect — module-load capture would freeze the union
  * before the test injection.
  */
+/** Pack-declared `--formats-exts` union (same freshness rationale as the
+ *  pattern builder above). Empty string = no flag. */
+function buildJscpdFormatsExts(): string {
+  const entries = new Set<string>();
+  for (const lang of LANGUAGES) {
+    for (const e of lang.jscpdFormatsExts ?? []) entries.add(e);
+  }
+  return [...entries].sort().join(';');
+}
+
 function buildJscpdPattern(): string {
   const exts = new Set<string>();
   for (const lang of LANGUAGES) {
@@ -140,6 +150,8 @@ export async function gatherJscpdResult(cwd: string): Promise<DuplicationGatherO
   const autogenIgnore = allAutogenSourcePatterns().map((p) => `**/${p}`);
   const ignorePatterns = [...exclusionIgnore, ...autogenIgnore];
   const args = ['--reporters', 'json', '--output', reportDir, '--gitignore', '--pattern', pattern];
+  const formatsExts = buildJscpdFormatsExts();
+  if (formatsExts) args.push('--formats-exts', formatsExts);
   if (ignorePatterns.length > 0) {
     args.push('--ignore', ignorePatterns.join(','));
   }
