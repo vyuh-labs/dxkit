@@ -76,6 +76,23 @@ a parity suite rather than promised by documentation.
   the gate in CI — including both wave directions (seeded estate
   blocked; seeds fixed, the same estate passes).
 
+### Upgrade notes
+
+- **No re-baseline needed.** The finding-identity scheme is unchanged;
+  existing committed baselines and allowlists remain valid as-is.
+- **One behavior change for existing installs:** a custom check declared
+  `blocking: true` now blocks a NET-NEW failure under every posture,
+  including `security-only`, where it previously only warned. The
+  grandfathered backlog is unaffected; only failures a change introduces
+  can block. Repos that never declared a `blocking: true` check see no
+  change. To keep the old behavior for a specific check, set
+  `blocking: false` (or set `blockRules.newBlockingCustomCheckFailure:
+false` in the policy).
+- Everything else in this release is new opt-in surface (`gate`, the
+  wave, text rules, the embed profile, the ABAP pack) and is unreachable
+  from an existing install's guardrail, hooks, CI, or lanes until
+  invoked.
+
 ### Changed
 
 - **README** reworked around the sixty-second front door (`gate .` and
