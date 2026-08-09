@@ -77,6 +77,15 @@ export const DEFERRED_KINDS: Readonly<
       'complete producer for this kind.',
     landingPhase: 'seam gate (ships with the kind)',
   },
+  'broken-flow': {
+    reason:
+      'a broken declared flow is a property of an ESTATE COMPOSITION (N member ' +
+      'trees judged as one wave), not of any single tree a full-scan producer ' +
+      'walks: the wave gate mints the kind from flow.v1 declarations against ' +
+      'the composed served mesh. Substitute: none — the wave surface is the ' +
+      'complete producer for this kind.',
+    landingPhase: 'estate wave gate (4.4.0 WP7 — ships with the kind)',
+  },
   'paired-change': {
     reason:
       'a paired-change violation is a property of ONE DIFF ("this change touched the ' +

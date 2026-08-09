@@ -48,7 +48,9 @@ export const GATE_COMMANDS = [
       'call. Everything is net-new by construction under the fresh prior; `--baseline <dir>` ' +
       'diffs an edited tree against its generated original. Runs the correctness floor ' +
       '(compile + tests) only with `--trusted` consent — dxkit never executes code from a ' +
-      'tree it is merely judging. Exit 0 passed / 1 blocked / 2 cannot gate.',
+      'tree it is merely judging. `--workspace` judges N member trees as ONE estate wave: ' +
+      'composed served mesh, unresolved cross-member calls, dead routes, and declared ' +
+      'flow.v1 flows (`--flows <dir>`). Exit 0 passed / 1 blocked / 2 cannot gate.',
   },
   {
     id: 'guardrail',

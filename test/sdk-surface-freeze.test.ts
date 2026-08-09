@@ -139,6 +139,9 @@ describe('sdk surface freeze (Rule 18)', () => {
       // 4.4.0 (sdk 0.3.0): the machine-readable gate verdict + receipt —
       // what dxkit EMITS, deliberately outside the WireDoc ingest union.
       'verdict.v1',
+      // 4.4.0 (sdk 0.3.0): externally-declared expected flows for the
+      // estate wave gate (P2-6).
+      'flow.v1',
     ]);
   });
 

@@ -277,6 +277,46 @@ export interface WireVerdictDoc {
   meta?: Record<string, unknown>;
 }
 
+// ── flow.v1 ─────────────────────────────────────────────────────────────────
+
+/** One step of a declared flow: a consumed `(method, path)` that must
+ *  resolve against the composed served surface. Either the split form
+ *  or the compact `call: 'GET /orders'` string. */
+export interface WireFlowStep {
+  method?: string;
+  path?: string;
+  /** Compact `'<METHOD> <path>'` form; parsed at ingest. */
+  call?: string;
+  /** Informational: which member is expected to serve it. Never
+   *  load-bearing — resolution is against the WHOLE mesh. */
+  package?: string;
+  meta?: Record<string, unknown>;
+}
+
+/** A declared end-to-end flow: an ordered set of steps that must ALL
+ *  resolve for the flow to count as complete. Identity is the `id`
+ *  alone (the paired-change doctrine — never the matched member set,
+ *  so an iterating estate doesn't churn identity). */
+export interface WireFlow {
+  id: string;
+  description?: string;
+  steps: WireFlowStep[];
+  meta?: Record<string, unknown>;
+}
+
+/**
+ * `flow.v1` — externally-declared expected flows (4.4.0 WP7 / P2-6).
+ * A consumer compiles its own knowledge of the estate (consumer apps,
+ * shared tables, service contracts) into these descriptors; the wave
+ * gate evaluates "does every declared flow still complete" against the
+ * composed served surface of all members. dxkit re-normalizes every
+ * step path through the ONE shared normalizer at ingest.
+ */
+export interface WireFlowDoc {
+  schema: 'flow.v1';
+  flows: WireFlow[];
+}
+
 // ── The schema-id registry ──────────────────────────────────────────────────
 
 /**
@@ -290,6 +330,7 @@ export const WIRE_SCHEMA_IDS = [
   'findings.v1',
   'export.v1',
   'verdict.v1',
+  'flow.v1',
 ] as const;
 
 export type WireSchemaId = (typeof WIRE_SCHEMA_IDS)[number];

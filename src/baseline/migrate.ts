@@ -148,6 +148,9 @@ export function baselineEntryToIdentityInput(entry: BaselineEntry): IdentityInpu
       // `blocking` + `message` are verdict/display metadata; identity is the
       // rule name alone.
       return { kind: 'paired-change', check: e.check };
+    case 'broken-flow':
+      // `missingSteps` is display metadata; identity is the flow id alone.
+      return { kind: 'broken-flow', flow: e.flow };
     case 'license':
       // `version` is display metadata; identity is (package, licenseType).
       return { kind: 'license', package: e.package, licenseType: e.licenseType };
