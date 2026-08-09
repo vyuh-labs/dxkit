@@ -291,3 +291,20 @@ describe('the floor runs across nested project roots', () => {
     HEAVY,
   );
 });
+
+describe('WP8 — the enterprise tail surfaces', () => {
+  it(
+    'the verdict names every scanner that observed the tree (scanner@version)',
+    async () => {
+      const dir = makeTree({
+        'README.md': '# generated package\n',
+        '.dxkit/policy.json': securityPolicyJson(),
+      });
+      const outcome = await runGateCommand(dir, {});
+      const doc = JSON.parse(renderGateOutcome(outcome, true));
+      expect(doc.meta.tools).toBeDefined();
+      expect(typeof doc.meta.tools).toBe('object');
+    },
+    HEAVY,
+  );
+});
