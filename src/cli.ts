@@ -386,6 +386,9 @@ export async function run(argv: string[]): Promise<void> {
       help: { type: 'boolean', short: 'h', default: false },
       version: { type: 'boolean', short: 'v', default: false },
       'dx-only': { type: 'boolean', default: false },
+      // `init --gate-only` — the embed profile (4.4.0 WP8 / P3-9): policy
+      // scaffold only; no ship surfaces, no repair lanes, no GitHub wiring.
+      'gate-only': { type: 'boolean', default: false },
       full: { type: 'boolean', default: false },
       detect: { type: 'boolean', default: false },
       yes: { type: 'boolean', short: 'y', default: false },
@@ -601,6 +604,15 @@ export async function run(argv: string[]): Promise<void> {
 
   switch (command) {
     case 'init': {
+      // `--gate-only` (4.4.0 WP8 / P3-9): the embed profile for an on-prem
+      // image — a policy scaffold and NOTHING else. No .claude/, no hooks,
+      // no CI workflows, no repair lanes, no GitHub wiring: the container's
+      // whole dxkit surface is `gate <dir> --policy <file> --json`.
+      if (values['gate-only']) {
+        const { runGateOnlyInit } = await import('./init-gate-only');
+        await runGateOnlyInit(resolveRepoPath(positionals[1]));
+        break;
+      }
       const initStarted = Date.now();
       logger.header('Setting up dxkit');
 
@@ -1432,6 +1444,7 @@ export async function run(argv: string[]): Promise<void> {
       await runToolsCommand(targetPath, subCommand, !!values.yes, {
         toolName,
         all: !!values.all,
+        json: !!values.json,
       });
       break;
     }

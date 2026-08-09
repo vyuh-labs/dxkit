@@ -346,7 +346,68 @@ export async function runToolsCommand(
     await runInstall(targetPath, autoYes, options);
     return;
   }
+  if (subCommand === 'bom') {
+    renderToolsBom(options.json === true);
+    return;
+  }
   logger.fail(`Unknown tools subcommand: ${subCommand}`);
-  logger.info('Usage: vyuh-dxkit tools [list|install] [<tool-name>] [path] [--all] [--yes]');
+  logger.info('Usage: vyuh-dxkit tools [list|install|bom] [<tool-name>] [path] [--all] [--yes]');
   process.exit(1);
+}
+
+/**
+ * `tools bom [--json]` (4.4.0 WP8 / P3-9): the supply-chain bill of
+ * materials for what a dxkit install can bring into a container —
+ * rendered FROM the registry, never a second list. Per tool: the exact
+ * version pin parsed from its install commands, every pinned sha256
+ * (the dxkit_fetch args), and the install mechanism. An enterprise
+ * image review reads this instead of reverse-engineering the registry.
+ */
+export function renderToolsBom(json: boolean): void {
+  const rows = Object.values(TOOL_DEFS).map((def) => {
+    const installs = [def.install, ...Object.values(def.installCommands ?? {})].filter(
+      (c): c is string => typeof c === 'string' && c.length > 0,
+    );
+    const joined = installs.join('\n');
+    // Version pin: the first @x.y.z / vX.Y.Z / ==x.y.z token in any command.
+    const pin =
+      joined.match(/@[a-z0-9/.-]*?(\d+\.\d+\.\d+)/i)?.[1] ??
+      joined.match(/\bv(\d+\.\d+\.\d+)\b/)?.[1] ??
+      joined.match(/==(\d+\.\d+(?:\.\d+)?)/)?.[1] ??
+      null;
+    const checksums = [...new Set(joined.match(/\b[0-9a-f]{64}\b/g) ?? [])];
+    const via = joined.includes('dxkit_fetch')
+      ? 'pinned download (dxkit_fetch, sha256-verified, fails closed)'
+      : joined.includes('npm install')
+        ? 'npm'
+        : joined.includes('pip')
+          ? 'pip'
+          : joined.includes('brew')
+            ? 'brew/system'
+            : 'system package manager';
+    return {
+      name: def.name,
+      description: def.description,
+      layer: def.layer,
+      appliesTo: def.for,
+      versionPin: pin,
+      sha256: checksums,
+      installVia: via,
+    };
+  });
+  if (json) {
+    process.stdout.write(
+      JSON.stringify({ schema: 'dxkit.tools-bom.v1', tools: rows }, null, 2) + '\n',
+    );
+    return;
+  }
+  logger.header('Tool bill of materials (from the registry)');
+  for (const r of rows) {
+    logger.info(
+      `${r.name}  ${r.versionPin ? 'pin ' + r.versionPin : 'unpinned'}  · ${r.installVia}`,
+    );
+    if (r.sha256.length > 0) logger.dim(`  sha256: ${r.sha256.join(', ')}`);
+  }
+  logger.dim('\nUnpinned tools install via a system package manager the host controls;');
+  logger.dim('pinned downloads verify sha256 and fail closed (CLAUDE.md Rule 1).');
 }

@@ -32,6 +32,8 @@ import {
 export interface ToolsInstallOptions {
   toolName?: string;
   all?: boolean;
+  /** `tools bom --json`: machine-readable bill of materials. */
+  json?: boolean;
 }
 
 /**
