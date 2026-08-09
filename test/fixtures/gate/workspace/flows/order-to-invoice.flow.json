@@ -1,0 +1,4 @@
+{
+  "id": "order-to-invoice",
+  "steps": [{ "call": "GET /orders" }, { "call": "GET /price" }, { "call": "GET /invoice" }]
+}
