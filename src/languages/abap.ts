@@ -124,6 +124,10 @@ export const abap: LanguageSupport = {
   // hole, see the decision record; text rules still apply to them).
   sourceExtensions: ['.abap', '.asddls', '.asbdef'],
 
+  // jscpd tokenizes .abap without this but finds ZERO clones (verified);
+  // the explicit format mapping restores clone detection.
+  jscpdFormatsExts: ['abap:abap'],
+
   // abapGit test includes.
   testFilePatterns: ['*.testclasses.abap'],
 

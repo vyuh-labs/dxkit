@@ -861,7 +861,13 @@ describe('matrix — coverage (D021 sub-piece 4)', () => {
   for (const lang of BENCHMARK_LANGUAGES) {
     it(`${lang.name}: coverage capability declares runTests()`, async () => {
       const { getLanguage } = await import('../../src/languages');
+      // Declared no-coverage packs (a reason, never an omission — the
+      // DEFERRED_KINDS discipline): the cell then pins the ABSENCE.
+      const noCoverage: Record<string, string> = {
+        ABAP: 'coverage needs ABAP Unit in a live SAP system — deliberately declined (docs/decisions/abap-tooling.md)',
+      };
       const idMap: Record<string, string> = {
+        ABAP: 'abap',
         Python: 'python',
         Go: 'go',
         Rust: 'rust',
@@ -877,6 +883,10 @@ describe('matrix — coverage (D021 sub-piece 4)', () => {
       expect(id, `${lang.name}: missing id mapping in matrix coverage row`).toBeDefined();
       const pack = getLanguage(id as Parameters<typeof getLanguage>[0]);
       expect(pack, `${lang.name}: pack not found in registry`).toBeDefined();
+      if (noCoverage[lang.name]) {
+        expect(pack!.capabilities?.coverage, noCoverage[lang.name]).toBeUndefined();
+        return;
+      }
       const runTests = pack!.capabilities?.coverage?.runTests;
       expect(
         typeof runTests,

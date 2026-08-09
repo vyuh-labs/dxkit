@@ -230,6 +230,14 @@ export interface LanguageSupport {
   displayName: string;
 
   sourceExtensions: string[];
+  /**
+   * jscpd `--formats-exts` entries this pack needs (e.g. `'abap:abap'`)
+   * when jscpd's built-in extension mapping mishandles the language
+   * (verified for `.abap`: without the mapping jscpd tokenizes the files
+   * but finds zero clones). Optional — most extensions map natively.
+   * Unioned across packs by the ONE jscpd invocation (Rule 6).
+   */
+  jscpdFormatsExts?: readonly string[];
   testFilePatterns: string[];
   extraExcludes?: string[];
 

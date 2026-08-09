@@ -248,3 +248,46 @@ describe('the --json payload is verdict.v1 (P0-2)', () => {
     HEAVY,
   );
 });
+
+describe('the floor runs across nested project roots', () => {
+  it(
+    'discovers a manifest nested under a subdirectory and prefixes its checks with the root',
+    async () => {
+      // The package-export convention: the runnable project nests under
+      // code/, the tree root has no manifest. A root-only floor ran ZERO
+      // checks here while reading as healthy — caught by the acceptance
+      // matrix (the seeded failing test never executed).
+      const dir = makeTree({
+        'README.md': '# generated package\n',
+        'code/package.json': JSON.stringify({ name: 'nested', version: '1.0.0' }),
+        'code/index.js': 'module.exports = 1;\n',
+        '.dxkit/policy.json': securityPolicyJson(),
+      });
+      const seen: string[] = [];
+      const outcome = await runGateCommand(dir, {
+        trusted: true,
+        seams: {
+          runFloor: (opts) => {
+            seen.push(opts.cwd);
+            return {
+              ran: true,
+              blocks: false,
+              checks: [
+                { pack: 'typescript', label: 'affected-tests', bin: 'jest', status: 'pass' },
+              ],
+            };
+          },
+        },
+      });
+      // One invocation per root: the tree root plus the nested project.
+      expect(seen).toHaveLength(2);
+      expect(seen[1].endsWith('/code')).toBe(true);
+      // Nested checks carry the root prefix so attribution keys stay
+      // collision-free across roots.
+      const labels = outcome.floor?.checks.map((c) => c.label) ?? [];
+      expect(labels).toContain('affected-tests');
+      expect(labels).toContain('code:affected-tests');
+    },
+    HEAVY,
+  );
+});
