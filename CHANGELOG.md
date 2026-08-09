@@ -5,6 +5,87 @@ All notable changes to `@vyuhlabs/dxkit` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.4.0] - 2026-08-09
+
+The engine release. The verdict machinery that has always sat behind a
+git repo with a committed baseline is now callable on its own: one
+command in, one machine-readable verdict out, against any directory —
+no git, no init, no install into the tree being judged. Every gate is
+the same computation (a subject, a prior, a policy) through one engine,
+so a tree verdict and a repo guardrail verdict share fingerprints,
+classification, refusal tiers, and renderers by construction, pinned by
+a parity suite rather than promised by documentation.
+
+### Added
+
+- **`vyuh-dxkit gate <dir>` — the one-shot tree gate.** Judges a bare
+  directory under a fresh prior (everything found is net-new by
+  construction — right for freshly generated or converted code) or a
+  tree baseline (`--baseline <original>`: only what an edit introduced
+  can block). Exit codes are the contract: 0 passed, 1 blocked, 2
+  cannot gate (a refusal with the cause and remedy named, never a
+  guess). The subject tree is untrusted by default: dxkit never
+  executes code from a tree it is merely judging; the correctness
+  floor (compile + tests, across nested project roots) and
+  command-shaped checks run only under explicit `--trusted` consent,
+  and every skip is disclosed with its cause. With no policy given,
+  the gate judges under the cost-bounded security-only posture — the
+  same default every other unattended surface uses — rather than the
+  fully armed repo default; an explicit `--policy` or a
+  tree-committed policy always wins.
+- **`verdict.v1` — the machine-readable verdict.** `gate --json` emits
+  a frozen wire schema (in the extension SDK, additive-only): status,
+  exit code, the policy identity, every finding with its durable
+  fingerprint, every check that ran or was skipped with the skip's
+  cause, the floor result, refusals, and a receipt block a pipeline
+  can store as evidence.
+- **Named, versioned, embeddable policies.** A policy document may
+  declare `id` and `version`, and every verdict names the policy it
+  was judged under — id, version, and a content hash — so a verdict is
+  never separable from its rules. Declarative **text rules**
+  (`checks[]` with `pattern`/`globs`) run in-process with no command
+  execution, safe on untrusted trees, and a check declared
+  `blocking: true` blocks through a dedicated block rule under every
+  posture.
+- **The estate wave: `gate --workspace --flows <dir>`.** Judges N
+  member trees as one composition on top of the per-member gates: a
+  served mesh unioned across members, unresolved cross-member calls
+  (block), routes nothing consumes (warn — outward surface can have
+  callers dxkit cannot see), and externally declared end-to-end flows
+  (`flow.v1`, also in the SDK) whose unserved steps block. Findings
+  carry member-prefixed locators.
+- **Offline advisory snapshots.** `gate --advisory-db <path>[@version]`
+  runs the dependency audit against a local OSV snapshot with zero
+  egress — the air-gap path. The snapshot version joins the verdict's
+  recall context, so verdicts from different snapshots are never
+  silently compared as if they saw the same advisories.
+- **The ABAP language pack.** abaplint-adopted (MIT, pinned exactly —
+  the project publishes no semver stream), config-gated lint gate with
+  a structured JSON parse, and a syntax floor that catches a truncated
+  or unparseable object under `--trusted`. abapGit layout detection;
+  duplication and line counts wired through the standard tooling.
+  Eleven ecosystems total.
+- **The embed profile.** `init --gate-only` scaffolds exactly one
+  artifact (the policy file) — no hooks, CI, loop pack, or `.claude/`.
+  `tools bom [--json]` renders the scanner bill of materials from the
+  registry (pinned versions, checksums, install mechanisms) for image
+  supply-chain review.
+- **Discovery + guides.** Two learn pages (embedding the gate; wave
+  gating), the `dxkit-gate` agent skill, and a committed acceptance
+  matrix driving neutralized package/ABAP/workspace fixtures through
+  the gate in CI — including both wave directions (seeded estate
+  blocked; seeds fixed, the same estate passes).
+
+### Changed
+
+- **README** reworked around the sixty-second front door (`gate .` and
+  `learn --serve`), a first-screen measured number, real
+  blocked-finding stories, and explicit complement positioning:
+  guidance tools make agents write better code; the gate proves what
+  they wrote didn't break anything.
+- `@vyuhlabs/dxkit-sdk` 0.3.0 ships with this release (additive:
+  `verdict.v1` + `flow.v1` wire schemas).
+
 ## [4.3.8] - 2026-08-08
 
 The deliver-layer hotfix. Four live remediation-lane runs surfaced four
