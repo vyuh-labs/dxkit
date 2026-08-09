@@ -421,20 +421,30 @@ export { policyContentHash } from './policy-naming';
  *      path is supplied but unreadable / malformed.
  *   2. `<cwd>/.dxkit/policy.json` (conventional). Silently skipped
  *      when absent so consumers without a policy get the defaults.
- *   3. `DEFAULT_BROWNFIELD_POLICY` (compiled-in fallback).
+ *   3. `fallback` — `DEFAULT_BROWNFIELD_POLICY` unless the surface
+ *      declares a different no-policy posture (the tree gate passes the
+ *      security-only preset: under a fresh prior EVERY finding is
+ *      net-new, so the fully armed compiled default would block any
+ *      real tree on test-gap/quality debt no DoD ever asked about).
+ *      A policy FILE still merges over the compiled default — only the
+ *      nothing-configured arm is surface-tunable.
  *
  * Customer fields shallow-merge over the default. The
  * `confidence` / `blockRules` blocks deep-merge by key. Unknown
  * fields are preserved — the classifier ignores what it doesn't
  * know, so forward-compatible policy files don't break old dxkit.
  */
-export function resolvePolicy(policyPath: string | undefined, cwd: string): BrownfieldPolicy {
+export function resolvePolicy(
+  policyPath: string | undefined,
+  cwd: string,
+  fallback: BrownfieldPolicy = DEFAULT_BROWNFIELD_POLICY,
+): BrownfieldPolicy {
   let resolvedPath: string | undefined = policyPath;
   if (!resolvedPath) {
     const conventional = path.join(cwd, DEFAULT_POLICY_FILENAME);
     if (fs.existsSync(conventional)) resolvedPath = conventional;
   }
-  if (!resolvedPath) return DEFAULT_BROWNFIELD_POLICY;
+  if (!resolvedPath) return fallback;
   const read = readPolicyRoot(resolvedPath);
   if (read.status === 'absent') {
     // Only reachable via an explicit `--policy <p>` pointing at a missing file
