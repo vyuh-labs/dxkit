@@ -6,6 +6,7 @@ import type { CustomCheckFinding } from '../../src/analyzers/custom-checks/types
 import { LANGUAGES } from '../../src/languages';
 import type { LintOutputParse } from '../../src/languages/capabilities/lint-gate';
 import { parseEslintJson } from '../../src/languages/typescript';
+import { parseAbaplintJson } from '../../src/languages/abap';
 import { parseRuffJson } from '../../src/languages/python';
 import { parseGolangciJson } from '../../src/languages/go';
 import { parseRubocopJson } from '../../src/languages/ruby';
@@ -50,6 +51,27 @@ interface Fixture {
   readonly parse: LintOutputParse;
   readonly sample: string;
   readonly expect: { file: string; line: number; rule?: string; message?: string };
+}
+
+const abaplintParse: LintOutputParse = {
+  kind: 'structured',
+  label: 'abaplint-json',
+  parse: parseAbaplintJson,
+};
+
+function abaplintSample(file: string): string {
+  // Real shape from the pinned 2.120.19 (test/fixtures/raw/abap/) —
+  // single-line JSON array; `file` is absolute by abaplint convention.
+  return JSON.stringify([
+    {
+      description: 'Expected ENDMETHOD',
+      key: 'structure',
+      file,
+      start: { row: 1, col: 1 },
+      end: { row: 1, col: 55 },
+      severity: 'Error',
+    },
+  ]);
 }
 
 const eslintParse: LintOutputParse = {
@@ -258,6 +280,25 @@ function phpcsSample(file: string): string {
 }
 
 const FIXTURES: ReadonlyArray<Fixture> = [
+  {
+    label: 'abaplint -f json (absolute file — abaplint convention)',
+    packId: 'abap',
+    parse: abaplintParse,
+    sample: abaplintSample(`${CWD}/src/zcl_order.clas.abap`),
+    expect: {
+      file: 'src/zcl_order.clas.abap',
+      line: 1,
+      rule: 'structure',
+      message: 'Expected ENDMETHOD',
+    },
+  },
+  {
+    label: 'abaplint -f json (relative file)',
+    packId: 'abap',
+    parse: abaplintParse,
+    sample: abaplintSample('src/zcl_order.clas.abap'),
+    expect: { file: 'src/zcl_order.clas.abap', line: 1, rule: 'structure' },
+  },
   {
     label: 'eslint --format json (absolute filePath — eslint convention)',
     packId: 'typescript',

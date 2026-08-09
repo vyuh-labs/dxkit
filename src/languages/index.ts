@@ -22,6 +22,7 @@ import { java } from './java';
 import { ruby } from './ruby';
 import { swift } from './swift';
 import { php } from './php';
+import { abap } from './abap';
 
 export type {
   ArchitecturalShape,
@@ -43,6 +44,7 @@ export const LANGUAGES: readonly LanguageSupport[] = [
   ruby,
   swift,
   php,
+  abap,
 ];
 
 export function getLanguage(id: LanguageId): LanguageSupport | undefined {

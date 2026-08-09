@@ -22,6 +22,7 @@ const NODE_ONLY: DetectedStack['languages'] = {
   ruby: false,
   swift: false,
   php: false,
+  abap: false,
 };
 
 const EMPTY_STACK: DetectedStack['languages'] = {
@@ -35,6 +36,7 @@ const EMPTY_STACK: DetectedStack['languages'] = {
   ruby: false,
   swift: false,
   php: false,
+  abap: false,
 };
 
 describe('selectToolNames', () => {

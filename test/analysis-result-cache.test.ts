@@ -80,6 +80,7 @@ function stubBody(): AnalysisResultBody {
         ruby: false,
         swift: false,
         php: false,
+        abap: false,
       },
       infrastructure: { docker: false, postgres: false, redis: false },
       projectName: 'fixture',

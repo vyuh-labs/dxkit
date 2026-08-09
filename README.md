@@ -450,6 +450,7 @@ across those environments. See the execution-environment notes in
 | Ruby                    | `Gemfile`, `*.rb`           | RuboCop, bundler-audit                       |
 | Swift                   | `Package.swift`, `Podfile`  | SwiftLint, osv-scanner                       |
 | PHP                     | `composer.json`, `*.php`    | PHP_CodeSniffer, osv-scanner                 |
+| ABAP                    | `abaplint.json`, `*.abap`   | abaplint (lint gate + syntax floor)          |
 
 The correctness floor (does the change still compile, do its tests still
 pass) runs on every pack through each language's own build and test
@@ -465,18 +466,19 @@ coarser comparison is disclosed, never silent.
 <details>
 <summary><strong>Per-pack capabilities</strong>: coverage import, import-graph, severity tiers (click to expand)</summary>
 
-| Language | Detection                                 | Coverage import     | Import-graph                 | Native tools                        | Lint severity tiers    | Vuln severity tiers                           |
-| -------- | ----------------------------------------- | ------------------- | ---------------------------- | ----------------------------------- | ---------------------- | --------------------------------------------- |
-| TS / JS  | `package.json`                            | ✅ Istanbul         | ✅ import/require/re-export  | eslint, npm audit, vitest-coverage  | ✅ ESLint rule ID      | ✅ npm audit native                           |
-| Python   | `pyproject.toml`, `setup.py`, `*.py`      | ✅ coverage.py      | ✅ import/from               | ruff, pip-audit, coverage           | ✅ ruff code prefix    | ✅ pip-audit + OSV.dev (CVSS v3+v4)           |
-| Go       | `go.mod`                                  | ✅ coverprofile     | ✅ import blocks             | golangci-lint, govulncheck          | ✅ `FromLinter` family | ✅ govulncheck embedded + OSV.dev             |
-| Rust     | `Cargo.toml`                              | ✅ lcov + cobertura | ✅ use statements¹           | clippy, cargo-audit, cargo-llvm-cov | ✅ clippy group        | ✅ cargo-audit native                         |
-| C#       | `*.csproj`, `*.sln`                       | ✅ cobertura XML    | ✅ using declarations¹       | Roslyn analyzers (dotnet build)     | ✅ Roslyn code family² | ✅ dotnet list --vulnerable                   |
-| Kotlin   | gradle/`*.gradle{.kts,}`, `*.kt`          | ✅ JaCoCo XML       | ✅ import statements¹        | detekt, osv-scanner (Maven)         | ✅ detekt severity     | ✅ osv-scanner + OSV.dev (Maven)              |
-| Java     | `pom.xml`, `src/main/java/`, `*.java`     | ✅ JaCoCo XML       | ✅ import statements¹        | PMD, osv-scanner (Maven)            | ✅ PMD priority tiers  | ✅ osv-scanner + OSV.dev (Maven)              |
-| Ruby     | `*.rb`                                    | ✅ SimpleCov JSON   | ✅ require/require_relative¹ | rubocop, bundler-audit, osv-scanner | ✅ rubocop severity    | ✅ bundler-audit + osv-scanner (Gemfile.lock) |
-| Swift    | `Package.swift`, `Podfile`, `*.xcodeproj` | ✅ llvm-cov JSON    | ✅ SwiftPM target dirs       | swiftlint, osv-scanner (SwiftURL)   | ✅ SwiftLint rule tier | ✅ osv-scanner + OSV.dev (Package.resolved)³  |
-| PHP      | `composer.json`, `*.php`                  | ✅ PHPUnit clover   | ✅ use/require¹              | phpcs, osv-scanner (Packagist)      | ✅ phpcs sniff tier    | ✅ osv-scanner + OSV.dev (composer.lock)      |
+| Language | Detection                                  | Coverage import     | Import-graph                 | Native tools                        | Lint severity tiers    | Vuln severity tiers                           |
+| -------- | ------------------------------------------ | ------------------- | ---------------------------- | ----------------------------------- | ---------------------- | --------------------------------------------- |
+| TS / JS  | `package.json`                             | ✅ Istanbul         | ✅ import/require/re-export  | eslint, npm audit, vitest-coverage  | ✅ ESLint rule ID      | ✅ npm audit native                           |
+| Python   | `pyproject.toml`, `setup.py`, `*.py`       | ✅ coverage.py      | ✅ import/from               | ruff, pip-audit, coverage           | ✅ ruff code prefix    | ✅ pip-audit + OSV.dev (CVSS v3+v4)           |
+| Go       | `go.mod`                                   | ✅ coverprofile     | ✅ import blocks             | golangci-lint, govulncheck          | ✅ `FromLinter` family | ✅ govulncheck embedded + OSV.dev             |
+| Rust     | `Cargo.toml`                               | ✅ lcov + cobertura | ✅ use statements¹           | clippy, cargo-audit, cargo-llvm-cov | ✅ clippy group        | ✅ cargo-audit native                         |
+| C#       | `*.csproj`, `*.sln`                        | ✅ cobertura XML    | ✅ using declarations¹       | Roslyn analyzers (dotnet build)     | ✅ Roslyn code family² | ✅ dotnet list --vulnerable                   |
+| Kotlin   | gradle/`*.gradle{.kts,}`, `*.kt`           | ✅ JaCoCo XML       | ✅ import statements¹        | detekt, osv-scanner (Maven)         | ✅ detekt severity     | ✅ osv-scanner + OSV.dev (Maven)              |
+| Java     | `pom.xml`, `src/main/java/`, `*.java`      | ✅ JaCoCo XML       | ✅ import statements¹        | PMD, osv-scanner (Maven)            | ✅ PMD priority tiers  | ✅ osv-scanner + OSV.dev (Maven)              |
+| Ruby     | `*.rb`                                     | ✅ SimpleCov JSON   | ✅ require/require_relative¹ | rubocop, bundler-audit, osv-scanner | ✅ rubocop severity    | ✅ bundler-audit + osv-scanner (Gemfile.lock) |
+| Swift    | `Package.swift`, `Podfile`, `*.xcodeproj`  | ✅ llvm-cov JSON    | ✅ SwiftPM target dirs       | swiftlint, osv-scanner (SwiftURL)   | ✅ SwiftLint rule tier | ✅ osv-scanner + OSV.dev (Package.resolved)³  |
+| PHP      | `composer.json`, `*.php`                   | ✅ PHPUnit clover   | ✅ use/require¹              | phpcs, osv-scanner (Packagist)      | ✅ phpcs sniff tier    | ✅ osv-scanner + OSV.dev (composer.lock)      |
+| ABAP     | `abaplint.json`, `*.abap` (abapGit layout) | — (needs live SAP)  | —                            | abaplint (config-gated)             | ✅ abaplint rule key   | — (no offline dependency ecosystem)           |
 
 ¹ For these packs dxkit extracts import statements without resolving them
 to file-to-file links (that resolution needs per-build-system knowledge).
