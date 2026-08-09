@@ -49,7 +49,7 @@ describe('learn bundle — registry-driven, cannot drift', () => {
     }
   });
 
-  it('carries every posture knob and all seven curated docs with real titles', () => {
+  it('carries every posture knob and all nine curated docs with real titles', () => {
     expect(bundle.knobs.length).toBe(POSTURE_KNOBS.length);
     expect(bundle.docs.map((d) => d.slug)).toEqual([
       'how-dxkit-thinks',
@@ -58,6 +58,8 @@ describe('learn bundle — registry-driven, cannot drift', () => {
       'quickstart-reviewer',
       'quickstart-admin',
       'operating-the-lanes',
+      'gate-embedding',
+      'wave-gating',
       'extending-dxkit',
     ]);
     for (const d of bundle.docs) {
