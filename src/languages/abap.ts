@@ -34,6 +34,7 @@ import { hashFirstConfig, toolVersionInput } from './capabilities/recall-inputs'
 import { run } from '../analyzers/tools/runner';
 import { readRepoFile } from './version-detect';
 import type { LanguageSupport } from './types';
+import { abapBdefStructureCheck } from './abap-bdef';
 import type { CapabilityProvider } from './capabilities/provider';
 import type { LintResult, SeverityCounts } from './capabilities/types';
 import type { RawLocatedFinding } from './capabilities/lint-gate';
@@ -188,6 +189,10 @@ export const abap: LanguageSupport = {
     affectedTests(_ctx) {
       return null;
     },
+    // The `.bdef` STRUCTURAL floor (#309): abaplint has no BDL parser, so
+    // behavior definitions get the plausibility tier — its own check id,
+    // never presented as "parsed". Retires when upstream parses BDL.
+    structureCheck: abapBdefStructureCheck,
   },
 
   lintGate: {

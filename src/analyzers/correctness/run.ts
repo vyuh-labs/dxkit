@@ -198,6 +198,50 @@ function runResolutionCheck(
 }
 
 /**
+ * Execute a pack's optional STRUCTURE check (#309) — a pure computation
+ * mirroring `runResolutionCheck`. Findings are keyed by FILE (the durable
+ * identity of "this artifact is structurally broken"), so an already-red
+ * tree still blocks on a NEW broken artifact through the one attribution
+ * comparator. `none` returns null (nothing ran, nothing claimed); a throw
+ * is infrastructure — disclosed skip, never a verdict.
+ */
+function runStructureCheck(
+  id: LanguageId,
+  provider: CorrectnessProvider,
+  ctx: CorrectnessContext,
+): CorrectnessCheckResult | null {
+  try {
+    const res = provider.structureCheck!(ctx);
+    if (res.kind === 'none') return null;
+    const base = { pack: id, label: res.label, bin: '' };
+    if (res.kind === 'clean') return { ...base, status: 'pass' };
+    if (res.kind === 'broken') {
+      const lines = res.findings.map((f) => `${f.file}: ${f.problem}`);
+      lines.push(
+        'A structurally implausible artifact fails downstream consumers at import time. ' +
+          'This is a STRUCTURAL check (no parser covers this artifact class) — shallow by ' +
+          'design, so a pass means "plausible", never "parsed".',
+      );
+      return {
+        ...base,
+        status: 'fail',
+        output: lines.join('\n'),
+        findings: [...new Set(res.findings.map((f) => f.file))],
+      };
+    }
+    return { ...base, status: 'skipped-unavailable', output: res.reason };
+  } catch (err) {
+    return {
+      pack: id,
+      label: 'structure',
+      bin: '',
+      status: 'skipped-unavailable',
+      output: `structure check errored: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+}
+
+/**
  * Run the correctness floor across the active packs. Never throws — an exec
  * error surfaces as a `fail` check (fail-closed), a missing binary as
  * `skipped-unavailable` (fail-open). `blocks` is true iff a check that ran
@@ -326,6 +370,14 @@ export function runCorrectnessFloor(opts: CorrectnessFloorOptions): CorrectnessF
     // infrastructure, never a verdict: fail-OPEN as a disclosed skip.
     if (provider.resolutionCheck) {
       checks.push(runResolutionCheck(id, provider, ctx));
+    }
+    // The structure check (#309, optional capability): same pure-computation
+    // contract — the tier between "file exists" and "parses" for artifact
+    // classes no parser covers. `none` (no artifacts of the class) pushes
+    // nothing: the check never ran and claims nothing.
+    if (provider.structureCheck) {
+      const structural = runStructureCheck(id, provider, ctx);
+      if (structural !== null) checks.push(structural);
     }
   }
 

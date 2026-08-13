@@ -95,6 +95,25 @@ function stripDxkitOutputs(status: string): string {
     .join('\n');
 }
 
+/**
+ * The PATHS the working tree currently differs on (dirty tracked +
+ * untracked, dxkit outputs stripped) — the same view the signature hashes,
+ * as a nameable list. Consumed by the verdict cache's mismatch diagnostic
+ * (#282): a same-tree refusal that cannot say WHICH paths perturbed the
+ * signature turns a 30-second diagnosis into a workflow autopsy. Null when
+ * unreadable (not a git repo).
+ */
+export function treeStatusPaths(repoDir: string): string[] | null {
+  const head = gitCapture(repoDir, 'rev-parse HEAD').trim();
+  if (!head) return null;
+  const status = stripDxkitOutputs(gitCapture(repoDir, 'status --porcelain=v1 -uall'));
+  return status
+    .split('\n')
+    .map((line) => line.slice(3).trim())
+    .filter(Boolean)
+    .sort();
+}
+
 export function workingTreeSignature(repoDir: string): string | null {
   const head = gitCapture(repoDir, 'rev-parse HEAD').trim();
   if (!head) return null; // not a git repo / no commit → never cache
