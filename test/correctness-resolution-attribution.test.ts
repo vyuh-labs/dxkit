@@ -93,7 +93,10 @@ function packWithResolution(
 ): LanguageSupport {
   return {
     id: 'synthetic',
-    depVulns: { manifestPatterns: ['package.json', 'package-lock.json'] },
+    // The probe reads manifest patterns from `capabilities.depVulns` (the
+    // real pack shape) — a top-level `depVulns` here is invisible to
+    // `dependencyManifestFilesIn` and silently empties the base evidence.
+    capabilities: { depVulns: { manifestPatterns: ['package.json', 'package-lock.json'] } },
     correctness: {
       execution: () => ({
         hosts: ['any' as const],
@@ -149,6 +152,91 @@ describe('refutedResolutionSpecifiers — the base probe', () => {
 
   it('yields no refutation at all when the base is unreadable', () => {
     expect(refutedResolutionSpecifiers(dir, 'not-a-sha', packs, ['ghost-pkg'])).toBeNull();
+  });
+});
+
+/**
+ * #284 — the measurement asymmetry, both live shapes: a lockfile MENTIONS
+ * package names it never installed (peer metadata inside another entry,
+ * under a --legacy-peer-deps install), and a short name is a literal
+ * substring of a longer installed one. The old whole-blob containment read
+ * both as "maybe provided at base" and hard-blocked pre-existing phantoms
+ * on manifests-only diffs. The format-aware evidence answers what the
+ * current side asks: was a package by that name INSTALLED at base?
+ */
+describe('refutedResolutionSpecifiers — #284 lockfile evidence (peer metadata, substrings)', () => {
+  let dir: string;
+  let baseSha: string;
+  const packs = [packWithResolution({ kind: 'clean', checkedSpecifiers: 0 })];
+
+  beforeAll(() => {
+    dir = mkdtempSync(join(tmpdir(), 'dxkit-floor-attrib-peer-'));
+    git(dir, ['init', '-q', '-b', 'main']);
+    git(dir, ['config', 'user.email', 'test@example.com']);
+    git(dir, ['config', 'user.name', 'test']);
+    git(dir, ['config', 'commit.gpgsign', 'false']);
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'fixture', version: '1.0' }));
+    // The incident lockfile shape: '@render-three/fiber' is installed and its
+    // entry DECLARES 'three' as a peer — but 'three' has no entry of its own
+    // (--legacy-peer-deps never materialized it). 'three' is also a literal
+    // substring of the installed package's name.
+    writeFileSync(
+      join(dir, 'package-lock.json'),
+      JSON.stringify({
+        name: 'fixture',
+        lockfileVersion: 3,
+        packages: {
+          '': { dependencies: { '@render-three/fiber': '^8.0.0' } },
+          'node_modules/@render-three/fiber': {
+            version: '8.0.0',
+            peerDependencies: { three: '>=0.150' },
+          },
+        },
+      }),
+    );
+    mkdirSync(join(dir, 'src'), { recursive: true });
+    writeFileSync(
+      join(dir, 'src', 'scene.js'),
+      "const t = require('three');\nmodule.exports = t;\n",
+    );
+    git(dir, ['add', '.']);
+    git(dir, ['commit', '-q', '-m', 'base']);
+    baseSha = git(dir, ['rev-parse', 'HEAD']).trim();
+    // Allowlist-only change (the live shape: a diff that cannot introduce
+    // an import).
+    writeFileSync(join(dir, 'NOTES.md'), 'defer extended\n');
+    git(dir, ['add', '.']);
+    git(dir, ['commit', '-q', '-m', 'chore: notes']);
+  });
+  afterAll(() => rmSync(dir, { recursive: true, force: true }));
+
+  it('refutes a peer-declared-but-never-installed phantom (the three class)', () => {
+    // Old behavior: "three" appears in the lockfile blob (peer metadata AND
+    // as a substring of @render-three/fiber) → kept blocking. New behavior:
+    // no installed-tree entry names it → already unresolvable at base →
+    // pre-existing, refuted.
+    expect(refutedResolutionSpecifiers(dir, baseSha, packs, ['three'])).toEqual(['three']);
+  });
+
+  it('keeps a package with an actual installed-tree entry (nothing over-refutes)', () => {
+    expect(refutedResolutionSpecifiers(dir, baseSha, packs, ['@render-three/fiber'])).toEqual([]);
+  });
+
+  it('an unparseable lockfile falls back to containment (keep the block)', () => {
+    writeFileSync(join(dir, 'package-lock.json'), '{ not json');
+    git(dir, ['add', '.']);
+    git(dir, ['commit', '-q', '-m', 'break lockfile']);
+    const brokenBase = git(dir, ['rev-parse', 'HEAD']).trim();
+    // Containment sees "three" inside the broken blob's text? It does not
+    // here (the broken blob has no such text), so the phantom still refutes;
+    // the fallback path is exercised either way. Keep a mentioned name to
+    // prove the conservative direction:
+    writeFileSync(join(dir, 'package-lock.json'), '{ not json but mentions three somewhere');
+    git(dir, ['add', '.']);
+    git(dir, ['commit', '-q', '-m', 'mention in broken blob']);
+    const mentionedBase = git(dir, ['rev-parse', 'HEAD']).trim();
+    expect(refutedResolutionSpecifiers(dir, brokenBase, packs, ['three'])).toEqual(['three']);
+    expect(refutedResolutionSpecifiers(dir, mentionedBase, packs, ['three'])).toEqual([]);
   });
 });
 

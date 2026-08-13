@@ -135,6 +135,33 @@ describe('classify — newly_published_advisory (D4 phase 1)', () => {
     expect(out.status).toBe('added');
   });
 
+  it('#283: the per-finding tier — a touched manifest whose diff never mentions THIS package still relabels', () => {
+    const out = classify(
+      addedPair,
+      DEFAULT_BROWNFIELD_POLICY,
+      ctx({ packageUntouchedByDiff: true }),
+    );
+    expect(out.status).toBe('newly_published_advisory');
+    const reason = out.reasons.find((r) => r.code === 'newly-published-advisory');
+    expect(reason!.detail).toContain('no manifest line mentioning this package');
+  });
+
+  it('#283: the tier verdict applies identically on the per-finding path (high blocks, medium warns)', () => {
+    const high = classify(
+      addedPair,
+      DEFAULT_BROWNFIELD_POLICY,
+      ctx({ packageUntouchedByDiff: true, severity: 'high' }),
+    );
+    const medium = classify(
+      addedPair,
+      DEFAULT_BROWNFIELD_POLICY,
+      ctx({ packageUntouchedByDiff: true, severity: 'medium' }),
+    );
+    expect(high.blocks).toBe(true);
+    expect(medium.blocks).toBe(false);
+    expect(medium.warns).toBe(true);
+  });
+
   it('a manifest-TOUCHING diff keeps full added semantics', () => {
     const out = classify(addedPair, DEFAULT_BROWNFIELD_POLICY, ctx({ manifestUntouched: false }));
     expect(out.status).toBe('added');
