@@ -68,6 +68,7 @@ tuning belongs here.
 | `licenses`                  | `object`       | License posture: `prohibited` lists SPDX ids/prefixes that block on new dependencies. See "Prohibited licenses" below.                                                                                                                                                                                              |
 | `depBump`                   | `object`       | Scheduled deterministic dependency-bump lane (`enabled`, `allowMajor`). See the `depBump` section below.                                                                                                                                                                                                            |
 | `lint`                      | `object`       | Enable the pack-declared built-in lint gate. `{ enabled, blocking }`, both default `false`.                                                                                                                                                                                                                         |
+| `floor`                     | `object`       | Correctness-floor posture for the `gate` command family. `{ "required": true }` (the default) makes a floor that could not run a `CANNOT GATE` refusal instead of a disclosed skip; `{ "required": false }` restores skip-and-disclose. Loop/pre-push/CI floor surfaces are not governed by this key.               |
 | `largeFileThreshold`        | `number`       | Line count above which a source file is flagged `large-file` (default `500`). Applied once at gather time, so it drives the guardrail `large-file` finding, the "files over N lines" count, and the Quality + Maintainability scores together. A non-positive / non-numeric value is ignored (falls back to `500`). |
 | `reports`                   | `object`       | Opt-in report snapshots on merge. See "Report snapshots on merge" below.                                                                                                                                                                                                                                            |
 | `graph`                     | `object`       | Code-graph freshness transport. `{ "refresh": "cache" \| "off" }` (default `off`). See "Code-graph refresh transport" below.                                                                                                                                                                                        |
@@ -189,7 +190,11 @@ sources feed one seam:
 ```
 
 - **`checks[]`** — user-declared invariants. `command` is a string or argv
-  array; `blocking` (default `true`) sets block-vs-warn; `expectedExit`
+  array; `blocking` (default `true`) sets block-vs-warn; `required` (default
+  `false`) makes the check's OBSERVATION part of the verdict contract — a
+  required check that did not run (untrusted tree, missing toolchain,
+  ref-based mode) turns the verdict into `CANNOT GATE` with the cause and
+  remedy named, instead of a disclosed skip under PASSED; `expectedExit`
   (default `0`) sets the passing exit code; `parse` is `"exit"` (BINARY — the
   whole command passes or fails) or `{ "regex": "…" }` (LOCATED — each matching
   line is a finding keyed on `file+line+rule`, so net-new lint errors block

@@ -26,6 +26,7 @@
 import * as path from 'path';
 import { runGate } from './gate/engine';
 import type { GuardrailCheckResult } from './gate/result';
+import { floorRequiredGap, type RequiredObservationGap } from './gate/required-observation';
 import { resolveGateMode } from './baseline/modes';
 import { DEFAULT_BROWNFIELD_POLICY, resolvePolicy } from './baseline/policy';
 import { DEFAULT_LOOP_PRESET, policyForPreset } from './baseline/presets';
@@ -86,6 +87,10 @@ export interface GateCommandOutcome {
   readonly floorNetNew: ReadonlyArray<AttributedFloorFailure>;
   /** Present when the floor was skipped, with the declared cause. */
   readonly floorSkipped?: FloorSkip;
+  /** Present when the skipped floor was REQUIRED (WP1, §7.1 —
+   *  `policy.floor.required`, default true): the gate refuses
+   *  (`CANNOT GATE`, exit 2) instead of passing over the skip. */
+  readonly floorRequiredGap?: RequiredObservationGap;
 }
 
 /** Map a floor check status onto the attribution comparator's base shape. */
@@ -236,18 +241,26 @@ export async function runGateCommand(
     };
   }
 
+  // The floor's required-observation gap (WP1, §7.1): a skipped floor
+  // under `floor.required` (the default) is a REFUSAL, not a disclosed
+  // pass — the gate will not certify a tree whose compile + tests it was
+  // told to require but could not run. ONE evaluator decides
+  // (`required-observation.ts`); the engine already folded required
+  // CUSTOM checks into `counts` the same way.
+  const floorGap = floorRequiredGap(policy, floorSkipped);
+
   // Exit-code derivation: the one verdict derivation first, then the
   // floor. A net-new floor failure is a BLOCK (fail-closed on a real
   // failure — Rule 15); a refusal (CANNOT GATE) maps to the gate's own
   // exit 2. Precedence mirrors verdictWordFrom: a definite regression
-  // outranks a refusal.
+  // outranks a refusal, a refusal outranks any pass.
   const floorBlocks = floorNetNew.length > 0;
   let exitCode: 0 | 1 | 2;
   let verdict: string;
   if (counts.verdict === 'BLOCKED' || floorBlocks) {
     exitCode = 1;
     verdict = 'BLOCKED';
-  } else if (counts.verdict === 'CANNOT GATE') {
+  } else if (counts.verdict === 'CANNOT GATE' || floorGap !== undefined) {
     exitCode = 2;
     verdict = 'CANNOT GATE';
   } else {
@@ -263,6 +276,7 @@ export async function runGateCommand(
     ...(floor !== undefined ? { floor } : {}),
     floorNetNew,
     ...(floorSkipped !== undefined ? { floorSkipped } : {}),
+    ...(floorGap !== undefined ? { floorRequiredGap: floorGap } : {}),
   };
 }
 
@@ -294,6 +308,12 @@ function renderGateReceipt(outcome: GateCommandOutcome): string {
       '',
       `Floor: SKIPPED (${outcome.floorSkipped.cause}) — ${outcome.floorSkipped.detail}`,
     );
+    if (outcome.floorRequiredGap) {
+      lines.push(
+        `Floor: REQUIRED but not observed — the gate CANNOT GATE rather than certify it.`,
+        `  remedy: ${outcome.floorRequiredGap.remedy}`,
+      );
+    }
   }
   lines.push('', `Gate verdict: ${outcome.verdict} (exit ${outcome.exitCode})`);
   return lines.join('\n');

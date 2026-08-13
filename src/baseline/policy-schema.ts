@@ -171,6 +171,13 @@ export function buildPolicySchema(version: string): Schema {
         },
         'Pack-declared linter as a gate citizen.',
       ),
+      floor: obj(
+        {
+          required: boolProp('floor.required'),
+        },
+        'Correctness-floor posture for the gate command family (compile + tests as a ' +
+          'verdict requirement).',
+      ),
       checks: {
         type: 'array',
         description: desc('checks'),
@@ -200,6 +207,14 @@ export function buildPolicySchema(version: string): Schema {
                 'paths. Absent scans every non-excluded file.',
             },
             blocking: { type: 'boolean', description: 'Net-new failure blocks (default true).' },
+            required: {
+              type: 'boolean',
+              description:
+                'The check must be OBSERVED for a certifiable verdict (default false). A ' +
+                'required check that did not run (untrusted tree, missing toolchain, ' +
+                'ref-based mode) turns the verdict into CANNOT GATE with the cause and ' +
+                'remedy named, instead of a disclosed skip under PASSED.',
+            },
             expectedExit: { type: 'number', description: 'Exit code meaning pass (default 0).' },
             parse: {
               description:

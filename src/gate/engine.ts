@@ -35,18 +35,12 @@ import type { BrownfieldPolicy } from '../baseline/policy';
 import { FULL_SCOPE, scopeForPolicy, scopeForRefBasedDiff } from '../baseline/gather-scope';
 import { computeChangedFiles } from '../baseline/changed-files';
 import { changedFilesTouchDependencyManifest, detectActiveLanguages } from '../languages';
-import { collectAttributionGaps } from '../baseline/attribution-gap';
-import { collectExpiryProjection } from '../baseline/expiry-projection';
 import { evaluateFlowGateForGuardrail } from '../baseline/flow-gate-check';
 import { evaluateSchemaDriftGateForGuardrail } from '../baseline/schema-drift-gate-check';
 import { evaluateDupGateForGuardrail } from '../baseline/dup-gate-check';
 import { evaluatePairedGateForGuardrail } from '../baseline/paired-gate-check';
 import type { BaselineEntry } from '../baseline/types';
-import {
-  refreshWorkflowInstalled,
-  detectBaselineSuspect,
-  readBaselineProvenance,
-} from '../baseline/provenance';
+import { refreshWorkflowInstalled } from '../baseline/provenance';
 import { MANAGED_SHIP_SURFACES } from '../managed-artifacts';
 import {
   computeAllowlistDelta,
@@ -57,7 +51,8 @@ import { resolveEffectiveAllowlist } from '../allowlist/effective';
 import { entryToAllowlistable } from '../baseline/allowlist-match';
 import { classifyPairs } from './classify-pairs';
 import { diffEnvelopes, keepUnderChangedOnly, pairBlocks } from './context';
-import { collectNotObservedDisclosures, partitionForRefBasedDiff } from './observation';
+import { partitionForRefBasedDiff } from './observation';
+import { collectVerdictDisclosures } from './disclosures';
 import { acquirePrior, assertPriorSchemeComparable, emptyPriorFromScan } from './prior';
 import type { GuardrailCheckResult } from './result';
 import type { GateEngineOptions, GateSubject } from './types';
@@ -368,54 +363,29 @@ export async function runGate(
   const baseBlocks = options.changedOnly ? filteredBlocks : blocks;
   const baseWarns = options.changedOnly ? filteredWarns : warns;
 
-  // Attribution gaps: block-rule-class findings recall drift demoted out of
-  // block-rule reach. Computed from the SAME pair set the verdict reads
-  // (post --changed-only filter), so a filtered-out pair can neither block
-  // nor refuse. The verdict derivation (`verdictCounts`) consumes these —
-  // while one exists the run cannot render PASSED.
-  const attributionGaps = collectAttributionGaps(filteredPairs, envelopeDrift.recallDrift);
-
-  // Baseline-suspect staleness disclosure (#222): a large share of ADDED
-  // findings in files the diff never touched is a stale-anchor signature (the
-  // baseline predates the base branch's recent history), not developer fault.
-  // Committed modes only — ref-based re-gathers the prior side at the PR's own
-  // base, so there is no stale-anchor concept. Disclosure only: the verdict is
-  // mechanically correct either way; this reframes it and names the honest
-  // remedy (workflow-aware via the provenance module).
-  const baselineSuspect =
-    priorClass === 'committed'
-      ? detectBaselineSuspect({
-          addedFiles: filteredPairs
-            .filter((p) => p.classification.status === 'added' && p.file !== undefined)
-            .map((p) => p.file!),
-          changedFiles: baseline.repo.commitSha
-            ? computeChangedFiles(cwd, baseline.repo.commitSha)
-            : null,
-          provenance: readBaselineProvenance(cwd, baseline),
-        })
-      : null;
-
-  // Aggregate the not-observed pairs into per-reason disclosures for the
-  // renderers. Aggregate ON PURPOSE: a repo-scale lint backlog is tens of
-  // thousands of entries, and listing them (the "Resolved (18406)" table this
-  // fixes) is both a lie and a comment-size failure — the honest output is one
-  // line per unobserved check with its count. Computed from the SAME pair set
-  // the verdict reads (post --changed-only filter), through the same reason
-  // function the classifier consumed, so the counts and phrasing agree by
-  // construction.
-  const notObservedDisclosures = collectNotObservedDisclosures(
+  // Every verdict-adjacent disclosure — attribution gaps (Rule 19),
+  // required-observation gaps (WP1 §7.1), the baseline-suspect signature
+  // (#222), the not-observed aggregate, the suppression-lapse projection —
+  // is collected in ONE module from the SAME post-filter pair set and clock
+  // the verdict reads, so a filtered-out pair can neither block, refuse,
+  // nor lapse. See `disclosures.ts`.
+  const {
+    attributionGaps,
+    requiredNotObserved,
+    baselineSuspect,
+    notObserved: notObservedDisclosures,
+    suppressionExpiry,
+  } = collectVerdictDisclosures({
+    cwd,
+    policy,
+    priorClass,
+    baseline,
+    current,
     filteredPairs,
+    envelopeDrift,
+    refExcludedKinds,
     priorById,
     notObservedReasonFor,
-  );
-
-  // The lapse projection: what today's active suppressions will cost when their
-  // windows close. Reads the same pair set the verdict reads (post
-  // --changed-only filter) and the same `now` the suppression decision used, so
-  // a pair cannot be treated as suppressed here and lapsing on a different day.
-  // Disclosure only — it is deliberately absent from `blocks` / `warns` below.
-  const suppressionExpiry = collectExpiryProjection({
-    pairs: filteredPairs,
     flowGate,
     schemaDriftGate,
     dupGate,
@@ -442,6 +412,7 @@ export async function runGate(
     warns:
       baseWarns || flowGate.warns || schemaDriftGate.warns || dupGate.warns || pairedGate.warns,
     attributionGaps,
+    requiredNotObserved,
     ...(baselineSuspect ? { baselineSuspect } : {}),
     suppressionExpiry,
     notObserved: notObservedDisclosures,

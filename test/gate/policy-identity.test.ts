@@ -35,7 +35,14 @@ function makeTree(files: Record<string, string>): string {
 
 function dodPolicy(version: string, extra: Record<string, unknown> = {}): string {
   const { policy } = policyForPreset('security-only', DEFAULT_BROWNFIELD_POLICY);
-  return JSON.stringify({ ...policy, id: 'acme.dod.pkg', version, ...extra }, null, 2);
+  // These rows pin policy NAMING (hash/id/version), not floor posture — the
+  // untrusted runs opt out of the default-required floor so verdicts stay
+  // driven by the findings the rows seed (WP1 §7.1 has its own pins).
+  return JSON.stringify(
+    { ...policy, id: 'acme.dod.pkg', version, floor: { required: false }, ...extra },
+    null,
+    2,
+  );
 }
 
 beforeAll(() => {

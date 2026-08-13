@@ -52,6 +52,14 @@ export interface CustomCheckConfig {
   readonly globs?: readonly string[];
   /** Net-new failure blocks (default true) or only warns (false). */
   readonly blocking?: boolean;
+  /** The check's OBSERVATION is required for a certifiable verdict
+   *  (default false). A required check that did not run — untrusted
+   *  tree, missing toolchain, ref-based mode — turns the verdict into
+   *  `CANNOT GATE` with the cause and remedy named, instead of a
+   *  disclosed skip under a PASSED banner. Orthogonal to `blocking`
+   *  (which decides what a net-new FAILURE does once observed). One
+   *  evaluator: `src/gate/required-observation.ts`. */
+  readonly required?: boolean;
   /** Exit code meaning "pass" (default 0). Command checks only. */
   readonly expectedExit?: number;
   /** Output→findings extraction. `'exit'` (default): one binary finding per
