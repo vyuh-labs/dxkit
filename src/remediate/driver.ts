@@ -67,6 +67,13 @@ export interface AgentRunResult {
    *  runner verifies whatever was committed and DISCLOSES this; a no-diff
    *  errored run is a failure outcome, never a benign no-op. */
   readonly failure?: { readonly reason: string };
+  /** The agent's FINAL MESSAGE on a completed run, when the driver reports
+   *  one (#285): a clean no-op outcome discards the transcript by design,
+   *  which made "no-op against a visibly non-empty inventory" unautopsiable
+   *  — the runner records this in the attempt record for no-op outcomes so
+   *  the agent's own account of why nothing changed survives. Bounded by
+   *  the driver; never rendered into a PR body. */
+  readonly finalMessage?: string;
   /** For the failure taxonomy only — never rendered into a PR body. */
   readonly transcriptTail: string;
 }

@@ -148,6 +148,33 @@ describe('executeTask $0 landing preflight (#286)', () => {
   });
 });
 
+describe('executeTask provisional record (#289)', () => {
+  it('the record exists BEFORE the agent phase — a SIGKILLed frame still leaves evidence', async () => {
+    const cwd = tempRepo();
+    let recordAtAgentTime: Record<string, unknown> | undefined;
+    await executeTask(
+      cwd,
+      config(),
+      'write-docs',
+      'pr',
+      seams({
+        runTask: async () => {
+          recordAtAgentTime = readRecord(cwd);
+          return verifiedResult();
+        },
+      }),
+    );
+    expect(recordAtAgentTime).toBeDefined();
+    expect(recordAtAgentTime!.phase).toBe('agent');
+    expect(recordAtAgentTime!.landed).toBe(false);
+    expect(recordAtAgentTime!.outcome).toBe('provisional');
+    // Finalize overwrites it on the normal path.
+    const final = readRecord(cwd);
+    expect(final.phase).toBe('final');
+    expect(final.outcome).toBe('verified');
+  });
+});
+
 describe('executeTask landing layer (#273)', () => {
   it('a rules-shaped push refusal is a DISCLOSED outcome with the git stderr and the remedy', async () => {
     const cwd = tempRepo();

@@ -160,6 +160,10 @@ export async function executeTask(
       logger.info(`resuming budget-bounded attempt #${resume.attempt} from the salvage branch`);
     }
   }
+  // Evidence before the agent phase (#289): a SIGKILLed frame cannot write
+  // its own record, so it exists BEFORE the spawn.
+  writeProvisionalRecord(cwd, taskId, currentHead(cwd) ?? '');
+
   const reporter = startPhaseReporter(`remediate:${taskId}`);
   // The $0 landing preflight (#286): when this run intends to LAND, probe
   // the standing branch's delivery preconditions BEFORE any agent spawns —
@@ -354,6 +358,60 @@ function finalizeTaskRun(cwd: string, taskId: string, run: TaskRun): TaskRun {
 /** The machine-readable attempt record — written pre-push (landed:false)
  *  AND at every finalize, so the evidence exists no matter where the
  *  landing dies. Best-effort plumbing, never a failure. */
+/**
+ * PROVISIONAL attempt record, written BEFORE the driver spawns (#289): a
+ * SIGKILL (runner OOM) is uncatchable, so every disclosure mechanism the
+ * frame owns dies with it — the record written only at finalize meant a
+ * killed frame left zero evidence and any committed work evaporated
+ * unrecorded. This is the evidence-before-the-risky-step principle moved
+ * one step earlier: the record names how far the run got (`phase:
+ * 'agent'`) and carries `baseHead`, so the workflow's evidence step can
+ * format-patch `baseHead..HEAD` of whatever the agent had committed
+ * before death (falling back to the checkout's live HEAD — the record
+ * has no `head` yet). Finalize overwrites it on every normal path.
+ */
+function writeProvisionalRecord(cwd: string, taskId: string, baseHead: string): void {
+  try {
+    const dir = path.join(cwd, '.dxkit', 'cache');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, `remediate-${taskId}.json`),
+      JSON.stringify(
+        {
+          phase: 'agent',
+          outcome: 'provisional',
+          task: taskId,
+          landed: false,
+          baseHead,
+          head: null,
+          note:
+            'provisional record written before the agent spawned — if this survives the run, ' +
+            'the frame died mid-agent-phase (it could not write its own obituary); partial ' +
+            'work, if any, is in the baseHead..HEAD range of the checkout',
+        },
+        null,
+        2,
+      ) + '\n',
+      'utf8',
+    );
+  } catch {
+    // evidence plumbing, never a failure
+  }
+}
+
+/** HEAD of the checkout, or null (evidence plumbing, never a failure). */
+function currentHead(cwd: string): string | null {
+  try {
+    return execFileSync('git', ['rev-parse', 'HEAD'], {
+      cwd,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }).trim();
+  } catch {
+    return null;
+  }
+}
+
 function writeAttemptRecord(cwd: string, taskId: string, run: TaskRun): void {
   try {
     const dir = path.join(cwd, '.dxkit', 'cache');
@@ -371,6 +429,9 @@ function writeAttemptRecord(cwd: string, taskId: string, run: TaskRun): void {
 export function taskRunJson(run: TaskRun): Record<string, unknown> {
   const r = run.result;
   return {
+    // The frame reached finalize — distinguishes this record from the
+    // provisional one a SIGKILL leaves behind (#289).
+    phase: 'final',
     outcome: r.outcome,
     task: r.task ?? null,
     note: r.note ?? null,
@@ -388,6 +449,8 @@ export function taskRunJson(run: TaskRun): Record<string, unknown> {
     head: r.head ?? null,
     // Failure evidence (machine-readable record only — never the PR body).
     transcriptTail: r.transcriptTail ?? null,
+    // The agent's own account of a no-op (#285) — autopsiable, never rendered.
+    agentFinalMessage: r.agentFinalMessage ?? null,
     ledger: r.ledger,
   };
 }
