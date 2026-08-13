@@ -19,11 +19,16 @@ import { allowlistSuppressionFor } from '../baseline/allowlist-match';
 import { DERIVED_MEMBERSHIP_KINDS } from '../baseline/gather-scope';
 import type { GatherScope } from '../baseline/gather-scope';
 import {
+  changedContentLines,
   computeAddedFiles,
   computeChangedFiles,
   createChangedLineIndex,
 } from '../baseline/changed-files';
-import { changedFilesTouchDependencyManifest, detectActiveLanguages } from '../languages';
+import {
+  changedFilesTouchDependencyManifest,
+  dependencyManifestFilesIn,
+  detectActiveLanguages,
+} from '../languages';
 import { describeRecallDrift } from '../baseline/recall';
 import { isSanitized } from '../baseline/sanitize';
 import type { BaselineEntry, FindingId, MatchResult } from '../baseline/types';
@@ -122,6 +127,34 @@ export function classifyPairs(input: ClassifyPairsInput): ClassifyPairsOutput {
         !changedFilesTouchDependencyManifest(changed, detectActiveLanguages(cwd));
     }
     return manifestUntouchedMemo;
+  };
+
+  // The PER-FINDING sibling of the fast path above (#283): when the diff DID
+  // touch a manifest, an added dep-vuln whose package NO changed manifest
+  // line mentions provably kept its resolution across the diff — the diff
+  // did not change that package, so the advisory-feed attribution applies to
+  // it exactly as it would under an untouched manifest. Conservative token
+  // test: any mention (even a substring inside a longer name) reads as
+  // "possibly changed" and keeps developer attribution — a demotion needs
+  // decisive absence. Memoized: one content-line diff over the changed
+  // manifests per run, only when an added dep-vuln pair under a touched
+  // manifest actually asks. `null` (attribution unavailable) → no demotion.
+  let manifestDiffLinesMemo: ReadonlyArray<string> | null | undefined;
+  const packageUntouchedByDiff = (pkg: string): boolean => {
+    if (manifestDiffLinesMemo === undefined) {
+      const changed = baseSha ? computeChangedFiles(cwd, baseSha) : null;
+      manifestDiffLinesMemo =
+        changed === null
+          ? null
+          : changedContentLines(
+              cwd,
+              baseSha,
+              dependencyManifestFilesIn(changed, detectActiveLanguages(cwd)),
+            );
+    }
+    if (manifestDiffLinesMemo === null || pkg.length === 0) return false;
+    const needle = pkg.toLowerCase();
+    return !manifestDiffLinesMemo.some((line) => line.toLowerCase().includes(needle));
   };
 
   // Derived-membership attribution (the #25 class): for a kind whose per-file
@@ -256,9 +289,19 @@ export function classifyPairs(input: ClassifyPairsInput): ClassifyPairsOutput {
       ...(customCheckBlocking !== undefined ? { customCheckBlocking } : {}),
       ...(notObserved !== undefined ? { notObserved } : {}),
       // Only asked for added dep-vuln pairs, so a run with none never pays the
-      // git diff (and other kinds never see the flag).
-      ...(anchorEntry.kind === 'dep-vuln' && pair.status === 'added' && manifestUntouched()
-        ? { manifestUntouched: true }
+      // git diff (and other kinds never see the flags). Two tiers of the ONE
+      // attribution question (#283): the run-level fast path (no manifest
+      // touched at all), then the per-finding fallback (manifests touched,
+      // but no changed manifest line mentions THIS package).
+      ...(anchorEntry.kind === 'dep-vuln' && pair.status === 'added'
+        ? manifestUntouched()
+          ? { manifestUntouched: true }
+          : // A sanitized entry carries no package name — per-finding
+            // attribution then has no subject and the pair keeps `added`
+            // (bias toward the conservative claim, never a blind demotion).
+            'package' in anchorEntry && packageUntouchedByDiff(anchorEntry.package)
+            ? { packageUntouchedByDiff: true }
+            : {}
         : {}),
     };
 

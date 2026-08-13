@@ -14,6 +14,7 @@
 import { execFileSync } from 'child_process';
 
 import { dependencyManifestFilesIn } from '../../languages';
+import { basePackageEvidence } from './lockfile-evidence';
 import type { LanguageSupport } from '../../languages/types';
 import { IMPORT_RESOLUTION_LABEL, type CorrectnessFloorResult } from './run';
 import { attributeFloorFailures, type FloorBaseCheck } from './attribution';
@@ -24,8 +25,14 @@ import { attributeFloorFailures, type FloorBaseCheck } from './attribution';
  * some package by that name was installed there — and every install is
  * recorded in a manifest/lockfile. So:
  *
- *   - the specifier appears in NO base manifest/lockfile blob (conservative
- *     textual containment — a false "present" merely keeps the block), AND
+ *   - NO base manifest/lockfile evidences a package by that name — the
+ *     format-aware installed/declared set where the format is modeled
+ *     (`lockfile-evidence.ts`, #284: a lockfile MENTIONS names it does not
+ *     install, e.g. peer metadata inside another entry, and short names
+ *     are substrings of longer ones — both read as falsely "present" under
+ *     the old whole-blob containment and turned a pre-existing phantom
+ *     into a net-new block), textual containment where it is not (a false
+ *     "present" merely keeps the block), AND
  *   - the base tree already carried the import (the QUOTED specifier appears
  *     in base source — quoting excludes prose mentions, and a false "absent"
  *     merely keeps the block)
@@ -35,11 +42,12 @@ import { attributeFloorFailures, type FloorBaseCheck } from './attribution';
  *
  * Everything else stays attributable (the un-hoist class the resolution
  * check exists for: a specifier the base lockfile DID provide transitively
- * reads as present and keeps blocking; a newly-added import of an undeclared
- * package is absent from base source and keeps blocking). Every uncertainty
- * lands on "keep blocking" — the refutation only fires when the base
- * evidence is decisive. Returns null when the base side is unreadable (no
- * refutation, behavior unchanged). Exported for tests.
+ * is an installed-tree KEY, reads as present, and keeps blocking; a newly-
+ * added import of an undeclared package is absent from base source and
+ * keeps blocking). Every uncertainty lands on "keep blocking" — the
+ * refutation only fires when the base evidence is decisive. Returns null
+ * when the base side is unreadable (no refutation, behavior unchanged).
+ * Exported for tests.
  */
 export function refutedResolutionSpecifiers(
   cwd: string,
@@ -54,17 +62,25 @@ export function refutedResolutionSpecifiers(
     const treeFiles = git(['ls-tree', '-r', '--name-only', baseSha]).split('\n').filter(Boolean);
     const manifestPaths = dependencyManifestFilesIn(treeFiles, packs);
     const manifestBlobs = manifestPaths.map((p) => {
-      try {
-        return git(['show', `${baseSha}:${p}`]);
-      } catch {
-        // An unreadable manifest blob makes base evidence non-decisive for
-        // every specifier — fail toward keeping the block.
-        throw new Error(`unreadable base manifest ${p}`);
-      }
+      const blob = ((): string => {
+        try {
+          return git(['show', `${baseSha}:${p}`]);
+        } catch {
+          // An unreadable manifest blob makes base evidence non-decisive for
+          // every specifier — fail toward keeping the block.
+          throw new Error(`unreadable base manifest ${p}`);
+        }
+      })();
+      // Format-aware installed/declared set where the format is modeled;
+      // null keeps the containment fallback for that file (#284).
+      return { blob, evidence: basePackageEvidence(p, blob) };
     });
     const refuted: string[] = [];
     for (const spec of specifiers) {
-      if (manifestBlobs.some((blob) => blob.includes(spec))) continue; // maybe provided at base
+      const maybeProvidedAtBase = manifestBlobs.some(({ blob, evidence }) =>
+        evidence !== null ? evidence.has(spec) : blob.includes(spec),
+      );
+      if (maybeProvidedAtBase) continue;
       // Quoted-containment probe for the import existing at base. `git grep`
       // exits 1 on no match — treated as "not imported at base" (keep block).
       const importedAtBase = [`'${spec}'`, `"${spec}"`].some((needle) => {
