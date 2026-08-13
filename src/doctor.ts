@@ -22,6 +22,7 @@ import { EXTERNAL_SNAPSHOT_STALE_DAYS, snapshotAgeDays } from './ingest/engine-f
 import { diagnoseFlow, type FlowDiagnosis } from './analyzers/flow/diagnose';
 import { gatherRecommendations, type CommandRecommendation } from './discovery/commands';
 import { trustedLocalContext } from './analysis-trust';
+import { probeDeliveryPreconditions } from './lanes/delivery-preconditions';
 
 /**
  * Three-tier doctor:
@@ -1034,6 +1035,28 @@ function runOperationalChecks(cwd: string, hasManifest: boolean): CheckResult[] 
           skill: 'dxkit-fix',
         },
       });
+    }
+
+    // 6f. Lane DELIVERY preconditions (#287): a branch-creation ruleset whose
+    // exclusion misses the lanes' standing-branch pattern makes every landing
+    // 403 AFTER the full agent budget is spent — knowable from three API
+    // reads at setup time. The ONE prober; the lanes' $0 preflight (#286)
+    // consumes the same module. Fail-open: an unanswerable probe stays
+    // silent here — doctor never invents a refusal.
+    if (prLaneInstalled) {
+      const delivery = probeDeliveryPreconditions(cwd);
+      for (const p of delivery.probes.filter((p) => p.verdict === 'blocked')) {
+        checks.push({
+          label: `lanes cannot deliver here — branch creation is blocked for ${p.branch}`,
+          ok: false,
+          tier: 'operational',
+          fix: {
+            hint: `${p.evidence}. ${p.remedy ?? ''} Every lane run on this repo will spend its full agent budget and then fail to land until this is fixed.`,
+            command: 'gh api repos/{owner}/{repo}/rulesets',
+            skill: 'dxkit-fix',
+          },
+        });
+      }
     }
   }
 

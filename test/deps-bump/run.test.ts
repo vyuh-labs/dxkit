@@ -91,6 +91,41 @@ describe('runDepsBump', () => {
     }
   });
 
+  it('#286: a blocked landing preflight refuses at $0 — nothing is applied', async () => {
+    const dir = repoWithManifest({ devDependencies: { axios: '^1.7.0' } });
+    const calls: string[][] = [];
+    try {
+      const r = await runDepsBump({
+        cwd: dir,
+        trust: trustedLocalContext(),
+        apply: true,
+        land: 'pr',
+        gather,
+        execBump: (argv) => {
+          calls.push([...argv]);
+          return { ok: true, output: '' };
+        },
+        probeDelivery: () => ({
+          probes: [
+            {
+              branch: 'dxkit/dep-bump',
+              verdict: 'blocked' as const,
+              evidence: 'an active branch-creation ruleset covers "dxkit/dep-bump"',
+              remedy: 'add "refs/heads/dxkit/**" to its exclusion patterns',
+            },
+          ],
+          anyBlocked: true,
+          unverifiable: false,
+        }),
+      });
+      expect(r.outcome).toBe('refused');
+      expect(r.note).toContain('landing-unavailable');
+      expect(calls).toHaveLength(0); // the package manager never ran
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('applies with the PM section preserved and lands via the shared lander on a green floor', async () => {
     const dir = repoWithManifest({ devDependencies: { axios: '^1.7.0' } });
     const calls: string[][] = [];

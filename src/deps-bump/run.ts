@@ -48,7 +48,11 @@ import { guardrailVerdictFor, toFloorBaseChecks } from '../lanes/verify';
 import { landRefreshPaths, type LandRefreshResult } from '../land-refresh';
 import { detectDefaultBranch } from '../ship-installers';
 
-export const DEP_BUMP_BRANCH = 'dxkit/dep-bump';
+// The standing-branch name lives in the ONE leaf home the delivery
+// prober also reads (`lanes/branches.ts`); re-exported for consumers.
+export { DEP_BUMP_BRANCH } from '../lanes/branches';
+import { DEP_BUMP_BRANCH } from '../lanes/branches';
+import { describeDeliveryProbe, probeDeliveryPreconditions } from '../lanes/delivery-preconditions';
 
 export interface AppliedBump extends PlannedBump {
   readonly applied: boolean;
@@ -108,6 +112,8 @@ export interface DepsBumpOptions {
   readonly landPaths?: typeof landRefreshPaths;
   /** Injected for tests: the findings source. */
   readonly gather?: (cwd: string) => Promise<{ findings: readonly DepVulnFinding[] }>;
+  /** Injected for tests: the $0 landing preflight (#286). */
+  readonly probeDelivery?: typeof probeDeliveryPreconditions;
 }
 
 /** package.json section a direct dependency lives in ('dependencies' when
@@ -258,6 +264,28 @@ export async function runDepsBump(opts: DepsBumpOptions): Promise<DepsBumpResult
       applied: [],
       note: 'refused: no package.json at the repo root — the apply lane is node-first.',
     });
+  }
+
+  // The $0 landing preflight (#286): when this run intends to LAND, probe
+  // the standing branch's delivery preconditions BEFORE applying anything —
+  // a branch-creation ruleset that will 403 the push is knowable from one
+  // API read. Only POSITIVE refusal evidence refuses; an unanswerable probe
+  // proceeds (the preflight never invents a refusal).
+  if (opts.land === 'pr') {
+    const preflight = (opts.probeDelivery ?? probeDeliveryPreconditions)(cwd, {
+      branches: [DEP_BUMP_BRANCH],
+    });
+    const blocked = preflight.probes.find((p) => p.verdict === 'blocked');
+    if (blocked) {
+      return finish({
+        outcome: 'refused',
+        plan,
+        applied: [],
+        note:
+          `landing-unavailable (preflight, $0 — nothing was applied): ` +
+          `${describeDeliveryProbe(blocked)}`,
+      });
+    }
   }
 
   const pm = detectPackageManager(cwd);

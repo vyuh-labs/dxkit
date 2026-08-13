@@ -75,6 +75,8 @@ function seams(overrides: Partial<ExecutorSeams> = {}): ExecutorSeams {
       mode: 'pr' as const,
       prUrl: 'https://example.test/pr/1',
     }),
+    // A clean $0 preflight by default (#286) — tests never shell gh.
+    probeDelivery: () => ({ probes: [], anyBlocked: false, unverifiable: false }),
     ...overrides,
   };
 }
@@ -84,6 +86,67 @@ function readRecord(cwd: string): Record<string, unknown> {
     fs.readFileSync(path.join(cwd, '.dxkit', 'cache', 'remediate-write-docs.json'), 'utf8'),
   ) as Record<string, unknown>;
 }
+
+describe('executeTask $0 landing preflight (#286)', () => {
+  it('positive refusal evidence refuses BEFORE any agent spawns, with the remedy named', async () => {
+    const cwd = tempRepo();
+    let agentSpawned = false;
+    const run = await executeTask(
+      cwd,
+      config(),
+      'write-docs',
+      'pr',
+      seams({
+        runTask: async () => {
+          agentSpawned = true;
+          return verifiedResult();
+        },
+        probeDelivery: () => ({
+          probes: [
+            {
+              branch: 'dxkit/remediate-write-docs',
+              verdict: 'blocked' as const,
+              evidence: 'an active branch-creation ruleset covers "dxkit/remediate-write-docs"',
+              remedy: 'add "refs/heads/dxkit/**" to its exclusion patterns',
+            },
+          ],
+          anyBlocked: true,
+          unverifiable: false,
+        }),
+      }),
+    );
+    expect(agentSpawned).toBe(false); // the whole point: $0, no spend
+    expect(run.result.outcome).toBe('refused');
+    expect(run.result.note).toContain('landing-unavailable');
+    expect(run.result.note).toContain('refs/heads/dxkit/**');
+    expect(run.clean).toBe(false);
+  });
+
+  it('an unverifiable probe PROCEEDS — the preflight never invents a refusal', async () => {
+    const cwd = tempRepo();
+    const run = await executeTask(
+      cwd,
+      config(),
+      'write-docs',
+      'pr',
+      seams({
+        probeDelivery: () => ({
+          probes: [
+            {
+              branch: 'dxkit/remediate-write-docs',
+              verdict: 'unknown' as const,
+              evidence: 'could not verify: API unreachable',
+            },
+          ],
+          anyBlocked: false,
+          unverifiable: true,
+        }),
+      }),
+    );
+    expect(run.result.outcome).toBe('verified');
+    expect(run.landed).toBe(true);
+  });
+});
 
 describe('executeTask landing layer (#273)', () => {
   it('a rules-shaped push refusal is a DISCLOSED outcome with the git stderr and the remedy', async () => {
