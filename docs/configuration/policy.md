@@ -57,6 +57,7 @@ tuning belongs here.
 | Key                         | Type           | Effect                                                                                                                                                                                                                                                                                                              |
 | --------------------------- | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `mode`                      | `"brownfield"` | Always `brownfield` today. Reserved for future greenfield-strict modes.                                                                                                                                                                                                                                             |
+| `extends`                   | `string`       | The base posture this file refines: `"security-only"`, `"full-debt"`, or `"default"` (the fully armed compiled default). Absent = `"default"` (the pre-4.4.1 behavior). Declare it — see [policy-guide#policy-base](policy-guide.md#policy-base). Unknown values are a load error, never a silent fallback.         |
 | `block`                     | `string[]`     | Finding statuses that fail the guardrail check (exit code 1).                                                                                                                                                                                                                                                       |
 | `warn`                      | `string[]`     | Statuses that print a warning but don't fail.                                                                                                                                                                                                                                                                       |
 | `confidence`                | `object`       | Per-severity match-confidence floor. A `relocated`/`persisted` pair below the floor is demoted to `uncertain`.                                                                                                                                                                                                      |
@@ -624,12 +625,23 @@ when cold graph builds are a CI cost you want to remove.
 
 ## Loading order
 
-1. `--policy <path>` flag on `guardrail check` (explicit)
+1. `--policy <path>` flag (explicit; `guardrail check` and `gate` both take it)
 2. `<cwd>/.dxkit/policy.json` (conventional; auto-discovered)
-3. Compiled-in `DEFAULT_BROWNFIELD_POLICY` (no policy on disk)
+3. The surface's no-policy fallback: repo surfaces (`guardrail check`,
+   `baseline`) use the compiled-in `DEFAULT_BROWNFIELD_POLICY`; the tree
+   gate (`gate <dir>`) falls back to the **security-only** preset instead
+   (under a fresh prior every finding is net-new, so the fully armed
+   default would block any real tree on debt no DoD asked about).
+
+A policy FILE (steps 1–2) merges over its **declared base** — the
+`extends` field (`"security-only"` / `"full-debt"` / `"default"`; absent
+means `"default"`). Run `vyuh-dxkit policy show` to see the resolved
+result, per-rule provenance, and the active fallbacks.
 
 Unknown fields in the JSON are preserved but ignored by the classifier
-— future schema fields don't break older dxkit installations.
+— future schema fields don't break older dxkit installations. The one
+exception is `extends` itself: an unknown base is a load error, because a
+typo silently changing which rules are armed is the class the field closes.
 
 ## See also
 

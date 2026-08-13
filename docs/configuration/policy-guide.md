@@ -27,6 +27,7 @@ stanzas).
 | `depBump.schedule`                  | [#dep-bump](#dep-bump)                       |
 | `duplication.mode`                  | [#duplication-mode](#duplication-mode)       |
 | `expiryNotice.enabled`              | [#expiry-notice](#expiry-notice)             |
+| `extends`                           | [#policy-base](#policy-base)                 |
 | `floor.required`                    | [#floor-required](#floor-required)           |
 | `flow.mode`                         | [#flow-mode](#flow-mode)                     |
 | `flow.sources`                      | [#flow-sources](#flow-sources)               |
@@ -51,6 +52,29 @@ stanzas).
 | `schema.mode`                       | [#schema-mode](#schema-mode)                 |
 
 <!-- END GENERATED: knob-index -->
+
+## Policy base
+
+**What it does.** `"extends"` names the posture this file REFINES:
+`"security-only"`, `"full-debt"`, or `"default"` (the fully armed compiled
+default). Your file's fields merge over that base — a three-line file with
+`"extends": "security-only"` is a complete, predictable DoD.
+
+**Default and why.** Absent means `"default"` — the pre-4.4.1 merge base,
+kept so existing files resolve byte-identically. But absent is a footgun
+for new files: a minimal policy silently inherits every armed rule of the
+compiled default, including test-gap and quality blocking a security-posture
+DoD never asked for. The scaffold writes the base explicitly; `doctor`
+recommends pinning it when a committed file omits it.
+
+**When you would change it.** Every hand-written file should declare it.
+Embedding pipelines and agent-gate DoDs usually want `"security-only"`;
+`"full-debt"` is the strict posture where any net-new finding blocks.
+
+**Tuning.** An unknown value is a load ERROR, never a silent fallback — a
+typo'd base changing which rules are armed is the exact class the field
+exists to close. `vyuh-dxkit policy show` renders the resolved result with
+per-rule provenance.
 
 ## Baseline mode
 

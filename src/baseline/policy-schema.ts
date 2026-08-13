@@ -68,6 +68,7 @@ export function buildPolicySchema(version: string): Schema {
     additionalProperties: true,
     properties: {
       $schema: { type: 'string', description: 'Editor-schema stamp; written by the scaffold.' },
+      extends: stringProp('extends'),
       id: {
         type: 'string',
         description:
