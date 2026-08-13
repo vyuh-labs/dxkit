@@ -25,7 +25,7 @@
  */
 
 import { dxkitCli } from '../self-invocation';
-import { readVerdictForTree } from '../baseline/verdict-cache';
+import { explainVerdictMiss, readVerdictForTree } from '../baseline/verdict-cache';
 import {
   addEntry,
   daysUntilDate,
@@ -151,12 +151,29 @@ export function executeDefer(cwd: string, req: DeferRequest, now = new Date()): 
   const leftBlocking: string[] = [];
   if (req.fromLastCheck) {
     if (!cachedBlocking) {
+      // The path-level diagnostic (#282): when a cache EXISTS but the tree
+      // moved, name what moved — the class this closes was a workflow's own
+      // scratch files perturbing the signature, undiagnosable from "no
+      // cached verdict" alone.
+      const miss = cached === null ? explainVerdictMiss(cwd) : null;
+      const missDetail =
+        miss !== null && (miss.newPaths.length > 0 || miss.clearedPaths.length > 0)
+          ? ' The tree CHANGED since the last check — paths that differ:' +
+            (miss.newPaths.length > 0
+              ? ` new/modified since the check: ${miss.newPaths.slice(0, 10).join(', ')}${miss.newPaths.length > 10 ? ` (+${miss.newPaths.length - 10} more)` : ''}.`
+              : '') +
+            (miss.clearedPaths.length > 0
+              ? ` no longer dirty: ${miss.clearedPaths.slice(0, 10).join(', ')}${miss.clearedPaths.length > 10 ? ` (+${miss.clearedPaths.length - 10} more)` : ''}.`
+              : '') +
+            ' (Scratch/log files written into the repo between check and defer are the classic cause — write them outside the repo.)'
+          : '';
       return refuse(
         cached
           ? 'The cached verdict has no finding list (written by an older dxkit). ' +
               `Re-run \`${dxkitCli('guardrail check')}\` on this tree, then retry.`
           : 'No cached guardrail verdict for this tree. Run ' +
-              `\`${dxkitCli('guardrail check')}\` first (same tree, no edits in between), then retry.`,
+              `\`${dxkitCli('guardrail check')}\` first (same tree, no edits in between), then retry.` +
+              missDetail,
       );
     }
     for (const f of cachedBlocking) {

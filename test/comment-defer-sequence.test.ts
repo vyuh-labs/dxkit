@@ -80,3 +80,82 @@ describe('comment-defer same-tree sequence (#282)', () => {
     expect(template).toContain('$RUNNER_TEMP/comment-defer.json');
   });
 });
+
+describe('the mismatch diagnostic names the perturbing paths (#282 residual)', () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'dxkit-defer-diag-'));
+    execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: dir });
+    execFileSync('git', ['config', 'user.email', 't@example.com'], { cwd: dir });
+    execFileSync('git', ['config', 'user.name', 't'], { cwd: dir });
+    execFileSync('git', ['config', 'commit.gpgsign', 'false'], { cwd: dir });
+    writeFileSync(join(dir, 'README.md'), '# repo\n');
+    execFileSync('git', ['add', '.'], { cwd: dir });
+    execFileSync('git', ['commit', '-q', '-m', 'initial'], { cwd: dir });
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  async function cacheVerdictNow(): Promise<void> {
+    const { writeVerdict } = await import('../src/baseline/verdict-cache');
+    const { DEFAULT_BROWNFIELD_POLICY } = await import('../src/baseline/policy');
+    writeVerdict(dir, DEFAULT_BROWNFIELD_POLICY, {
+      blocks: true,
+      warns: false,
+      blockingCount: 1,
+      unattributableCount: 0,
+      warningCount: 0,
+      markdown: '## dxkit signals',
+      ranAt: '2026-08-13T00:00:00.000Z',
+      blockingFindings: [{ fingerprint: 'aaaa000011112222', kind: 'dep-vuln', status: 'added' }],
+    });
+  }
+
+  it('a scratch file written after the check is NAMED in the miss explanation', async () => {
+    const { explainVerdictMiss } = await import('../src/baseline/verdict-cache');
+    await cacheVerdictNow();
+    expect(explainVerdictMiss(dir)).toBeNull(); // tree unchanged → no miss
+    writeFileSync(join(dir, 'guardrail-stderr.log'), 'noise\n');
+    const miss = explainVerdictMiss(dir)!;
+    expect(miss).not.toBeNull();
+    expect(miss.newPaths).toEqual(['guardrail-stderr.log']);
+    expect(miss.clearedPaths).toEqual([]);
+  });
+
+  it('the full lifecycle: check → scratch INSIDE the repo → defer refuses NAMING the path', async () => {
+    const { executeDefer } = await import('../src/allowlist/defer-core');
+    await cacheVerdictNow();
+    // The broken workflow sequence: a scratch file lands in the checkout
+    // between check and defer.
+    writeFileSync(join(dir, 'comment-defer.json'), '{}');
+    const result = executeDefer(dir, {
+      reason: 'advisory wave',
+      expires: '+7d',
+      fromLastCheck: true,
+      addedBy: 't@example.com',
+      mode: 'full',
+    });
+    expect(result.ok).toBe(false);
+    const message = result.ok ? '' : result.message;
+    expect(message).toContain('No cached guardrail verdict');
+    // The 30-second diagnosis: the perturbing path is NAMED, with the cause.
+    expect(message).toContain('comment-defer.json');
+    expect(message).toContain('write them outside the repo');
+  });
+
+  it('the fixed lifecycle: check → scratch OUTSIDE → defer succeeds', async () => {
+    const { executeDefer } = await import('../src/allowlist/defer-core');
+    await cacheVerdictNow();
+    const result = executeDefer(dir, {
+      reason: 'advisory wave',
+      expires: '+7d',
+      fromLastCheck: true,
+      addedBy: 't@example.com',
+      mode: 'full',
+    });
+    expect(result.ok).toBe(true);
+  });
+});

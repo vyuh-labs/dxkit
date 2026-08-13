@@ -30,6 +30,33 @@ Dot-directories and the flows directory itself are not members. Each member
 is analyzed with the same per-tree machinery the single-tree gate uses;
 the wave layer then composes the results.
 
+`--flows` resolves **relative to the workspace root**, not your current
+directory. A declared flows directory that does not resolve is a refusal:
+the run answers `cannot_gate` (exit 2) naming the path it tried — never a
+silent skip that renders a verdict with zero flows evaluated (and when the
+path happens to exist relative to your current directory, the refusal says
+so, since that is the usual mistake).
+
+### Declared served surfaces (`dxkit-surface.json`)
+
+A member whose routes live in a DSL or service definition the extractor
+cannot parse would otherwise join the mesh with zero routes, and every
+flow step against it would false-block. Such a member can DECLARE its
+surface in a `dxkit-surface.json` at its root:
+
+```json
+{ "serves": ["GET /api/orders", "POST /api/orders", "ANY /health"] }
+```
+
+Declared entries join the served mesh exactly as extracted routes do —
+same normalizer, same catch-all semantics, full participation in
+no-route / dead-route / flow resolution — but they are labeled and
+disclosed as **declared** (asserted, not observed): the verdict carries a
+`surface:<member>` check row per declaring member, and malformed entries
+are named, never silently dropped. A member with a `.dxkit/policy.json`
+can alternatively point `flow.specs` at an OpenAPI document — the wave
+honors per-member flow config, and a spec is the richer contract.
+
 ## What the composition checks
 
 The gate builds one **served mesh**: the union of every route every member

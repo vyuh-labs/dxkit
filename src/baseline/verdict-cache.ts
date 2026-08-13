@@ -22,7 +22,7 @@
 import { createHash } from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
-import { workingTreeSignature } from '../loop/gate-cache';
+import { treeStatusPaths, workingTreeSignature } from '../loop/gate-cache';
 import type { BrownfieldPolicy } from './policy';
 import { pairBlocks, type ClassifiedPair } from './check';
 
@@ -94,6 +94,38 @@ export interface CachedVerdict {
    *  from the last same-tree run. Optional: a cache written by an older dxkit
    *  lacks it — defer then asks for a re-run rather than guessing. */
   readonly blockingFindings?: ReadonlyArray<CachedBlockingFinding>;
+  /** The dirty/untracked PATH LIST at cache time (dxkit outputs stripped) —
+   *  the nameable projection of the signature's status input, so a
+   *  same-tree mismatch can say WHICH paths perturbed it (#282). Optional:
+   *  older caches lack it and the diagnostic stays silent. */
+  readonly treePaths?: ReadonlyArray<string>;
+}
+
+/** Why the cached verdict did not match this tree, path-by-path (#282):
+ *  the diagnostic that turns "defer refused, no cached verdict" from a
+ *  workflow autopsy into a 30-second read. Null when there is no cache at
+ *  all, it is unreadable, it MATCHES, or it predates `treePaths`. */
+export function explainVerdictMiss(
+  cwd: string,
+): { newPaths: readonly string[]; clearedPaths: readonly string[] } | null {
+  const sig = workingTreeSignature(cwd);
+  if (!sig) return null;
+  let parsed: CachedVerdict;
+  try {
+    parsed = JSON.parse(fs.readFileSync(path.join(cwd, CACHE_REL), 'utf8')) as CachedVerdict;
+  } catch {
+    return null;
+  }
+  if (typeof parsed.signature !== 'string' || parsed.signature === sig) return null;
+  if (!Array.isArray(parsed.treePaths)) return null;
+  const now = treeStatusPaths(cwd);
+  if (now === null) return null;
+  const cached = new Set(parsed.treePaths);
+  const current = new Set(now);
+  return {
+    newPaths: now.filter((p) => !cached.has(p)),
+    clearedPaths: [...cached].filter((p) => !current.has(p)),
+  };
 }
 
 /** Stable hash of the resolved policy — the block/warn severity routing that
@@ -166,7 +198,13 @@ export function writeVerdict(
   try {
     const sig = workingTreeSignature(cwd);
     if (!sig) return;
-    const entry: CachedVerdict = { ...fields, signature: sig, policyHash: policyHash(policy) };
+    const paths = treeStatusPaths(cwd);
+    const entry: CachedVerdict = {
+      ...fields,
+      signature: sig,
+      policyHash: policyHash(policy),
+      ...(paths !== null ? { treePaths: paths } : {}),
+    };
     const abs = path.join(cwd, CACHE_REL);
     fs.mkdirSync(path.dirname(abs), { recursive: true });
     fs.writeFileSync(abs, JSON.stringify(entry, null, 2) + '\n', 'utf8');

@@ -88,6 +88,34 @@ export type ResolutionCheckResult =
   | { readonly kind: 'unresolved'; readonly unresolved: readonly UnresolvedImport[] }
   | { readonly kind: 'skipped'; readonly reason: string };
 
+/** One structurally broken artifact — identity is the FILE (a second
+ *  problem in the same file is the same broken artifact; a NEW broken
+ *  file on an already-red tree is a new finding). */
+export interface StructuralFinding {
+  readonly file: string;
+  readonly problem: string;
+}
+
+/**
+ * Result of a pack's optional STRUCTURE check (#309): the floor tier
+ * between "file exists" and "parses", for artifact classes NO parser
+ * covers (the ABAP pack's `.bdef` behavior definitions — abaplint has no
+ * BDL parser). `label` names the check's own id so a verdict reader can
+ * tell "structurally plausible" from "parsed"; when an upstream parser
+ * lands, the structural check retires in its favor. `none` = the tree
+ * carries no artifacts of the class (the check never ran, nothing is
+ * claimed).
+ */
+export type StructureCheckResult =
+  | { readonly kind: 'clean'; readonly label: string; readonly checkedFiles: number }
+  | {
+      readonly kind: 'broken';
+      readonly label: string;
+      readonly findings: readonly StructuralFinding[];
+    }
+  | { readonly kind: 'skipped'; readonly label: string; readonly reason: string }
+  | { readonly kind: 'none' };
+
 import type { ExecutionRequirement } from '../../execution';
 
 /**
@@ -123,6 +151,19 @@ export interface CorrectnessProvider {
    * runner treats a throw as a disclosed skip (fail-open).
    */
   resolutionCheck?(ctx: CorrectnessContext): ResolutionCheckResult;
+  /**
+   * OPTIONAL: verify artifacts of a class NO parser covers are at least
+   * STRUCTURALLY plausible (#309 — the `.bdef` class: generation cutoffs,
+   * prose/markup leakage, missing header shape, empty files all pass a
+   * parser-less floor silently). Pure, read-only, never spawns; discovery
+   * routes through the canonical walker; bias hard toward false NEGATIVES
+   * (a legal artifact must never be refused — shallow checks only). The
+   * runner treats a throw as a disclosed skip (fail-open). Distinct check
+   * label so "structurally plausible" is never presented as "parsed";
+   * cross-artifact consistency is explicitly OUT of scope (contract-level
+   * verification, not syntax).
+   */
+  structureCheck?(ctx: CorrectnessContext): StructureCheckResult;
   /**
    * What the floor NEEDS from the environment that runs it (CLAUDE.md Rule 20):
    * host OS, ambient toolchains, whether it builds the project, how its target
