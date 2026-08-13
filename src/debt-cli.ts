@@ -30,6 +30,7 @@ import * as logger from './logger';
 import { pathForBaseline, readBaselineFile, type BaselineFile } from './baseline/baseline-file';
 import { captureFloorDebt, failingFloorDebt, type FloorDebt } from './baseline/floor-debt';
 import { checkKey } from './analyzers/correctness/attribution';
+import { daysUntilDate, tryLoadAllowlist } from './allowlist/file';
 import { KIND_DEFAULT_SEVERITY, describeEntryLocation } from './baseline/check';
 import type { BaselineEntry, FindingSeverity } from './baseline/types';
 
@@ -72,6 +73,20 @@ export interface DebtFindingGroup {
   readonly samples: ReadonlyArray<{ fingerprint: string; locator: string }>;
 }
 
+/** An ACTIVE allowlist-deferred finding (#285): suppressed from the verdict
+ *  until `expiresAt`, then it re-blocks — so it belongs in the repair
+ *  inventory NOW. The live class: nine advisories were deferred with "the
+ *  fix-vulns lane will fix them", the lane read this report, the deferrals
+ *  were invisible to it, and the run completed as a no-op with the fix
+ *  window silently wasted. */
+export interface DebtDeferredEntry {
+  readonly fingerprint: string;
+  readonly kind: string;
+  readonly reason: string;
+  readonly expiresAt: string;
+  readonly daysRemaining: number;
+}
+
 export interface DebtReport {
   readonly schema: 'dxkit.debt.v1';
   readonly baselinePresent: boolean;
@@ -89,6 +104,11 @@ export interface DebtReport {
     readonly total: number;
     readonly groups: ReadonlyArray<DebtFindingGroup>;
   };
+  /** Active deferrals (#285) — a DISTINCT section, never merged into the
+   *  baseline groups: deferral means "do not GATE on this now", and must
+   *  not also mean "hide it from the lane whose job is fixing it".
+   *  Gating behavior is untouched (still suppressed until expiry). */
+  readonly deferred: ReadonlyArray<DebtDeferredEntry>;
   readonly plan: ReadonlyArray<string>;
 }
 
@@ -102,6 +122,8 @@ export function buildDebtReport(
     /** Skip the live floor run and read only the baseline's recorded
      *  envelope — instant, honest about its staleness. */
     readonly stored?: boolean;
+    /** The clock for deferral expiry (injectable for tests). */
+    readonly now?: Date;
   } = {},
 ): DebtReport {
   const name = opts.name ?? 'main';
@@ -223,6 +245,35 @@ export function buildDebtReport(
       `Unmeasurable here (install the toolchain or rely on CI): ${unobservable.join('; ')}`,
     );
   }
+  // Active deferrals (#285): unexpired allowlist entries in the 'deferred'
+  // category. Each returns as a BLOCKER on its expiry, so it is repair
+  // inventory now — the defer's forcing-function design only works if
+  // something works the item during the window.
+  const now = opts.now ?? new Date();
+  const allowlist = tryLoadAllowlist(cwd);
+  const deferred: DebtDeferredEntry[] = (allowlist?.entries ?? [])
+    .filter((e) => e.category === 'deferred' && typeof e.expiresAt === 'string')
+    .map((e) => ({
+      fingerprint: e.fingerprint,
+      kind: e.kind,
+      reason: e.reason ?? '',
+      expiresAt: e.expiresAt!,
+      // The ONE expiry countdown (allowlist/file.ts) — doctor, the audit,
+      // the lapse projection, and this report agree on the same date math.
+      daysRemaining: daysUntilDate(e.expiresAt!, now),
+    }))
+    .filter((e) => e.daysRemaining >= 0)
+    .sort((a, b) => a.daysRemaining - b.daysRemaining);
+  if (deferred.length > 0) {
+    const earliest = deferred[0];
+    plan.push(
+      `Fix the ${deferred.length} DEFERRED finding(s) — suppressed from the verdict until ` +
+        `expiry, then they re-block (earliest: ${earliest.expiresAt}, ` +
+        `${earliest.daysRemaining} day(s) away). Fixing them inside the window is the point ` +
+        `of the defer.`,
+    );
+  }
+
   if (plan.length === 0)
     plan.push('No recorded debt — the floor is green and the baseline is empty.');
 
@@ -232,6 +283,7 @@ export function buildDebtReport(
     floorSource: opts.stored ? 'stored' : 'live',
     floor: { live, baseline: storedFloor, failures, fixedSinceBaseline, unobservable },
     findings: { total: baseline?.findings.length ?? 0, groups },
+    deferred,
     plan,
   };
 }
@@ -284,6 +336,19 @@ export function renderDebtConsole(report: DebtReport): string {
         ? '  none — the baseline is clean'
         : '  no baseline file — run `vyuh-dxkit baseline create` first',
     );
+  }
+  if (report.deferred.length > 0) {
+    lines.push('');
+    lines.push(
+      `DEFERRED (${report.deferred.length} — suppressed until expiry, then they RE-BLOCK)`,
+    );
+    for (const d of report.deferred) {
+      lines.push(
+        `  ${d.kind.padEnd(12)} ${d.fingerprint}  returns ${d.expiresAt} ` +
+          `(${d.daysRemaining} day(s)) — ${d.reason}`,
+      );
+    }
+    lines.push('  Fixing these inside the window is the point of the defer.');
   }
   lines.push('');
   lines.push('SUGGESTED ORDER');

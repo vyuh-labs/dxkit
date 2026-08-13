@@ -235,18 +235,47 @@ __DXKIT_CI_RUNTIME_SETUP__
 __DXKIT_REMEDIATE_CREDENTIAL_ENV__
         run: |
           if [ -x ./node_modules/.bin/vyuh-dxkit ]; then DXKIT=./node_modules/.bin/vyuh-dxkit; else DXKIT=vyuh-dxkit; fi
+          set +e
           "$DXKIT" remediate --task "${{ matrix.task }}" --land pr
+          EXIT=$?
+          set -e
+          # Kill-shaped death disclosure (dxkit #289): SIGKILL is uncatchable,
+          # so a killed frame cannot write its own obituary — the only layer
+          # that survives is this one. A 137/143 exit with only the
+          # PROVISIONAL record (written before the agent spawned) means the
+          # frame died mid-agent-phase. The cause is a HYPOTHESIS (a runner
+          # OOM is one common producer of SIGKILL) — the disclosure names the
+          # signal and the phase, never invents a cause.
+          if [ "$EXIT" -eq 137 ] || [ "$EXIT" -eq 143 ]; then
+            REC=".dxkit/cache/remediate-${{ matrix.task }}.json"
+            PHASE=$(node -e "try{console.log(require('./' + process.argv[1]).phase||'')}catch{}" "$REC" 2>/dev/null || true)
+            if [ "$PHASE" = "agent" ]; then
+              echo "::warning title=dxkit remediate ${{ matrix.task }}::the frame was KILLED mid-agent-phase (exit $EXIT — kill-shaped; a runner out-of-memory kill is one possible cause). Partial work, if any, is in the attempt artifact."
+              {
+                echo "## dxkit remediate: ${{ matrix.task }} — frame killed mid-agent-phase"
+                echo ""
+                echo "Exit $EXIT (kill-shaped) with only the provisional attempt record present:"
+                echo "the process was killed before it could classify its own death. A runner"
+                echo "out-of-memory kill is one possible cause (hypothesis, not a measurement)."
+                echo "Partial committed work, if any, is preserved in the attempt artifact."
+              } >> "$GITHUB_STEP_SUMMARY"
+            fi
+          fi
+          exit "$EXIT"
 
       # A BLOCKED / failed attempt's diff must survive the ephemeral runner:
       # the runner writes a machine-readable attempt record; when nothing
       # landed but commits exist, format-patch them into a run artifact so
       # "stays local for inspection" means something a human can download.
+      # A PROVISIONAL record (the frame died mid-agent-phase, #289) has no
+      # `head` — fall back to the checkout's live HEAD, which carries
+      # whatever the agent committed before death.
       - name: Collect the attempt diff (evidence when nothing landed)
         if: always()
         run: |
           REC=".dxkit/cache/remediate-${{ matrix.task }}.json"
           if [ -f "$REC" ]; then
-            RANGE=$(node -e "const r=require('./' + process.argv[1]); if (!r.landed && r.baseHead && r.head && r.baseHead !== r.head) console.log(r.baseHead + '..' + r.head);" "$REC")
+            RANGE=$(node -e "const r=require('./' + process.argv[1]); if (!r.landed && r.baseHead) { const head = r.head || (r.phase === 'agent' ? 'HEAD' : null); if (head && r.baseHead !== head) console.log(r.baseHead + '..' + head); }" "$REC")
             if [ -n "$RANGE" ]; then
               git format-patch --stdout "$RANGE" > remediate-attempt.patch
               echo "wrote remediate-attempt.patch for $RANGE"

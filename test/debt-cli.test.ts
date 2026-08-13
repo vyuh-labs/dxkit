@@ -247,3 +247,90 @@ describe('floorDebtNotice (guardrail renderers surface grandfathered floor debt)
     expect(floorDebtNotice({})).toBeNull();
   });
 });
+
+describe('deferred visibility (#285 — the defer must not hide its subjects from the fixer)', () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'dxkit-debt-defer-'));
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  function writeAllowlist(entries: object[]): void {
+    mkdirSync(join(dir, '.dxkit'), { recursive: true });
+    writeFileSync(
+      join(dir, '.dxkit', 'allowlist.json'),
+      JSON.stringify({
+        schemaVersion: 'dxkit-allowlist/v1',
+        mode: 'full',
+        identityScheme: 'v3',
+        entries,
+      }),
+    );
+  }
+
+  it('active deferrals surface as a DISTINCT section with expiry, and join the plan', () => {
+    writeBaseline(dir, undefined, []);
+    writeAllowlist([
+      {
+        fingerprint: 'aaaa000011112222',
+        kind: 'dep-vuln',
+        category: 'deferred',
+        reason: 'published after baseline capture; fix scheduled',
+        addedBy: 't@e.c',
+        addedAt: '2026-08-08',
+        expiresAt: '2026-08-29',
+      },
+      {
+        fingerprint: 'bbbb000011112222',
+        kind: 'dep-vuln',
+        category: 'false-positive',
+        reason: 'not a real credential',
+        addedBy: 't@e.c',
+        addedAt: '2026-08-08',
+      },
+    ]);
+    const report = buildDebtReport(dir, {
+      liveFloor: () => null,
+      now: new Date('2026-08-14T00:00:00Z'),
+    });
+    // Only the deferred CATEGORY — a false-positive is not repair inventory.
+    expect(report.deferred).toHaveLength(1);
+    expect(report.deferred[0]).toMatchObject({
+      fingerprint: 'aaaa000011112222',
+      kind: 'dep-vuln',
+      expiresAt: '2026-08-29',
+      daysRemaining: 15,
+    });
+    expect(report.plan.some((p) => p.includes('DEFERRED'))).toBe(true);
+    const console = renderDebtConsole(report);
+    expect(console).toContain('DEFERRED (1');
+    expect(console).toContain('RE-BLOCK');
+    expect(console).toContain('2026-08-29');
+  });
+
+  it('an EXPIRED deferral is not listed — it already re-blocks (the gate owns it now)', () => {
+    writeBaseline(dir, undefined, []);
+    writeAllowlist([
+      {
+        fingerprint: 'cccc000011112222',
+        kind: 'dep-vuln',
+        category: 'deferred',
+        reason: 'lapsed',
+        addedBy: 't@e.c',
+        addedAt: '2026-07-01',
+        expiresAt: '2026-07-08',
+      },
+    ]);
+    const report = buildDebtReport(dir, {
+      liveFloor: () => null,
+      now: new Date('2026-08-14T00:00:00Z'),
+    });
+    expect(report.deferred).toHaveLength(0);
+  });
+
+  it('no allowlist at all → an empty section, never a crash', () => {
+    writeBaseline(dir, undefined, []);
+    const report = buildDebtReport(dir, { liveFloor: () => null });
+    expect(report.deferred).toEqual([]);
+  });
+});

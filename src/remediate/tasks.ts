@@ -154,7 +154,10 @@ message. When you believe you are done, re-run the failing commands and then
     prompt:
       `Run \`./node_modules/.bin/vyuh-dxkit debt --json\` and \`vyuh-dxkit vulnerabilities\`.
 Your task is the dependency-vulnerability findings: upgrade or patch the
-affected dependencies, preferring the smallest safe version bumps. After each
+affected dependencies, preferring the smallest safe version bumps. The debt
+report's DEFERRED section lists advisories suppressed until an expiry date,
+when they RE-BLOCK — they are first-class targets for this run (fixing them
+inside the window is the point of the defer), alongside the baselined groups. After each
 bump, run the repo's install and its tests (or the affected subset) to prove
 no behavior broke. Prefer fixing reachable + high/critical advisories first.
 If an advisory has no fixed release, note it in docs/DXKIT-REMEDIATION-NOTES.md

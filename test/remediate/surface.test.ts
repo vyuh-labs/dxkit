@@ -81,6 +81,20 @@ describe('installCiRemediate (the managed workflow)', () => {
     expect(readFileSync(workflowPath(), 'utf8')).toContain("cron: '0 6 * * *'");
   });
 
+  it('#289: kill-shaped exits are disclosed and the evidence step falls back to live HEAD on a provisional record', () => {
+    writeFileSync(join(repo, '.dxkit', 'policy.json'), '{"remediate": {"enabled": true}}', 'utf8');
+    installCiRemediate(repo);
+    const text = readFileSync(workflowPath(), 'utf8');
+    // The workflow layer is the only one that survives a SIGKILL: it
+    // distinguishes a kill-shaped exit with only the provisional record
+    // present, and phrases the cause as a HYPOTHESIS.
+    expect(text).toContain('137');
+    expect(text).toContain('KILLED mid-agent-phase');
+    expect(text).toContain('possible cause');
+    // The evidence step reads the provisional record's live-HEAD fallback.
+    expect(text).toContain("r.phase === 'agent' ? 'HEAD'");
+  });
+
   it('triggers stay schedule + workflow_dispatch only — never PR or comment events', () => {
     writeFileSync(join(repo, '.dxkit', 'policy.json'), '{"remediate": {"enabled": true}}', 'utf8');
     installCiRemediate(repo);

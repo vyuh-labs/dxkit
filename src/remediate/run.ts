@@ -34,6 +34,7 @@ import { resolveDispatchedTask } from './dispatch';
 import { resumePromptNote } from './resume';
 import { realGit } from './git-ops';
 import { armInLoopGate, type InLoopGateStatus } from './agent-trust';
+import { unenforceableCapsFor } from './budget-notes';
 import { evaluateScoreHinge, healthHingeScores } from './score-hinge';
 import { salvageForTask } from './config';
 import type { AgentEnvelope, RemediateResult, RemediateRunOptions } from './outcome';
@@ -110,27 +111,9 @@ export async function runRemediateTask(opts: RemediateRunOptions): Promise<Remed
   // follows the task's declared completion shape. The CLI's land decision
   // reads the same function, so the note here and the landing agree.
   const effectiveSalvage = salvageForTask(opts.config, task);
-  // A cap below 'enforced' is a DISCLOSED limitation, phrased by what the
-  // driver CAN do. Claiming an unenforced cap as a cap is the $14.71 class:
-  // maxUsd read post-hoc while max_turns silently governed real spend.
-  const unenforceableCaps: string[] = [];
-  if (driver.budgetSupport.turns !== 'enforced') {
-    unenforceableCaps.push(
-      `maxTurns is not enforceable by ${driver.id}; the wall-clock cap (${budget.maxMinutes} min) applies`,
-    );
-  }
-  if (driver.budgetSupport.cost === 'none') {
-    unenforceableCaps.push(
-      `maxUsd is not enforceable by ${driver.id} (no spend reporting); the wall-clock cap applies`,
-    );
-  } else if (driver.budgetSupport.cost === 'reported') {
-    unenforceableCaps.push(
-      `maxUsd ($${budget.maxUsd}) is ADVISORY for ${driver.id}: the CLI reports spend only ` +
-        `after the run and cannot stop mid-run on cost. Real spend is bounded by the ` +
-        `enforced turn cap (${budget.maxTurns}) and the wall clock (${budget.maxMinutes} min); ` +
-        `an overrun is disclosed and the attempt marked partial`,
-    );
-  }
+  // Budget-envelope disclosures — the ONE phrasing, split to
+  // `budget-notes.ts` at the large-file bar.
+  const unenforceableCaps = unenforceableCapsFor(driver, budget);
 
   // Auth-path disclosure (driver-generic): a declared credential the runner
   // actually injected = billed API spend; none = the CLI's stored login
@@ -365,6 +348,11 @@ export async function runRemediateTask(opts: RemediateRunOptions): Promise<Remed
       envelope,
       floor: entryFloor,
       ...evidenceTail,
+      // The agent's own account of why nothing changed (#285): a clean
+      // no-op discards the transcript by design, which made "no-op against
+      // a visibly non-empty inventory" unautopsiable. Attempt-record
+      // evidence only — never the ledger / PR body.
+      ...(agentResult.finalMessage ? { agentFinalMessage: agentResult.finalMessage } : {}),
       ...(scrubbed.length > 0 ? { scrubbedArtifacts: scrubbed } : {}),
       ...(partial ? { partial } : {}),
       note:
