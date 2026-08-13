@@ -36,9 +36,15 @@ __DXKIT_FRAGMENT_CAPTURE_JOBS__
     runs-on: ubuntu-latest
 __DXKIT_REFRESH_NEEDS__
     steps:
+__DXKIT_LANE_TOKEN_STEPS__
+
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          # Branch pushes reuse this persisted credential; a default-token
+          # push never triggers workflow runs (a PR it opens shows no
+          # checks). ONE tier chain: src/lanes/lane-token.ts.
+          token: __DXKIT_LANE_TOKEN__
 
       - uses: actions/setup-node@v6
         with:
@@ -92,7 +98,7 @@ __DXKIT_CI_RUNTIME_SETUP__
         # unauthenticated and fail silently (the per-template-drift class the
         # lane-token parity test pins).
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: __DXKIT_LANE_TOKEN__
         run: |
           if [ -x ./node_modules/.bin/vyuh-dxkit ]; then
             DXKIT=./node_modules/.bin/vyuh-dxkit

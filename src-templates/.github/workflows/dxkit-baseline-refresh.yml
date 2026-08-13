@@ -30,47 +30,17 @@ __DXKIT_REFRESH_NEEDS__
     # above already filters the common case).
     if: ${{ !contains(github.event.head_commit.message, '[skip ci]') }}
     steps:
-      # Lane token, three tiers (4.4.1 WP7). Preferred: a GitHub App —
-      # no billed seat, a short-lived token minted per run (the PAT-expiry
-      # class cannot recur), and lane activity attributed to the app's own
-      # bot identity, whose PRs a maintainer can approve. Configure: the
-      # repository (or org) VARIABLE DXKIT_APP_ID + the secret
-      # DXKIT_APP_PRIVATE_KEY, with the app installed on this repo holding
-      # contents + pull-requests write. Falls back to the DXKIT_BOT_TOKEN
-      # PAT, then the default token (whose PRs run no checks). A
-      # configured-but-broken App FAILS THIS STEP loudly rather than
-      # silently degrading a tier — a config error must not quietly change
-      # which identity pushes.
-      - name: Mint the lane token (GitHub App, when configured)
-        id: dxkit-app-token
-        if: ${{ vars.DXKIT_APP_ID != '' }}
-        uses: actions/create-github-app-token@v2
-        with:
-          app-id: ${{ vars.DXKIT_APP_ID }}
-          private-key: ${{ secrets.DXKIT_APP_PRIVATE_KEY }}
+__DXKIT_LANE_TOKEN_STEPS__
 
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
           # `persist-credentials: true` (the default) leaves the
           # token in .git/config so the final `git push` reuses it.
-          # Optional bot PAT (DXKIT_BOT_TOKEN): pushes made with the default
-          # GITHUB_TOKEN never trigger workflow runs, so the advisory decision
-          # PR this lane can open would show no checks. Falls back cleanly.
-          token: ${{ steps.dxkit-app-token.outputs.token || secrets.DXKIT_BOT_TOKEN || github.token }}
-
-      - name: Disclose token mode
-        env:
-          DXKIT_APP_SET: ${{ vars.DXKIT_APP_ID != '' }}
-          DXKIT_BOT_TOKEN_SET: ${{ secrets.DXKIT_BOT_TOKEN != '' }}
-        run: |
-          if [ "${DXKIT_APP_SET}" = "true" ]; then
-            echo "token tier: GitHub App (short-lived, minted this run)"
-          elif [ "${DXKIT_BOT_TOKEN_SET}" = "true" ]; then
-            echo "token tier: DXKIT_BOT_TOKEN (PAT)"
-          else
-            echo "::notice title=lane PRs run no checks::This lane pushes with the default GITHUB_TOKEN, and GitHub never triggers workflows for such pushes - the PR it opens will show no checks. Preferred fix: a GitHub App (set the DXKIT_APP_ID variable + the DXKIT_APP_PRIVATE_KEY secret - no billed seat, short-lived per-run tokens). A DXKIT_BOT_TOKEN PAT secret with repo scope also works."
-          fi
+          # Pushes + PRs made with the default GITHUB_TOKEN never trigger
+          # workflow runs, so the advisory decision PR this lane can open
+          # would show no checks. ONE tier chain: src/lanes/lane-token.ts.
+          token: __DXKIT_LANE_TOKEN__
 
       - uses: actions/setup-node@v6
         with:
@@ -125,7 +95,7 @@ __DXKIT_CI_RUNTIME_SETUP__
         # useless to a step that never receives the token (the defect that let
         # an in-horizon expiry produce zero issues, silently).
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: __DXKIT_LANE_TOKEN__
         run: |
           if [ -x ./node_modules/.bin/vyuh-dxkit ]; then
             DXKIT=./node_modules/.bin/vyuh-dxkit
