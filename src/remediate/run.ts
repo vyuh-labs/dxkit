@@ -33,6 +33,7 @@ import type { RemediateTask } from './tasks';
 import { resolveDispatchedTask } from './dispatch';
 import { resumePromptNote } from './resume';
 import { realGit } from './git-ops';
+import { armInLoopGate, type InLoopGateStatus } from './agent-trust';
 import { evaluateScoreHinge, healthHingeScores } from './score-hinge';
 import { salvageForTask } from './config';
 import type { AgentEnvelope, RemediateResult, RemediateRunOptions } from './outcome';
@@ -138,6 +139,23 @@ export async function runRemediateTask(opts: RemediateRunOptions): Promise<Remed
     ? 'api-key'
     : 'subscription';
 
+  // The in-loop gate (#305): pre-trust the lane's own CI checkout so the
+  // committed Stop hook can actually LOAD (an untrusted workspace made the
+  // in-loop gate silently absent on every CI lane run ever), then probe the
+  // wiring and disclose the result — armed vs backstop-only, with the
+  // reason, in the envelope. Drivers without an in-loop mechanism are
+  // honestly backstop-only. Injectable for tests (the runFloor seam pattern).
+  const armGate =
+    opts.armInLoopGate ??
+    ((): InLoopGateStatus =>
+      driver.inLoopGateMechanism === 'claude-stop-hook'
+        ? armInLoopGate(opts.cwd, { ci: process.env.GITHUB_ACTIONS === 'true' })
+        : {
+            mode: 'backstop-only',
+            reason: `driver ${driver.id} has no in-loop gate mechanism; post-run verification is the gate`,
+          });
+  const inLoopGate = armGate();
+
   const envelopeBase = {
     driver: driver.id,
     model: choice.native,
@@ -146,6 +164,7 @@ export async function runRemediateTask(opts: RemediateRunOptions): Promise<Remed
     auth,
     budget,
     unenforceableCaps,
+    inLoopGate,
   };
 
   const git = opts.git ?? realGit(opts.cwd);
