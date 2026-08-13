@@ -111,4 +111,37 @@ describe('workflow-template token parity', () => {
       );
     }
   });
+
+  it('the remediate lane re-mints before the task and refreshes the landing credential (App-token 1h cap)', () => {
+    // App INSTALLATION tokens are hard-capped at one hour by GitHub. Only
+    // the remediate lane runs long enough to outlive one (an agent budget
+    // plus setup); dep-bump and baseline-refresh are minutes-long jobs and
+    // deliberately keep the single top-of-job mint.
+    const content = fs.readFileSync(path.join(WORKFLOWS, 'dxkit-remediate.yml'), 'utf8');
+    // A fresh mint gated on the same App variable, immediately before the
+    // task step — the hour starts at agent launch, not at job start.
+    expect(content).toContain('id: dxkit-app-token-task');
+    // The checkout persisted the FIRST mint as the git credential (what the
+    // landing push authenticates with); it must be REWRITTEN with the fresh
+    // token, in the same extraheader shape actions/checkout writes.
+    expect(content).toContain('http.https://github.com/.extraheader');
+    // The task step's gh credential prefers the fresh token, keeping the
+    // full four-tier fallback.
+    expect(content).toContain(
+      'steps.dxkit-app-token-task.outputs.token || steps.dxkit-app-token.outputs.token',
+    );
+    // The CLI learns the tier so it can clamp the wall clock to the token
+    // lifetime (disclosed in the envelope, never silent).
+    expect(content).toContain('DXKIT_TOKEN_MODE');
+    // Ordering: agent-CLI install → re-mint → credential refresh → task, so
+    // setup time cannot eat the token's hour.
+    const install = content.indexOf('Install the agent CLI');
+    const remint = content.indexOf('id: dxkit-app-token-task');
+    const refresh = content.indexOf('Refresh the landing credential');
+    const task = content.indexOf('Run task ${{ matrix.task }}');
+    expect(install).toBeGreaterThan(-1);
+    expect(remint).toBeGreaterThan(install);
+    expect(refresh).toBeGreaterThan(remint);
+    expect(task).toBeGreaterThan(refresh);
+  });
 });

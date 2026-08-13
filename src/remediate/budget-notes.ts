@@ -9,6 +9,45 @@
 import type { AgentDriver } from './driver';
 import type { RemediateBudget } from './config';
 
+/**
+ * The minutes ceiling on the GitHub App token tier. An App INSTALLATION
+ * token is hard-capped at ONE HOUR by GitHub with no longer-lived form,
+ * and the lane's landing push authenticates with it — so the agent run
+ * plus verify plus landing must fit inside the hour or the landing 401s
+ * AFTER the full agent spend (the late-delivery death class the
+ * delivery-preconditions preflight exists to kill, resurfacing at the
+ * credential layer). The workflow re-mints immediately before the task
+ * step, so the window starts at agent launch; 45 minutes leaves the
+ * verify + landing tail inside it. The PAT and workflow-token tiers are
+ * long-lived and never clamped.
+ */
+export const APP_TOKEN_SAFE_MINUTES = 45;
+
+/**
+ * Clamp the wall-clock budget to the credential's lifetime, disclosed
+ * like every other budget limitation — never silent. The tier arrives
+ * via `DXKIT_TOKEN_MODE` (set by the lane workflow's token resolution;
+ * absent on local runs, which use the developer's own ambient auth and
+ * are never clamped).
+ */
+export function clampBudgetToTokenLifetime(
+  budget: RemediateBudget,
+  env: Readonly<Record<string, string | undefined>>,
+): { budget: RemediateBudget; notes: readonly string[] } {
+  if (env.DXKIT_TOKEN_MODE !== 'app' || budget.maxMinutes <= APP_TOKEN_SAFE_MINUTES) {
+    return { budget, notes: [] };
+  }
+  return {
+    budget: { ...budget, maxMinutes: APP_TOKEN_SAFE_MINUTES },
+    notes: [
+      `maxMinutes ${budget.maxMinutes} clamped to ${APP_TOKEN_SAFE_MINUTES}: this lane pushes ` +
+        `with a GitHub App installation token, which GitHub hard-caps at one hour, and the ` +
+        `landing must fit inside it — a longer run would spend its full agent budget and then ` +
+        `fail to deliver. For longer runs use the DXKIT_BOT_TOKEN PAT tier or lower the budget.`,
+    ],
+  };
+}
+
 /** The per-driver unenforceable-cap disclosures for a budget. */
 export function unenforceableCapsFor(driver: AgentDriver, budget: RemediateBudget): string[] {
   const caps: string[] = [];

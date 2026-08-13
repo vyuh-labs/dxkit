@@ -239,6 +239,33 @@ __DXKIT_CI_RUNTIME_SETUP__
           git config user.name "__DXKIT_BOT_NAME__"
           git config user.email "__DXKIT_BOT_EMAIL__"
 
+      # An App installation token is hard-capped at ONE HOUR by GitHub, and
+      # the first mint happened before checkout + toolchain install — so a
+      # long agent budget could outlive it and 401 the LANDING push after
+      # the full agent spend. Re-mint here so the token's lifetime starts
+      # at agent launch, not at job start; the CLI additionally clamps the
+      # agent budget on this tier so agent + verify + landing fit inside
+      # the fresh token (disclosed in the ledger, never silent).
+      - name: Re-mint the lane token before the task (App tier)
+        id: dxkit-app-token-task
+        if: ${{ vars.DXKIT_APP_ID != '' }}
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.DXKIT_APP_ID }}
+          private-key: ${{ secrets.DXKIT_APP_PRIVATE_KEY }}
+
+      # The checkout persisted the FIRST mint as the repo's git credential
+      # (that is what the landing `git push` authenticates with), so the
+      # fresh token must replace it — same extraheader shape
+      # actions/checkout writes.
+      - name: Refresh the landing credential (App tier)
+        if: ${{ vars.DXKIT_APP_ID != '' }}
+        env:
+          DXKIT_FRESH_TOKEN: ${{ steps.dxkit-app-token-task.outputs.token }}
+        run: |
+          AUTH=$(printf 'x-access-token:%s' "$DXKIT_FRESH_TOKEN" | base64 -w0)
+          git config http.https://github.com/.extraheader "AUTHORIZATION: basic $AUTH"
+
       # ONE task per job (this matrix row's own checkout): the CLI verifies
       # inside the frame, opens the task's standing PR, writes the ledger to
       # THIS job's step summary, streams per-phase log groups + heartbeats,
@@ -246,7 +273,11 @@ __DXKIT_CI_RUNTIME_SETUP__
       # per-task failure, visible on the run page without opening logs.
       - name: Run task ${{ matrix.task }}
         env:
-          GH_TOKEN: ${{ steps.dxkit-app-token.outputs.token || secrets.DXKIT_BOT_TOKEN || github.token }}
+          GH_TOKEN: ${{ steps.dxkit-app-token-task.outputs.token || steps.dxkit-app-token.outputs.token || secrets.DXKIT_BOT_TOKEN || github.token }}
+          # The tier the run resolved (mirrors the Disclose step): 'app'
+          # tells the CLI the credential is a one-hour installation token,
+          # so it clamps the agent budget to fit landing inside it.
+          DXKIT_TOKEN_MODE: ${{ vars.DXKIT_APP_ID != '' && 'app' || (secrets.DXKIT_BOT_TOKEN != '' && 'pat' || 'workflow') }}
           # Dispatch-campaign inputs, transported via ENV only (the
           # comment-defer pattern — free text never touches a shell line).
           # Blank on scheduled runs; the CLI clamps budget overrides to the

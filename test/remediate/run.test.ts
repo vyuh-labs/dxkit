@@ -331,6 +331,27 @@ describe('the budget envelope (runner-enforced, disclosed)', () => {
     expect(r.note).toContain('draft-pr');
   });
 
+  it('the App-tier token lifetime clamps the wall clock, disclosed in the envelope', async () => {
+    process.env.DXKIT_TOKEN_MODE = 'app';
+    try {
+      const driver = fakeDriver({});
+      const r = await runRemediateTask(
+        base(driver, {
+          config: {
+            ...config(),
+            agent: { ...config().agent, budget: { maxTurns: 80, maxMinutes: 90, maxUsd: 5 } },
+          },
+        }),
+      );
+      // The driver's enforced wall clock IS the clamped value — enforcement
+      // and disclosure read the same budget.
+      expect(driver.lastRun?.budget.maxMinutes).toBe(45);
+      expect(r.envelope!.unenforceableCaps.join(' ')).toContain('one hour');
+    } finally {
+      delete process.env.DXKIT_TOKEN_MODE;
+    }
+  });
+
   it('a driver that cannot enforce a cap yields a DISCLOSED limitation, never silence', async () => {
     const driver = fakeDriver({ costUsd: 99 }, { budgetSupport: { turns: 'none', cost: 'none' } });
     const r = await runRemediateTask(base(driver));

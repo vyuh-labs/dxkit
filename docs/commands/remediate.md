@@ -150,7 +150,13 @@ token through one chain, best tier first:
    seat, the PAT-expiry class cannot recur, and lane PRs are attributed
    to the app's own bot identity, so a maintainer can approve them. A
    configured-but-broken app fails the mint step loudly rather than
-   silently degrading a tier.
+   silently degrading a tier. One lifetime fact to know: GitHub caps an
+   installation token at **one hour**, so the remediate lane re-mints
+   immediately before the task step (the hour starts at agent launch,
+   not at job start) and clamps the agent's wall-clock budget to 45
+   minutes on this tier — disclosed in the run's envelope — so the
+   landing push always fits inside the token. Runs that need a longer
+   wall clock should use the PAT tier.
 2. **`DXKIT_BOT_TOKEN`** (a PAT with repo scope): works today,
    attributed to the PAT's owner (who then cannot approve the lane's
    PRs), and expires on the PAT's schedule.

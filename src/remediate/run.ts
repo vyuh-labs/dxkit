@@ -34,7 +34,7 @@ import { resolveDispatchedTask } from './dispatch';
 import { resumePromptNote } from './resume';
 import { realGit } from './git-ops';
 import { armInLoopGate, type InLoopGateStatus } from './agent-trust';
-import { unenforceableCapsFor } from './budget-notes';
+import { clampBudgetToTokenLifetime, unenforceableCapsFor } from './budget-notes';
 import { evaluateScoreHinge, healthHingeScores } from './score-hinge';
 import { salvageForTask } from './config';
 import type { AgentEnvelope, RemediateResult, RemediateRunOptions } from './outcome';
@@ -106,14 +106,18 @@ export async function runRemediateTask(opts: RemediateRunOptions): Promise<Remed
   }
 
   const choice = resolveModelSetting(driver, opts.config.agent.model, task.tier);
-  const budget = opts.config.agent.budget;
+  // The credential-lifetime clamp applies at the ONE budget read, so
+  // enforcement (the process timeout), the agent's prompt, and the
+  // envelope disclosure all see the same effective wall clock.
+  const lifetime = clampBudgetToTokenLifetime(opts.config.agent.budget, process.env);
+  const budget = lifetime.budget;
   // The ONE salvage resolver (config.ts): explicit policy wins; 'auto'
   // follows the task's declared completion shape. The CLI's land decision
   // reads the same function, so the note here and the landing agree.
   const effectiveSalvage = salvageForTask(opts.config, task);
   // Budget-envelope disclosures — the ONE phrasing, split to
   // `budget-notes.ts` at the large-file bar.
-  const unenforceableCaps = unenforceableCapsFor(driver, budget);
+  const unenforceableCaps = [...lifetime.notes, ...unenforceableCapsFor(driver, budget)];
 
   // Auth-path disclosure (driver-generic): a declared credential the runner
   // actually injected = billed API spend; none = the CLI's stored login

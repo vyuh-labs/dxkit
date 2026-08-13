@@ -59,7 +59,11 @@ silent skips, one code path per concept, disclosures on every verdict.
   billed bot seat and no long-lived PAT. Fully additive: the chain is
   App token, then `DXKIT_BOT_TOKEN`, then the workflow token, and
   existing PAT setups keep working unchanged. `doctor` reports which
-  tier a repo will use.
+  tier a repo will use. Because GitHub caps an installation token at
+  one hour, the remediate lane re-mints immediately before the task
+  step and clamps the agent's wall clock to 45 minutes on this tier
+  (disclosed in the envelope) so the landing push always fits inside
+  the token's lifetime; longer runs belong on the PAT tier.
 - **In-loop gate arming for agent lanes.** The remediation lane
   pre-trusts its own checkout (CI only), probes that the agent's
   Stop-gate wiring actually resolves, and the envelope now states
