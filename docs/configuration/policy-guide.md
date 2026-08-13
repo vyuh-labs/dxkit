@@ -27,6 +27,7 @@ stanzas).
 | `depBump.schedule`                  | [#dep-bump](#dep-bump)                       |
 | `duplication.mode`                  | [#duplication-mode](#duplication-mode)       |
 | `expiryNotice.enabled`              | [#expiry-notice](#expiry-notice)             |
+| `floor.required`                    | [#floor-required](#floor-required)           |
 | `flow.mode`                         | [#flow-mode](#flow-mode)                     |
 | `flow.sources`                      | [#flow-sources](#flow-sources)               |
 | `graph.refresh`                     | [#graph-refresh](#graph-refresh)             |
@@ -180,6 +181,34 @@ review comment. Prefer `parse: { regex }` for linter-shaped output.
 
 **Security.** Commands run from THIS committed file only — review edits to
 `checks[].command` like CI config changes.
+
+**Required observation.** `checks[].required: true` makes a check's
+OBSERVATION part of the verdict contract: if the check did not run
+(untrusted tree, missing toolchain, ref-based mode), the verdict is
+`CANNOT GATE` with the cause and remedy named — never a disclosed skip
+under a PASSED banner. Orthogonal to `blocking`, which decides what a
+net-new FAILURE does once the check ran. Default false: an optional
+check that cannot run keeps the skip-and-disclose behavior.
+
+## Floor required
+
+**What it does.** Makes the correctness floor ("does it compile, do its
+tests pass") a verdict REQUIREMENT on the `gate` command family. When the
+floor cannot run — the tree is untrusted and `--trusted` was not passed —
+the gate answers `CANNOT GATE` (exit 2) instead of certifying a tree whose
+compile and tests it never saw.
+
+**Default and why.** `true` on the gate surface — the gate's product
+promise is refusing to certify what it did not observe, and the one-shot
+gate has no CI backstop behind it. The loop Stop-gate, pre-push, and CI
+floor surfaces are NOT governed by this knob: they keep their declared
+fail-open-on-infrastructure doctrine, because a slow or missing toolchain
+must not wedge an unattended loop and CI is their backstop.
+
+**When you would change it.** Set `"floor": { "required": false }` in an
+embedding pipeline that gates untrusted trees on findings only and runs
+the compile/test floor elsewhere — the skip stays disclosed in the verdict
+either way.
 
 ## Paired change rules
 

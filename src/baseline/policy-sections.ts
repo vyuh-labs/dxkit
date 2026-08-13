@@ -184,3 +184,17 @@ export function prohibitedLicensePatterns(policy: {
     ),
   ].sort();
 }
+
+/** `floor.*` block in `.dxkit/policy.json` (see `BrownfieldPolicy.floor`). */
+export interface FloorPolicy {
+  /** The floor's observation is required for a certifiable gate verdict
+   *  (default true on the gate surface). */
+  readonly required?: boolean;
+}
+
+/** `graph.*` block in `.dxkit/policy.json`. */
+export interface GraphSection {
+  /** `'cache'` → install the graph-refresh workflow (Actions-cache transport);
+   *  `'off'`/absent → rebuild on demand (the default). */
+  readonly refresh?: 'cache' | 'off';
+}

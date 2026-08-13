@@ -137,6 +137,11 @@ export const POLICY_PARAMS: readonly PolicyParamMeta[] = [
     anchor: 'custom-checks',
   },
   {
+    path: 'floor.required',
+    summary: 'a gate verdict requires the correctness floor to have run (default true)',
+    anchor: 'floor-required',
+  },
+  {
     path: 'pairedChecks',
     summary: 'changing X requires also changing Y; declarative, nothing spawned',
     anchor: 'paired-change-rules',
