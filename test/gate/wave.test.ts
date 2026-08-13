@@ -184,27 +184,30 @@ describe('runWaveCommand — declared flows dir refusal (#307)', () => {
   it('names the cwd-relative near-miss when that is what happened (the guide-example asymmetry)', async () => {
     const { mkdtempSync, mkdirSync, rmSync } = await import('fs');
     const { tmpdir } = await import('os');
-    const { join, relative } = await import('path');
+    const { join } = await import('path');
     const { runWaveCommand } = await import('../../src/gate-wave');
     const base = mkdtempSync(join(tmpdir(), 'dxkit-wave-nearmiss-'));
-    // Deep nesting so the relative path's `..` arithmetic genuinely
-    // diverges between cwd-resolution and workspace-root-resolution.
-    const ws = join(base, 'deep', 'nested', 'workspace');
-    const elsewhere = mkdtempSync(join(tmpdir(), 'dxkit-wave-cwdflows-'));
+    const ws = join(base, 'workspace');
+    // The cwd is CONTROLLED (forks pool, chdir is safe): a bare relative
+    // path that exists under the current directory but not under the
+    // workspace root — the exact shape the issue reports. Deriving the
+    // divergence from `..` arithmetic instead is depth-coupled: it vanishes
+    // whenever cwd and the fixture workspace sit at the same depth (the CI
+    // runner's checkout is exactly as deep as the old fixture was).
+    const cwdDir = join(base, 'somewhere-else');
+    const prevCwd = process.cwd();
     try {
       mkdirSync(join(ws, 'svc-a'), { recursive: true });
-      mkdirSync(join(elsewhere, 'flows'), { recursive: true });
-      // A path that resolves under the CURRENT directory but not under the
-      // workspace root — the exact shape the issue reports.
-      const cwdRelative = relative(process.cwd(), join(elsewhere, 'flows'));
-      const outcome = await runWaveCommand(ws, { flowsDir: cwdRelative });
+      mkdirSync(join(cwdDir, 'declared-flows'), { recursive: true });
+      process.chdir(cwdDir);
+      const outcome = await runWaveCommand(ws, { flowsDir: 'declared-flows' });
       expect(outcome.verdict).toBe('cannot_gate');
       expect(outcome.flowsRefusal?.reason).toContain(
         'DOES exist relative to the current directory',
       );
     } finally {
+      process.chdir(prevCwd);
       rmSync(base, { recursive: true, force: true });
-      rmSync(elsewhere, { recursive: true, force: true });
     }
   });
 });
