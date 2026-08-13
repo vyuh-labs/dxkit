@@ -23,12 +23,10 @@
  * without re-shaping consumer code.
  */
 
-import * as fs from 'fs';
 import * as path from 'path';
 
 import type { CustomCheckConfig, LintPolicy } from './policy-checks';
 export type { CustomCheckConfig, LintPolicy } from './policy-checks';
-import { readPolicyRoot } from './policy-text';
 import type { BaselineMode, BaselineAnchor } from './modes';
 import type { FindingSeverity, FindingStatus } from './types';
 import type {
@@ -217,6 +215,17 @@ export interface BrownfieldPolicy {
    */
   readonly id?: string;
   readonly version?: string;
+  /**
+   * The BASE this policy file refines (WP1b, strategy §7.2):
+   * `"security-only"` / `"full-debt"` (the presets) or `"default"` (the
+   * fully armed compiled default). Absent ⟹ `"default"` — the pre-4.4.1
+   * merge base, kept so existing files resolve byte-identically. Declare
+   * it: a minimal file without a base silently inherits every armed
+   * rule of the compiled default (the embedder footgun this closes).
+   * Unknown tokens are a load ERROR, never a silent fallback. Resolved
+   * only by `policyBaseFor` in `./policy-resolve`.
+   */
+  readonly extends?: string;
   /** Statuses that fail the guardrail check (non-zero exit code). */
   readonly block: ReadonlyArray<FindingStatus>;
   /** Statuses that emit a warning but don't fail. */
@@ -425,76 +434,14 @@ export const DEFAULT_POLICY_FILENAME = path.join('.dxkit', 'policy.json');
 // stays the single import surface for policy concepts.
 export { policyContentHash } from './policy-naming';
 
-/**
- * Load a brownfield policy with the three-step resolution order
- * shared by `createBaseline` and `runGuardrailCheck`:
- *
- *   1. `policyPath` (explicit `--policy <p>` flag). Errors if the
- *      path is supplied but unreadable / malformed.
- *   2. `<cwd>/.dxkit/policy.json` (conventional). Silently skipped
- *      when absent so consumers without a policy get the defaults.
- *   3. `fallback` — `DEFAULT_BROWNFIELD_POLICY` unless the surface
- *      declares a different no-policy posture (the tree gate passes the
- *      security-only preset: under a fresh prior EVERY finding is
- *      net-new, so the fully armed compiled default would block any
- *      real tree on test-gap/quality debt no DoD ever asked about).
- *      A policy FILE still merges over the compiled default — only the
- *      nothing-configured arm is surface-tunable.
- *
- * Customer fields shallow-merge over the default. The
- * `confidence` / `blockRules` blocks deep-merge by key. Unknown
- * fields are preserved — the classifier ignores what it doesn't
- * know, so forward-compatible policy files don't break old dxkit.
- */
-export function resolvePolicy(
-  policyPath: string | undefined,
-  cwd: string,
-  fallback: BrownfieldPolicy = DEFAULT_BROWNFIELD_POLICY,
-): BrownfieldPolicy {
-  let resolvedPath: string | undefined = policyPath;
-  if (!resolvedPath) {
-    const conventional = path.join(cwd, DEFAULT_POLICY_FILENAME);
-    if (fs.existsSync(conventional)) resolvedPath = conventional;
-  }
-  if (!resolvedPath) return fallback;
-  const read = readPolicyRoot(resolvedPath);
-  if (read.status === 'absent') {
-    // Only reachable via an explicit `--policy <p>` pointing at a missing file
-    // (the conventional path is existence-checked above).
-    throw new Error(`policy file not readable: ${resolvedPath} (no such file)`);
-  }
-  if (read.status === 'malformed') {
-    throw new Error(`policy file is not valid JSON/JSONC: ${resolvedPath} (${read.error})`);
-  }
-  const obj = read.value as Partial<BrownfieldPolicy>;
-  return {
-    ...DEFAULT_BROWNFIELD_POLICY,
-    ...obj,
-    confidence: { ...DEFAULT_BROWNFIELD_POLICY.confidence, ...(obj.confidence ?? {}) },
-    blockRules: { ...DEFAULT_BROWNFIELD_POLICY.blockRules, ...(obj.blockRules ?? {}) },
-    block: obj.block ?? DEFAULT_BROWNFIELD_POLICY.block,
-    warn: obj.warn ?? DEFAULT_BROWNFIELD_POLICY.warn,
-    addedRequiresChangedLines:
-      obj.addedRequiresChangedLines ?? DEFAULT_BROWNFIELD_POLICY.addedRequiresChangedLines,
-    // A non-positive / non-finite / non-number JSON value is ignored so a
-    // malformed policy silently falls back to the canonical default rather than
-    // disabling the large-file signal (e.g. threshold 0 → everything flagged).
-    largeFileThreshold: normalizeLargeFileThreshold(obj.largeFileThreshold),
-    mode: 'brownfield',
-  };
-}
-
-/** Accept only a positive, finite number as an override; anything else → unset
- *  (the producer then falls back to `LARGE_FILE_THRESHOLD_LINES`). */
-function normalizeLargeFileThreshold(value: unknown): number | undefined {
-  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : undefined;
-}
-
-/**
- * Convenience wrapper for callers that don't take a `--policy`
- * override (e.g., `createBaseline`). Loads the conventional file if
- * present; returns defaults otherwise.
- */
-export function loadPolicyFromCwd(cwd: string): BrownfieldPolicy {
-  return resolvePolicy(undefined, cwd);
-}
+// Policy RESOLUTION (the --policy / conventional-file / fallback order,
+// and the `extends` base merge) lives in `./policy-resolve` — split at
+// the large-file bar, re-exported here so `from './policy'` stays the
+// single import surface for policy concepts.
+export {
+  POLICY_BASE_TOKENS,
+  loadPolicyFromCwd,
+  policyBaseFor,
+  resolvePolicy,
+  type PolicyBaseToken,
+} from './policy-resolve';

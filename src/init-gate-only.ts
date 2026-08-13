@@ -31,7 +31,12 @@ export async function runGateOnlyInit(cwd: string): Promise<void> {
   } else {
     fs.mkdirSync(path.dirname(policyPath), { recursive: true });
     const scaffold = renderPolicyScaffold({
-      active: {},
+      // The embed profile pins its base EXPLICITLY (WP1b §7.2): the written
+      // file names the same security-only posture the gate's no-policy
+      // fallback applies, so scaffolding never silently changes posture —
+      // and a later hand edit starts from a declared base, not the
+      // fully-armed-default footgun.
+      active: { extends: 'security-only' },
       ctx: scaffoldCtxFor(cwd),
       version: VERSION,
     });
