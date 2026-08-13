@@ -5,6 +5,42 @@ All notable changes to `@vyuhlabs/dxkit` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.4.2] - 2026-08-13
+
+The token-chain root fix, found within hours of 4.4.1 by rolling it out
+onto a real estate (#323). 4.4.1 gave the lanes one three-tier token
+chain (App installation token, then `DXKIT_BOT_TOKEN`, then the default
+token) — but the chain was hand-copied into three hand-picked templates,
+and every other write-surface workflow silently stayed on the default
+token: the baseline-refresh `-branch`/`-cache` anchor-transport variants
+(their advisory decision PRs showed no checks), comment-defer's push of
+the defer commit back to the PR branch (the PR's checks never re-ran
+after a defer), the flow and extensions standing-PR lanes, and even the
+default baseline-refresh variant's own `gh` step.
+
+### Fixed
+
+- **One definition of the lane token.** The chain expression, the App
+  mint step, and the tier disclosure now live in a single module
+  (`src/lanes/lane-token.ts`); workflow templates carry placeholders,
+  and the one workflow writer substitutes them unconditionally — a
+  template cannot drift off the chain, and a new lane template inherits
+  the whole mechanism by writing one placeholder. Every write-surface
+  workflow dxkit installs (remediate, dep-bump, all three
+  baseline-refresh variants, comment-defer, flow-refresh,
+  extensions-refresh) now authenticates through the chain, including
+  the persisted checkout credential its branch pushes reuse.
+- **The net is content-derived, not a filename list.** The template
+  test now derives "needs the chain" from what a template does (creates
+  PRs or issues, pushes commits) across ALL templates, with deliberate
+  non-members declared as exemptions with reasons (guardrails posts a
+  comment only; graph/reports/deep-sast refresh push artifacts nothing
+  downstream consumes). Every template is additionally rendered with
+  the real substitutions and parsed as YAML.
+
+`vyuh-dxkit update` refreshes the installed workflows; no baseline,
+policy, or wire-format changes.
+
 ## [4.4.1] - 2026-08-13
 
 The trust-the-lane release. Every defect this release closes was found

@@ -47,10 +47,12 @@ jobs:
     if: github.event.issue.pull_request && startsWith(github.event.comment.body, '/dxkit ')
     runs-on: ubuntu-latest
     steps:
+__DXKIT_LANE_TOKEN_STEPS__
+
       - name: Check commenter permission
         id: perm
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: __DXKIT_LANE_TOKEN__
           COMMENT_AUTHOR: ${{ github.event.comment.user.login }}
         run: |
           LEVEL=$(gh api "repos/${GITHUB_REPOSITORY}/collaborators/${COMMENT_AUTHOR}/permission" --jq .permission 2>/dev/null || echo none)
@@ -63,7 +65,7 @@ jobs:
       - name: Refuse without write permission
         if: steps.perm.outputs.authorized != 'true'
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: __DXKIT_LANE_TOKEN__
           PR_NUMBER: ${{ github.event.issue.number }}
           COMMENT_AUTHOR: ${{ github.event.comment.user.login }}
         run: |
@@ -76,7 +78,7 @@ jobs:
         if: steps.perm.outputs.authorized == 'true'
         id: pr
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: __DXKIT_LANE_TOKEN__
           PR_NUMBER: ${{ github.event.issue.number }}
         run: |
           gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" > pr.json
@@ -87,7 +89,7 @@ jobs:
       - name: Refuse fork pull requests
         if: steps.perm.outputs.authorized == 'true' && steps.pr.outputs.same_repo != 'true'
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: __DXKIT_LANE_TOKEN__
           PR_NUMBER: ${{ github.event.issue.number }}
         run: |
           gh pr comment "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --body \
@@ -99,6 +101,10 @@ jobs:
         if: steps.perm.outputs.authorized == 'true' && steps.pr.outputs.same_repo == 'true'
         with:
           ref: ${{ steps.pr.outputs.head_ref }}
+          # The defer commit is pushed back to the PR branch with the
+          # persisted credential; a default-token push never re-triggers the
+          # PR's checks, so the guardrail would stay red after the defer.
+          token: __DXKIT_LANE_TOKEN__
           # Full history so the git-aware matcher can resolve the baseline's
           # anchor commit + diff against the PR head.
           fetch-depth: 0
@@ -194,7 +200,7 @@ __DXKIT_CI_RUNTIME_SETUP__
       - name: Reply on the pull request
         if: steps.apply.outputs.action && steps.apply.outputs.action != 'ignored'
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: __DXKIT_LANE_TOKEN__
           PR_NUMBER: ${{ github.event.issue.number }}
         run: |
           gh pr comment "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/comment-defer-reply.md"

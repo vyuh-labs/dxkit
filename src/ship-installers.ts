@@ -38,6 +38,7 @@ import {
 import { baselineRefreshCron, loadPolicyFromCwd } from './baseline/policy';
 import { cronFromCadence, DEFAULT_DEPBUMP_CRON } from './baseline/policy-sections';
 import { BOT_IDENTITY } from './land-refresh';
+import { LANE_TOKEN_SUBSTITUTIONS } from './lanes/lane-token';
 import { resolveRemediateConfig } from './remediate/config';
 import { driverById } from './remediate/registry';
 import { knownTaskIds } from './remediate/tasks';
@@ -548,6 +549,14 @@ function installWorkflow(
   // Render the final content first, so we can no-op when it already matches and
   // decide ownership from what's actually on disk.
   let content = fs.readFileSync(srcAbs, 'utf8');
+  // The lane token chain renders UNCONDITIONALLY, before caller
+  // substitutions — the ONE definition (src/lanes/lane-token.ts) reaching
+  // every template through the ONE writer, so no callsite can forget it
+  // and no template can drift off the chain (the #323 class). Templates
+  // without the placeholders are untouched.
+  for (const [key, value] of Object.entries(LANE_TOKEN_SUBSTITUTIONS)) {
+    content = content.split(key).join(value);
+  }
   for (const [key, value] of Object.entries(substitutions)) {
     content = content.split(key).join(value);
   }
