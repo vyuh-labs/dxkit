@@ -136,6 +136,28 @@ own default applies (subscription mode). `remediate.enabled: true` gates
 the scheduled workflow only; the local CLI runs regardless, since a human
 at a terminal is its own consent.
 
+### The lane token (three tiers)
+
+The lanes push branches and open PRs, and PRs opened with the default
+`GITHUB_TOKEN` run **no checks** (GitHub's robot-loop rule), which makes
+them unmergeable under branch protection. The workflows resolve their
+token through one chain, best tier first:
+
+1. **GitHub App** (preferred): set the `DXKIT_APP_ID` repository (or
+   org) _variable_ and the `DXKIT_APP_PRIVATE_KEY` _secret_, with the
+   app installed on the repo holding contents + pull-requests write. The
+   workflow mints a short-lived installation token per run — no billed
+   seat, the PAT-expiry class cannot recur, and lane PRs are attributed
+   to the app's own bot identity, so a maintainer can approve them. A
+   configured-but-broken app fails the mint step loudly rather than
+   silently degrading a tier.
+2. **`DXKIT_BOT_TOKEN`** (a PAT with repo scope): works today,
+   attributed to the PAT's owner (who then cannot approve the lane's
+   PRs), and expires on the PAT's schedule.
+3. **The default token**: functional, but the lane's PRs run no checks —
+   the workflow says so with a run notice, and `doctor` flags it at
+   setup time.
+
 Exit code is the truthful aggregate: any task that did not end
 `verified`, `no-op`, or a landed salvage draft exits 1.
 

@@ -85,16 +85,29 @@ describe('workflow-template token parity', () => {
     ).toEqual([]);
   });
 
-  it('PR-opening lane templates route credentials through the DXKIT_BOT_TOKEN fallback', () => {
+  it('PR-opening lane templates route credentials through the ONE three-tier token chain (4.4.1 WP7)', () => {
     const PR_LANES = ['dxkit-dep-bump.yml', 'dxkit-remediate.yml', 'dxkit-baseline-refresh.yml'];
+    const TIER_CHAIN =
+      'steps.dxkit-app-token.outputs.token || secrets.DXKIT_BOT_TOKEN || github.token';
     for (const file of PR_LANES) {
       const content = fs.readFileSync(path.join(WORKFLOWS, file), 'utf8');
-      expect(content, `${file} must use the DXKIT_BOT_TOKEN fallback`).toContain(
-        'secrets.DXKIT_BOT_TOKEN || github.token',
+      // Tier 1: the App mint step, gated on the DXKIT_APP_ID VARIABLE
+      // (secrets cannot gate an `if:`), pinned action version.
+      expect(content, `${file} must mint the App token when configured`).toContain(
+        'actions/create-github-app-token@v2',
       );
-      // The degraded default is disclosed, not silent.
+      expect(content, `${file} must gate the mint on the App variable`).toContain(
+        "if: ${{ vars.DXKIT_APP_ID != '' }}",
+      );
+      // Tiers 1→2→3 in one expression — App token, then PAT, then default.
+      expect(content, `${file} must use the three-tier token chain`).toContain(TIER_CHAIN);
+      // The degraded default is disclosed, not silent — and the notice
+      // names the App tier as the preferred remedy.
       expect(content, `${file} must disclose the default-token degradation`).toContain(
         'DXKIT_BOT_TOKEN_SET',
+      );
+      expect(content, `${file} degraded-mode notice must name the App remedy`).toContain(
+        'DXKIT_APP_ID variable',
       );
     }
   });
