@@ -9,6 +9,8 @@ import { budgetForTask, resolveRemediateConfig, tasksWithinSpendCeiling } from '
 import { resolveModelSetting } from './driver';
 import { AGENT_DRIVERS, driverById } from './registry';
 import { remediateTaskById } from './tasks';
+import { remediateBranchFor } from '../lanes/branches';
+import { describeDeliveryProbe, probeDeliveryPreconditions } from '../lanes/delivery-preconditions';
 
 export interface RemediatePlanOptions {
   readonly json?: boolean;
@@ -147,5 +149,24 @@ export function runRemediatePlan(cwd: string, opts: RemediatePlanOptions = {}): 
       `  spend ceiling ($${config.maxSpendPerRun}/run): ${ceiling.deferred.join(', ')} ` +
         'deferred to the next firing (disclosed, never dropped).',
     );
+  }
+
+  // The delivery line (#287): can the lanes actually LAND here? The ONE
+  // prober the $0 preflight and doctor consume. Fail-open: an unverifiable
+  // probe is one dim line, never a warning — the plan must not invent a
+  // refusal it cannot evidence.
+  const delivery = probeDeliveryPreconditions(process.cwd(), {
+    branches: config.tasks.map((t) => remediateBranchFor(t)),
+  });
+  if (delivery.unverifiable) {
+    logger.dim(
+      'delivery: could not verify branch rules here (no gh / not GitHub) — probes run in CI too.',
+    );
+  } else {
+    for (const p of delivery.probes) {
+      if (p.verdict === 'ok') logger.info(`  delivery ${p.branch}: OK`);
+      else if (p.verdict === 'blocked') logger.fail(`  delivery ${describeDeliveryProbe(p)}`);
+      else logger.warn(`  delivery ${describeDeliveryProbe(p)}`);
+    }
   }
 }

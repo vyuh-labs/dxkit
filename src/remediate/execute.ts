@@ -27,6 +27,7 @@ import { driverById } from './registry';
 import { remediateTaskById } from './tasks';
 import { runRemediateTask, type RemediateResult } from './run';
 import { landRemediateHead, remediateBranchFor } from './land';
+import { describeDeliveryProbe, probeDeliveryPreconditions } from '../lanes/delivery-preconditions';
 import { appendLaneEvent, LANE_LEDGER_SCHEMA_VERSION } from '../lanes/ledger';
 
 export interface TaskRun {
@@ -92,6 +93,8 @@ export interface ExecutorSeams {
   readonly landHead?: typeof landRemediateHead;
   readonly branch?: (cwd: string) => string;
   readonly defaultBranch?: (cwd: string) => string;
+  /** Injected for tests: the $0 landing preflight (#286). */
+  readonly probeDelivery?: typeof probeDeliveryPreconditions;
 }
 
 /** Run one task through the runner and (optionally) land it — the ONE
@@ -158,6 +161,32 @@ export async function executeTask(
     }
   }
   const reporter = startPhaseReporter(`remediate:${taskId}`);
+  // The $0 landing preflight (#286): when this run intends to LAND, probe
+  // the standing branch's delivery preconditions BEFORE any agent spawns —
+  // a branch-creation ruleset that will 403 the landing is knowable from
+  // one API read, and the live class spent full agent budgets discovering
+  // it at push time. Only POSITIVE refusal evidence blocks; an
+  // unanswerable probe proceeds (the preflight never invents a refusal).
+  if (land === 'pr') {
+    const preflight = (seams.probeDelivery ?? probeDeliveryPreconditions)(cwd, {
+      branches: [remediateBranchFor(taskId)],
+    });
+    const blocked = preflight.probes.find((p) => p.verdict === 'blocked');
+    if (blocked) {
+      const note =
+        `landing-unavailable (preflight, $0 — no agent was spawned): ` +
+        `${describeDeliveryProbe(blocked)}`;
+      // `task` is omitted: the preflight runs before task-id resolution
+      // narrows the raw string; the note + ledger name it.
+      const refusal: RemediateResult = {
+        outcome: 'refused',
+        note,
+        ledger: `## dxkit remediate: ${taskId}\n\noutcome: **refused**\n\n${note}\n`,
+      };
+      return finalizeTaskRun(cwd, taskId, { result: refusal, landed: false, clean: false });
+    }
+  }
+
   let result: RemediateResult;
   try {
     result = await (seams.runTask ?? runRemediateTask)({

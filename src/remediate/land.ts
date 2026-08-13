@@ -20,9 +20,10 @@ import {
 import { internalGitPushArgs } from '../git-internal-push';
 import * as logger from '../logger';
 
-export function remediateBranchFor(taskId: string): string {
-  return `dxkit/remediate-${taskId}`;
-}
+// The standing-branch name lives in the ONE leaf home the delivery
+// prober also reads (`lanes/branches.ts`); re-exported for consumers.
+import { remediateBranchFor } from '../lanes/branches';
+export { remediateBranchFor } from '../lanes/branches';
 
 export interface LandRemediateOptions {
   readonly cwd: string;
