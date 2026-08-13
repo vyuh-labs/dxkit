@@ -9,10 +9,13 @@
 import type { FindingSeverity, FindingStatus, MatchPair, MatchReason } from './types';
 import {
   type BrownfieldPolicy,
-  type BrownfieldBlockRules,
   DEFAULT_BROWNFIELD_POLICY,
   newAdvisoryBlockSeverities,
 } from './policy';
+// The ONE block-rule evaluator lives in `./block-rules` (split at the
+// large-file bar); re-exported so existing doc references stay truthful.
+import { evaluateBlockRules } from './block-rules';
+export { evaluateBlockRules } from './block-rules';
 
 /**
  * Contextual signals the classifier reads when available. Every field
@@ -93,6 +96,14 @@ export interface ClassifyContext {
    *  Absent (changed files unknowable) ⇒ no relabel: the evidence is missing,
    *  so the finding keeps its `added` attribution. */
   readonly manifestUntouched?: boolean;
+  /** The per-finding sibling of `manifestUntouched` (#283): the diff DID
+   *  touch a manifest, but NO changed manifest line mentions THIS finding's
+   *  package — the diff provably did not change its resolution, so the
+   *  advisory-feed attribution applies to it exactly as under an untouched
+   *  manifest. Set only for `added` dep-vuln pairs, decided by the ONE
+   *  changed-content index in `classify-pairs.ts` (Rule 2.30: never a second
+   *  attribution table). Absent ⇒ no relabel — the finding keeps `added`. */
+  readonly packageUntouchedByDiff?: boolean;
   /** True when an `added` dep-vuln is on a reachable code path. */
   readonly reachable?: boolean;
   /** For a `custom-check` finding: the user/pack-declared block intent
@@ -218,23 +229,34 @@ export function classify(
             `baseline is re-captured`,
         });
       }
-    } else if (context.kind === 'dep-vuln' && context.manifestUntouched) {
-      // D4: the PR changed no dependency manifest, so the dependency set is
-      // identical to the baseline's — the developer cannot be the cause of an
-      // added dep-vuln. The one input that moved is the advisory FEED
-      // (published after baseline capture). Recall is genuinely clean here
-      // (Rule 19's recallDrifted branch above wins when it isn't), so this is
-      // its own status — never "regression", never `tooling_drift`. The
-      // verdict is decided by the advisory TIER below (default: high/critical
-      // block, medium/low warn; malicious always blocks).
+    } else if (
+      context.kind === 'dep-vuln' &&
+      (context.manifestUntouched || context.packageUntouchedByDiff)
+    ) {
+      // D4: the developer cannot be the cause of this added dep-vuln — either
+      // the PR changed no dependency manifest at all (the run-level fast
+      // path), or it did but no changed manifest line mentions THIS package
+      // (#283's per-finding tier: a one-line bump PR must not be blamed for
+      // the whole advisory wave against packages it never touched). Either
+      // way the dependency's resolution is identical to the baseline's and
+      // the one input that moved is the advisory FEED (published after
+      // baseline capture). Recall is genuinely clean here (Rule 19's
+      // recallDrifted branch above wins when it isn't), so this is its own
+      // status — never "regression", never `tooling_drift`. The verdict is
+      // decided by the advisory TIER below (default: high/critical block,
+      // medium/low warn; malicious always blocks).
       status = 'newly_published_advisory';
       reasons.push({
         code: 'newly-published-advisory',
         detail:
-          'not introduced by this PR — the diff touches no dependency manifest, so this ' +
-          'advisory was published after the baseline was captured. Fix the vulnerability to ' +
-          'unblock, or defer time-boxed: vyuh-dxkit allowlist defer --from-last-check ' +
-          '--reason="…"',
+          (context.manifestUntouched
+            ? 'not introduced by this PR — the diff touches no dependency manifest, so this ' +
+              'advisory was published after the baseline was captured. '
+            : 'not introduced by this PR — the diff changes no manifest line mentioning this ' +
+              'package (its resolution is unchanged), so this advisory was published after ' +
+              'the baseline was captured. ') +
+          'Fix the vulnerability to unblock, or defer time-boxed: vyuh-dxkit allowlist defer ' +
+          '--from-last-check --reason="…"',
       });
     } else if (context.derivedMembership && context.fileAddedInDiff === false) {
       // Derived-membership attribution (the #25 class): this kind's per-file
@@ -378,107 +400,6 @@ export function classify(
     reasons,
     ...(unattributableBlockRule !== undefined ? { unattributableBlockRule } : {}),
   };
-}
-
-/**
- * Check whether any block-rule fires for the given classified pair.
- * Returns the matching rule's name (for reason rendering) or null
- * when no rule fires.
- *
- * Block-rules escalate specific kinds of net-new findings beyond the generic
- * policy. They fire on a matcher-`added` finding INCLUDING one demoted to
- * `config_drift`: a config / .dxkit-ignore / policy-hash change does not create
- * phantom findings (the credential or vuln is really in the code — the config
- * edit only changed the *reason* string), so it must never disable a block for a
- * net-new blocking-class finding. That closes the bypass where a coincident
- * policy.json edit — or drift vs a stale baseline — let a net-new critical secret
- * pass as a warning (feedback #20). `tooling_drift` (a scanner / advisory-DB
- * version change CAN surface a phantom critical that isn't a real regression) and
- * `uncertain` (scanner wobble) still suppress block-rules, preserving the
- * legitimate false-block prevention there — but `tooling_drift` does NOT get to
- * silently pass a block-rule-class finding: the recall-drift branch above records
- * `unattributableBlockRule` for it, and the verdict layer refuses to print PASSED
- * while one exists. Without that, `tooling_drift` is the #20 bypass one status
- * over: every pre-Rule-19 baseline reads as drifted, so a net-new secret sailed
- * through as a warning on upgrade day while the banner said PASSED.
- */
-function evaluateBlockRules(
-  status: FindingStatus,
-  rules: BrownfieldBlockRules,
-  context: ClassifyContext,
-): string | null {
-  // `newly_published_advisory` never reaches here — its verdict is governed by
-  // the advisory tier (see the early return in `classify`), which owns the
-  // malicious always-block invariant that `newMaliciousDependency` covers for
-  // ordinary `added` findings.
-  if (status !== 'added' && status !== 'config_drift') return null;
-  if (rules.newSecret && context.kind === 'secret') return 'newSecret';
-  if (rules.newCriticalSecurity && context.kind === 'code' && context.severity === 'critical') {
-    return 'newCriticalSecurity';
-  }
-  if (rules.newHighSecurity && context.kind === 'code' && context.severity === 'high') {
-    return 'newHighSecurity';
-  }
-  if (
-    rules.newCriticalDependencyVulnerability &&
-    context.kind === 'dep-vuln' &&
-    context.severity === 'critical'
-  ) {
-    return 'newCriticalDependencyVulnerability';
-  }
-  if (
-    rules.newHighReachableDependencyVulnerability &&
-    context.kind === 'dep-vuln' &&
-    context.severity === 'high' &&
-    context.reachable === true
-  ) {
-    return 'newHighReachableDependencyVulnerability';
-  }
-  // Malicious-code advisories block at ANY severity: install-time malware
-  // executes at install, so CVSS and reachability are the wrong lens. The
-  // `malicious` signal comes from the one canonical predicate
-  // (`src/analyzers/security/malicious.ts`) applied to the current scan.
-  if (rules.newMaliciousDependency && context.kind === 'dep-vuln' && context.malicious === true) {
-    return 'newMaliciousDependency';
-  }
-  // Every minted `license` finding is already a prohibited-list match (the
-  // inventory never becomes findings), so kind alone is the whole predicate.
-  if (rules.newProhibitedLicense && context.kind === 'license') {
-    return 'newProhibitedLicense';
-  }
-  // A custom check the policy declared `blocking: true` (4.4.0): the block
-  // intent rides on the finding itself, threaded here as
-  // `customCheckBlocking`. Only a strict `true` fires — a sanitized entry
-  // (intent stripped) or a `blocking: false` check never does; those keep
-  // the generic `block` list's verdict and applyCustomCheckIntent's
-  // demotion respectively.
-  if (
-    rules.newBlockingCustomCheckFailure &&
-    context.kind === 'custom-check' &&
-    context.customCheckBlocking === true
-  ) {
-    return 'newBlockingCustomCheckFailure';
-  }
-  // A net-new test gap the developer can actually have caused: a file this
-  // diff ADDED, shipping without a test. The rule's original predicate
-  // (`overlapsChangedLines === true`) was structurally DEAD — a test-gap
-  // finding is whole-file and carries no line, so the overlap was always
-  // undefined and the rule could never fire (the T1.2 armed-but-dead class).
-  // The added-file predicate is also the only honest one for a
-  // derived-membership kind: an EDIT never introduces a test gap (see
-  // `derived-membership-shift` above), so firing on edits would misattribute.
-  if (rules.newUntestedChangedSource && context.kind === 'test-gap' && context.fileAddedInDiff) {
-    return 'newUntestedChangedSource';
-  }
-  if (
-    rules.newSevereQualityIssueInChangedFiles &&
-    (context.kind === 'code' || context.kind === 'hygiene') &&
-    (context.severity === 'critical' || context.severity === 'high') &&
-    context.overlapsChangedLines === true
-  ) {
-    return 'newSevereQualityIssueInChangedFiles';
-  }
-  return null;
 }
 
 /**

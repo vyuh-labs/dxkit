@@ -18,6 +18,7 @@
  * return a partial set on error.
  */
 import { execFileSync } from 'child_process';
+import * as fs from 'fs';
 import { existsSync } from 'fs';
 import * as path from 'path';
 
@@ -191,4 +192,60 @@ function readChangedLineSet(cwd: string, baseSha: string, file: string): Set<num
     for (let i = 0; i < newCount; i++) out.add(newStart + i);
   }
   return out;
+}
+
+/**
+ * The CONTENT lines the working tree changed vs `baseSha` across `files`
+ * (added + removed sides of the one-sided base → working-tree diff, staged
+ * + unstaged; an untracked file contributes all of its lines, per the
+ * attribution doctrine above). Null on git failure — attribution
+ * unavailable, callers must read it as UNKNOWN, never as "nothing
+ * changed". Consumed by the per-finding advisory attribution (#283): a
+ * dep-vuln whose package no changed manifest line mentions provably kept
+ * its resolution across the diff.
+ */
+export function changedContentLines(
+  cwd: string,
+  baseSha: string,
+  files: ReadonlyArray<string>,
+): ReadonlyArray<string> | null {
+  if (!baseSha || files.length === 0) return files.length === 0 ? [] : null;
+  let untracked: Set<string>;
+  try {
+    untracked = new Set(
+      gitLines(cwd, ['ls-files', '--others', '--exclude-standard', '--', ...files]),
+    );
+  } catch {
+    return null;
+  }
+  const lines: string[] = [];
+  for (const file of files) {
+    if (untracked.has(file)) {
+      try {
+        lines.push(...fs.readFileSync(path.join(cwd, file), 'utf8').split('\n'));
+      } catch {
+        return null; // listed as untracked but unreadable → unknown
+      }
+      continue;
+    }
+    let diff: string;
+    try {
+      diff = execFileSync('git', ['diff', '--no-color', '--find-renames', baseSha, '--', file], {
+        cwd,
+        encoding: 'utf8',
+        maxBuffer: 128 * 1024 * 1024,
+      });
+    } catch {
+      return null;
+    }
+    for (const raw of diff.split('\n')) {
+      if (
+        (raw.startsWith('+') && !raw.startsWith('+++')) ||
+        (raw.startsWith('-') && !raw.startsWith('---'))
+      ) {
+        lines.push(raw.slice(1));
+      }
+    }
+  }
+  return lines;
 }

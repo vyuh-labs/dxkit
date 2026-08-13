@@ -3,7 +3,11 @@ import { execFileSync } from 'child_process';
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync, unlinkSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { computeChangedFiles, createChangedLineIndex } from '../../src/baseline/changed-files';
+import {
+  changedContentLines,
+  computeChangedFiles,
+  createChangedLineIndex,
+} from '../../src/baseline/changed-files';
 
 /**
  * `computeChangedFiles` is the safety core of incremental scanning (opt 3):
@@ -178,5 +182,54 @@ describe('createChangedLineIndex (line-granularity sibling — same working-tree
       const attributed = lines === 'all' || (lines !== null && lines.size > 0);
       expect(attributed, `no line attribution for changed file ${file}`).toBe(true);
     }
+  });
+});
+
+describe('changedContentLines (#283 — the per-finding advisory attribution basis)', () => {
+  let repo: string;
+  let base: string;
+  beforeEach(() => {
+    repo = mkdtempSync(join(tmpdir(), 'dxkit-changed-lines-'));
+    git(repo, ['init', '-q', '-b', 'main']);
+    git(repo, ['config', 'user.email', 't@t.co']);
+    git(repo, ['config', 'user.name', 't']);
+    writeFileSync(
+      join(repo, 'package.json'),
+      JSON.stringify({ dependencies: { 'pkg-a': '^1.0.0', 'pkg-b': '^2.0.0' } }, null, 2) + '\n',
+    );
+    base = commitAll(repo, 'base');
+  });
+  afterEach(() => {
+    rmSync(repo, { recursive: true, force: true });
+  });
+
+  it("a one-line bump yields exactly that package's changed lines — the untouched package is absent", () => {
+    writeFileSync(
+      join(repo, 'package.json'),
+      JSON.stringify({ dependencies: { 'pkg-a': '^1.1.0', 'pkg-b': '^2.0.0' } }, null, 2) + '\n',
+    );
+    const lines = changedContentLines(repo, base, ['package.json'])!;
+    expect(lines.some((l) => l.includes('pkg-a'))).toBe(true);
+    // The issue's acceptance shape: bump A, and B's resolution provably
+    // unchanged — no changed line mentions it.
+    expect(lines.some((l) => l.includes('pkg-b'))).toBe(false);
+  });
+
+  it('an untracked file reads as fully added (a new manifest must not read as untouched)', () => {
+    mkdirSync(join(repo, 'nested'), { recursive: true });
+    writeFileSync(
+      join(repo, 'nested', 'package.json'),
+      JSON.stringify({ dependencies: { 'pkg-new': '^1.0.0' } }) + '\n',
+    );
+    const lines = changedContentLines(repo, base, ['nested/package.json'])!;
+    expect(lines.some((l) => l.includes('pkg-new'))).toBe(true);
+  });
+
+  it('an empty file list is an empty answer, never null', () => {
+    expect(changedContentLines(repo, base, [])).toEqual([]);
+  });
+
+  it('git failure yields null — unknown, never "nothing changed"', () => {
+    expect(changedContentLines(repo, 'not-a-sha', ['package.json'])).toBeNull();
   });
 });
