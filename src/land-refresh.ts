@@ -54,10 +54,22 @@ export interface LandRefreshOptions {
   /** The standing refresh branch (`dxkit/<surface>-refresh`). */
   readonly branchName: string;
   readonly defaultBranch: string;
-  /** Commit subject; `[skip ci]` is appended by this module. */
+  /** Commit subject; push mode appends `[skip ci]` (a direct artifact
+   *  refresh on the default branch should not churn CI). */
   readonly commitTitle: string;
   readonly prTitle: string;
   readonly prBody: string;
+  /**
+   * Stamp `[skip ci]` on the PR-mode head commit too (#304). Default FALSE:
+   * GitHub honors the marker for `pull_request` workflows, so a stamped
+   * standing PR can never run a single check — a code-carrying lane PR then
+   * presents with zero CI, silently defeats the DXKIT_BOT_TOKEN's stated
+   * purpose, and under required checks is permanently unmergeable (the
+   * PR-mode sibling of the push-mode deadlock enforcement.ts documents).
+   * Only an artifact-only refresh PR that deliberately wants silent updates
+   * opts in — per consumer, never as the shared default.
+   */
+  readonly prSkipCi?: boolean;
   /**
    * Substance check, run only when git sees a byte diff: return false to
    * REVERT the paths and land nothing (a timestamp-only refresh must not
@@ -125,7 +137,9 @@ export function landRefreshPaths(opts: LandRefreshOptions): LandRefreshResult {
   // human stranded on the bot branch.
   const priorRef = exec('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { allowFail: true }).trim();
   exec('git', ['checkout', '-B', opts.branchName]);
-  commit(`${opts.prTitle}\n\n[skip ci]`);
+  // Clean head commit by default (#304): the PR is the review vehicle, and a
+  // PR that runs no checks is not reviewable in any meaningful sense.
+  commit(opts.prSkipCi ? `${opts.prTitle}\n\n[skip ci]` : opts.prTitle);
   // Internal machine push → `--no-verify` (gh #156), same reason as the push mode.
   exec('git', internalGitPushArgs(opts.branchName, { force: true }));
   if (priorRef && priorRef !== 'HEAD' && priorRef !== opts.branchName) {
