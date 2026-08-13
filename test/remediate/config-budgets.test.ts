@@ -16,6 +16,10 @@ import {
   DEFAULT_REMEDIATE_BUDGET,
   type RemediateConfig,
 } from '../../src/remediate/config';
+import {
+  APP_TOKEN_SAFE_MINUTES,
+  clampBudgetToTokenLifetime,
+} from '../../src/remediate/budget-notes';
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -179,6 +183,37 @@ describe('salvageForTask — the one salvage resolver (task-shape defaults)', ()
     // IS a completion test.
     for (const t of REMEDIATE_TASKS) {
       if (t.skipWhenEntryFloorGreen) expect(t.completion).toBe('bounded');
+    }
+  });
+});
+
+describe('clampBudgetToTokenLifetime (the App-token 1h hard cap)', () => {
+  const base = { maxTurns: 80, maxMinutes: 90, maxUsd: 5 };
+
+  it('clamps the wall clock on the app tier and discloses the remedy', () => {
+    const { budget, notes } = clampBudgetToTokenLifetime(base, { DXKIT_TOKEN_MODE: 'app' });
+    expect(budget.maxMinutes).toBe(APP_TOKEN_SAFE_MINUTES);
+    // Only the wall clock moves — turns and spend are untouched.
+    expect(budget.maxTurns).toBe(base.maxTurns);
+    expect(budget.maxUsd).toBe(base.maxUsd);
+    expect(notes).toHaveLength(1);
+    // The disclosure names the cause and BOTH remedies (never silent).
+    expect(notes[0]).toContain('one hour');
+    expect(notes[0]).toContain('DXKIT_BOT_TOKEN');
+  });
+
+  it('a budget already inside the lifetime is untouched, no note', () => {
+    const small = { ...base, maxMinutes: 30 };
+    const { budget, notes } = clampBudgetToTokenLifetime(small, { DXKIT_TOKEN_MODE: 'app' });
+    expect(budget).toEqual(small);
+    expect(notes).toEqual([]);
+  });
+
+  it('long-lived tiers (pat, workflow) and local runs (env absent) are never clamped', () => {
+    for (const env of [{ DXKIT_TOKEN_MODE: 'pat' }, { DXKIT_TOKEN_MODE: 'workflow' }, {}]) {
+      const { budget, notes } = clampBudgetToTokenLifetime(base, env);
+      expect(budget).toEqual(base);
+      expect(notes).toEqual([]);
     }
   });
 });
