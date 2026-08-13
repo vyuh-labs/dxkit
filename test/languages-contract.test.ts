@@ -437,6 +437,26 @@ describe.each(LANGUAGES as LanguageSupport[])('language contract: $id', (lang) =
         ).toBeGreaterThan(0);
       }
     }
+    // The OPTIONAL structure check (#309, 4.4.1): same pure-computation
+    // contract as resolutionCheck — well-formed result, never a throw, a
+    // labeled check id whenever anything ran or was claimed (`none` is the
+    // only unlabeled arm: nothing ran, nothing is claimed).
+    if (c.structureCheck) {
+      const res = c.structureCheck(ctx);
+      expect(['clean', 'broken', 'skipped', 'none']).toContain(res.kind);
+      if (res.kind !== 'none') {
+        expect(
+          res.label.length,
+          `${lang.id}: a structure check must carry its own check label`,
+        ).toBeGreaterThan(0);
+      }
+      if (res.kind === 'skipped') {
+        expect(
+          res.reason.length,
+          `${lang.id}: a structure-check skip must disclose its reason`,
+        ).toBeGreaterThan(0);
+      }
+    }
   });
 
   // 4.2 (test-gap tooling-config exemption): a pack that declares

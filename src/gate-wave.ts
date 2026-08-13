@@ -22,6 +22,7 @@ import type { WireFlow, WireVerdictCheck, WireVerdictDoc } from '@vyuhlabs/dxkit
 import { evaluateWaveGate, type WaveGateResult } from './analyzers/flow/wave';
 import { gatherFlowModel } from './analyzers/flow/gather';
 import { readFlowConfig } from './analyzers/flow/config';
+import { readDeclaredSurface } from './analyzers/flow/declared-surface';
 import type { RepoFlowModel } from './analyzers/flow/model';
 import { describeBrokenIntegration } from './analyzers/flow/gate';
 import { VERSION } from './constants';
@@ -50,6 +51,20 @@ export interface WaveCommandOutcome {
   /** Flow documents that could not be parsed — disclosed, never silent. */
   readonly malformedFlowDocs: ReadonlyArray<{ readonly file: string; readonly error: string }>;
   readonly flowCount: number;
+  /** Present when a DECLARED --flows dir did not resolve (#307): the run
+   *  refused (`cannot_gate`, exit 2) before gating anything — a gate whose
+   *  job is refusing to certify what it cannot see must not render a
+   *  verdict with zero flows evaluated when flows were declared. */
+  readonly flowsRefusal?: { readonly reason: string; readonly remedy: string };
+  /** Members that DECLARED a served surface (#308): route counts joined
+   *  into the mesh (asserted, not observed) + any malformed entries —
+   *  disclosed so a declared mesh never reads as an extracted one. Empty
+   *  when no member carries a dxkit-surface.json. */
+  readonly declaredSurfaces?: ReadonlyArray<{
+    readonly member: string;
+    readonly routes: number;
+    readonly malformed: readonly string[];
+  }>;
 }
 
 /** Read every declared flow from the `--flows` directory. Accepts a
@@ -105,6 +120,14 @@ export function discoverMembers(dir: string, flowsDir?: string): string[] {
     .sort();
 }
 
+function isDirectory(p: string): boolean {
+  try {
+    return fs.statSync(p).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
 /** Wave URL semantics: an absolute URL's host joins the mesh namespace. */
 function stripAbsoluteHost(rawUrl: string): string | null {
   const m = rawUrl.match(/^https?:\/\/[^/]+(\/.*)?$/i);
@@ -135,6 +158,41 @@ export async function runWaveCommand(
   const root = path.resolve(dir);
   const flowsDir =
     options.flowsDir !== undefined ? path.resolve(root, options.flowsDir) : undefined;
+
+  // A DECLARED flows dir that does not resolve is a REFUSAL, not a skip
+  // (#307): the old behavior skipped the flows check with an ENOENT cause,
+  // gated the real flows directory as a member tree, and rendered a verdict
+  // with zero flows evaluated — a gate whose job is refusing to certify
+  // what it cannot see must not certify around its own declared inputs.
+  // Resolution is WORKSPACE-ROOT-relative (documented); the refusal names
+  // the cwd-relative near-miss when that is what happened.
+  if (flowsDir !== undefined && !isDirectory(flowsDir)) {
+    const cwdCandidate = path.resolve(process.cwd(), options.flowsDir!);
+    const nearMiss =
+      cwdCandidate !== flowsDir && isDirectory(cwdCandidate)
+        ? ` Note: "${options.flowsDir}" DOES exist relative to the current directory — ` +
+          `--flows resolves against the workspace root (${root}).`
+        : '';
+    return {
+      exitCode: 2,
+      verdict: 'cannot_gate',
+      members: [],
+      wave: evaluateWaveGate({ members: [], flows: [] }),
+      malformedFlowDocs: [
+        { file: flowsDir, error: 'declared flows directory not found or not a directory' },
+      ],
+      flowCount: 0,
+      flowsRefusal: {
+        reason:
+          `the declared --flows directory does not resolve: ${flowsDir} is not a ` +
+          `directory, so the declared flows cannot be evaluated.${nearMiss}`,
+        remedy:
+          'point --flows at a directory that exists under the workspace root ' +
+          '(paths resolve workspace-root-relative), or drop --flows to gate without declared flows',
+      },
+    };
+  }
+
   const memberNames = discoverMembers(root, flowsDir);
   if (memberNames.length === 0) {
     throw new Error(
@@ -165,6 +223,11 @@ export async function runWaveCommand(
   // prefixed with the member name so fingerprints are WORKSPACE-relative
   // (environment-independent AND member-unique — Rule 9).
   const waveMembers = [];
+  const declaredSurfaces: Array<{
+    member: string;
+    routes: number;
+    malformed: readonly string[];
+  }> = [];
   for (const name of memberNames) {
     const memberRoot = path.join(root, name);
     const config = readFlowConfig(memberRoot);
@@ -180,7 +243,23 @@ export async function runWaveCommand(
       relativeTo: memberRoot,
       rewriteUrl: stripAbsoluteHost,
     });
-    waveMembers.push({ name, model: prefixMemberFiles(name, model) });
+    // The DECLARED surface (#308): a member whose routes live in a DSL the
+    // extractor cannot parse joins the mesh via dxkit-surface.json — same
+    // normalizer, full no-route/dead-route/flow participation, labeled
+    // `declared-surface` and disclosed per member (asserted, not observed).
+    const surface = readDeclaredSurface(memberRoot);
+    const merged =
+      surface !== null && surface.routes.length > 0
+        ? { ...model, routes: [...model.routes, ...surface.routes] }
+        : model;
+    if (surface !== null) {
+      declaredSurfaces.push({
+        member: name,
+        routes: surface.routes.length,
+        malformed: surface.malformed,
+      });
+    }
+    waveMembers.push({ name, model: prefixMemberFiles(name, merged) });
   }
   const declared =
     flowsDir !== undefined ? readDeclaredFlows(flowsDir) : { flows: [], malformed: [] };
@@ -208,6 +287,7 @@ export async function runWaveCommand(
     wave,
     malformedFlowDocs: declared.malformed,
     flowCount: declared.flows.length,
+    declaredSurfaces,
   };
 }
 
@@ -223,6 +303,18 @@ export function renderWaveOutcome(outcome: WaveCommandOutcome, json: boolean): s
     }));
     for (const d of outcome.malformedFlowDocs) {
       checks.push({ id: `flows:${path.basename(d.file)}`, status: 'skipped', cause: d.error });
+    }
+    // Declared surfaces (#308): the wire says which members joined the mesh
+    // by ASSERTION and names every malformed entry.
+    for (const s of outcome.declaredSurfaces ?? []) {
+      checks.push({
+        id: `surface:${s.member}`,
+        status: s.malformed.length > 0 ? 'skipped' : 'passed',
+        cause:
+          s.malformed.length > 0
+            ? `declared surface has malformed entries: ${s.malformed.join('; ')}`
+            : `${s.routes} route(s) joined the mesh by DECLARATION (asserted, not extracted)`,
+      });
     }
     const doc: WireVerdictDoc = {
       schema: 'verdict.v1',
@@ -249,7 +341,11 @@ export function renderWaveOutcome(outcome: WaveCommandOutcome, json: boolean): s
         })),
         ...outcome.wave.flowFindings.map((f) => ({
           kind: 'broken-flow',
-          rule: 'flow-incomplete',
+          // The wire rule id matches the KIND and the wave-gating guide
+          // (#306): tooling written from the guide filters on `broken-flow`,
+          // and the first 4.4.0 emitter said `flow-incomplete` — a name no
+          // documentation ever promised.
+          rule: 'broken-flow',
           message: `${f.flowId}: ${f.missingSteps.map((s) => `${s.method} ${s.path}`).join(', ')} unresolved`,
           fingerprint: f.id,
           blocking: true,
@@ -260,6 +356,13 @@ export function renderWaveOutcome(outcome: WaveCommandOutcome, json: boolean): s
         ran: false,
         skippedWithCause: 'wave mode: per-member floors ride each member gate (see member checks)',
       },
+      ...(outcome.flowsRefusal !== undefined
+        ? {
+            refusals: [
+              { reason: outcome.flowsRefusal.reason, remedy: outcome.flowsRefusal.remedy },
+            ],
+          }
+        : {}),
       receipt: renderWaveOutcome({ ...outcome }, false),
       meta: {
         members: outcome.wave.members,
@@ -271,11 +374,23 @@ export function renderWaveOutcome(outcome: WaveCommandOutcome, json: boolean): s
   }
 
   const lines: string[] = ['Wave gate — estate composition', ''];
+  if (outcome.flowsRefusal !== undefined) {
+    lines.push(`CANNOT GATE — ${outcome.flowsRefusal.reason}`);
+    lines.push(`  remedy: ${outcome.flowsRefusal.remedy}`);
+    lines.push('', `Wave verdict: cannot_gate (exit ${outcome.exitCode})`);
+    return lines.join('\n');
+  }
   for (const m of outcome.wave.members) {
     lines.push(`  member ${m.name}: ${m.routes} route(s), ${m.calls} call(s)`);
   }
   for (const m of outcome.members) {
     lines.push(`  member ${m.name}: gate ${m.outcome.verdict} (exit ${m.outcome.exitCode})`);
+  }
+  for (const s of outcome.declaredSurfaces ?? []) {
+    lines.push(
+      `  member ${s.member}: +${s.routes} DECLARED route(s) (dxkit-surface.json — asserted, not extracted)`,
+    );
+    for (const bad of s.malformed) lines.push(`    ! ${bad}`);
   }
   if (outcome.wave.seamFindings.length > 0) {
     lines.push('', `Seam findings (${outcome.wave.seamFindings.length}):`);

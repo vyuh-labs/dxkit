@@ -150,3 +150,120 @@ describe('the wave surface readers', () => {
     }
   });
 });
+
+describe('runWaveCommand — declared flows dir refusal (#307)', () => {
+  it('a missing --flows dir is CANNOT GATE (exit 2) with the path named — never a skip, never a member', async () => {
+    const { mkdtempSync, mkdirSync, rmSync } = await import('fs');
+    const { tmpdir } = await import('os');
+    const { join } = await import('path');
+    const { runWaveCommand, renderWaveOutcome } = await import('../../src/gate-wave');
+    const ws = mkdtempSync(join(tmpdir(), 'dxkit-wave-refusal-'));
+    try {
+      mkdirSync(join(ws, 'svc-a'));
+      mkdirSync(join(ws, 'svc-b'));
+      const outcome = await runWaveCommand(ws, { flowsDir: 'no-such-flows' });
+      expect(outcome.verdict).toBe('cannot_gate');
+      expect(outcome.exitCode).toBe(2);
+      // The refusal happens BEFORE gating: no member was judged, so the
+      // flows-dir-as-member class cannot occur either.
+      expect(outcome.members).toHaveLength(0);
+      expect(outcome.flowsRefusal?.reason).toContain('no-such-flows');
+      expect(outcome.flowsRefusal?.remedy).toContain('workspace root');
+      const doc = JSON.parse(renderWaveOutcome(outcome, true)) as {
+        status: string;
+        refusals?: Array<{ reason: string; remedy?: string }>;
+      };
+      expect(doc.status).toBe('cannot_gate');
+      expect(doc.refusals?.[0].reason).toContain('does not resolve');
+      expect(renderWaveOutcome(outcome, false)).toContain('CANNOT GATE');
+    } finally {
+      rmSync(ws, { recursive: true, force: true });
+    }
+  });
+
+  it('names the cwd-relative near-miss when that is what happened (the guide-example asymmetry)', async () => {
+    const { mkdtempSync, mkdirSync, rmSync } = await import('fs');
+    const { tmpdir } = await import('os');
+    const { join, relative } = await import('path');
+    const { runWaveCommand } = await import('../../src/gate-wave');
+    const base = mkdtempSync(join(tmpdir(), 'dxkit-wave-nearmiss-'));
+    // Deep nesting so the relative path's `..` arithmetic genuinely
+    // diverges between cwd-resolution and workspace-root-resolution.
+    const ws = join(base, 'deep', 'nested', 'workspace');
+    const elsewhere = mkdtempSync(join(tmpdir(), 'dxkit-wave-cwdflows-'));
+    try {
+      mkdirSync(join(ws, 'svc-a'), { recursive: true });
+      mkdirSync(join(elsewhere, 'flows'), { recursive: true });
+      // A path that resolves under the CURRENT directory but not under the
+      // workspace root — the exact shape the issue reports.
+      const cwdRelative = relative(process.cwd(), join(elsewhere, 'flows'));
+      const outcome = await runWaveCommand(ws, { flowsDir: cwdRelative });
+      expect(outcome.verdict).toBe('cannot_gate');
+      expect(outcome.flowsRefusal?.reason).toContain(
+        'DOES exist relative to the current directory',
+      );
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+      rmSync(elsewhere, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('declared served surface (#308)', () => {
+  it('dxkit-surface.json routes join the mesh via the one normalizer; malformed entries disclosed', async () => {
+    const { readDeclaredSurface } = await import('../../src/analyzers/flow/declared-surface');
+    const dir = mkdtempSync(join(tmpdir(), 'dxkit-surface-'));
+    try {
+      writeFileSync(
+        join(dir, 'dxkit-surface.json'),
+        JSON.stringify({
+          serves: ['GET /api/orders/:id', 'post /api/orders', 'ANY /health', 'garbage', 42],
+        }),
+      );
+      const surface = readDeclaredSurface(dir)!;
+      expect(surface.routes.map((r) => `${r.method} ${r.path}`)).toEqual([
+        'GET /api/orders/{var}', // the ONE normalizer folds params
+        'POST /api/orders', // method case-folded
+        'ANY /health',
+      ]);
+      expect(surface.routes.every((r) => r.via === 'declared-surface')).toBe(true);
+      expect(surface.malformed).toHaveLength(2);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('no file → null (nothing inferred); unreadable file → disclosed, never silent', async () => {
+    const { readDeclaredSurface } = await import('../../src/analyzers/flow/declared-surface');
+    const dir = mkdtempSync(join(tmpdir(), 'dxkit-surface-none-'));
+    try {
+      expect(readDeclaredSurface(dir)).toBeNull();
+      writeFileSync(join(dir, 'dxkit-surface.json'), '{ nope');
+      const broken = readDeclaredSurface(dir)!;
+      expect(broken.routes).toHaveLength(0);
+      expect(broken.malformed).toHaveLength(1);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("a declared surface resolves another member's calls in the wave mesh (the DSL-tree class)", () => {
+    const result = evaluateWaveGate({
+      members: [
+        // The DSL member: extraction sees nothing, the declaration serves.
+        {
+          name: 'dsl-svc',
+          model: model({
+            routes: [{ method: 'GET', path: '/api/orders', file: 'dxkit-surface.json' }],
+          }),
+        },
+        {
+          name: 'ui',
+          model: model({ calls: [{ method: 'GET', path: '/api/orders', file: 'ui/app.js' }] }),
+        },
+      ],
+    });
+    // The call resolves against the declared route — no false no-route block.
+    expect(result.seamFindings.filter((f) => f.reason === 'no-route')).toHaveLength(0);
+  });
+});
