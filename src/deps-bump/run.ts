@@ -24,6 +24,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { execFileSync } from 'child_process';
+import { assembleLanePrBody } from '../pr/assemble';
 import type { AnalysisTrustContext } from '../analysis-trust';
 import type { DepVulnFinding } from '../languages/capabilities/types';
 import { gatherDepVulns } from '../analyzers/security/gather';
@@ -377,15 +378,21 @@ export async function runDepsBump(opts: DepsBumpOptions): Promise<DepsBumpResult
     outcome: 'landed',
     findingsClosed: [{ kind: 'dep-vuln', count: advisoriesClosed }],
   });
+  const defaultBranch = detectDefaultBranch(cwd);
   const land = (opts.landPaths ?? landRefreshPaths)({
     cwd,
     mode: 'pr',
     paths: [...bumpArtifactPaths(pm), ledgerRel],
     branchName: DEP_BUMP_BRANCH,
-    defaultBranch: detectDefaultBranch(cwd),
+    defaultBranch,
     commitTitle: 'chore(deps): security bumps (dxkit)',
     prTitle: 'dxkit: dependency security bumps',
-    prBody: renderLedger(partial),
+    // The ONE lane PR-body assembler (#288): labeled generated narrative on
+    // top, the ledger verbatim below. The bump changes are UNCOMMITTED at
+    // assembly time (the lander commits them), so today this renders
+    // ledger-only via the fail-open path — the wiring keeps both landers on
+    // the one assembler, and the ledger already itemizes every bump.
+    prBody: assembleLanePrBody({ cwd, ledger: renderLedger(partial), base: defaultBranch }),
   });
   return finish({
     ...partial,
