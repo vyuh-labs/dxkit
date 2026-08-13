@@ -217,8 +217,26 @@ describe('the verified frame (the agent is never trusted)', () => {
       turns: 12,
       costUsd: 0.8,
     });
+    // #305: the envelope always answers whether the in-loop gate was wired.
+    // The fake driver declares no mechanism → honestly backstop-only, and
+    // the ledger says so.
+    expect(r.envelope?.inLoopGate.mode).toBe('backstop-only');
+    expect(r.envelope?.inLoopGate.reason).toContain('no in-loop gate mechanism');
+    expect(r.ledger).toContain('in-loop gate: BACKSTOP-ONLY');
     expect(r.ledger).toContain('never');
     expect(r.ledger).toContain('trusted');
+  });
+
+  it('#305: an injected in-loop-gate probe reaches the envelope and the ledger', async () => {
+    const r = await runRemediateTask({
+      ...base(fakeDriver({ turns: 3 })),
+      armInLoopGate: () => ({
+        mode: 'in-loop-gated' as const,
+        reason: 'Stop hook declared, workspace trusted, command resolves',
+      }),
+    });
+    expect(r.envelope?.inLoopGate.mode).toBe('in-loop-gated');
+    expect(r.ledger).toContain('in-loop gate: ARMED');
   });
 
   it('no-op: an agent run with no committed change opens nothing', async () => {

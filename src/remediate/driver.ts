@@ -118,6 +118,16 @@ export interface AgentDriver {
    * stated fact, never an omission.
    */
   readonly cli: { readonly package: string; readonly version: string } | null;
+  /**
+   * The driver's in-loop gate mechanism, when it has one (#305):
+   * `'claude-stop-hook'` = the repo's committed `.claude/settings.json`
+   * Stop hook re-runs the guardrail on every stop attempt, provided the
+   * workspace is trusted and the hook command resolves — the runner
+   * pre-trusts its own CI checkout and probes the wiring before spawning
+   * (`agent-trust.ts`). Absent = the driver has no in-loop mechanism and
+   * every run is honestly disclosed `backstop-only`.
+   */
+  readonly inLoopGateMechanism?: 'claude-stop-hook';
   available(cwd: string): { readonly ok: true } | { readonly ok: false; readonly reason: string };
   run(opts: AgentRunOptions): Promise<AgentRunResult>;
 }

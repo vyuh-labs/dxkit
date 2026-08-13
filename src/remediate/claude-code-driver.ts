@@ -188,6 +188,9 @@ export function makeClaudeCodeDriver(exec: AgentExec = realAgentExec): AgentDriv
     // that actually bounds spend here.
     budgetSupport: { turns: 'enforced', cost: 'reported' },
     credentialEnv: ['ANTHROPIC_API_KEY'],
+    // The Stop hook is this driver's in-loop gate; the runner pre-trusts +
+    // probes the wiring pre-spawn and the envelope discloses the result.
+    inLoopGateMechanism: 'claude-stop-hook',
     // The pinned executor the managed workflow installs. Bump deliberately
     // (one line, one place) — never float `latest` under an unattended lane.
     cli: { package: '@anthropic-ai/claude-code', version: '2.1.222' },
