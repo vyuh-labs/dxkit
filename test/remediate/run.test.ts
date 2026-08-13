@@ -239,6 +239,16 @@ describe('the verified frame (the agent is never trusted)', () => {
     expect(r.ledger).toContain('in-loop gate: ARMED');
   });
 
+  it('#285: a no-op records the agent FINAL MESSAGE — the account of why nothing changed', async () => {
+    const r = await runRemediateTask(
+      base(fakeDriver({ finalMessage: 'inventory shows only deferred items I cannot see' }), {
+        git: fakeGit({ diff: false }),
+      }),
+    );
+    expect(r.outcome).toBe('no-op');
+    expect(r.agentFinalMessage).toBe('inventory shows only deferred items I cannot see');
+  });
+
   it('no-op: an agent run with no committed change opens nothing', async () => {
     const r = await runRemediateTask(base(fakeDriver({}), { git: fakeGit({ diff: false }) }));
     expect(r.outcome).toBe('no-op');

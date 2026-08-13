@@ -315,6 +315,11 @@ export function makeClaudeCodeDriver(exec: AgentExec = realAgentExec): AgentDriv
         resolvedModelId: resolvedModelFrom(result),
         timedOut: false,
         transcriptTail: tail,
+        // On a COMPLETED run `result` is the agent's final message (#285) —
+        // bounded here; the runner records it only for no-op outcomes.
+        ...(completed && typeof result.result === 'string' && result.result.trim()
+          ? { finalMessage: result.result.trim().slice(0, 4000) }
+          : {}),
         ...provenance,
         ...failure,
       };

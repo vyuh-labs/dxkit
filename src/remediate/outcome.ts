@@ -103,6 +103,11 @@ export interface RemediateResult {
    *  non-clean outcome (the run page must be diagnosable without reading
    *  source). Never rendered into the ledger / PR body. */
   readonly transcriptTail?: string;
+  /** The agent's final message, recorded for NO-OP outcomes only (#285):
+   *  the agent's own account of why nothing changed, so a no-op against a
+   *  non-empty inventory is autopsiable. Attempt-record evidence — never
+   *  the ledger / PR body. */
+  readonly agentFinalMessage?: string;
   /** dxkit runtime-artifact paths dropped from the attempt (regenerable
    *  scan state the agent committed mid-run) — disclosed in the ledger. */
   readonly scrubbedArtifacts?: readonly string[];
