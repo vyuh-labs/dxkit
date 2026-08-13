@@ -13,6 +13,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { execFileSync } from 'child_process';
+import { assembleLanePrBody } from '../pr/assemble';
 import * as logger from '../logger';
 import { trustedLocalContext } from '../analysis-trust';
 import { detectDefaultBranch } from '../ship-installers';
@@ -252,7 +253,17 @@ export async function executeTask(
           : draftSalvage
             ? ' (partial, budget-bounded)'
             : ''),
-      prBody: result.ledger,
+      // The ONE lane PR-body assembler (#288): a generated, labeled
+      // diff-scoped narrative on top; the ledger VERBATIM below (the
+      // contractual record, never paraphrased). Fail-open to ledger-only.
+      // The narrative range is the ATTEMPT's own commits (baseHead..HEAD) —
+      // the lane advances the checked-out default branch, so a
+      // defaultBranch..HEAD range would be empty by construction.
+      prBody: assembleLanePrBody({
+        cwd,
+        ledger: result.ledger,
+        base: result.baseHead ?? defaultBranch,
+      }),
       draft: draftSalvage || blockedSalvage,
       ledgerPath,
     });
