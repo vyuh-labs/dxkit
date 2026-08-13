@@ -5,6 +5,123 @@ All notable changes to `@vyuhlabs/dxkit` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.4.1] - 2026-08-13
+
+The trust-the-lane release. Every defect this release closes was found
+by running the product live — agent lanes on a real customer estate and
+an enterprise conversion pipeline embedding the gate — and each is
+fixed at its root with the platform's own disciplines: refusals over
+silent skips, one code path per concept, disclosures on every verdict.
+
+### ⚠ Upgrade notes (read these four before upgrading)
+
+1. **An untrusted `gate` run that cannot observe the correctness floor
+   now refuses instead of passing.** The floor (compile + tests) is
+   `required` by default: when it did not run — most commonly an
+   untrusted tree without `--trusted` — and nothing else blocks, the
+   verdict is **CANNOT GATE, exit 2** (previously PASSED with a
+   disclosed skip). A tree with blocking findings still reports
+   BLOCKED, exit 1. To restore the old behavior, opt out in the
+   policy: `"floor": { "required": false }`. Pipelines that treat any
+   non-zero exit as failure are unaffected in outcome; pipelines that
+   branch on exit codes should handle 2 as "verdict withheld", which
+   was already its documented meaning.
+2. **The wave wire rule id `flow-incomplete` is renamed
+   `broken-flow`.** `verdict.v1` from `gate --workspace` now emits the
+   rule id the documentation always used. If you match on the old id,
+   update the match when you upgrade.
+3. **Policies can now declare `extends`.** A policy document may set
+   `"extends": "security-only" | "full-debt" | "default"` and override
+   only what differs. Existing policies without the field are
+   unchanged. An unknown base token is a hard error, not a silent
+   fallback.
+4. **`AgentEnvelope.inLoopGate` is a new required field** of the lane
+   envelope. Consumers that parse envelopes strictly should accept it;
+   consumers that read known fields are unaffected.
+
+### Added
+
+- **Required observation (the §7.1 reversal).** A policy may mark any
+  custom check `"required": true`; a required check that did not run —
+  untrusted tree, missing toolchain, ref-based mode — turns the
+  verdict into CANNOT GATE with the cause and remedy named, instead of
+  a disclosed skip under a PASSED banner. The correctness floor is
+  required by default (upgrade note 1). Renderers, `--json`, and the
+  verdict cache all carry the `requiredNotObserved` disclosures.
+- **Policy `extends` + `vyuh-dxkit policy show`.** Small policies over
+  named bases (upgrade note 3), and one command that prints the
+  EFFECTIVE policy — base, overrides, and the result — so what the
+  gate enforces is inspectable rather than inferred.
+  `init --gate-only` now writes an `extends`-based policy.
+- **The GitHub App token tier for lanes.** The three lane workflows
+  mint an installation token from `vars.DXKIT_APP_ID` +
+  `secrets.DXKIT_APP_PRIVATE_KEY` when configured, so lane PRs need no
+  billed bot seat and no long-lived PAT. Fully additive: the chain is
+  App token, then `DXKIT_BOT_TOKEN`, then the workflow token, and
+  existing PAT setups keep working unchanged. `doctor` reports which
+  tier a repo will use.
+- **In-loop gate arming for agent lanes.** The remediation lane
+  pre-trusts its own checkout (CI only), probes that the agent's
+  Stop-gate wiring actually resolves, and the envelope now states
+  whether the in-loop gate was ARMED or the run was backstop-only —
+  so "the agent was gated while it worked" is a verified claim, not an
+  assumption.
+- **Delivery preconditions probed before agent spend.** Lanes probe
+  branch-protection rules for their own delivery branches up front and
+  refuse with the exact remedy (which pattern to exclude, which
+  restriction bites) instead of discovering a blocked push after the
+  agent has already burned its budget.
+- **Declared served surface for wave members (`dxkit-surface.json`).**
+  A member whose framework the extractor cannot see may declare the
+  routes it serves; declared routes join the mesh through the same
+  normalizer as extracted ones and are marked `via: "declared-surface"`
+  in the verdict. Malformed entries are disclosed, never dropped.
+- **ABAP behavior-definition structural floor.** The ABAP pack's floor
+  now covers BDL behavior definitions (`.bdef` and `.bdef.asbdef`):
+  unbalanced braces, truncated documents, a define-block header
+  without its body, and a dangling clause before end of file each
+  block as per-file findings under check id `bdef.structure`, with the
+  floor's usual fail-open-on-infrastructure discipline.
+- **Deferred-advisory visibility.** `debt` renders a DEFERRED section
+  with per-entry expiry countdowns and the plan line, and the
+  fix-vulns lane prompt names the deferred set so an agent neither
+  re-fixes nor silently un-defers them.
+- **Provisional attempt records.** The remediation lane writes its
+  attempt record before the agent runs and finalizes it after, so a
+  killed run (OOM, timeout) leaves evidence of what was attempted
+  instead of a gap, and the workflow discloses a kill-shaped exit as a
+  hypothesis with the record as backing.
+
+### Fixed
+
+- **Resolution-floor attribution no longer blames a diff for
+  pre-existing phantom dependencies.** The comparator now reads
+  base-side lockfile evidence (npm v1/v2+, yarn, pnpm, manifest
+  sections) instead of a containment heuristic, so an
+  allowlist-or-docs-only diff can no longer produce a resolution
+  block. (#283, #284)
+- **A mis-pointed `gate --workspace --flows` directory refuses** (exit
+  2, CANNOT GATE) instead of being silently gated as a member tree
+  with zero flows evaluated; when the given path exists relative to
+  the current directory but not the workspace root, the refusal says
+  exactly that. (#307)
+- **The wave gate's flow rule id matches its documentation** —
+  `broken-flow`, upgrade note 2. (#306)
+- **A verdict-cache miss names the paths that changed** between the
+  guardrail check and a defer attempt, with the classic cause (scratch
+  files written into the repo) and remedy spelled out. (#282)
+- **Lane landing commits in PR mode can carry the CI-skip marker**
+  (opt-in) so a lane's own landing push does not race a duplicate CI
+  run against the PR's checks. (#304)
+- **Lane PR bodies are assembled by one composer** — labeled narrative
+  plus the verbatim ledger — so the shared-PR composition classes
+  (duplicated sections, dropped ledger) are structurally closed. (#288)
+
+### Internal
+
+- The extension SDK is unchanged this release (`@vyuhlabs/dxkit-sdk`
+  stays 0.3.0); the new wire content rides existing optional fields.
+
 ## [4.4.0] - 2026-08-09
 
 The engine release. The verdict machinery that has always sat behind a

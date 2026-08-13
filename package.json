@@ -1,6 +1,6 @@
 {
   "name": "@vyuhlabs/dxkit",
-  "version": "4.4.0",
+  "version": "4.4.1",
   "description": "The change-safety layer for AI coding agents: structural context before the edit, a deterministic stop-gate that blocks net-new detector-backed regressions, and autonomous remediation lanes whose work lands only through that same gate. No model in the verdict.",
   "license": "MIT",
   "author": "Vyuh Labs",
