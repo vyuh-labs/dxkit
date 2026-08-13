@@ -2,6 +2,7 @@
  *  CLI command; `commands.ts` re-exports `COMMANDS` + `CommandId` + helpers. */
 import type { CapabilityDescriptor } from './command-types';
 import { dxkitCli } from '../self-invocation';
+import { readPolicyObjectSafe } from '../baseline/policy-text';
 import { INTERNAL_COMMANDS } from './command-defs-internal';
 import { GATE_COMMANDS } from './command-defs-gate';
 import {
@@ -44,12 +45,30 @@ export const COMMANDS = [
     audience: 'user',
     group: 'setup',
     summary:
-      'Read policy values (get), change a knob + refresh its workflows (set), adopt newly shipped knobs (sync)',
+      'Show the effective policy (show), read values (get), change a knob (set), adopt newly shipped knobs (sync)',
     typicalRuntime: '< 5 sec',
     docsBlurb:
-      'policy get reads one value for scripts/CI; policy sync appends the commented stanzas ' +
+      'policy show renders the EFFECTIVE policy a surface judges under — declared base, armed ' +
+      'block rules with provenance, required observations, and the no-policy fallbacks; ' +
+      'policy get reads one raw value for scripts/CI; policy sync appends the commented stanzas ' +
       'for knobs that shipped after your policy was scaffolded (dry-run by default).',
     skill: 'dxkit-config',
+    whenToRecommend: (ctx) => {
+      // The activation-asymmetry footgun (WP1b, §7.2): a committed policy
+      // file with no declared base silently refines the FULLY ARMED compiled
+      // default — an embedder's minimal dod.json armed test-gap blocking
+      // without anyone asking. Recommend pinning the base explicitly.
+      const raw = readPolicyObjectSafe(ctx.cwd);
+      if (raw !== null && raw['extends'] === undefined) {
+        return {
+          reason:
+            '.dxkit/policy.json declares no "extends" base — it silently refines the fully ' +
+            'armed compiled default (test-gap/quality rules armed)',
+          command: 'vyuh-dxkit policy show   # then pin: policy set extends security-only',
+        };
+      }
+      return null;
+    },
   },
   {
     id: 'uninstall',

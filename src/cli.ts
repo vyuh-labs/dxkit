@@ -1208,8 +1208,17 @@ export async function run(argv: string[]): Promise<void> {
         });
         break;
       }
+      if (sub === 'show') {
+        const { runPolicyShow } = await import('./policy-show');
+        runPolicyShow(resolveRepoPath(positionals[2]), {
+          policyPath: values.policy as string | undefined,
+          json: !!values.json,
+        });
+        break;
+      }
       logger.fail(
-        'usage: vyuh-dxkit policy get <dotted.path> [--default <value>] | ' +
+        'usage: vyuh-dxkit policy show [path] [--policy <file>] [--json] | ' +
+          'policy get <dotted.path> [--default <value>] | ' +
           'policy set <dotted.path> <value> | policy render [--apply] | policy sync [--apply]',
       );
       process.exitCode = 1;

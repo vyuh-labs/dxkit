@@ -137,6 +137,12 @@ export const POLICY_PARAMS: readonly PolicyParamMeta[] = [
     anchor: 'custom-checks',
   },
   {
+    path: 'extends',
+    summary: 'the base posture this file refines (absent = the fully armed compiled default)',
+    anchor: 'policy-base',
+    enumValues: ['security-only', 'full-debt', 'default'],
+  },
+  {
     path: 'floor.required',
     summary: 'a gate verdict requires the correctness floor to have run (default true)',
     anchor: 'floor-required',
@@ -266,6 +272,17 @@ export function paramMetaFor(path: string): PolicyParamMeta | undefined {
 }
 
 export const POLICY_STANZAS: readonly PolicyStanzaMeta[] = [
+  {
+    key: 'extends',
+    coversKnobs: ['extends'],
+    title: 'Policy base',
+    blurb: [
+      'The posture this file REFINES. Without it, a minimal file silently',
+      'inherits every armed rule of the fully armed compiled default.',
+    ],
+    anchor: 'policy-base',
+    example: () => 'security-only',
+  },
   {
     key: 'baseline',
     coversKnobs: ['baseline.mode', 'baseline.refreshCadence'],

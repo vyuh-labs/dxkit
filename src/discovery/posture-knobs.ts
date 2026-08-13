@@ -97,6 +97,13 @@ export const POSTURE_KNOBS: readonly PostureKnob[] = [
   },
   { path: 'loop.preset', command: 'loop', requiresPlan: true, requiresRecommend: true },
   {
+    path: 'extends',
+    command: 'policy',
+    requiresPlan: false,
+    requiresRecommend: true,
+    note: 'the base is a posture DECISION (which preset the file refines) — doctor recommends pinning it when a file omits it (the silent fully-armed-default footgun); no planConfig because configure never authors a posture the repo did not choose.',
+  },
+  {
     path: 'baseline.refreshCadence',
     command: 'baseline',
     requiresPlan: false,
