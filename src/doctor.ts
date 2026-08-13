@@ -131,6 +131,43 @@ function botTokenSecretAbsent(cwd: string): boolean | null {
   }
 }
 
+/** Is the GitHub App token tier configured (4.4.1 WP7)? TRUE only when BOTH
+ *  halves exist — the DXKIT_APP_ID variable and the DXKIT_APP_PRIVATE_KEY
+ *  secret; the workflows gate their mint step on the variable and fail
+ *  loudly on a broken key. Tri-state fail-open like its PAT sibling: null
+ *  when the API cannot answer (no admin scope, offline) — never a false
+ *  alarm. */
+function appTokenConfigured(cwd: string): boolean | null {
+  try {
+    const vars = execSync('gh variable list --json name --jq ".[].name"', {
+      cwd,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 15_000,
+    });
+    if (
+      !vars
+        .split('\n')
+        .map((l) => l.trim())
+        .includes('DXKIT_APP_ID')
+    ) {
+      return false;
+    }
+    const secrets = execSync('gh secret list --json name --jq ".[].name"', {
+      cwd,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 15_000,
+    });
+    return secrets
+      .split('\n')
+      .map((l) => l.trim())
+      .includes('DXKIT_APP_PRIVATE_KEY');
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Can GitHub Actions create pull requests in this repo? Same tri-state
  * fail-open contract as `botTokenSecretAbsent`: `false` only when the API
@@ -995,18 +1032,25 @@ function runOperationalChecks(cwd: string, hasManifest: boolean): CheckResult[] 
     const prLaneInstalled = ['dxkit-dep-bump.yml', 'dxkit-remediate.yml'].some((f) =>
       fs.existsSync(path.join(cwd, '.github', 'workflows', f)),
     );
-    if (prLaneInstalled && botTokenSecretAbsent(cwd) === true) {
+    // Warn only when NEITHER token tier is configured (4.4.1 WP7): the
+    // GitHub App tier (preferred — no billed seat, short-lived per-run
+    // tokens) or the DXKIT_BOT_TOKEN PAT. A null (unanswerable) App probe
+    // stays fail-open: the PAT check alone decides, exactly as before.
+    if (prLaneInstalled && botTokenSecretAbsent(cwd) === true && appTokenConfigured(cwd) !== true) {
       checks.push({
-        label: 'lane PRs will run no checks — DXKIT_BOT_TOKEN secret is not set',
+        label: 'lane PRs will run no checks — no lane token tier is configured',
         ok: false,
         tier: 'operational',
         fix: {
           hint:
             'The dep-bump / remediate lanes push with the default GITHUB_TOKEN, and GitHub ' +
             'never triggers workflows for such pushes — their PRs arrive with no checks ' +
-            '(unmergeable under branch protection). Create a PAT with repo scope and add it ' +
-            'as the DXKIT_BOT_TOKEN repo secret; the lanes pick it up automatically.',
-          command: 'gh secret set DXKIT_BOT_TOKEN',
+            '(unmergeable under branch protection). Preferred fix: create a GitHub App ' +
+            '(contents + pull-requests write, installed on this repo), then set the ' +
+            'DXKIT_APP_ID variable and DXKIT_APP_PRIVATE_KEY secret — no billed seat, ' +
+            'short-lived per-run tokens, and PRs a maintainer can approve. A PAT in the ' +
+            'DXKIT_BOT_TOKEN secret also works; the lanes pick either up automatically.',
+          command: 'gh variable set DXKIT_APP_ID && gh secret set DXKIT_APP_PRIVATE_KEY',
           skill: 'dxkit-fix',
         },
       });
