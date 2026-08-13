@@ -127,13 +127,23 @@ export function buildWireVerdict(outcome: GateCommandOutcome, receipt: string): 
         skippedWithCause: outcome.floorSkipped?.detail ?? 'floor did not run',
       };
 
-  const refusals =
-    result.attributionGaps.length > 0
-      ? result.attributionGaps.map((gap) => ({
-          reason: describeAttributionGap(gap),
-          remedy: attributionGapRemedy(result.envelopeDrift.refreshLaneInstalled),
-        }))
-      : undefined;
+  // Every refusal source feeds the ONE wire array: attribution gaps (Rule
+  // 19), required custom checks not observed, and the required floor's own
+  // gap (WP1, §7.1) — a cannot_gate verdict always names its evidence.
+  const refusalRows = [
+    ...result.attributionGaps.map((gap) => ({
+      reason: describeAttributionGap(gap),
+      remedy: attributionGapRemedy(result.envelopeDrift.refreshLaneInstalled),
+    })),
+    ...result.requiredNotObserved.map((gap) => ({
+      reason: gap.reason,
+      remedy: gap.remedy,
+    })),
+    ...(outcome.floorRequiredGap !== undefined
+      ? [{ reason: outcome.floorRequiredGap.reason, remedy: outcome.floorRequiredGap.remedy }]
+      : []),
+  ];
+  const refusals = refusalRows.length > 0 ? refusalRows : undefined;
 
   return {
     schema: 'verdict.v1',

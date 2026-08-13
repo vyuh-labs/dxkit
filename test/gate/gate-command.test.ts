@@ -103,7 +103,11 @@ describe('gate <dir> (fresh prior, default untrusted)', () => {
       const dir = makeTree({
         'README.md': '# generated package\n',
         'code/handlers.js': 'function total() {\n  return 1;\n}\n',
+        // This row pins finding-diff determinism, not floor posture — the
+        // policy opts out of the required floor so the untrusted run stays
+        // a clean PASSED (the default-required refusal has its own rows).
         '.dxkit/policy.json': securityPolicyJson({
+          floor: { required: false },
           checks: [{ name: 'no_placeholder', pattern: '\\b(TODO|FIXME|XXX)\\b' }],
         }),
       });
@@ -125,30 +129,80 @@ describe('gate <dir> (fresh prior, default untrusted)', () => {
   );
 
   it(
-    'no policy at all → the security-only fallback: an untested source file warns, never blocks (WP-P front door)',
+    'no policy, untrusted → CANNOT GATE exit 2: the required floor did not run (WP1 §7.1)',
     async () => {
-      // No --policy and no committed .dxkit/policy.json. Under the fresh
-      // prior every finding is net-new, so the fully armed compiled default
-      // (newUntestedChangedSource et al) would BLOCK this trivial tree on a
-      // test-gap — the shape that made a first-touch `gate .` read as a
-      // false positive. The fallback is the cost-bounded security-only
-      // posture instead; the gap still surfaces, as a warning.
+      // No --policy and no committed .dxkit/policy.json, and no --trusted.
+      // The security-only fallback still governs FINDINGS (the untested
+      // source warns, never blocks — the WP-P front-door fix), but the
+      // correctness floor is REQUIRED by default and could not run on an
+      // untrusted tree — so the gate refuses to certify instead of passing
+      // over the skip. The refusal names the cause and both remedies.
       const dir = makeTree({
         'README.md': '# generated package\n',
         'src/index.js': 'module.exports = (a, b) => a + b;\n',
       });
       const outcome = await runGateCommand(dir, {});
-      expect(outcome.verdict).toMatch(/^PASSED/);
-      expect(outcome.exitCode).toBe(0);
+      expect(outcome.verdict).toBe('CANNOT GATE');
+      expect(outcome.exitCode).toBe(2);
+      expect(outcome.floorRequiredGap?.checkId).toBe('floor');
+      // Findings posture is unchanged underneath the refusal: the test-gap
+      // is a warning, not a block, under the security-only fallback.
       const gap = outcome.result.pairs.find((p) => p.kind === 'test-gap');
       expect(gap).toBeDefined();
       expect(gap?.classification.blocks).toBe(false);
-      // The verdict names the exact fallback policy it judged under.
+      // The verdict names the exact fallback policy it judged under, and
+      // the wire refusal carries the floor gap with its remedy.
       const doc = JSON.parse(renderGateOutcome(outcome, true));
+      expect(doc.status).toBe('cannot_gate');
+      expect(doc.floor.ran).toBe(false);
+      expect(doc.refusals.some((r: { reason: string }) => r.reason.includes('floor'))).toBe(true);
+      expect(doc.refusals.every((r: { remedy?: string }) => r.remedy)).toBe(true);
       const { policyContentHash } = await import('../../src/baseline/policy');
       expect(doc.policy.hash).toBe(
         policyContentHash(policyForPreset('security-only', DEFAULT_BROWNFIELD_POLICY).policy),
       );
+    },
+    HEAVY,
+  );
+
+  it(
+    'the same tree with the floor observed (injected pass) → PASSED: the refusal is about observation, not posture',
+    async () => {
+      const dir = makeTree({
+        'README.md': '# generated package\n',
+        'src/index.js': 'module.exports = (a, b) => a + b;\n',
+      });
+      const outcome = await runGateCommand(dir, {
+        trusted: true,
+        seams: {
+          runFloor: () => ({
+            ran: true,
+            blocks: false,
+            checks: [{ pack: 'typescript', label: 'syntax', bin: 'tsc', status: 'pass' }],
+          }),
+        },
+      });
+      expect(outcome.verdict).toMatch(/^PASSED/);
+      expect(outcome.exitCode).toBe(0);
+      expect(outcome.floorRequiredGap).toBeUndefined();
+    },
+    HEAVY,
+  );
+
+  it(
+    'floor: { required: false } restores skip-and-disclose: untrusted clean tree passes with the skip named',
+    async () => {
+      const dir = makeTree({
+        'README.md': '# generated package\n',
+        'src/index.js': 'module.exports = (a, b) => a + b;\n',
+        '.dxkit/policy.json': securityPolicyJson({ floor: { required: false } }),
+      });
+      const outcome = await runGateCommand(dir, {});
+      expect(outcome.verdict).toMatch(/^PASSED/);
+      expect(outcome.exitCode).toBe(0);
+      expect(outcome.floorSkipped?.cause).toBe('untrusted');
+      expect(outcome.floorRequiredGap).toBeUndefined();
+      expect(renderGateOutcome(outcome, false)).toContain('SKIPPED (untrusted)');
     },
     HEAVY,
   );

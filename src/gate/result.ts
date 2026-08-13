@@ -18,6 +18,7 @@ import type { BaselineEntry, FindingSeverity, MatchPair, MatchResult } from '../
 import type { CoverageDrift } from '../baseline/coverage';
 import type { RecallDrift } from '../baseline/recall';
 import type { AttributionGap } from '../baseline/attribution-gap';
+import type { RequiredObservationGap } from './required-observation';
 import type { ExpiryProjection } from '../baseline/expiry-projection';
 import type { FlowGateOutcome } from '../baseline/flow-gate-check';
 import type { SchemaDriftGateOutcome } from '../baseline/schema-drift-gate-check';
@@ -171,6 +172,19 @@ export interface GuardrailCheckResult {
    * mismatch gets. Empty on a healthy run. See `src/baseline/attribution-gap.ts`.
    */
   readonly attributionGaps: ReadonlyArray<AttributionGap>;
+  /**
+   * Policy-declared REQUIRED checks whose observation is missing this run
+   * (4.4.1 WP1, strategy §7.1 — the observation sibling of
+   * `attributionGaps`). REQUIRED, and consumed by the one verdict
+   * derivation: while a gap exists the run cannot render PASSED — it
+   * refuses (`CANNOT GATE`) and names the missing evidence + remedy.
+   * Empty for every policy that declares no `required: true` check (all
+   * pre-4.4.1 policies), so existing repos see no behavior change. ONE
+   * evaluator: `src/gate/required-observation.ts`. The floor's own gap is
+   * surface-owned (`GateCommandOutcome.floorRequiredGap`) — the engine
+   * does not run the floor.
+   */
+  readonly requiredNotObserved: ReadonlyArray<RequiredObservationGap>;
   /** Present when the ADDED-finding pattern matches the stale-anchor
    *  signature (most net-new findings in files the diff never touched —
    *  #222). Disclosure only: reframes a mechanically-correct BLOCKED as

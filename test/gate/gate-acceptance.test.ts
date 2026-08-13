@@ -46,6 +46,11 @@ function dodPolicyPath(dir: string): string {
       ...policy,
       id: 'acceptance.dod.pkg',
       version: '1',
+      // The matrix's embed scenario gates UNTRUSTED trees on findings; the
+      // compile/test floor is exercised by its own --trusted rows, so the
+      // DoD opts out of the default-required floor (WP1 §7.1). The default
+      // refusal has its own dedicated row below.
+      floor: { required: false },
       checks: [
         {
           name: 'no_placeholder',
@@ -105,6 +110,25 @@ describe('package rows', () => {
       const { doc } = await gateRow('package/clean');
       expect(doc.status).toBe('passed');
       expect(doc.exitCode).toBe(0);
+    },
+    HEAVY,
+  );
+
+  it(
+    'clean, untrusted, no floor opt-out → cannot_gate: the required floor did not run (WP1 §7.1)',
+    async () => {
+      // The default posture (no --policy, no tree policy) REQUIRES the
+      // floor: an untrusted run that cannot execute compile + tests refuses
+      // to certify the tree instead of passing over the skip. Exit 2, and
+      // the wire refusal names the floor with both remedies.
+      const copy = join(scratch, 'package-clean-required-floor');
+      cpSync(join(FIXTURES, 'package/clean'), copy, { recursive: true });
+      const outcome = await runGateCommand(copy, {});
+      const doc = JSON.parse(renderGateOutcome(outcome, true));
+      expect(doc.status).toBe('cannot_gate');
+      expect(doc.exitCode).toBe(2);
+      expect(doc.floor.ran).toBe(false);
+      expect(doc.refusals.some((r: { reason: string }) => r.reason.includes('floor'))).toBe(true);
     },
     HEAVY,
   );

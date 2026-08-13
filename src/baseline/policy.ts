@@ -31,7 +31,13 @@ export type { CustomCheckConfig, LintPolicy } from './policy-checks';
 import { readPolicyRoot } from './policy-text';
 import type { BaselineMode, BaselineAnchor } from './modes';
 import type { FindingSeverity, FindingStatus } from './types';
-import type { LicensesPolicy, NewAdvisoriesPolicy, PairedCheckConfig } from './policy-sections';
+import type {
+  FloorPolicy,
+  GraphSection,
+  LicensesPolicy,
+  NewAdvisoriesPolicy,
+  PairedCheckConfig,
+} from './policy-sections';
 
 // The newer section shapes + their ONE normalizers live in
 // `policy-sections.ts` (split at the large-file bar); re-exported here so
@@ -42,6 +48,8 @@ export {
   baselineRefreshCron,
   newAdvisoryBlockSeverities,
   prohibitedLicensePatterns,
+  type FloorPolicy,
+  type GraphSection,
   type LicensesPolicy,
   type NewAdvisoriesPolicy,
   type PairedCheckConfig,
@@ -344,6 +352,17 @@ export interface BrownfieldPolicy {
    */
   readonly recall?: RecallPolicy;
   /**
+   * Correctness-floor posture for the surfaces that own tree-level floor
+   * execution (the `gate` command family). `required` defaults TRUE there:
+   * a floor that cannot run (untrusted tree) makes the verdict `CANNOT
+   * GATE` instead of a disclosed skip under PASSED. `{ "required": false }`
+   * restores skip-and-disclose. Loop / pre-push / CI floor surfaces are NOT
+   * governed by this field — they keep the declared Rule-15 fail-open-on-
+   * infrastructure doctrine (CI is their backstop; the one-shot gate has
+   * none).
+   */
+  readonly floor?: FloorPolicy;
+  /**
    * Code-graph freshness transport. Absent/`'off'` ⟹ the graph is rebuilt on
    * demand by each consumer (the default). `'cache'` installs the
    * `dxkit-graph-refresh` workflow, which rebuilds `graph.json` on merge to the
@@ -352,13 +371,6 @@ export interface BrownfieldPolicy {
    * because it's a CI-performance optimization, not a correctness gate.
    */
   readonly graph?: GraphSection;
-}
-
-/** `graph.*` block in `.dxkit/policy.json`. */
-export interface GraphSection {
-  /** `'cache'` → install the graph-refresh workflow (Actions-cache transport);
-   *  `'off'`/absent → rebuild on demand (the default). */
-  readonly refresh?: 'cache' | 'off';
 }
 
 /**

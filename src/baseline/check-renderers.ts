@@ -36,6 +36,7 @@ import type {
 } from './check';
 import { attributionGapRemedy, describeAttributionGap } from './attribution-gap';
 import type { AttributionGap } from './attribution-gap';
+import type { RequiredObservationGap } from '../gate/required-observation';
 import {
   EXPIRY_PROJECTION_REMEDY,
   describeExpiryProjection,
@@ -122,6 +123,9 @@ export interface VerdictCounts {
   readonly blocking: number;
   /** Unattributable block-rule-class findings (the `CANNOT GATE` tier). */
   readonly unattributable: number;
+  /** Policy-declared REQUIRED checks whose observation is missing — the
+   *  refusal tier's observation sibling (WP1, §7.1). */
+  readonly requiredMissing: number;
   readonly warning: number;
   readonly resolved: number;
 }
@@ -138,9 +142,15 @@ export function verdictWordFrom(v: {
   readonly blocks: boolean;
   readonly warns: boolean;
   readonly unattributable: number;
+  /** Missing required-check observations (WP1) — joins the refusal tier
+   *  exactly as attribution gaps do. Optional so pre-WP1 callers keep
+   *  compiling; absent means zero. */
+  readonly requiredMissing?: number;
 }): { verdict: VerdictWord; exitCode: 0 | 1 } {
   if (v.blocks) return { verdict: 'BLOCKED', exitCode: 1 };
-  if (v.unattributable > 0) return { verdict: 'CANNOT GATE', exitCode: 1 };
+  if (v.unattributable > 0 || (v.requiredMissing ?? 0) > 0) {
+    return { verdict: 'CANNOT GATE', exitCode: 1 };
+  }
   return v.warns
     ? { verdict: 'PASSED (with warnings)', exitCode: 0 }
     : { verdict: 'PASSED', exitCode: 0 };
@@ -186,16 +196,19 @@ export function verdictCounts(result: GuardrailCheckResult): VerdictCounts {
   // and the per-pair markers come from the same classifier output, so the
   // counts agree by construction.
   const unattributable = result.attributionGaps.reduce((n, g) => n + g.findingCount, 0);
+  const requiredMissing = result.requiredNotObserved.length;
   const word = verdictWordFrom({
     blocks: result.blocks,
     warns: result.warns,
     unattributable,
+    requiredMissing,
   });
   return {
     verdict: word.verdict,
     exitCode: word.exitCode,
     blocking: result.pairs.filter(isBlocking).length + extra.block,
     unattributable,
+    requiredMissing,
     warning: result.pairs.filter(isWarning).length + extra.warn,
     resolved: result.pairs.filter((p) => p.classification.status === 'removed').length,
   };
@@ -327,6 +340,18 @@ export function renderConsole(result: GuardrailCheckResult): string {
       lines.push(`  · ${describeAttributionGap(gap)}`);
     }
     lines.push(`  · ${attributionGapRemedy(result.envelopeDrift.refreshLaneInstalled)}`);
+    lines.push('');
+  }
+  if (result.requiredNotObserved.length > 0) {
+    lines.push(
+      logger.bold(
+        `Required checks not observed — refusing to pass (${result.requiredNotObserved.length})`,
+      ),
+    );
+    for (const gap of result.requiredNotObserved) {
+      lines.push(`  · ${gap.reason}`);
+      lines.push(`    remedy: ${gap.remedy}`);
+    }
     lines.push('');
   }
   if (suppressed.length > 0) {
@@ -903,6 +928,16 @@ function verdictBanner(result: GuardrailCheckResult): string {
         `block-rule kind${result.attributionGaps.length === 1 ? '' : 's'} (${kinds}) cannot be attributed`,
     );
   }
+  if (result.requiredNotObserved.length > 0) {
+    // The observation refusal (WP1, §7.1): a policy-declared required check
+    // did not run. Same tier as the attribution refusal — never PASSED over
+    // missing required evidence.
+    const n = result.requiredNotObserved.length;
+    const ids = result.requiredNotObserved.map((g) => g.checkId).join(', ');
+    return logger.bold(
+      `Guardrail CANNOT GATE — ${n} required check${n === 1 ? '' : 's'} not observed (${ids})`,
+    );
+  }
   if (result.warns) {
     const count = result.pairs.filter(isWarning).length + extra.warn;
     return logger.bold(`Guardrail PASSED — ${count} warning${count === 1 ? '' : 's'}`);
@@ -1226,6 +1261,11 @@ export interface GuardrailJsonPayload {
    *  disarmed, how many findings, and which recall input moved. Empty on a
    *  healthy run. */
   readonly attributionGaps: ReadonlyArray<AttributionGap>;
+  /** The refusal tier's observation sibling (WP1, §7.1): policy-declared
+   *  REQUIRED checks whose observation is missing this run, each with its
+   *  reason + remedy. ALWAYS present (`[]` when nothing required was
+   *  missed); non-empty makes the verdict `CANNOT GATE`. */
+  readonly requiredNotObserved: ReadonlyArray<RequiredObservationGap>;
   /** What this run's ACTIVE allowlist suppressions will do when their windows
    *  close: how many would block, how many would warn, and how soon. ALWAYS
    *  present (`lapsing: []` when nothing expires inside the horizon), so an
@@ -1478,6 +1518,10 @@ export function renderJson(result: GuardrailCheckResult): GuardrailJsonPayload {
       exitCode: counts.exitCode,
     },
     attributionGaps: result.attributionGaps,
+    // Required checks whose observation is missing (WP1, §7.1). Always
+    // present — an agent must be able to tell "nothing required was missed"
+    // from "nobody said".
+    requiredNotObserved: result.requiredNotObserved,
     suppressionExpiry: result.suppressionExpiry,
     // Baseline findings the current side never re-verified (per unobserved
     // check, aggregate counts). Always present — an agent reading the JSON
@@ -1748,6 +1792,20 @@ export function renderMarkdown(result: GuardrailCheckResult): string {
       for (const p of unattributable) lines.push(markdownPairRow(p));
       lines.push('');
     }
+  }
+
+  if (result.requiredNotObserved.length > 0) {
+    const n = result.requiredNotObserved.length;
+    lines.push(
+      `> ⚠️ **${n} required check${n === 1 ? '' : 's'} not observed** — the verdict is ` +
+        `CANNOT GATE: the policy declares the check${n === 1 ? '' : 's'} required, and the run ` +
+        `cannot certify what it did not see.`,
+    );
+    for (const gap of result.requiredNotObserved) {
+      lines.push(`> - ${escapeMd(gap.reason)}`);
+      lines.push(`>   - Remedy: ${escapeMd(gap.remedy)}`);
+    }
+    lines.push('');
   }
 
   if (result.depVulnsUnmeasured) {
@@ -2316,6 +2374,10 @@ function summarySentence(
     parts.push(
       `${unattributableCount} unattributable finding${unattributableCount === 1 ? '' : 's'} on block-rule kinds`,
     );
+  }
+  if (result.requiredNotObserved.length > 0) {
+    const n = result.requiredNotObserved.length;
+    parts.push(`${n} required check${n === 1 ? '' : 's'} not observed`);
   }
   if (warningCount > 0) parts.push(`${warningCount} warning${warningCount === 1 ? '' : 's'}`);
   if (resolvedCount > 0) parts.push(`${resolvedCount} resolved`);
