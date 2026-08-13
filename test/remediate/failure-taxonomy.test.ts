@@ -396,11 +396,18 @@ describe('ledger: the failure ledger is complete without leaking evidence', () =
         costUsd: 0,
         budget: { maxTurns: 80, maxMinutes: 30, maxUsd: 5 },
         unenforceableCaps: [],
+        inLoopGate: {
+          mode: 'backstop-only',
+          reason: 'the checkout is not a trusted workspace, so the Stop hook never loads',
+        },
       },
     });
     expect(ledger).toContain('outcome: **agent-failed**');
     expect(ledger).toContain('Credit balance is too low');
     expect(ledger).toContain('agent CLI 2.1.222');
     expect(ledger).toContain('api-key (billed API spend)');
+    // #305: a run without the in-loop gate must say so in the ledger.
+    expect(ledger).toContain('in-loop gate: BACKSTOP-ONLY');
+    expect(ledger).toContain('not a trusted workspace');
   });
 });

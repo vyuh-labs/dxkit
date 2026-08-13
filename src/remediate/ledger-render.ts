@@ -55,6 +55,14 @@ export function renderRemediateLedger(r: Omit<RemediateResult, 'ledger'>): strin
         `${e.turns !== undefined ? `${e.turns} turns` : 'an unreported turn count'} ` +
         `(caps: ${e.budget.maxTurns} turns, ${e.budget.maxMinutes} min, $${e.budget.maxUsd})`,
     );
+    // The in-loop gate disclosure (#305): a run whose Stop-gate never loaded
+    // must not read identically to one where it did — the burn-budget-then-
+    // red shape starts exactly here.
+    lines.push(
+      e.inLoopGate.mode === 'in-loop-gated'
+        ? `- in-loop gate: ARMED — ${e.inLoopGate.reason}`
+        : `- in-loop gate: BACKSTOP-ONLY — ${e.inLoopGate.reason}`,
+    );
     if (e.failure) lines.push(`- driver-reported failure: ${e.failure}`);
     if (e.turns !== undefined && e.turns > e.budget.maxTurns) {
       // The 81-vs-80 confusion: the driver's reported count can exceed the

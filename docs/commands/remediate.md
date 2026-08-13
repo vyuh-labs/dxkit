@@ -108,6 +108,25 @@ in committed policy), and the ledger and PR body disclose the dispatcher
 and the verbatim prompt. The work still lands only through the identical
 verified frame.
 
+## The in-loop gate
+
+The claude-code driver arms the dxkit Stop-gate (`DXKIT_LOOP_ACTIVE=1`),
+so an agent's stop attempt re-runs the guardrail inside the session and
+bounces net-new findings back while the working context is warm. For the
+hook to actually load, the checkout must be a trusted workspace: on CI
+runs the lane pre-trusts its own checkout before spawning (a deliberate
+trust decision — the lane checks out the maintainers' default branch,
+the same tree whose npm scripts and workflows CI already executes), then
+probes the wiring end to end. The envelope and ledger disclose the
+result on every run: `in-loop gate: ARMED` or `BACKSTOP-ONLY` with the
+first missing link named, so a run without the in-loop gate never reads
+identically to one with it.
+
+Structural limit, worth knowing: a `max_turns` kill never reaches a
+stop attempt, so even a wired Stop-gate cannot fire at the cap. In-loop
+gating helps every completion attempt before the cap; the post-run
+verified frame remains the final word either way.
+
 ## Credentials and enablement
 
 The default driver is `claude-code`. In CI the workflow injects the

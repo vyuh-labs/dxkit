@@ -13,6 +13,7 @@ import type { RemediateTask } from './tasks';
 import type { DispatchOverrides } from './dispatch';
 import type { HingeEvidence, HingeScores } from './score-hinge';
 import type { RemediateConfig } from './config';
+import type { InLoopGateStatus } from './agent-trust';
 
 export type RemediateOutcome =
   | 'verified' // diff produced, floor net-new-clean, guardrail PASSED — ready to land
@@ -57,6 +58,16 @@ export interface AgentEnvelope {
   };
   /** Caps the driver cannot enforce — disclosed, never silent. */
   readonly unenforceableCaps: readonly string[];
+  /**
+   * Was the in-loop Stop-gate actually WIRED for this run (#305)?
+   * `in-loop-gated` = the committed Stop hook verifiably loads (settings +
+   * trusted workspace + resolvable hook command), so stop attempts re-run
+   * the guardrail inside the session; `backstop-only` = it cannot load
+   * (reason named) and only post-run frame verification gates. REQUIRED so
+   * a run without the in-loop gate can never read identically to one with
+   * it. Decided by the ONE prober (`agent-trust.ts:armInLoopGate`).
+   */
+  readonly inLoopGate: InLoopGateStatus;
 }
 
 export interface RemediateResult {
@@ -128,6 +139,9 @@ export interface RemediateRunOptions {
   readonly git?: RemediateGit;
   readonly runFloor?: () => CorrectnessFloorResult;
   readonly runGuardrail?: () => Promise<GuardrailGateResult>;
+  /** Injected for tests: replaces the in-loop gate pre-trust + wiring probe
+   *  (`agent-trust.ts:armInLoopGate`). */
+  readonly armInLoopGate?: () => InLoopGateStatus;
   /** Injected for tests: replaces the health-score probe behind a task's
    *  score hinge. */
   readonly hingeScores?: (hinge: NonNullable<RemediateTask['scoreHinge']>) => Promise<HingeScores>;
