@@ -265,9 +265,16 @@ describe('workflow-template token discipline', () => {
     // task step — the hour starts at agent launch, not at job start.
     expect(content).toContain('id: dxkit-app-token-task');
     // The checkout persisted the FIRST mint as the git credential (what the
-    // landing push authenticates with); it must be REWRITTEN with the fresh
-    // token, in the same extraheader shape actions/checkout writes.
+    // landing push authenticates with); it must be REPLACED across scopes —
+    // a leftover value in any scope makes git send two Authorization
+    // headers and GitHub 400s the push ("Duplicate header", the live
+    // class) — and then PROVEN with an ls-remote at $0, before any agent
+    // spend.
     expect(content).toContain('http.https://github.com/.extraheader');
+    expect(content).toContain('--unset-all http.https://github.com/.extraheader');
+    expect(content).toContain('git config --global --unset-all');
+    expect(content).toContain('git ls-remote --heads origin');
+    expect(content).toContain('expected exactly 1 auth header config');
     // The task step's gh credential prefers the fresh token (the _TASK
     // placeholder), and the CLI learns the tier so it can clamp the wall
     // clock to the token lifetime (disclosed, never silent).

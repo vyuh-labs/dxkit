@@ -14,7 +14,10 @@
  * its first completion attempt in-session with the findings and turns left
  * to repair.
  *
- * Three duties, one module:
+ * Four duties, one module (the fourth added in 4.4.3 — the live class:
+ * a repo that never installed the loop pack has no committed Stop hook, so
+ * every lane run on it was backstop-only by construction; the gate is the
+ * LANE's requirement, so the lane installs it at runner scope itself):
  *
  * 1. PRE-TRUST (`preTrustAgentCheckout`): before spawning, the lane marks
  *    its own checkout trusted in the runner's `~/.claude.json`
@@ -43,6 +46,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { resolveDxkitCli } from '../self-invocation';
+import { STOP_HOOK_COMMAND, STOP_HOOK_TIMEOUT_SECONDS } from '../loop/scaffold';
 
 /** The envelope disclosure: was the in-loop Stop-gate actually wired? */
 export interface InLoopGateStatus {
@@ -109,11 +113,11 @@ export function checkoutTrusted(cwd: string, opts: AgentTrustOptions = {}): bool
   }
 }
 
-/** The committed Stop-hook commands in `.claude/settings.json`, or null when
- *  the file/hook is absent or unparseable. */
-function stopHookCommands(cwd: string): string[] | null {
+/** The Stop-hook commands declared in one settings file, or null when the
+ *  file/hook is absent or unparseable. */
+function stopHookCommandsIn(settingsPath: string): string[] | null {
   try {
-    const raw = fs.readFileSync(path.join(cwd, '.claude', 'settings.json'), 'utf8');
+    const raw = fs.readFileSync(settingsPath, 'utf8');
     const doc = JSON.parse(raw) as {
       hooks?: { Stop?: Array<{ hooks?: Array<{ command?: unknown }> }> };
     };
@@ -127,6 +131,82 @@ function stopHookCommands(cwd: string): string[] | null {
   }
 }
 
+/** Where the agent CLI reads Stop hooks for a spawn in `cwd`: the checkout's
+ *  committed settings AND the runner's user-scope settings (both merge at
+ *  runtime). Returns the commands plus which scope supplied them. */
+function stopHookCommands(
+  cwd: string,
+  opts: AgentTrustOptions = {},
+): { commands: string[]; scope: 'project' | 'runner' | 'both' } | null {
+  const home = opts.home ?? os.homedir();
+  const project = stopHookCommandsIn(path.join(cwd, '.claude', 'settings.json'));
+  const runner = stopHookCommandsIn(path.join(home, '.claude', 'settings.json'));
+  if (project && runner) return { commands: [...project, ...runner], scope: 'both' };
+  if (project) return { commands: project, scope: 'project' };
+  if (runner) return { commands: runner, scope: 'runner' };
+  return null;
+}
+
+/**
+ * The lane-owned arming half (4.4.3): when the CHECKOUT carries no Stop
+ * hook, install the standard dxkit Stop-gate into the RUNNER's user-scope
+ * `~/.claude/settings.json`. The in-loop gate is the LANE's requirement —
+ * the lane is the party spawning an agent that must be gated — so it must
+ * not depend on whether the repo opted into the loop pack (the live class:
+ * every lane run on a repo without committed loop hooks was silently
+ * backstop-only, disclosed but unfixable from the repo side).
+ *
+ * User scope deliberately, not the checkout: the runner sweeps the agent's
+ * uncommitted work into the landing/salvage commit, so a hook injected
+ * into the WORKTREE could leak into the landed PR. The runner's own home
+ * is ephemeral CI state, invisible to the landed diff, and merges into the
+ * spawned agent's settings exactly like a developer's user settings. CI
+ * runs only — a maintainer's local `~/.claude/settings.json` is theirs.
+ *
+ * Merge-preserving and idempotent, same discipline as the scaffold's
+ * project-settings writer; the ONE hook body (`STOP_HOOK_COMMAND`, Rule 2).
+ */
+export function ensureRunnerStopHook(
+  cwd: string,
+  opts: AgentTrustOptions = {},
+): { readonly applied: boolean; readonly reason?: string } {
+  const existing = stopHookCommands(cwd, opts);
+  if (existing !== null) return { applied: false, reason: 'a Stop hook is already declared' };
+  const home = opts.home ?? os.homedir();
+  const settingsPath = path.join(home, '.claude', 'settings.json');
+  try {
+    let doc: Record<string, unknown> = {};
+    if (fs.existsSync(settingsPath)) {
+      const parsed = JSON.parse(fs.readFileSync(settingsPath, 'utf8')) as unknown;
+      if (typeof parsed === 'object' && parsed !== null) doc = parsed as Record<string, unknown>;
+    }
+    const hooks =
+      typeof doc.hooks === 'object' && doc.hooks !== null
+        ? (doc.hooks as Record<string, unknown>)
+        : {};
+    const stop = Array.isArray(hooks.Stop) ? (hooks.Stop as unknown[]) : [];
+    doc.hooks = {
+      ...hooks,
+      Stop: [
+        ...stop,
+        {
+          hooks: [
+            { type: 'command', command: STOP_HOOK_COMMAND, timeout: STOP_HOOK_TIMEOUT_SECONDS },
+          ],
+        },
+      ],
+    };
+    fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
+    fs.writeFileSync(settingsPath, JSON.stringify(doc, null, 2) + '\n');
+    return { applied: true };
+  } catch (err) {
+    return {
+      applied: false,
+      reason: `could not write ${settingsPath}: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+}
+
 /**
  * Positive-evidence probe: would the Stop-gate actually load for a spawn in
  * `cwd`? Claims `in-loop-gated` only when every verifiable link holds; the
@@ -134,15 +214,16 @@ function stopHookCommands(cwd: string): string[] | null {
  * label this exists to kill is "armed" without evidence.
  */
 export function probeStopGateWiring(cwd: string, opts: AgentTrustOptions = {}): InLoopGateStatus {
-  const commands = stopHookCommands(cwd);
-  if (commands === null) {
+  const declared = stopHookCommands(cwd, opts);
+  if (declared === null) {
     return {
       mode: 'backstop-only',
       reason:
-        'no Stop hook in the checkout’s .claude/settings.json — the loop cannot self-verify; ' +
-        'post-run verification is the gate',
+        'no Stop hook in the checkout’s .claude/settings.json or the runner’s user settings — ' +
+        'the loop cannot self-verify; post-run verification is the gate',
     };
   }
+  const commands = declared.commands;
   if (!checkoutTrusted(cwd, opts)) {
     return {
       mode: 'backstop-only',
@@ -168,7 +249,13 @@ export function probeStopGateWiring(cwd: string, opts: AgentTrustOptions = {}): 
   return {
     mode: 'in-loop-gated',
     reason:
-      'Stop hook declared in committed settings, workspace trusted, hook command resolves — ' +
+      `Stop hook declared (${
+        declared.scope === 'project'
+          ? 'committed settings'
+          : declared.scope === 'runner'
+            ? 'installed by the lane at runner scope'
+            : 'committed settings + runner scope'
+      }), workspace trusted, hook command resolves — ` +
       'stop attempts re-run the guardrail in-session (a max_turns kill still never reaches a ' +
       'stop attempt; the post-run frame remains the final word)',
   };
@@ -183,6 +270,13 @@ export function armInLoopGate(
   cwd: string,
   opts: AgentTrustOptions & { readonly ci: boolean },
 ): InLoopGateStatus {
-  if (opts.ci) preTrustAgentCheckout(cwd, opts);
+  if (opts.ci) {
+    preTrustAgentCheckout(cwd, opts);
+    // The gate is the lane's own guarantee (4.4.3): a repo that never
+    // installed the loop pack still gets an armed Stop-gate, via the
+    // runner's user-scope settings. A failed injection is not fatal here —
+    // the probe below then honestly reports backstop-only with the gap.
+    ensureRunnerStopHook(cwd, opts);
+  }
   return probeStopGateWiring(cwd, opts);
 }

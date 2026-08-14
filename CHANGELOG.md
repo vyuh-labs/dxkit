@@ -5,6 +5,37 @@ All notable changes to `@vyuhlabs/dxkit` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.4.3] - 2026-08-14
+
+Two root fixes from the first live agent-lane run on 4.4.2. The run
+itself was an honest failure — every gap was disclosed in the envelope
+and the evidence artifact survived — but disclosed is not fixed:
+
+### Fixed
+
+- **The remediate lane's landing credential is now self-verifying.**
+  The 4.4.2 pre-task credential refresh could leave a second
+  Authorization value in another git config scope; git then sent two
+  Authorization headers and GitHub rejected the landing push with HTTP
+  400 ("Duplicate header") — after the full agent spend. The refresh
+  step now replaces the header across every scope, asserts exactly one
+  value remains, and PROVES the credential with a `git ls-remote`
+  inside the step — a broken landing credential now fails the run at
+  $0 setup, before any agent spawns, never at delivery.
+- **The in-loop Stop-gate is now the lane's own guarantee.** Arming
+  previously required the repo to carry a committed Stop hook
+  (`.claude/settings.json`) — so on any repo that never installed the
+  loop pack, every lane run was backstop-only by construction
+  (disclosed, but unfixable from the repo side). The lane now installs
+  the standard Stop-gate hook into the RUNNER's user-scope settings
+  when the checkout has none (CI only, merge-preserving, idempotent) —
+  deliberately never into the worktree, where the agent's work sweep
+  could carry it into the landed commit. The envelope names which
+  scope armed the gate.
+
+`vyuh-dxkit update` refreshes the remediate workflow; no baseline,
+policy, or wire-format changes.
+
 ## [4.4.2] - 2026-08-13
 
 The token-chain root fix, found within hours of 4.4.1 by rolling it out

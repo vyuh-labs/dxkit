@@ -136,3 +136,68 @@ describe('armInLoopGate — the lane entry point', () => {
     expect(checkoutTrusted(checkout, { home })).toBe(false);
   });
 });
+
+describe('lane-owned arming (4.4.3) — the gate is the lane’s guarantee, not a repo opt-in', () => {
+  it('CI + no committed Stop hook → the lane installs it at runner scope and arms', () => {
+    // The live class: every lane run on a repo without the loop pack was
+    // backstop-only by construction, disclosed but unfixable repo-side.
+    installLocalCli();
+    const status = armInLoopGate(checkout, { home, ci: true });
+    expect(status.mode).toBe('in-loop-gated');
+    expect(status.reason).toContain('runner scope');
+    const runner = JSON.parse(readFileSync(join(home, '.claude', 'settings.json'), 'utf8')) as {
+      hooks: { Stop: Array<{ hooks: Array<{ command: string }> }> };
+    };
+    expect(runner.hooks.Stop).toHaveLength(1);
+    expect(runner.hooks.Stop[0].hooks[0].command).toContain('hook stop-gate');
+  });
+
+  it('idempotent: a second arming never duplicates the runner-scope hook', () => {
+    installLocalCli();
+    armInLoopGate(checkout, { home, ci: true });
+    armInLoopGate(checkout, { home, ci: true });
+    const runner = JSON.parse(readFileSync(join(home, '.claude', 'settings.json'), 'utf8')) as {
+      hooks: { Stop: unknown[] };
+    };
+    expect(runner.hooks.Stop).toHaveLength(1);
+  });
+
+  it('a committed Stop hook wins: nothing is installed at runner scope', () => {
+    writeStopHook();
+    installLocalCli();
+    const status = armInLoopGate(checkout, { home, ci: true });
+    expect(status.mode).toBe('in-loop-gated');
+    expect(status.reason).toContain('committed settings');
+    expect(() => readFileSync(join(home, '.claude', 'settings.json'), 'utf8')).toThrow();
+  });
+
+  it('existing runner-scope settings are merge-preserved, never clobbered', () => {
+    mkdirSync(join(home, '.claude'), { recursive: true });
+    writeFileSync(
+      join(home, '.claude', 'settings.json'),
+      JSON.stringify({ permissions: { allow: ['Bash(ls:*)'] }, hooks: { PreToolUse: [] } }),
+    );
+    installLocalCli();
+    armInLoopGate(checkout, { home, ci: true });
+    const runner = JSON.parse(readFileSync(join(home, '.claude', 'settings.json'), 'utf8')) as {
+      permissions: { allow: string[] };
+      hooks: { PreToolUse: unknown[]; Stop: unknown[] };
+    };
+    expect(runner.permissions.allow).toEqual(['Bash(ls:*)']);
+    expect(runner.hooks.PreToolUse).toEqual([]);
+    expect(runner.hooks.Stop).toHaveLength(1);
+  });
+
+  it('WORKTREE PURITY: arming writes nothing under the checkout — an injected hook must never leak into the landed commit via the work sweep', () => {
+    installLocalCli();
+    armInLoopGate(checkout, { home, ci: true });
+    expect(() => readFileSync(join(checkout, '.claude', 'settings.json'), 'utf8')).toThrow();
+  });
+
+  it('non-CI: no runner-scope installation either — backstop-only stays honest', () => {
+    installLocalCli();
+    const status = armInLoopGate(checkout, { home, ci: false });
+    expect(status.mode).toBe('backstop-only');
+    expect(() => readFileSync(join(home, '.claude', 'settings.json'), 'utf8')).toThrow();
+  });
+});
