@@ -51,7 +51,7 @@ picked up automatically with no workflow edits.
    selected repositories for tighter control.
 6. Org (or repo) Actions settings: variable `DXKIT_APP_ID` = the numeric
    id; secret `DXKIT_APP_PRIVATE_KEY` = the full `.pem` contents. The id
-   is a *variable*, not a secret, because workflow `if:` conditions
+   is a _variable_, not a secret, because workflow `if:` conditions
    cannot read secrets.
 7. Delete the local `.pem`.
 
