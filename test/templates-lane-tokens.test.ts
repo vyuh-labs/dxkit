@@ -264,15 +264,18 @@ describe('workflow-template token discipline', () => {
     // A fresh mint gated on the same App variable, immediately before the
     // task step — the hour starts at agent launch, not at job start.
     expect(content).toContain('id: dxkit-app-token-task');
-    // The checkout persisted the FIRST mint as the git credential (what the
-    // landing push authenticates with); it must be REPLACED across scopes —
-    // a leftover value in any scope makes git send two Authorization
-    // headers and GitHub 400s the push ("Duplicate header", the live
-    // class) — and then PROVEN with an ls-remote at $0, before any agent
-    // spend.
+    // ONE credential writer (the live 4.4.3 class): checkout v6 persists
+    // its credential where `git config --unset-all` cannot reliably reach,
+    // and a second Authorization source makes GitHub 400 the landing push
+    // ("Duplicate header"). So the task job's checkout persists NOTHING,
+    // and the tier-generic install step is the only writer — defensive
+    // unsets, a count assertion, and an ls-remote PROOF at $0, before any
+    // agent spend, on every tier (not only the App).
+    expect(content).toContain('persist-credentials: false');
+    expect(content).toContain('- name: Install the landing credential');
+    expect(content).toContain('DXKIT_LANE_TOKEN: __DXKIT_LANE_TOKEN_TASK__');
     expect(content).toContain('http.https://github.com/.extraheader');
     expect(content).toContain('--unset-all http.https://github.com/.extraheader');
-    expect(content).toContain('git config --global --unset-all');
     expect(content).toContain('git ls-remote --heads origin');
     expect(content).toContain('expected exactly 1 auth header config');
     // The task step's gh credential prefers the fresh token (the _TASK
@@ -284,7 +287,7 @@ describe('workflow-template token discipline', () => {
     // setup time cannot eat the token's hour.
     const install = content.indexOf('Install the agent CLI');
     const remint = content.indexOf('id: dxkit-app-token-task');
-    const refresh = content.indexOf('Refresh the landing credential');
+    const refresh = content.indexOf('- name: Install the landing credential');
     const task = content.indexOf('Run task ${{ matrix.task }}');
     expect(install).toBeGreaterThan(-1);
     expect(remint).toBeGreaterThan(install);
