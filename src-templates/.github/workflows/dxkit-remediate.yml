@@ -157,6 +157,15 @@ __DXKIT_LANE_TOKEN_STEPS__
           # workflow runs, so the lane's PRs would show no checks. The ONE
           # tier chain (src/lanes/lane-token.ts) retires that degradation.
           token: __DXKIT_LANE_TOKEN__
+          # ONE credential writer (the live 4.4.3 class): checkout v6
+          # persists its credential in storage `git config --unset-all`
+          # cannot reliably clear, so any later credential install risks
+          # git sending TWO Authorization headers — GitHub 400s the push.
+          # The checkout authenticates its own fetch with the token above
+          # and persists NOTHING; the "Install the landing credential"
+          # step below is the only writer, for every tier, and proves
+          # itself before the agent spawns.
+          persist-credentials: false
 
       - uses: actions/setup-node@v6
         with:
@@ -224,27 +233,26 @@ __DXKIT_CI_RUNTIME_SETUP__
           app-id: ${{ vars.DXKIT_APP_ID }}
           private-key: ${{ secrets.DXKIT_APP_PRIVATE_KEY }}
 
-      # The checkout persisted the FIRST mint as the repo's git credential
-      # (that is what the landing `git push` authenticates with), so the
-      # fresh token must REPLACE it — across every config scope, because a
-      # leftover value in any scope makes git send TWO Authorization
-      # headers and GitHub rejects the push with HTTP 400 "Duplicate
-      # header" (the live class: the landing died AFTER the full agent
-      # spend). The step then PROVES the credential authenticates with an
-      # ls-remote — a broken credential must fail HERE, at $0, before any
-      # agent spawns; never at delivery.
-      - name: Refresh the landing credential (App tier)
-        if: ${{ vars.DXKIT_APP_ID != '' }}
+      # The ONE landing credential, every tier. The checkout persisted
+      # nothing (persist-credentials: false above), so this step is the
+      # only credential writer: it installs the tier-chain token (the
+      # fresh task-time App mint when configured, else the PAT, else the
+      # default token), asserts exactly one Authorization source exists —
+      # a duplicate makes GitHub 400 the landing push with "Duplicate
+      # header", the class that killed a full agent run — and PROVES the
+      # credential with an ls-remote. A broken landing credential fails
+      # HERE, at $0, before any agent spawns; never at delivery.
+      - name: Install the landing credential
         env:
-          DXKIT_FRESH_TOKEN: ${{ steps.dxkit-app-token-task.outputs.token }}
+          DXKIT_LANE_TOKEN: __DXKIT_LANE_TOKEN_TASK__
         run: |
-          AUTH=$(printf 'x-access-token:%s' "$DXKIT_FRESH_TOKEN" | base64 -w0)
+          AUTH=$(printf 'x-access-token:%s' "$DXKIT_LANE_TOKEN" | base64 -w0)
           git config --local --unset-all http.https://github.com/.extraheader || true
           git config --global --unset-all http.https://github.com/.extraheader 2>/dev/null || true
           git config --local http.https://github.com/.extraheader "AUTHORIZATION: basic $AUTH"
           COUNT=$(git config --get-all http.https://github.com/.extraheader | wc -l)
           if [ "$COUNT" != "1" ]; then
-            echo "::error title=landing credential::expected exactly 1 auth header config after refresh, found $COUNT (a duplicate would 400 the landing push)"
+            echo "::error title=landing credential::expected exactly 1 auth header config, found $COUNT (a duplicate would 400 the landing push)"
             exit 1
           fi
           git ls-remote --heads origin >/dev/null

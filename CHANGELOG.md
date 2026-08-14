@@ -5,6 +5,31 @@ All notable changes to `@vyuhlabs/dxkit` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.4.4] - 2026-08-14
+
+One structural fix, proven necessary by 4.4.3's own $0 credential check
+(which correctly refused a run at setup, before any agent spend — but
+for a cause the 4.4.3 cleanup could not remove).
+
+### Fixed
+
+- **The remediate task job has exactly ONE credential writer.**
+  actions/checkout v6 persists its credential in storage that
+  `git config --unset-all` cannot reliably clear from the local or
+  global scope, so any later credential install risked git sending two
+  Authorization headers (GitHub rejects the push with HTTP 400
+  "Duplicate header"). The task job's checkout now runs with
+  `persist-credentials: false` — it authenticates its own fetch and
+  persists nothing — and the tier-generic "Install the landing
+  credential" step is the only writer, for every token tier (App, PAT,
+  default), keeping the count assertion and the `ls-remote` proof at
+  setup. The credential-at-$0 guarantee now covers PAT repos too: an
+  expired PAT fails the run before the agent spawns instead of at
+  delivery.
+
+`vyuh-dxkit update` refreshes the remediate workflow; no baseline,
+policy, or wire-format changes.
+
 ## [4.4.3] - 2026-08-14
 
 Two root fixes from the first live agent-lane run on 4.4.2. The run
