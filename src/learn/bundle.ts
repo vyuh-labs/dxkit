@@ -115,6 +115,7 @@ const DOC_SLUGS = [
   'quickstart-reviewer',
   'quickstart-admin',
   'operating-the-lanes',
+  'lane-tokens',
   'gate-embedding',
   'wave-gating',
   'extending-dxkit',

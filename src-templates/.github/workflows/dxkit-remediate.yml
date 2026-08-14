@@ -162,10 +162,30 @@ __DXKIT_LANE_TOKEN_STEPS__
           # cannot reliably clear, so any later credential install risks
           # git sending TWO Authorization headers — GitHub 400s the push.
           # The checkout authenticates its own fetch with the token above
-          # and persists NOTHING; the "Install the landing credential"
-          # step below is the only writer, for every tier, and proves
-          # itself before the agent spawns.
+          # and persists NOTHING; the credential-install steps below are
+          # the only writers (each unsets everything before setting one
+          # value), and each proves itself with an ls-remote.
           persist-credentials: false
+
+      # Working credential for the SETUP phase: dependency install may need
+      # authenticated git (a private git-pinned dependency), and the
+      # checkout persisted nothing. Same body as the landing install below;
+      # the landing step REPLACES this value with the fresh task-time token.
+      - name: Install the working credential
+        env:
+          DXKIT_LANE_TOKEN: __DXKIT_LANE_TOKEN__
+        run: |
+          AUTH=$(printf 'x-access-token:%s' "$DXKIT_LANE_TOKEN" | base64 -w0)
+          git config --local --unset-all http.https://github.com/.extraheader || true
+          git config --global --unset-all http.https://github.com/.extraheader 2>/dev/null || true
+          git config --local http.https://github.com/.extraheader "AUTHORIZATION: basic $AUTH"
+          COUNT=$(git config --get-all http.https://github.com/.extraheader | wc -l)
+          if [ "$COUNT" != "1" ]; then
+            echo "::error title=working credential::expected exactly 1 auth header config, found $COUNT"
+            exit 1
+          fi
+          git ls-remote --heads origin >/dev/null
+          echo "working credential verified (single auth header, ls-remote OK)"
 
       - uses: actions/setup-node@v6
         with:

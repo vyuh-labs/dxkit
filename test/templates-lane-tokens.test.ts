@@ -272,8 +272,20 @@ describe('workflow-template token discipline', () => {
     // unsets, a count assertion, and an ls-remote PROOF at $0, before any
     // agent spend, on every tier (not only the App).
     expect(content).toContain('persist-credentials: false');
+    // A working credential right after checkout (setup-phase git needs —
+    // a private git-pinned dependency installs before the landing step),
+    // then the landing credential with the FRESH task token replacing it.
+    expect(content).toContain('- name: Install the working credential');
+    expect(content).toContain('DXKIT_LANE_TOKEN: __DXKIT_LANE_TOKEN__');
     expect(content).toContain('- name: Install the landing credential');
     expect(content).toContain('DXKIT_LANE_TOKEN: __DXKIT_LANE_TOKEN_TASK__');
+    const checkoutIdx = content.indexOf('persist-credentials: false');
+    const workingIdx = content.indexOf('- name: Install the working credential');
+    // The plan job has its own earlier install step; the ordering that
+    // matters is inside the TASKS job, so search from the working step on.
+    const depsIdx = content.indexOf('- name: Install dependencies + dxkit', workingIdx);
+    expect(workingIdx).toBeGreaterThan(checkoutIdx);
+    expect(depsIdx).toBeGreaterThan(workingIdx);
     expect(content).toContain('http.https://github.com/.extraheader');
     expect(content).toContain('--unset-all http.https://github.com/.extraheader');
     expect(content).toContain('git ls-remote --heads origin');
