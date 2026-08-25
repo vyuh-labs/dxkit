@@ -3,10 +3,49 @@
  * exemptions: the second half of the one policy metadata table
  * (`policy-metadata.ts`), split at the large-file bar and re-exported
  * there so `from './policy-metadata'` stays the one import path. The
- * per-parameter rows (`POLICY_PARAMS`) live in the sibling; the types
- * these tables conform to are declared there too.
+ * per-parameter rows (`POLICY_PARAMS`) live in the sibling; the stanza
+ * types are declared HERE, in the leaf, so the import edge runs one way
+ * (metadata re-exports from this module, this module imports nothing).
  */
-import type { PolicyStanzaMeta, ScaffoldExemptKnob } from './policy-metadata';
+
+/** Repo facts the scaffold tailors on. Plain data (no registry imports) so
+ *  the metadata modules stay leaves; the caller builds it from the language
+ *  registry. */
+export interface ScaffoldCtx {
+  readonly packIds: readonly string[];
+  /** Does any active pack declare a `lintGate`? */
+  readonly lintCapable: boolean;
+}
+
+/** One commented-out opt-in stanza in the generated scaffold. */
+export interface PolicyStanzaMeta {
+  /** Top-level policy key the stanza teaches (`pairedChecks`, `depBump`, …).
+   *  A key already active in the rendered policy suppresses its stanza. */
+  readonly key: string;
+  /** `POSTURE_KNOBS` paths this stanza covers; the scaffold-coverage test
+   *  resolves every knob through these. */
+  readonly coversKnobs: readonly string[];
+  /** Section title rendered in the stanza's header comment. */
+  readonly title: string;
+  /** Teaching lines rendered as comments above the stanza. */
+  readonly blurb: readonly string[];
+  /** Guide anchor for the whole stanza. */
+  readonly anchor: string;
+  /** The syntactically-complete example value; uncommenting it IS activation
+   *  (E3). A function of ctx so examples can tailor per stack. */
+  readonly example: (ctx: ScaffoldCtx) => unknown;
+  /** Extra comment lines after the stanza (e.g. "then run: vyuh-dxkit update"). */
+  readonly followUp?: readonly string[];
+  /** Omit the stanza entirely when false (per-stack tailoring). */
+  readonly appliesWhen?: (ctx: ScaffoldCtx) => boolean;
+}
+
+/** A `POSTURE_KNOBS` path deliberately absent from the scaffold; a declared
+ *  exemption with a reason, never a silent omission. */
+export interface ScaffoldExemptKnob {
+  readonly path: string;
+  readonly reason: string;
+}
 
 export const POLICY_STANZAS: readonly PolicyStanzaMeta[] = [
   {
