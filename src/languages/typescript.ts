@@ -19,7 +19,7 @@ import {
   gatherOsvScannerDepVulnsResult,
   mergeMaliciousOsvFindings,
 } from '../analyzers/tools/osv-scanner-deps';
-import { detectLockfile } from '../package-manager';
+import { detectLockfile, lockfileSyncCheck } from '../package-manager';
 import { fileExists, run, runJSON } from '../analyzers/tools/runner';
 import { walkPaths } from '../analyzers/tools/walk-paths';
 import { installedNodeMajor, readRepoFile, repoFileExists } from './version-detect';
@@ -34,11 +34,13 @@ import type {
   LintProvider,
   RunTestsOutcome,
 } from './capabilities/provider';
-import type {
-  CorrectnessCommand,
-  CorrectnessContext,
-  CorrectnessProvider,
-  ResolutionCheckResult,
+import {
+  LOCKFILE_SYNC_LABEL,
+  type CorrectnessCommand,
+  type CorrectnessContext,
+  type CorrectnessProvider,
+  type LockfileCheck,
+  type ResolutionCheckResult,
 } from './capabilities/correctness';
 import type { ExecutionRequirement } from '../execution';
 import { projectPathIdentity } from './capabilities/correctness';
@@ -2205,6 +2207,24 @@ const tsCorrectnessProvider: CorrectnessProvider = {
 
   resolutionCheck: tsResolutionCheck,
   relativeImportIdentities: tsRelativeImportIdentities,
+
+  // The lockfile-sync check (4.4.5): would CI's frozen install of this tree
+  // succeed? The command per PM lives in `package-manager.ts` (the one home of
+  // install commands); this builder only picks the lockfile actually present.
+  // No lockfile → nothing to keep in sync → null. A PM with no reliable
+  // dry-run (yarn) is a disclosed skip, never a silent one.
+  lockfileCheck(ctx: CorrectnessContext): LockfileCheck | null {
+    const lock = detectLockfile(ctx.cwd);
+    if (lock === null) return null;
+    const check = lockfileSyncCheck(lock.pm);
+    if (check.kind === 'skipped') return check;
+    const [bin, ...args] = check.argv;
+    return {
+      kind: 'command',
+      command: { label: LOCKFILE_SYNC_LABEL, bin, args },
+      ...(check.tolerated ? { tolerated: check.tolerated } : {}),
+    };
+  },
 
   syntaxCheck(ctx: CorrectnessContext): CorrectnessCommand | null {
     // Prefer the project's own typecheck script — it carries their exact

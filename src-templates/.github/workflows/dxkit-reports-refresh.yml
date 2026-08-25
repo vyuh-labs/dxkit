@@ -43,27 +43,13 @@ jobs:
 __DXKIT_CI_RUNTIME_SETUP__
       - name: Install dependencies + dxkit
         run: |
-          corepack enable >/dev/null 2>&1 || true
-          if [ -f pnpm-lock.yaml ]; then
-            pnpm install --frozen-lockfile
-          elif [ -f yarn.lock ]; then
-            yarn install --immutable 2>/dev/null || yarn install --frozen-lockfile
-          elif [ -f bun.lockb ] || [ -f bun.lock ]; then
-            npm install -g bun >/dev/null 2>&1 || true
-            bun install --frozen-lockfile
-          elif [ -f package-lock.json ]; then
-            # A repo whose tree only resolves under --legacy-peer-deps (a peer
-            # conflict its own install already tolerates) must not fail the gate.
-            # `npm ci` installs the LOCKFILE's tree either way — the flag only
-            # skips the peer check that rejects it — so the audited tree is still
-            # the tree the repo ships. Re-resolving (`npm install`) is NOT a valid
-            # fallback here: it would fabricate a different tree.
-            npm ci || npm ci --legacy-peer-deps
-          elif [ -f package.json ]; then
-            npm install || npm install --legacy-peer-deps
-          else
-            npm install -g @vyuhlabs/dxkit
-          fi
+          # A repo whose tree only resolves under --legacy-peer-deps (a peer
+          # conflict its own install already tolerates) must not fail the gate.
+          # `npm ci` installs the LOCKFILE's tree either way — the flag only
+          # skips the peer check that rejects it — so the audited tree is still
+          # the tree the repo ships. Re-resolving (`npm install`) is NOT a valid
+          # fallback here: it would fabricate a different tree.
+          __DXKIT_INSTALL_DEPS__
 
       - name: Install scanner tools
         run: |

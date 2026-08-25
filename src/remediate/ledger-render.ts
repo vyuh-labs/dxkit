@@ -5,6 +5,7 @@
  * type dependency is type-only, so there is no runtime cycle.
  */
 import { renderFloorVerification, renderGuardrailVerdict } from '../lanes/verification-render';
+import { describeInstall } from '../lanes/verify-tree';
 import { renderScoreHinge } from './score-hinge';
 import type { RemediateResult } from './run';
 
@@ -115,6 +116,10 @@ export function renderRemediateLedger(r: Omit<RemediateResult, 'ledger'>): strin
   }
 
   lines.push('### Verification', '');
+  // The install line comes first: it is what CI's own install step will do
+  // with this tree, verified on a clean checkout (4.4.5).
+  const install = describeInstall(r.install);
+  if (install) lines.push(install, '');
   lines.push(...renderFloorVerification(r.floor, r.floorAttribution, 'the pre-agent entry run'));
   lines.push(...renderGuardrailVerdict(r.guardrailVerdict));
   if (r.scoreHinge) lines.push(renderScoreHinge(r.scoreHinge));

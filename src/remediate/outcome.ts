@@ -8,6 +8,7 @@ import type { AnalysisTrustContext } from '../analysis-trust';
 import type { CorrectnessFloorResult } from '../analyzers/correctness/run';
 import type { AttributedFloorFailure } from '../analyzers/correctness/attribution';
 import type { GuardrailGateResult } from '../lanes/verify';
+import type { InstallOutcome, VerifyTreeSeams } from '../lanes/verify-tree';
 import type { AgentDriver } from './driver';
 import type { RemediateTask } from './tasks';
 import type { DispatchOverrides } from './dispatch';
@@ -18,6 +19,7 @@ import type { InLoopGateStatus } from './agent-trust';
 export type RemediateOutcome =
   | 'verified' // diff produced, floor net-new-clean, guardrail PASSED — ready to land
   | 'no-op' // agent ran TO COMPLETION, no diff (nothing to fix)
+  | 'install-failed' // a clean checkout of the diff cannot be installed the way CI installs — never lands
   | 'floor-red' // diff breaks the net-new floor — never lands
   | 'guardrail-red' // guardrail blocked, refused, or could not run — never lands
   | 'score-red' // the task's score hinge did not hold (goal not met) — never lands
@@ -80,6 +82,11 @@ export interface RemediateResult {
   readonly partial?: boolean;
   readonly floor?: CorrectnessFloorResult;
   readonly floorAttribution?: readonly AttributedFloorFailure[];
+  /** How the frozen install of the candidate went on a CLEAN checkout
+   *  (4.4.5): the ledger says what CI's install step will do. */
+  readonly install?: InstallOutcome;
+  /** Which files the candidate changed vs the base (the floor's diff scope). */
+  readonly changedFiles?: readonly string[];
   readonly guardrailVerdict?: string;
   /** Score-hinge evidence (tasks that declare one): the entry vs post-agent
    *  dimension scores the land decision was made on. Present on success AND
@@ -142,8 +149,15 @@ export interface RemediateRunOptions {
   /** Injected for tests. */
   readonly drivers?: readonly AgentDriver[];
   readonly git?: RemediateGit;
+  /** Injected for tests: the ENTRY floor on the pristine tree, and the
+   *  post-agent floor inside the verification worktree (forwarded to
+   *  `verifyTree`'s floor seam). */
   readonly runFloor?: () => CorrectnessFloorResult;
+  /** Injected for tests: forwarded to `verifyTree`'s guardrail seam. */
   readonly runGuardrail?: () => Promise<GuardrailGateResult>;
+  /** Injected for tests: the worktree / install / changed-files seams of the
+   *  ONE tree verification (`src/lanes/verify-tree.ts`). */
+  readonly verifySeams?: Pick<VerifyTreeSeams, 'worktree' | 'install' | 'changedFiles'>;
   /** Injected for tests: replaces the in-loop gate pre-trust + wiring probe
    *  (`agent-trust.ts:armInLoopGate`). */
   readonly armInLoopGate?: () => InLoopGateStatus;
@@ -173,6 +187,7 @@ export type RemediatePhase =
   | 'entry-floor'
   | 'agent'
   | 'sweep'
+  | 'verify-install'
   | 'verify-floor'
   | 'guardrail'
   | 'score-hinge';

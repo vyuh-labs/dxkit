@@ -225,6 +225,11 @@ function base(driver: AgentDriver, extra: Partial<Parameters<typeof runRemediate
     git: fakeGit({ diff: true }),
     runFloor: () => RED_FLOOR,
     runGuardrail: async () => ({ verdict: 'PASSED', ran: true, passesGate: true }),
+    verifySeams: {
+      worktree: async <T>(_o: unknown, fn: (wt: string) => Promise<T>) => fn('/tmp/fake-worktree'),
+      install: () => ({ status: 'installed' as const, argv: ['npm', 'ci'] }),
+      changedFiles: () => ['src/a.ts'],
+    },
     ...extra,
   };
 }

@@ -201,6 +201,12 @@ describe('runRemediateTask — resumed attempts', () => {
       resume: { attempt: 1 },
       runFloor: () => RED, // only the verify side runs — entry came in
       runGuardrail: async () => ({ verdict: 'PASSED', ran: true, passesGate: true }),
+      verifySeams: {
+        worktree: async <T>(_o: unknown, fn: (wt: string) => Promise<T>) =>
+          fn('/tmp/fake-worktree'),
+        install: () => ({ status: 'installed' as const, argv: ['npm', 'ci'] }),
+        changedFiles: () => ['src/a.ts'],
+      },
     });
     expect(r.outcome).toBe('floor-red');
     expect(r.resume).toEqual({ attempt: 1 });
@@ -219,6 +225,12 @@ describe('runRemediateTask — resumed attempts', () => {
       resume: { attempt: 2 },
       runFloor: () => GREEN,
       runGuardrail: async () => ({ verdict: 'PASSED', ran: true, passesGate: true }),
+      verifySeams: {
+        worktree: async <T>(_o: unknown, fn: (wt: string) => Promise<T>) =>
+          fn('/tmp/fake-worktree'),
+        install: () => ({ status: 'installed' as const, argv: ['npm', 'ci'] }),
+        changedFiles: () => ['src/a.ts'],
+      },
     });
     expect(r.outcome).toBe('verified');
     expect(driver.lastRun?.prompt).toContain('RESUMED ATTEMPT #2');

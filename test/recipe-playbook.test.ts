@@ -225,6 +225,17 @@ const mockPlaybookPack = {
       buildTarget: 'none' as const,
       weight: 'cheap' as const,
     }),
+    // Lockfile-sync floor (4.4.5): a distinctive dry-run command proves the
+    // optional builder flows pack → runner, and that the runner (not the pack)
+    // decides WHEN it runs: full scope / a manifest-touching diff only.
+    lockfileCheck: () => ({
+      kind: 'command' as const,
+      command: { label: 'lockfile-sync', bin: 'playbookc-mock', args: ['lock', '--dry-run'] },
+      tolerated: {
+        matches: (output: string) => output.includes('PLAYBOOK-PEER-ONLY'),
+        disclosure: 'playbook peer conflict tolerated',
+      },
+    }),
   },
   // Lint-GATE contribution (custom-check flagship). Distinctive bin/parse so the
   // assertion verifies the synthetic pack's provider flows through
@@ -540,6 +551,72 @@ describe('recipe playbook — synthetic pack', () => {
       exec: () => ({ available: true, code: 0, output: '' }),
     });
     expect(sourceOnly.scopeEscalated).toBeUndefined();
+  });
+
+  // 4.4.5: the lockfile-sync check is pack-DECLARED but runner-SCHEDULED. The
+  // synthetic pack's distinctive dry-run must run at full scope (and on a
+  // manifest-touching diff, which escalates), and must NOT run on a
+  // source-only fast run — the over-run direction (every Stop paying a
+  // package-manager dry-run) is the regression that would make the fast
+  // surface slow.
+  it('runCorrectnessFloor schedules the mock pack lockfile check at full scope only (4.4.5)', () => {
+    const packs = [...LANGUAGES];
+    const seen: string[][] = [];
+    const exec = (cmd: { readonly bin: string; readonly args: readonly string[] }) => {
+      seen.push([cmd.bin, ...cmd.args]);
+      return { available: true, code: 0, output: '' };
+    };
+    const lockRan = () => seen.some((argv) => argv.join(' ') === 'playbookc-mock lock --dry-run');
+
+    runCorrectnessFloor({
+      cwd: '/nonexistent-repo',
+      changedFiles: ['a.pbk'],
+      scope: 'affected',
+      packs,
+      exec,
+    });
+    expect(lockRan(), 'a source-only affected run must not pay the dry-run').toBe(false);
+
+    seen.length = 0;
+    const full = runCorrectnessFloor({
+      cwd: '/nonexistent-repo',
+      changedFiles: [],
+      scope: 'full',
+      packs,
+      exec,
+    });
+    expect(lockRan()).toBe(true);
+    const lock = full.checks.find(
+      (c) => (c.pack as string) === 'playbook' && c.label === 'lockfile-sync',
+    );
+    expect(lock?.status).toBe('pass');
+
+    seen.length = 0;
+    runCorrectnessFloor({
+      cwd: '/nonexistent-repo',
+      changedFiles: ['playbook.lock'],
+      scope: 'affected',
+      packs,
+      exec,
+    });
+    expect(lockRan(), 'a manifest-touching diff escalates and runs the dry-run').toBe(true);
+
+    // The tolerated condition flows pack → runner: a PASS with the disclosure.
+    const tolerated = runCorrectnessFloor({
+      cwd: '/nonexistent-repo',
+      changedFiles: [],
+      scope: 'full',
+      packs,
+      exec: (cmd) =>
+        cmd.args.includes('--dry-run')
+          ? { available: true, code: 1, output: 'PLAYBOOK-PEER-ONLY' }
+          : { available: true, code: 0, output: '' },
+    });
+    const tol = tolerated.checks.find(
+      (c) => (c.pack as string) === 'playbook' && c.label === 'lockfile-sync',
+    );
+    expect(tol?.status).toBe('pass');
+    expect(tol?.note).toBe('playbook peer conflict tolerated');
   });
 
   // custom-check flagship: the lint gate iterates `activeLintGateProviders`, so a
