@@ -14,7 +14,7 @@
  * Content-hash scheme (the reformat-survival layer). Every LOCATED entry is
  * stamped with `contentHash` through the shared `contentStamper`: SHA-1[0:16]
  * of the whitespace-normalized 7-line window around the finding, read from the
- * file AT THE ANCHOR COMMIT (`git show <sha>:<file>`), the same scheme the
+ * working tree the finding was scanned on, the same scheme the
  * secret / code / config / duplication / stale-allow kinds use. The
  * git-aware matcher keys its content-hash pass on `(rule, contentHash)`; the
  * rule string for a custom-check pair is `check/rule` (or the bare check
@@ -28,7 +28,9 @@
  * custom-check entries. That degrades to exactly the pre-scheme behavior (the
  * matcher skips a side without a hash; the git and identity passes still
  * run), so no migration step and no rescan are needed. The next baseline
- * refresh stamps the entries.
+ * refresh stamps the entries. Stamps are only as good as the tree they read:
+ * a baseline captured on a dirty tree hashes that tree, which is also what its
+ * line numbers describe.
  *
  * BINARY findings (no `file`) are whole-command pass/fail with no location;
  * they carry no hash by construction.

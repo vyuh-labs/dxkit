@@ -51,15 +51,9 @@ import type {
 } from '../types';
 
 export interface SecurityProducerOptions {
-  /** Repo path; used by the shared `contentStamper` to invoke
-   * `git show`. Omitting it disables content-hash stamping. */
+  /** Repo path; the shared `contentStamper` reads the working tree the
+   * findings were scanned on. Omitting it disables content-hash stamping. */
   readonly cwd?: string;
-  /** Commit SHA the baseline is anchored to. When the working tree
-   * has uncommitted changes, callers may pass `'HEAD'` so the hash
-   * reflects committed state — content-hash matching against a
-   * later run will still work as long as both sides read the same
-   * SHA. */
-  readonly commitSha?: string;
 }
 
 /**
@@ -74,11 +68,7 @@ export function securityAggregateToBaselineEntries(
   const out: RichBaselineEntry[] = [];
   // The ONE stamping entry point (content-stamp.ts): no commit, a whole-file
   // line 0, or an unreadable file all yield no stamp.
-  const stamp = contentStamper(
-    options.cwd && options.commitSha
-      ? { cwd: options.cwd, commitSha: options.commitSha }
-      : undefined,
-  );
+  const stamp = contentStamper(options.cwd ? { cwd: options.cwd } : undefined);
 
   for (const f of aggregate.findingsByCategory.secret) {
     const input: SecretIdentityInput = {

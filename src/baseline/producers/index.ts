@@ -217,10 +217,7 @@ const SECURITY_PRODUCER: BaselineProducer = {
   produce(ctx) {
     const aggregate = ctx.analysisResult.capabilities.securityAggregate;
     if (!aggregate) return [];
-    return securityAggregateToBaselineEntries(aggregate, {
-      cwd: ctx.cwd,
-      commitSha: ctx.commitSha || undefined,
-    });
+    return securityAggregateToBaselineEntries(aggregate, { cwd: ctx.cwd });
   },
   recallContexts(ctx) {
     const p = ctx.analysisResult.capabilities.securityAggregate?.provenance;
@@ -281,7 +278,6 @@ const QUALITY_PRODUCER: BaselineProducer = {
     return [
       ...duplicationToBaselineEntries(ctx.analysisResult.capabilities.duplication, {
         cwd: ctx.cwd,
-        commitSha: ctx.commitSha,
       }),
       ...staleFilesToBaselineEntries(ctx.hygiene.staleFiles),
     ];
@@ -342,7 +338,7 @@ const STALE_ALLOW_PRODUCER: BaselineProducer = {
     return staleAllowToBaselineEntries({
       annotations: ctx.inlineAllowlistAnnotations,
       aggregate: ctx.analysisResult.capabilities.securityAggregate ?? null,
-      commit: { cwd: ctx.cwd, commitSha: ctx.commitSha },
+      commit: { cwd: ctx.cwd },
     });
   },
   recallContexts(ctx) {

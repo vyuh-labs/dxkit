@@ -241,7 +241,6 @@ describe('securityAggregateToBaselineEntries', () => {
 
   describe('content-hash stamping (with git fixture)', () => {
     let dir: string;
-    let sha: string;
 
     beforeEach(() => {
       dir = mkdtempSync(join(tmpdir(), 'dxkit-prod-sec-'));
@@ -255,7 +254,6 @@ describe('securityAggregateToBaselineEntries', () => {
       );
       execFileSync('git', ['add', '.'], { cwd: dir });
       execFileSync('git', ['commit', '-q', '-m', 'fixture'], { cwd: dir });
-      sha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: dir, encoding: 'utf8' }).trim();
     });
 
     afterEach(() => {
@@ -267,7 +265,7 @@ describe('securityAggregateToBaselineEntries', () => {
       const aggregate = emptyAggregate({
         findingsByCategory: { secret: [], code: [f], config: [], dependency: [] },
       });
-      const entries = securityAggregateToBaselineEntries(aggregate, { cwd: dir, commitSha: sha });
+      const entries = securityAggregateToBaselineEntries(aggregate, { cwd: dir });
       const e = entries[0];
       if (e.kind !== 'code') throw new Error('shape');
       expect(e.contentHash).toMatch(/^[0-9a-f]{16}$/);
@@ -283,18 +281,18 @@ describe('securityAggregateToBaselineEntries', () => {
       const aggregate = emptyAggregate({
         findingsByCategory: { secret: [], code: [], config: [f], dependency: [] },
       });
-      const entries = securityAggregateToBaselineEntries(aggregate, { cwd: dir, commitSha: sha });
+      const entries = securityAggregateToBaselineEntries(aggregate, { cwd: dir });
       const e = entries[0];
       if (e.kind !== 'config') throw new Error('shape');
       expect(e.contentHash).toBeUndefined();
     });
 
-    it('omits contentHash when the file is missing at the commit', () => {
+    it('omits contentHash when the file is missing from the tree', () => {
       const f = codeFinding({ file: 'missing.ts', line: 1 });
       const aggregate = emptyAggregate({
         findingsByCategory: { secret: [], code: [f], config: [], dependency: [] },
       });
-      const entries = securityAggregateToBaselineEntries(aggregate, { cwd: dir, commitSha: sha });
+      const entries = securityAggregateToBaselineEntries(aggregate, { cwd: dir });
       const e = entries[0];
       if (e.kind !== 'code') throw new Error('shape');
       expect(e.contentHash).toBeUndefined();

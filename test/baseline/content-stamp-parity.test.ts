@@ -170,11 +170,13 @@ describe('content-stamp parity across the producer registry', () => {
     expect(binary && 'contentHash' in binary ? binary.contentHash : undefined).toBeUndefined();
   });
 
-  it('with no commit available nothing is stamped, and nothing throws (a bare tree)', () => {
+  it('with no commit the tree still stamps (an unborn HEAD is not a missing tree), and nothing throws', () => {
     const entries = runProducers(locatedContext(dir, ''), PRODUCERS);
     expect(entries.length).toBeGreaterThan(0);
-    for (const e of entries) {
-      expect('contentHash' in e ? e.contentHash : undefined).toBeUndefined();
+    const located = entries.filter((e) => 'line' in e && typeof e.line === 'number' && e.line > 0);
+    expect(located.length).toBeGreaterThan(0);
+    for (const e of located) {
+      expect('contentHash' in e ? e.contentHash : undefined).toMatch(/^[0-9a-f]{16}$/);
     }
   });
 

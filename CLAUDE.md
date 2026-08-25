@@ -99,10 +99,14 @@ ${path}` keys, which discards catch-all structure — so it did exact membership
   through a local closure and the custom-check producer stamped nothing, so
   one 4-space to 2-space reindent read a repo's whole grandfathered lint
   backlog as resolved plus dozens of net-new. The arch-check confines
-  `computeContentHashFromCommit(` to that module (annotate
+  the hash primitive `computeContentHash(` to `content-hash.ts` plus that
+  module (annotate
   `// content-stamp-ok` for a justified exception), and
   `test/baseline/content-stamp-parity.test.ts` iterates `PRODUCERS` and
   asserts every line-carrying entry is stamped (synthetic-injection guarded).
+  The stamp reads the WORKING TREE, the tree every scanner read and whose
+  line numbers the finding carries (reading the anchor commit instead hashed
+  pre-change content at post-change lines on every dirty-tree surface).
   Path-identity kinds (large-file, test-gap, stale-file) carry no line and no
   stamp; a pre-scheme baseline without the field degrades to the git and
   identity passes, no migration or rescan.

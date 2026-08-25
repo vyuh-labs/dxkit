@@ -43,7 +43,6 @@
  */
 
 import { createHash } from 'crypto';
-import { execFileSync } from 'child_process';
 
 /**
  * Width of the context window read on each side of the finding's
@@ -89,52 +88,4 @@ export function computeContentHash(
  */
 function normalizeLine(line: string): string {
   return line.replace(/\s+/g, ' ').trim();
-}
-
-/**
- * Read a file's content at a specific commit. Returns null when git
- * can't resolve the path-at-commit pair — file didn't exist at
- * `sha`, file is binary, sha is unreachable. Callers treat null
- * the same as "content-hash unavailable for this path."
- *
- * Uses `git show <sha>:<path>` which does not require checking out
- * the commit — safe to call repeatedly in a tight loop without
- * touching the working tree.
- */
-export function readFileFromCommit(cwd: string, sha: string, file: string): string | null {
-  try {
-    return execFileSync('git', ['show', `${sha}:${file}`], {
-      cwd,
-      encoding: 'utf8',
-      // Cap output size — git show on a 100MB committed binary would
-      // otherwise blow the default stdio buffer. 10MB is generous for
-      // any real source file.
-      maxBuffer: 10 * 1024 * 1024,
-      // Silence the "fatal: path X does not exist" message git emits
-      // to stderr when the file/sha pair doesn't resolve. Callers
-      // expect a null return, not a stderr message bleeding through.
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Combined helper: read the file at a commit and compute its
- * content hash at the given line. Returns null when the file
- * couldn't be read. Called ONLY by `contentStamper` in
- * `content-stamp.ts` (the arch-check pins that); producers use the
- * stamper, never this helper directly.
- */
-export function computeContentHashFromCommit(
-  cwd: string,
-  sha: string,
-  file: string,
-  line: number,
-  contextLines: number = CONTENT_HASH_CONTEXT_LINES,
-): string | null {
-  const content = readFileFromCommit(cwd, sha, file);
-  if (content === null) return null;
-  return computeContentHash(content, line, contextLines);
 }

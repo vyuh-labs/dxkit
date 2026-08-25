@@ -124,38 +124,34 @@ describe('custom-check content-hash stamping (reformat survival)', () => {
   it('the producer stamps a located entry through the shared stamper; a binary entry stays bare', () => {
     const src = fourSpaceSource();
     writeFileSync(join(dir, FILE), src);
-    const sha = commit(dir, 'backlog');
+    commit(dir, 'backlog');
     const [located, binary] = customCheckFindingsToBaselineEntries(
       [lintFinding(46), { check: 'check:seam', blocking: true, message: 'boom' }],
-      { cwd: dir, commitSha: sha },
+      { cwd: dir },
     );
     expect(located.kind === 'custom-check' && located.contentHash).toBe(
       computeContentHash(src, 46),
     );
     expect(binary.kind === 'custom-check' && binary.contentHash).toBeUndefined();
-    // No commit (a bare tree): the same producer stamps nothing, no branch needed.
+    // No source (a producer running without a repo path): the same producer
+    // stamps nothing, no branch needed.
     const [bare] = customCheckFindingsToBaselineEntries([lintFinding(46)]);
     expect(bare.kind === 'custom-check' && bare.contentHash).toBeUndefined();
-    expect(contentStampSource({ cwd: dir, commitSha: '' })).toBeUndefined();
+    expect(contentStampSource({ cwd: '' })).toBeUndefined();
+    expect(contentStampSource({ cwd: dir })).toEqual({ cwd: dir });
   });
 
   it('a 4-space to 2-space reindent pairs the moved finding via content-hash at 0.80, zero added', () => {
     const before = fourSpaceSource();
     writeFileSync(join(dir, FILE), before);
     const base = commit(dir, 'backlog at 4 spaces');
+    // The baseline side stamps the tree it scanned (the 4-space one).
+    const prior = customCheckFindingsToBaselineEntries([lintFinding(46)], { cwd: dir });
     const after = reformat(before);
     expect(after.split('\n')[40]).toBe('  console.log(id);'); // line 41 now // slop-ok
     writeFileSync(join(dir, FILE), after);
     const head = commit(dir, 'reformat to 2 spaces');
-
-    const prior = customCheckFindingsToBaselineEntries([lintFinding(46)], {
-      cwd: dir,
-      commitSha: base,
-    });
-    const current = customCheckFindingsToBaselineEntries([lintFinding(41)], {
-      cwd: dir,
-      commitSha: head,
-    });
+    const current = customCheckFindingsToBaselineEntries([lintFinding(41)], { cwd: dir });
     // The shift crossed the 3-line identity window: the fingerprints differ,
     // so only a locator-aware pass can pair them.
     expect(prior[0].id).not.toBe(current[0].id);
@@ -179,6 +175,7 @@ describe('custom-check content-hash stamping (reformat survival)', () => {
     const before = fourSpaceSource();
     writeFileSync(join(dir, FILE), before);
     const base = commit(dir, 'backlog at 4 spaces');
+    const prior = customCheckFindingsToBaselineEntries([lintFinding(46)], { cwd: dir });
     // Reformat AND introduce a second console.log at the top of `handle`.
     const after = reformat(before).replace(
       '  const id = req.id;\n',
@@ -191,13 +188,9 @@ describe('custom-check content-hash stamping (reformat survival)', () => {
     expect(newLine).toBe(38);
     expect(movedLine).toBe(42);
 
-    const prior = customCheckFindingsToBaselineEntries([lintFinding(46)], {
-      cwd: dir,
-      commitSha: base,
-    });
     const current = customCheckFindingsToBaselineEntries(
       [lintFinding(newLine), lintFinding(movedLine)],
-      { cwd: dir, commitSha: head },
+      { cwd: dir },
     );
     const result = gitAwareMatch(entriesToLocated(prior), entriesToLocated(current), {
       cwd: dir,
@@ -213,6 +206,69 @@ describe('custom-check content-hash stamping (reformat survival)', () => {
     expect(result.removed).toEqual([]);
   });
 
+  it('an UNCOMMITTED reformat (the Stop-gate / pre-push tree) still pairs: the stamp reads the tree the scan read', () => {
+    const before = fourSpaceSource();
+    writeFileSync(join(dir, FILE), before);
+    const base = commit(dir, 'backlog at 4 spaces');
+    const prior = customCheckFindingsToBaselineEntries([lintFinding(46)], { cwd: dir });
+    // Reformat in place, no commit: the current scan sees line 41 in a dirty tree.
+    writeFileSync(join(dir, FILE), reformat(before));
+    const current = customCheckFindingsToBaselineEntries([lintFinding(41)], { cwd: dir });
+    expect(current[0].kind === 'custom-check' && current[0].contentHash).toBe(
+      prior[0].kind === 'custom-check' ? prior[0].contentHash : 'unstamped',
+    );
+    const result = gitAwareMatch(entriesToLocated(prior), entriesToLocated(current), {
+      cwd: dir,
+      baseSha: base,
+      headSha: base,
+    });
+    expect(result.added).toEqual([]);
+    expect(result.pairs.map((p) => p.reasons.map((r) => r.code))).toEqual([['content-hash']]);
+  });
+
+  it('a same-rule finding newly introduced at the old line is NOT paired as persisted on a dirty tree', () => {
+    const before = fourSpaceSource();
+    writeFileSync(join(dir, FILE), before);
+    commit(dir, 'backlog at 4 spaces');
+    const prior = customCheckFindingsToBaselineEntries([lintFinding(46)], { cwd: dir });
+    // Delete the finding's line and put a DIFFERENT console statement at line 46,
+    // uncommitted. Hashing the committed tree at line 46 would reproduce the prior
+    // stamp and pair a net-new finding as persisted.
+    const lines = before.split('\n');
+    lines[45] = '    console.log("something else entirely", req, id, extra);'; // slop-ok
+    lines.splice(30, 0, '    // a comment shifting the window content');
+    writeFileSync(join(dir, FILE), lines.join('\n'));
+    const current = customCheckFindingsToBaselineEntries([lintFinding(46)], { cwd: dir });
+    expect(current[0].kind === 'custom-check' && current[0].contentHash).not.toBe(
+      prior[0].kind === 'custom-check' ? prior[0].contentHash : 'unstamped',
+    );
+  });
+
+  it('the content pass prefers a same-file candidate over an identical window in another file', () => {
+    const before = fourSpaceSource();
+    writeFileSync(join(dir, FILE), before);
+    const base = commit(dir, 'backlog at 4 spaces');
+    const prior = customCheckFindingsToBaselineEntries([lintFinding(46)], { cwd: dir });
+    // A copy of the file appears under a new path, and the original is reformatted.
+    const twin = 'src/legacy-copy.ts';
+    writeFileSync(join(dir, twin), reformat(before));
+    writeFileSync(join(dir, FILE), reformat(before));
+    const head = commit(dir, 'reformat + copy');
+    const current = customCheckFindingsToBaselineEntries(
+      [{ ...lintFinding(41), file: twin }, lintFinding(41)],
+      { cwd: dir },
+    );
+    const result = gitAwareMatch(entriesToLocated(prior), entriesToLocated(current), {
+      cwd: dir,
+      baseSha: base,
+      headSha: head,
+    });
+    const paired = result.pairs.find((p) => p.priorId !== undefined)!;
+    const sameFileId = current.find((e) => e.kind === 'custom-check' && e.file === FILE)!.id;
+    expect(paired.currentId).toBe(sameFileId);
+    expect(paired.status).toBe('persisted');
+  });
+
   it('a pre-scheme baseline (no hash on the prior side) degrades to the old behavior, never throws', () => {
     const before = fourSpaceSource();
     writeFileSync(join(dir, FILE), before);
@@ -222,10 +278,7 @@ describe('custom-check content-hash stamping (reformat survival)', () => {
     // An entry written before the stamp existed: same shape, no contentHash.
     const prior = customCheckFindingsToBaselineEntries([lintFinding(46)]);
     expect(prior[0].kind === 'custom-check' && prior[0].contentHash).toBeUndefined();
-    const current = customCheckFindingsToBaselineEntries([lintFinding(41)], {
-      cwd: dir,
-      commitSha: head,
-    });
+    const current = customCheckFindingsToBaselineEntries([lintFinding(41)], { cwd: dir });
     const result = gitAwareMatch(entriesToLocated(prior), entriesToLocated(current), {
       cwd: dir,
       baseSha: base,
@@ -241,17 +294,26 @@ describe('custom-check content-hash stamping (reformat survival)', () => {
 });
 
 describe('contentStamper (the one stamping policy)', () => {
-  it('never stamps without a source, on a whole-file line 0, or on an unreadable file', () => {
+  it('never stamps without a source, on a whole-file line 0, outside the tree, or on an unreadable file', () => {
     const dir = makeRepo();
     try {
       writeFileSync(join(dir, 'a.txt'), 'one\ntwo\nthree\n');
-      const sha = commit(dir, 'init');
       expect(contentStamper(undefined)('a.txt', 2)).toBeUndefined();
-      expect(contentStamper({ cwd: dir, commitSha: '' })('a.txt', 2)).toBeUndefined();
-      const stamp = contentStamper({ cwd: dir, commitSha: sha });
+      expect(contentStamper({ cwd: '' })('a.txt', 2)).toBeUndefined();
+      // No commit is needed: the tree is the source (an unborn HEAD still stamps).
+      const stamp = contentStamper({ cwd: dir });
       expect(stamp('a.txt', 0)).toBeUndefined();
       expect(stamp('missing.txt', 2)).toBeUndefined();
+      expect(stamp('..' + '/outside.txt', 2)).toBeUndefined();
+      expect(stamp(join(dir, 'a.txt'), 2)).toBeUndefined();
       expect(stamp('a.txt', 2)).toBe(computeContentHash('one\ntwo\nthree\n', 2));
+      // Per-stamper file cache: a rewrite after the first read is not observed
+      // (a producer stamps one scan of one tree; the next scan builds a new stamper).
+      writeFileSync(join(dir, 'a.txt'), 'changed\ntwo\nthree\n');
+      expect(stamp('a.txt', 2)).toBe(computeContentHash('one\ntwo\nthree\n', 2));
+      expect(contentStamper({ cwd: dir })('a.txt', 2)).toBe(
+        computeContentHash('changed\ntwo\nthree\n', 2),
+      );
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -259,15 +321,15 @@ describe('contentStamper (the one stamping policy)', () => {
 });
 
 describe('arch-check: a second stamping call site is rejected', () => {
-  it('scripts/check-architecture.sh flags computeContentHashFromCommit() outside content-stamp.ts', () => {
+  it('scripts/check-architecture.sh flags computeContentHash() outside content-stamp.ts', () => {
     const repoRoot = resolve(__dirname, '..', '..');
     const rogueRoot = mkdtempSync(join(tmpdir(), 'dxkit-rogue-stamp-'));
     try {
       mkdirSync(join(rogueRoot, 'producers'), { recursive: true });
       writeFileSync(
         join(rogueRoot, 'producers', 'rogue.ts'),
-        "import { computeContentHashFromCommit } from '../content-hash';\n" +
-          'export const h = computeContentHashFromCommit(cwd, sha, file, line);\n',
+        "import { computeContentHash } from '../content-hash';\n" +
+          'export const h = computeContentHash(content, line);\n',
       );
       // The gate reads its scan root from the environment so the rule can be
       // proven to bite without planting a file inside src/.

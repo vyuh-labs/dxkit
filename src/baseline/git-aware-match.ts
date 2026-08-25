@@ -463,17 +463,23 @@ export function gitAwareMatch(
       if (bucket) bucket.push(c);
       else currentByContent.set(key, [c]);
     }
-    const takeContent = (key: string): LocatedIdentity | undefined => {
+    // Same-file candidates first: identical boilerplate windows in different
+    // files (copied components, generated code) hash identically under one
+    // rule, and pairing a prior with another file's twin would report the
+    // real relocation as net-new at the wrong path. Only when no same-file
+    // candidate exists does the pass accept a cross-file one (a rename).
+    const takeContent = (key: string, file: string | undefined): LocatedIdentity | undefined => {
       const bucket = currentByContent.get(key);
       if (!bucket || bucket.length === 0) return undefined;
-      const head = bucket.shift();
+      const sameFile = file === undefined ? -1 : bucket.findIndex((c) => c.file === file);
+      const [taken] = bucket.splice(sameFile >= 0 ? sameFile : 0, 1);
       if (bucket.length === 0) currentByContent.delete(key);
-      return head;
+      return taken;
     };
     for (const p of prior) {
       if (priorMatched.has(p)) continue;
       if (!p.contentHash || !p.rule) continue;
-      const candidate = takeContent(contentKey(p.rule, p.contentHash));
+      const candidate = takeContent(contentKey(p.rule, p.contentHash), p.file);
       if (!candidate) continue;
       priorMatched.add(p);
       currentMatched.add(candidate);

@@ -694,23 +694,23 @@ fi
 # every producer of a located kind calls `contentStamper`. Before this gate the
 # security producer stamped through a local closure and the custom-check
 # producer stamped nothing, so a whole-file reindent read ~10k grandfathered
-# lint findings as resolved + net-new. A second call site of
-# `computeContentHashFromCommit(` is a second stamping policy in the making.
+# lint findings as resolved + net-new. A second call site of the hash
+# primitive `computeContentHash(` is a second stamping policy in the making.
 # Annotate `// content-stamp-ok` for a justified exception (rare).
 CONTENT_STAMP_ALLOWLIST="src/baseline/content-hash.ts src/baseline/content-stamp.ts"
 ALLOW_FILTER_CS=""
 for f in $CONTENT_STAMP_ALLOWLIST; do
   ALLOW_FILTER_CS="$ALLOW_FILTER_CS -e ^${f}:"
 done
-ROGUE_STAMP=$(grep -rnE "computeContentHashFromCommit[[:space:]]*\(" ${CONTENT_STAMP_SCAN_ROOT:-src}/ 2>/dev/null \
+ROGUE_STAMP=$(grep -rnE "(^|[^A-Za-z])computeContentHash[[:space:]]*\(" ${CONTENT_STAMP_SCAN_ROOT:-src}/ 2>/dev/null \
   | grep -v "// content-stamp-ok" \
   | grep -v -E ':[[:space:]]*(//|\*)' \
   | { [ -n "$ALLOW_FILTER_CS" ] && grep -v $ALLOW_FILTER_CS || cat; })
 if [ -n "$ROGUE_STAMP" ]; then
-  echo "❌ Content-stamp violation: computeContentHashFromCommit() called outside src/baseline/content-stamp.ts:"
+  echo "❌ Content-stamp violation: computeContentHash() called outside src/baseline/content-stamp.ts:"
   echo "$ROGUE_STAMP"
   echo "   → Build a stamper with contentStamper(source) from src/baseline/content-stamp.ts"
-  echo "     and call it per (file, line); it owns the no-commit / line-0 / unreadable policy."
+  echo "     and call it per (file, line); it owns the no-source / line-0 / unreadable policy."
   echo "   → Annotate '// content-stamp-ok' for a justified exception (rare)."
   ERRORS=$((ERRORS + 1))
 fi

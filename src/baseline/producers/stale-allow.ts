@@ -48,7 +48,7 @@ import { lineWindowFor } from '../../analyzers/tools/fingerprint';
 import type { SecurityAggregate } from '../../analyzers/security/aggregator';
 import type { InlineAllowlistOccurrence } from '../../allowlist/gather';
 import { coveredLineFor } from '../../allowlist/inline-synth';
-import { contentStamper } from '../content-stamp';
+import { contentStamper, type ContentStampSource } from '../content-stamp';
 import { identityFor } from '../finding-identity';
 import type { RichBaselineEntry, StaleAllowIdentityInput } from '../types';
 
@@ -60,7 +60,7 @@ export interface StaleAllowInput {
    * content-hash pass relocates it without git (the line-bucketed identity
    * re-mints on a >window shift). Best-effort: omitted when absent or the file
    * can't be read at the commit. */
-  readonly commit?: { readonly cwd: string; readonly commitSha: string };
+  readonly commit?: ContentStampSource;
 }
 
 /**

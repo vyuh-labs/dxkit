@@ -27,7 +27,7 @@
  *     positions, not just counts. Pending in a follow-up commit.
  */
 
-import { contentStamper } from '../content-stamp';
+import { contentStamper, type ContentStampSource } from '../content-stamp';
 import { duplicationCanonicalSides, identityFor } from '../finding-identity';
 import type { RichBaselineEntry, DuplicationIdentityInput, StaleFileIdentityInput } from '../types';
 import type { DuplicationResult } from '../../languages/capabilities/types';
@@ -51,7 +51,7 @@ const STALE_SUFFIXES = new Set(['swp', 'swo', 'bak', 'orig', 'tmp', 'log', 'pyc'
  */
 export function duplicationToBaselineEntries(
   duplication: DuplicationResult | undefined,
-  opts?: { readonly cwd: string; readonly commitSha: string },
+  opts?: ContentStampSource,
 ): RichBaselineEntry[] {
   if (!duplication) return [];
   const out: RichBaselineEntry[] = [];
