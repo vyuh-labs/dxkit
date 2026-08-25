@@ -4,9 +4,9 @@
  * Converts the canonical `SecurityAggregate` produced by the security
  * analyzer (`src/analyzers/security/aggregator.ts`) into the per-kind
  * `BaselineEntry` shape stored in the baseline file. Pure function
- * over its input apart from the optional content-hash stamp, which
- * reads the file at the baseline commit via git (skipped when the
- * caller doesn't supply a commit SHA).
+ * over its input — a pure map from the aggregate to entries. The
+ * `contentHash` stamp is applied by the ORCHESTRATOR (`stampEntries`
+ * in content-stamp.ts), never per producer.
  *
  * Four `BaselineEntry` kinds are derived here, matching the four
  * categories the aggregator emits:
@@ -26,20 +26,11 @@
  * the same line) and a `secret-hmac` entry (content identity, stable
  * across file moves).
  *
- * Content-hash stamping (third-pass matcher fallback): when `cwd` +
- * `commitSha` are supplied, the shared `contentStamper` (the one
- * stamping entry point every located kind uses) reads each file at
- * the baseline commit and hashes the normalized context window around
- * the finding's line. The hash lands in `BaselineEntry.contentHash`
- * for the secret / code / config kinds; the matcher's content-hash
- * pass uses it to pair findings across runs even when git diff can't
- * map the line position. Producers can pass `undefined` for the SHA
- * (e.g., non-git directories) and content-hash matching is simply
- * unavailable for that baseline — the matcher's other passes still
- * work.
+ * Content-hash stamping lives in the orchestrator (content-stamp.ts):
+ * producers emit bare entries; `stampEntries` hashes every located one
+ * from the working tree the findings were scanned on.
  */
 
-import { contentStamper } from '../content-stamp';
 import type { SecurityAggregate } from '../../analyzers/security/aggregator';
 import { identityFor } from '../finding-identity';
 import type {
@@ -50,12 +41,6 @@ import type {
   SecretIdentityInput,
 } from '../types';
 
-export interface SecurityProducerOptions {
-  /** Repo path; the shared `contentStamper` reads the working tree the
-   * findings were scanned on. Omitting it disables content-hash stamping. */
-  readonly cwd?: string;
-}
-
 /**
  * Build `BaselineEntry`s from a `SecurityAggregate`. Returned in the
  * iteration order of the four categories so the produced baseline
@@ -63,12 +48,8 @@ export interface SecurityProducerOptions {
  */
 export function securityAggregateToBaselineEntries(
   aggregate: SecurityAggregate,
-  options: SecurityProducerOptions = {},
 ): RichBaselineEntry[] {
   const out: RichBaselineEntry[] = [];
-  // The ONE stamping entry point (content-stamp.ts): no commit, a whole-file
-  // line 0, or an unreadable file all yield no stamp.
-  const stamp = contentStamper(options.cwd ? { cwd: options.cwd } : undefined);
 
   for (const f of aggregate.findingsByCategory.secret) {
     const input: SecretIdentityInput = {
@@ -82,7 +63,6 @@ export function securityAggregateToBaselineEntries(
       // finding carries. Absent → identityFor falls back to the line hash.
       ...(f.contentAnchor !== undefined ? { contentAnchor: f.contentAnchor } : {}),
     };
-    const contentHash = stamp(f.file, f.line);
     out.push({
       id: identityFor(input),
       kind: 'secret',
@@ -91,7 +71,6 @@ export function securityAggregateToBaselineEntries(
       file: f.file,
       line: f.line,
       ...(f.severity !== undefined ? { severity: f.severity } : {}),
-      ...(contentHash !== undefined ? { contentHash } : {}),
       ...(f.absorbedFingerprints && f.absorbedFingerprints.length > 0
         ? { absorbedFingerprints: f.absorbedFingerprints }
         : {}),
@@ -109,7 +88,6 @@ export function securityAggregateToBaselineEntries(
       // built; passing it reproduces the finding's content fingerprint.
       ...(f.contentAnchor !== undefined ? { contentAnchor: f.contentAnchor } : {}),
     };
-    const contentHash = stamp(f.file, f.line);
     out.push({
       id: identityFor(input),
       kind: 'code',
@@ -118,7 +96,6 @@ export function securityAggregateToBaselineEntries(
       file: f.file,
       line: f.line,
       ...(f.severity !== undefined ? { severity: f.severity } : {}),
-      ...(contentHash !== undefined ? { contentHash } : {}),
       ...(f.absorbedFingerprints && f.absorbedFingerprints.length > 0
         ? { absorbedFingerprints: f.absorbedFingerprints }
         : {}),
@@ -139,7 +116,6 @@ export function securityAggregateToBaselineEntries(
     };
     // Whole-file findings (`.env in git`) carry line 0; content-hash
     // is meaningless for them and `stamp` returns undefined.
-    const contentHash = stamp(f.file, f.line);
     out.push({
       id: identityFor(input),
       kind: 'config',
@@ -148,7 +124,6 @@ export function securityAggregateToBaselineEntries(
       file: f.file,
       line: f.line,
       ...(f.severity !== undefined ? { severity: f.severity } : {}),
-      ...(contentHash !== undefined ? { contentHash } : {}),
       ...(f.absorbedFingerprints && f.absorbedFingerprints.length > 0
         ? { absorbedFingerprints: f.absorbedFingerprints }
         : {}),

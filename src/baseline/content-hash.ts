@@ -14,7 +14,7 @@
  *
  *   1. Every producer of a located kind stamps its entries through
  *      the ONE `contentStamper` (`content-stamp.ts`), which reads the
- *      finding's surrounding context lines at the anchor commit,
+ *      finding's surrounding context lines from the working tree,
  *      normalizes whitespace, and computes a SHA-1[0:16] hash here.
  *      The hash is stamped on the finding entry in the baseline file.
  *   2. At guardrail-check time, the current scan computes content
@@ -71,7 +71,18 @@ export function computeContentHash(
   line: number,
   contextLines: number = CONTENT_HASH_CONTEXT_LINES,
 ): string {
-  const lines = fileContent.split('\n');
+  return computeContentHashFromLines(fileContent.split('\n'), line, contextLines);
+}
+
+/**
+ * Same hash over pre-split lines. The stamper caches split lines per file so
+ * a file carrying thousands of findings is split once, not once per finding.
+ */
+export function computeContentHashFromLines(
+  lines: readonly string[],
+  line: number,
+  contextLines: number = CONTENT_HASH_CONTEXT_LINES,
+): string {
   const startIdx = Math.max(0, line - 1 - contextLines);
   const endIdx = Math.min(lines.length, line + contextLines);
   const window = lines.slice(startIdx, endIdx);

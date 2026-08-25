@@ -44,6 +44,7 @@ import { buildReachable } from '../src/analyzers/tests/import-graph';
 import { trustedLocalContext } from '../src/analysis-trust';
 import { createBaseline } from '../src/baseline/create';
 import { runGuardrailCheck } from '../src/baseline/check';
+import { CONFIDENCE_CONTENT_HASH_SAME_FILE } from '../src/baseline/git-aware-match';
 import { isSanitized } from '../src/baseline/sanitize';
 
 const FIXTURES = join(__dirname, 'fixtures', 'analysis');
@@ -490,16 +491,16 @@ describe('analysis fixtures: identity survives a whole-file reformat (custom-che
     // Seven findings sit on reindented lines: the diff rewrote them, so the
     // git line map has no image and only the content pass can pair them. The
     // eighth (`function debugLog(`) is unindented, so git maps it directly.
-    // A content pair carries the matcher's 0.80 confidence, which the default
-    // policy reads as `uncertain` (a warning) for a medium-severity kind;
-    // never `added`, never a block.
+    // A SAME-FILE content pair carries the 0.90 tier, which clears every
+    // default per-severity threshold: the whole backlog reads PERSISTED,
+    // never `uncertain`, never `added`, never a block.
     const byContent = pairs.filter((p) =>
       p.classification.reasons.some((r) => r.code === 'content-hash'),
     );
     expect(byContent.length).toBe(7);
     for (const p of byContent) {
-      expect(p.pair.confidence).toBe(0.8);
-      expect(['persisted', 'uncertain']).toContain(p.classification.status);
+      expect(p.pair.confidence).toBe(CONFIDENCE_CONTENT_HASH_SAME_FILE);
+      expect(p.classification.status).toBe('persisted');
     }
     expect(pairs.length - byContent.length).toBe(1);
 

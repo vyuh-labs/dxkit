@@ -48,19 +48,12 @@ import { lineWindowFor } from '../../analyzers/tools/fingerprint';
 import type { SecurityAggregate } from '../../analyzers/security/aggregator';
 import type { InlineAllowlistOccurrence } from '../../allowlist/gather';
 import { coveredLineFor } from '../../allowlist/inline-synth';
-import { contentStamper, type ContentStampSource } from '../content-stamp';
 import { identityFor } from '../finding-identity';
 import type { RichBaselineEntry, StaleAllowIdentityInput } from '../types';
 
 export interface StaleAllowInput {
   readonly annotations: ReadonlyArray<InlineAllowlistOccurrence>;
   readonly aggregate: SecurityAggregate | null;
-  /** Repo + baseline commit. When present, each stale entry is stamped with a
-   * `contentHash` of the annotation's surrounding context, so the matcher's
-   * content-hash pass relocates it without git (the line-bucketed identity
-   * re-mints on a >window shift). Best-effort: omitted when absent or the file
-   * can't be read at the commit. */
-  readonly commit?: ContentStampSource;
 }
 
 /**
@@ -86,7 +79,6 @@ export function staleAllowToBaselineEntries(input: StaleAllowInput): RichBaselin
   if (input.aggregate === null) return [];
 
   const covered = buildCoveredLocations(input.aggregate);
-  const stamp = contentStamper(input.commit);
   const out: RichBaselineEntry[] = [];
   for (const occ of input.annotations) {
     // Check the line the annotation COVERS (above-line → the finding below it),
@@ -101,14 +93,12 @@ export function staleAllowToBaselineEntries(input: StaleAllowInput): RichBaselin
       line: occ.line,
       category: occ.category,
     };
-    const contentHash = stamp(occ.file, occ.line);
     out.push({
       id: identityFor(identityInput),
       kind: 'stale-allow',
       file: occ.file,
       line: occ.line,
       category: occ.category,
-      ...(contentHash !== undefined ? { contentHash } : {}),
     });
   }
   return out;

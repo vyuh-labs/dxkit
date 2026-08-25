@@ -637,6 +637,11 @@ export type BaselineEntry =
       file: string;
       symbol?: string;
       lineRange?: readonly [number, number];
+      /** Content-hash of the range start's context (range-anchored gaps are
+       * line-dependent, so they carry the reformat-survival stamp like every
+       * located kind; symbol-anchored gaps are line-independent and the
+       * orchestrator leaves them bare). */
+      contentHash?: string;
     }
   | { id: FindingId; kind: 'test-gap'; file: string; risk: TestGapRisk }
   | {
@@ -647,7 +652,7 @@ export type BaselineEntry =
       marker: HygieneMarker;
       /** Same content-hash semantics as the secret/code/config variant
        * — populated when the producer can read the file at the
-       * baseline commit. */
+       * tree the findings were scanned on. */
       contentHash?: string;
     }
   | {
@@ -742,8 +747,10 @@ export type BaselineEntry =
        * scheme as secret/code/config), so the matcher's content-hash pass
        * relocates a lint finding across a whole-file reformat that both moves
        * it past the identity window and rewrites its line in the diff. Absent
-       * for a binary finding, when no commit was available, and on baselines
-       * written before the stamp (those degrade to the git + identity passes). */
+       * for a binary finding and on baselines written before the stamp
+       * (those degrade to the git + identity passes until the migrate lane
+       * restamps them). Stamped from the working tree the finding was
+       * scanned on, by the orchestrator. */
       contentHash?: string;
     }
   | {

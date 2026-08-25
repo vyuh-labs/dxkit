@@ -8,7 +8,12 @@ import { ShipInstallResult, detectDefaultBranch } from './ship-installers';
 import { detectInstallFlags, refreshManagedSurfaces } from './managed-artifacts';
 import { applyPolicyDerivedFlags } from './managed-artifacts-detect';
 import * as logger from './logger';
-import { detectStaleRecall, detectStaleScheme, migrateIdentity } from './baseline/migrate';
+import {
+  detectStaleRecall,
+  detectStaleScheme,
+  migrateIdentity,
+  restampContentHashes,
+} from './baseline/migrate';
 import { createBaseline, gatherScanCoverage } from './baseline/create';
 import { missingScanners } from './baseline/coverage';
 import { loadPolicyFromCwd } from './baseline/policy';
@@ -260,6 +265,7 @@ export async function runUpdate(cwd: string, force: boolean, rescan = false): Pr
   // manual re-baseline. Fail-soft: a migration error is reported, not fatal
   // to the rest of the update.
   await migrateIdentityIfStale(cwd);
+  restampIfBare(cwd);
 
   // Recall-attribution refresh (CLAUDE.md Rule 19). Runs AFTER the identity
   // migration on purpose: that path already re-baselines, which stamps recall
@@ -387,6 +393,32 @@ function baselineFinishingStep(cwd: string, alsoAllowlist = false): string {
  * throws (a migration failure is surfaced as a warning so the rest of the
  * update still succeeds).
  */
+/**
+ * Restamp content hashes on a baseline written before the stamp scheme, so
+ * the matcher's reformat-surviving content pass works without waiting for
+ * the next refresh. Fail-open with a warning; the rest of the update stands.
+ */
+function restampIfBare(cwd: string): void {
+  try {
+    const summary = restampContentHashes(cwd);
+    if (!summary) return;
+    logger.success(
+      `Content hashes stamped onto ${summary.restamped} baseline finding(s) ` +
+        `(reformat-tolerant matching now covers them).`,
+    );
+    if (summary.unreadable > 0) {
+      logger.warn(
+        `${summary.unreadable} finding(s) reference files unreadable at the baseline's anchor ` +
+          `commit — left unstamped; the next baseline refresh will stamp them.`,
+      );
+    }
+  } catch (err) {
+    logger.warn(
+      `Content-hash restamp skipped: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+}
+
 async function migrateIdentityIfStale(cwd: string): Promise<void> {
   let from;
   try {

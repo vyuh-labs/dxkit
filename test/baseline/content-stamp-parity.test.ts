@@ -1,18 +1,17 @@
 /**
  * Content-stamp PARITY across producers (CLAUDE.md Rule 2.30).
  *
- * The invariant: every registered producer whose entries carry a LINE stamps
- * them with a `contentHash` when a commit is available. Path-identity kinds
- * (large-file, test-gap, stale-file, dep-vuln...) carry no line and no stamp.
+ * The invariant: the ORCHESTRATOR stamps every located entry (locatedness
+ * decided by `entryToLocated`, the projection the matcher pairs on), so no
+ * producer can ship unstamped — the 4.4.4 class where the custom-check
+ * producer stamped nothing while the security producer stamped through a
+ * local closure. Path-identity kinds (large-file, test-gap, dep-vuln...)
+ * carry no line and no stamp.
  *
- * Why a parity test and not just the arch-check: the arch-check pins that the
- * hash is computed in ONE module; it cannot see a producer that simply never
- * calls it. That is exactly how the custom-check producer shipped unstamped
- * while the security producer stamped: nothing iterated the registry and
- * asked. This test does, on a real git repo, with every located producer fed
- * a finding, and it is injection-guarded (the checker must flag a synthetic
- * producer that emits a bare line-carrying entry) so a checker that stopped
- * looking would fail here rather than pass silently.
+ * Injection-guarded in the NEW direction: a synthetic producer that emits a
+ * bare located entry must come out of `runProducers` STAMPED (the registry
+ * is covered structurally), and `captureFragment`'s output is pinned too
+ * (the one entry-minting path outside the registry).
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { execFileSync } from 'child_process';
@@ -29,6 +28,7 @@ import {
 import type { RichBaselineEntry } from '../../src/baseline/types';
 import type { SecurityAggregate } from '../../src/analyzers/security/aggregator';
 import { producerFixtureContext } from './producer-fixture';
+import { entryToLocated } from '../../src/baseline/entry-to-located';
 
 /**
  * Every entry the git-aware matcher can relocate by line: it carries a
@@ -36,18 +36,15 @@ import { producerFixtureContext } from './producer-fixture';
  * side). These are the entries that MUST carry a content hash when a commit
  * is available. Returns the offenders; empty means parity holds.
  */
+function isLocated(e: RichBaselineEntry): boolean {
+  const loc = entryToLocated(e);
+  return loc.file !== undefined && typeof loc.line === 'number' && loc.line > 0;
+}
+
 function unstampedLocatedEntries(entries: ReadonlyArray<RichBaselineEntry>): RichBaselineEntry[] {
-  const out: RichBaselineEntry[] = [];
-  for (const e of entries) {
-    const located =
-      e.kind === 'duplication'
-        ? e.startLineA > 0
-        : 'line' in e && typeof e.line === 'number' && e.line > 0 && 'file' in e;
-    if (!located) continue;
-    const hash = 'contentHash' in e ? e.contentHash : undefined;
-    if (hash === undefined) out.push(e);
-  }
-  return out;
+  return entries.filter(
+    (e) => isLocated(e) && ('contentHash' in e ? e.contentHash : undefined) === undefined,
+  );
 }
 
 const SOURCE =
@@ -155,12 +152,7 @@ describe('content-stamp parity across the producer registry', () => {
     const entries = runProducers(locatedContext(dir, sha), PRODUCERS);
     // Not vacuous: each located producer actually contributed a line-carrying
     // entry, so a producer that silently dropped its input would fail here.
-    const locatedKinds = new Set(
-      entries
-        .filter((e) => unstampedLocatedEntries([e]).length === 0)
-        .filter((e) => ('line' in e && typeof e.line === 'number') || e.kind === 'duplication')
-        .map((e) => e.kind),
-    );
+    const locatedKinds = new Set(entries.filter(isLocated).map((e) => e.kind));
     for (const kind of ['code', 'duplication', 'stale-allow', 'custom-check']) {
       expect(locatedKinds, `producer for ${kind} contributed a located entry`).toContain(kind);
     }
@@ -180,7 +172,7 @@ describe('content-stamp parity across the producer registry', () => {
     }
   });
 
-  it('SYNTHETIC INJECTION: the checker flags a producer that emits a bare located entry', () => {
+  it('SYNTHETIC INJECTION: a producer that emits a bare located entry comes out STAMPED', () => {
     const rogue: BaselineProducer = {
       name: 'synthetic-unstamped',
       contributes: ['code'],
@@ -200,8 +192,62 @@ describe('content-stamp parity across the producer registry', () => {
         return new Map([['code', { epoch: 1, inputs: {} }]]);
       },
     };
+    // The orchestrator stamps registry output structurally: a new producer
+    // needs no wiring, so the injected bare entry gains a hash.
     const entries = runProducers(locatedContext(dir, sha), [rogue]);
-    const offenders = unstampedLocatedEntries(entries);
-    expect(offenders.map((e) => e.id)).toEqual(['synth0000feedbeef']);
+    expect(unstampedLocatedEntries(entries)).toEqual([]);
+    const synth = entries.find((e) => e.id === 'synth0000feedbeef');
+    expect(synth && 'contentHash' in synth ? synth.contentHash : undefined).toMatch(
+      /^[0-9a-f]{16}$/,
+    );
+    // The negative control still exists: an entry whose file is OUTSIDE the
+    // repo stays bare (the stamper's containment policy, not a stamping gap).
+    const escapee = runProducers(locatedContext(dir, sha), [
+      {
+        ...rogue,
+        produce() {
+          return [
+            {
+              id: 'synth0000feedbee0',
+              kind: 'code',
+              tool: 'semgrep',
+              rule: 'rule-1',
+              file: '../outside.ts',
+              line: 10,
+            },
+          ];
+        },
+      },
+    ]);
+    expect(unstampedLocatedEntries(escapee).map((e) => e.id)).toEqual(['synth0000feedbee0']);
+  });
+
+  it('captureFragment output is stamped through the same entry point', async () => {
+    const { captureFragment } = await import('../../src/baseline/fragment');
+    const { trustedLocalContext } = await import('../../src/analysis-trust');
+    const { loadPolicyFromCwd } = await import('../../src/baseline/policy');
+    const policyDir = join(dir, '.dxkit');
+    mkdirSync(policyDir, { recursive: true });
+    writeFileSync(
+      join(policyDir, 'policy.json'),
+      JSON.stringify({
+        checks: [
+          {
+            name: 'seed-lint',
+            command: `node -e "console.log('src/a.ts:12: no-x seeded')"`, // slop-ok
+            parse: { regex: '^(?<file>[^:]+):(?<line>\\d+): (?<rule>\\S+)' },
+          },
+        ],
+      }),
+    );
+    const fragment = await captureFragment({
+      cwd: dir,
+      trust: trustedLocalContext(),
+      policy: loadPolicyFromCwd(dir),
+      checks: ['seed-lint'],
+    });
+    const findings = fragment.findings as RichBaselineEntry[];
+    expect(findings.length).toBeGreaterThan(0);
+    expect(unstampedLocatedEntries(findings)).toEqual([]);
   });
 });

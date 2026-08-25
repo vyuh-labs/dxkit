@@ -11,41 +11,28 @@
  * `ProducerContext.customCheckFindings`) and passed here — this producer is a
  * pure map apart from the best-effort content-hash read, never a shell-out.
  *
- * Content-hash scheme (the reformat-survival layer). Every LOCATED entry is
- * stamped with `contentHash` through the shared `contentStamper`: SHA-1[0:16]
- * of the whitespace-normalized 7-line window around the finding, read from the
- * working tree the finding was scanned on, the same scheme the
- * secret / code / config / duplication / stale-allow kinds use. The
- * git-aware matcher keys its content-hash pass on `(rule, contentHash)`; the
- * rule string for a custom-check pair is `check/rule` (or the bare check
- * label), minted identically on both sides by `entryToLocated`. So a
- * whole-file reindent, which moves every line past the 3-line identity window
- * AND rewrites every line in the diff (no line-map image for the git pass),
- * still pairs each grandfathered lint finding with its moved self instead of
- * reading as "resolved" plus "net-new".
+ * Content-hash stamping lives in the orchestrator (`stampEntries` in
+ * content-stamp.ts): this producer emits bare entries. Within one identity
+ * bucket (the shared 3-line window) the entry records the MINIMUM reported
+ * line, so the stamped window is independent of the linter's output order
+ * (two occurrences reported in either order yield one hash).
  *
- * Migration: baselines written before this scheme carry no `contentHash` on
- * custom-check entries. That degrades to exactly the pre-scheme behavior (the
- * matcher skips a side without a hash; the git and identity passes still
- * run), so no migration step and no rescan are needed. The next baseline
- * refresh stamps the entries. Stamps are only as good as the tree they read:
- * a baseline captured on a dirty tree hashes that tree, which is also what its
- * line numbers describe.
+ * Migration: baselines written before the stamp scheme carry no
+ * `contentHash` on custom-check entries. The matcher degrades to the git
+ * and identity passes, and the update/migrate lane restamps them at the
+ * baseline's anchor commit (`restampAtCommit`).
  *
  * BINARY findings (no `file`) are whole-command pass/fail with no location;
  * they carry no hash by construction.
  */
 
-import { contentStamper, type ContentStampSource } from '../content-stamp';
 import { identityFor } from '../finding-identity';
 import type { CustomCheckFinding } from '../../analyzers/custom-checks/types';
 import type { RichBaselineEntry } from '../types';
 
 export function customCheckFindingsToBaselineEntries(
   findings: readonly CustomCheckFinding[],
-  commit?: ContentStampSource,
 ): RichBaselineEntry[] {
-  const stamp = contentStamper(commit);
   // ONE entry per identity. Located identity buckets lines into the shared
   // 3-line window (Rule 9), so a linter reporting the same rule on adjacent
   // lines mints the SAME fingerprint N times — and the multiset survived
@@ -66,10 +53,18 @@ export function customCheckFindingsToBaselineEntries(
     const hit = byId.get(id);
     if (hit) {
       hit.occurrences += 1;
+      // Minimum-line rule: the bucket's recorded line (and thus the stamped
+      // window) must not depend on which occurrence the linter printed first.
+      if (
+        f.line !== undefined &&
+        'line' in hit.entry &&
+        typeof hit.entry.line === 'number' &&
+        f.line < hit.entry.line
+      ) {
+        hit.entry = { ...hit.entry, line: f.line };
+      }
       continue;
     }
-    const contentHash =
-      f.file !== undefined && f.line !== undefined ? stamp(f.file, f.line) : undefined;
     byId.set(id, {
       occurrences: 1,
       entry: {
@@ -81,7 +76,6 @@ export function customCheckFindingsToBaselineEntries(
         ...(f.line !== undefined ? { line: f.line } : {}),
         ...(f.rule !== undefined ? { rule: f.rule } : {}),
         ...(f.message !== undefined ? { message: f.message } : {}),
-        ...(contentHash !== undefined ? { contentHash } : {}),
       },
     });
   }
