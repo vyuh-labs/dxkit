@@ -522,9 +522,39 @@ describe('refutedResolutionSpecifiers: relative (project-path) identities', () =
     );
   });
 
-  it('discloses (and keeps the block) when the basename is too common to read', () => {
-    // 2001 base files mention `config`: past the candidate ceiling, so the
-    // probe declines to decide, says so, and keeps the block.
+  it('a SHORT basename still refutes: the needles are import-shaped, not bare substrings', () => {
+    // `db` as a bare substring matches half a codebase; as `/db'` it only
+    // matches an import tail, so the pre-existing dangling import refutes.
+    const short = mkdtempSync(join(tmpdir(), 'dxkit-floor-attrib-short-'));
+    try {
+      git(short, ['init', '-q', '-b', 'main']);
+      git(short, ['config', 'user.email', 'test@example.com']);
+      git(short, ['config', 'user.name', 'test']);
+      git(short, ['config', 'commit.gpgsign', 'false']);
+      mkdirSync(join(short, 'src'));
+      writeFileSync(
+        join(short, 'src', 'a.js'),
+        "const d = require('./db');\nmodule.exports = d;\n",
+      );
+      // Plenty of prose mentions of `db` that must NOT count as candidates.
+      writeFileSync(
+        join(short, 'src', 'notes.js'),
+        '// db db db\nconst dbName = 1;\nmodule.exports = dbName;\n',
+      );
+      git(short, ['add', '.']);
+      git(short, ['commit', '-q', '-m', 'base']);
+      const sha = git(short, ['rev-parse', 'HEAD']).trim();
+      const ev = refutedResolutionSpecifiers(short, sha, packs, ['./src/db']);
+      expect(ev?.refuted).toEqual(['./src/db']);
+      expect(ev?.undecided).toEqual([]);
+    } finally {
+      rmSync(short, { recursive: true, force: true });
+    }
+  });
+
+  it('past the candidate ceiling the identity degrades to DISCLOSED undecided and does not block', () => {
+    // 2001 base files import './config': past the candidate ceiling, so the
+    // probe cannot attribute; the pre-push surface warns instead of blocking.
     const many = mkdtempSync(join(tmpdir(), 'dxkit-floor-attrib-many-'));
     try {
       git(many, ['init', '-q', '-b', 'main']);
@@ -540,7 +570,25 @@ describe('refutedResolutionSpecifiers: relative (project-path) identities', () =
       const sha = git(many, ['rev-parse', 'HEAD']).trim();
       const ev = refutedResolutionSpecifiers(many, sha, packs, ['./src/config']);
       expect(ev?.refuted).toEqual([]);
+      expect(ev?.undecided).toEqual(['./src/config']);
       expect(ev?.disclosures.join('\n')).toContain('too many to read');
+      const result = {
+        ran: true,
+        blocks: true,
+        checks: [
+          {
+            pack: 'typescript',
+            label: IMPORT_RESOLUTION_LABEL,
+            bin: '',
+            status: 'fail',
+            output: '',
+            findings: ['./src/config'],
+          },
+        ],
+      } as unknown as CorrectnessFloorResult;
+      const out = attributePrePushResolution(many, sha, packs, result);
+      expect(out?.blocks).toBe(false);
+      expect(out?.note).toContain('cannot attribute');
     } finally {
       rmSync(many, { recursive: true, force: true });
     }

@@ -90,6 +90,25 @@ describe('import-resolution disclosures reach the rendered floor', () => {
     ]);
   });
 
+  it('a SKIPPED check keeps the disclosures accumulated before it stepped back', () => {
+    const r = runCorrectnessFloor({
+      ...base,
+      packs: [
+        packWith({
+          kind: 'skipped',
+          reason: '12 packages do not resolve',
+          disclosures: ['60 relative imports reach no file, repo-wide'],
+        }),
+      ],
+    });
+    const check = r.checks.find((c) => c.label === IMPORT_RESOLUTION_LABEL)!;
+    expect(check.status).toBe('skipped-unavailable');
+    expect(check.output).toContain('12 packages');
+    const lines = describeEnvironmentSkips(r);
+    expect(lines.join('\n')).toContain('12 packages do not resolve');
+    expect(lines.join('\n')).toContain('60 relative imports');
+  });
+
   it('a clean check with nothing to disclose stays silent', () => {
     const r = runCorrectnessFloor({
       ...base,
