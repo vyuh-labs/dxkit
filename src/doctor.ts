@@ -23,6 +23,16 @@ import { diagnoseFlow, type FlowDiagnosis } from './analyzers/flow/diagnose';
 import { gatherRecommendations, type CommandRecommendation } from './discovery/commands';
 import { trustedLocalContext } from './analysis-trust';
 import { probeDeliveryPreconditions } from './lanes/delivery-preconditions';
+import {
+  LANE_TOKEN_REMEDY_COMMAND,
+  probeLaneTokenTierHere,
+  type LaneTokenTierProbe,
+} from './lanes/lane-token-probe';
+import {
+  LANE_TOKEN_APP_ID_VARIABLE_NAME,
+  LANE_TOKEN_APP_KEY_SECRET_NAME,
+  LANE_TOKEN_PAT_SECRET_NAME,
+} from './lanes/lane-token';
 
 /**
  * Three-tier doctor:
@@ -109,62 +119,50 @@ export interface DoctorReport {
 }
 
 /**
- * Is the DXKIT_BOT_TOKEN repo secret absent? Tri-state and fail-open:
- * `true` only when `gh secret list` SUCCEEDED and the name is not there;
- * `false` when present; `null` when unknowable (no gh, no admin scope,
- * offline) — the caller stays silent on null, never a false alarm.
+ * The 6d lane-token check for a probe result (dxkit #325). Pure so every
+ * state is pinned by test: a genuine absence is the red finding with the
+ * remedy; an UNOBSERVABLE scope (org-level names this token cannot list)
+ * is advice that says what could not be verified and where the truth is,
+ * never the negative assertion; a configured tier is no finding at all.
  */
-function botTokenSecretAbsent(cwd: string): boolean | null {
-  try {
-    const out = execSync('gh secret list --json name --jq ".[].name"', {
-      cwd,
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-      timeout: 15_000,
-    });
-    return !out
-      .split('\n')
-      .map((l) => l.trim())
-      .includes('DXKIT_BOT_TOKEN');
-  } catch {
-    return null;
-  }
-}
-
-/** Is the GitHub App token tier configured (4.4.1 WP7)? TRUE only when BOTH
- *  halves exist — the DXKIT_APP_ID variable and the DXKIT_APP_PRIVATE_KEY
- *  secret; the workflows gate their mint step on the variable and fail
- *  loudly on a broken key. Tri-state fail-open like its PAT sibling: null
- *  when the API cannot answer (no admin scope, offline) — never a false
- *  alarm. */
-function appTokenConfigured(cwd: string): boolean | null {
-  try {
-    const vars = execSync('gh variable list --json name --jq ".[].name"', {
-      cwd,
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-      timeout: 15_000,
-    });
-    if (
-      !vars
-        .split('\n')
-        .map((l) => l.trim())
-        .includes('DXKIT_APP_ID')
-    ) {
-      return false;
-    }
-    const secrets = execSync('gh secret list --json name --jq ".[].name"', {
-      cwd,
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-      timeout: 15_000,
-    });
-    return secrets
-      .split('\n')
-      .map((l) => l.trim())
-      .includes('DXKIT_APP_PRIVATE_KEY');
-  } catch {
-    return null;
+export function laneTokenTierCheck(result: LaneTokenTierProbe): CheckResult | null {
+  switch (result.state) {
+    case 'configured':
+      return null;
+    case 'not-configured':
+      return {
+        label: 'lane PRs will run no checks: no lane token tier is configured',
+        ok: false,
+        tier: 'operational',
+        fix: {
+          hint:
+            'The dep-bump / remediate lanes push with the default GITHUB_TOKEN, and GitHub ' +
+            'never triggers workflows for such pushes, so their PRs arrive with no checks ' +
+            '(unmergeable under branch protection). Preferred fix: create a GitHub App ' +
+            '(contents + pull-requests write, installed on this repo), then set the ' +
+            `${LANE_TOKEN_APP_ID_VARIABLE_NAME} variable and ${LANE_TOKEN_APP_KEY_SECRET_NAME} secret (no billed seat, ` +
+            'short-lived per-run tokens, and PRs a maintainer can approve). A PAT in the ' +
+            `${LANE_TOKEN_PAT_SECRET_NAME} secret also works; the lanes pick either up automatically. ` +
+            `Probed: ${result.evidence}.`,
+          command: LANE_TOKEN_REMEDY_COMMAND,
+          skill: 'dxkit-fix',
+        },
+      };
+    case 'unobservable':
+      return {
+        label: 'lane token tier could not be verified from here',
+        ok: false,
+        tier: 'operational',
+        advisory: true,
+        fix: {
+          hint:
+            `Doctor ${result.reason}. This is not a finding: an org-level tier is ` +
+            'common and works without being visible to a repo-scoped token. To verify, ' +
+            'open a recent dep-bump / remediate run and read its "Disclose token mode" ' +
+            `step, or re-run doctor with a token that can list org Actions variables and secrets.`,
+          skill: 'dxkit-fix',
+        },
+      };
   }
 }
 
@@ -1025,35 +1023,20 @@ function runOperationalChecks(cwd: string, hasManifest: boolean): CheckResult[] 
   // that pushes with the default GITHUB_TOKEN opens PRs that trigger NO
   // workflow runs (GitHub's own robot-loop rule) — uncheckable under branch
   // protection. The lanes disclose this per run, but a run notice is
-  // reactive; doctor is where setup gaps are FOUND. Advisory + fail-open:
-  // when `gh` can't list secrets (no admin scope, offline), stay silent —
-  // never a false alarm.
+  // reactive; doctor is where setup gaps are FOUND. Tri-state: a scope the
+  // token cannot list (org-level names, no admin scope, offline) is
+  // "could not verify", disclosed as advice, never a false alarm.
   {
     const prLaneInstalled = ['dxkit-dep-bump.yml', 'dxkit-remediate.yml'].some((f) =>
       fs.existsSync(path.join(cwd, '.github', 'workflows', f)),
     );
-    // Warn only when NEITHER token tier is configured (4.4.1 WP7): the
-    // GitHub App tier (preferred — no billed seat, short-lived per-run
-    // tokens) or the DXKIT_BOT_TOKEN PAT. A null (unanswerable) App probe
-    // stays fail-open: the PAT check alone decides, exactly as before.
-    if (prLaneInstalled && botTokenSecretAbsent(cwd) === true && appTokenConfigured(cwd) !== true) {
-      checks.push({
-        label: 'lane PRs will run no checks — no lane token tier is configured',
-        ok: false,
-        tier: 'operational',
-        fix: {
-          hint:
-            'The dep-bump / remediate lanes push with the default GITHUB_TOKEN, and GitHub ' +
-            'never triggers workflows for such pushes — their PRs arrive with no checks ' +
-            '(unmergeable under branch protection). Preferred fix: create a GitHub App ' +
-            '(contents + pull-requests write, installed on this repo), then set the ' +
-            'DXKIT_APP_ID variable and DXKIT_APP_PRIVATE_KEY secret — no billed seat, ' +
-            'short-lived per-run tokens, and PRs a maintainer can approve. A PAT in the ' +
-            'DXKIT_BOT_TOKEN secret also works; the lanes pick either up automatically.',
-          command: 'gh variable set DXKIT_APP_ID && gh secret set DXKIT_APP_PRIVATE_KEY',
-          skill: 'dxkit-fix',
-        },
-      });
+    // Red only when NEITHER tier is configured AND every scope the lane
+    // reads (repo + org variables/secrets) was actually enumerated. An
+    // org-level tier a repo-scoped token cannot list is UNOBSERVABLE, and
+    // reads as "could not verify" advice, never as absent (dxkit #325).
+    if (prLaneInstalled) {
+      const check = laneTokenTierCheck(probeLaneTokenTierHere(cwd));
+      if (check) checks.push(check);
     }
 
     // 6e. Lane-PR creation permission. Same class as 6d, earlier in the

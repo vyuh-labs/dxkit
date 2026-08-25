@@ -24,9 +24,18 @@
  * declared exemptions, never a filename list.
  */
 
+/**
+ * The configuration NAMES each tier reads. One definition: the workflow
+ * text below, the doctor probe (`lane-token-probe.ts`) and every remedy
+ * string derive from these, so a rename cannot leave a consumer probing
+ * or advising a stale name.
+ */
+export const LANE_TOKEN_APP_ID_VARIABLE_NAME = 'DXKIT_APP_ID';
+export const LANE_TOKEN_APP_KEY_SECRET_NAME = 'DXKIT_APP_PRIVATE_KEY';
+export const LANE_TOKEN_PAT_SECRET_NAME = 'DXKIT_BOT_TOKEN';
+
 /** Tier chain for checkout credentials and gh calls: App → PAT → default. */
-export const LANE_TOKEN_CHAIN =
-  '${{ steps.dxkit-app-token.outputs.token || secrets.DXKIT_BOT_TOKEN || github.token }}';
+export const LANE_TOKEN_CHAIN = `\${{ steps.dxkit-app-token.outputs.token || secrets.${LANE_TOKEN_PAT_SECRET_NAME} || github.token }}`;
 
 /**
  * The remediate task step's chain: prefers the token re-minted immediately
@@ -35,13 +44,14 @@ export const LANE_TOKEN_CHAIN =
  * then falls through the standard tiers.
  */
 export const LANE_TOKEN_CHAIN_TASK =
-  '${{ steps.dxkit-app-token-task.outputs.token || steps.dxkit-app-token.outputs.token || ' +
-  'secrets.DXKIT_BOT_TOKEN || github.token }}';
+  `\${{ steps.dxkit-app-token-task.outputs.token || steps.dxkit-app-token.outputs.token || ` +
+  `secrets.${LANE_TOKEN_PAT_SECRET_NAME} || github.token }}`;
 
 /** The resolved tier, as an env value the CLI can branch on ('app' clamps
  *  the agent wall clock to the installation token's lifetime). */
 export const LANE_TOKEN_MODE_EXPR =
-  "${{ vars.DXKIT_APP_ID != '' && 'app' || (secrets.DXKIT_BOT_TOKEN != '' && 'pat' || 'workflow') }}";
+  `\${{ vars.${LANE_TOKEN_APP_ID_VARIABLE_NAME} != '' && 'app' || ` +
+  `(secrets.${LANE_TOKEN_PAT_SECRET_NAME} != '' && 'pat' || 'workflow') }}`;
 
 /**
  * The mint + disclose steps, placed before checkout in every chain-carrying
@@ -51,29 +61,29 @@ export const LANE_TOKEN_MODE_EXPR =
  */
 export const LANE_TOKEN_STEPS = `      # The lane token, tier chain: GitHub App installation token (minted
       # per run — no billed seat, one-hour lifetime), then the optional
-      # DXKIT_BOT_TOKEN PAT, then the default token (whose PRs and pushes
+      # ${LANE_TOKEN_PAT_SECRET_NAME} PAT, then the default token (whose PRs and pushes
       # never trigger workflow runs — disclosed below, never silent).
       # ONE definition: src/lanes/lane-token.ts substitutes this block and
       # every __DXKIT_LANE_TOKEN__ reference at install time.
       - name: Mint the lane token (GitHub App, when configured)
         id: dxkit-app-token
-        if: \${{ vars.DXKIT_APP_ID != '' }}
+        if: \${{ vars.${LANE_TOKEN_APP_ID_VARIABLE_NAME} != '' }}
         uses: actions/create-github-app-token@v2
         with:
-          app-id: \${{ vars.DXKIT_APP_ID }}
-          private-key: \${{ secrets.DXKIT_APP_PRIVATE_KEY }}
+          app-id: \${{ vars.${LANE_TOKEN_APP_ID_VARIABLE_NAME} }}
+          private-key: \${{ secrets.${LANE_TOKEN_APP_KEY_SECRET_NAME} }}
 
       - name: Disclose token mode
         env:
-          DXKIT_APP_SET: \${{ vars.DXKIT_APP_ID != '' }}
-          DXKIT_BOT_TOKEN_SET: \${{ secrets.DXKIT_BOT_TOKEN != '' }}
+          DXKIT_APP_SET: \${{ vars.${LANE_TOKEN_APP_ID_VARIABLE_NAME} != '' }}
+          ${LANE_TOKEN_PAT_SECRET_NAME}_SET: \${{ secrets.${LANE_TOKEN_PAT_SECRET_NAME} != '' }}
         run: |
           if [ "\${DXKIT_APP_SET}" = "true" ]; then
             echo "token tier: GitHub App (short-lived, minted this run)"
-          elif [ "\${DXKIT_BOT_TOKEN_SET}" = "true" ]; then
-            echo "token tier: DXKIT_BOT_TOKEN (PAT)"
+          elif [ "\${${LANE_TOKEN_PAT_SECRET_NAME}_SET}" = "true" ]; then
+            echo "token tier: ${LANE_TOKEN_PAT_SECRET_NAME} (PAT)"
           else
-            echo "::notice title=lane PRs run no checks::This lane pushes with the default GITHUB_TOKEN, and GitHub never triggers workflows for such pushes - the PR it opens will show no checks. Preferred fix: a GitHub App (set the DXKIT_APP_ID variable + the DXKIT_APP_PRIVATE_KEY secret - no billed seat, short-lived per-run tokens). A DXKIT_BOT_TOKEN PAT secret with repo scope also works."
+            echo "::notice title=lane PRs run no checks::This lane pushes with the default GITHUB_TOKEN, and GitHub never triggers workflows for such pushes - the PR it opens will show no checks. Preferred fix: a GitHub App (set the ${LANE_TOKEN_APP_ID_VARIABLE_NAME} variable + the ${LANE_TOKEN_APP_KEY_SECRET_NAME} secret - no billed seat, short-lived per-run tokens). A ${LANE_TOKEN_PAT_SECRET_NAME} PAT secret with repo scope also works."
           fi`;
 
 /**
