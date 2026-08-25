@@ -90,6 +90,42 @@ describe('lockfile-sync floor check (typescript pack, npm)', () => {
     try {
       const r = floorOn(dir, 1, EUSAGE, 'affected');
       expect(r.checks.find((c) => c.label === LOCKFILE_SYNC_LABEL)).toBeUndefined();
+      // The result carries the EFFECTIVE scope, so renderers report what ran.
+      expect(r.scope).toBe('affected');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // An affected run with an EMPTY changed set is an UNDETERMINABLE diff — the
+  // pack contract reads it as full, so the lockfile check must run there too
+  // (a silent skip would re-open the class on any surface that cannot compute
+  // its diff: the change that drifted the lockfile may simply be invisible).
+  it('an affected run with an EMPTY changed set (undeterminable diff) still runs the check', () => {
+    const dir = tsRepo(files);
+    try {
+      const r = runCorrectnessFloor({
+        cwd: dir,
+        changedFiles: [],
+        scope: 'affected',
+        packs: [TS],
+        exec: (cmd) =>
+          cmd.bin === 'npm' && cmd.args.includes('--dry-run')
+            ? { available: true, code: 1, output: EUSAGE }
+            : { available: true, code: 0, output: '' },
+      });
+      const lock = r.checks.find((c) => c.label === LOCKFILE_SYNC_LABEL)!;
+      expect(lock.status).toBe('fail');
+      expect(r.blocks).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('a full run records its scope on the result', () => {
+    const dir = tsRepo(files);
+    try {
+      expect(floorOn(dir, 0, '').scope).toBe('full');
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

@@ -45,14 +45,38 @@ export async function verifyCommittedHead(
       ...(opts.runGuardrail ? { runGuardrail: () => opts.runGuardrail!() } : {}),
     },
   });
-  const guardrail: GuardrailGateResult = verified.guardrail ?? {
-    verdict:
-      `unavailable (verification failed at step '${verified.failure?.step ?? 'unknown'}': ` +
-      `${verified.failure?.message ?? 'unknown'})`,
+  return { verified, guardrail: guardrailShapeFor(verified) };
+}
+
+/**
+ * The guardrail shape for a verification that carries no guardrail result.
+ * Two honest cases, never conflated (and never a fabricated failure): the
+ * verification BROKE (a `failure` names the step), or it STOPPED on its own
+ * verdict before the guardrail was due (install-failed / floor-red) — the
+ * gate was deliberately not consulted, and the ledger says so.
+ */
+function guardrailShapeFor(verified: VerifyTreeResult): GuardrailGateResult {
+  if (verified.guardrail) return verified.guardrail;
+  if (verified.failure) {
+    return {
+      verdict:
+        `unavailable (verification failed at step '${verified.failure.step}': ` +
+        `${verified.failure.message})`,
+      ran: false,
+      passesGate: false,
+    };
+  }
+  const stoppedAt =
+    verified.verdict === 'install-failed'
+      ? 'install'
+      : verified.verdict === 'floor-red'
+        ? 'floor'
+        : 'an earlier step';
+  return {
+    verdict: `not consulted (verification stopped at ${stoppedAt})`,
     ran: false,
     passesGate: false,
   };
-  return { verified, guardrail };
 }
 
 /** The install-failed outcome's note: what failed, why it matters, the

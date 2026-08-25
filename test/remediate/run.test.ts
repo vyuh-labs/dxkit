@@ -116,7 +116,9 @@ function base(driver: AgentDriver, extra: Partial<Parameters<typeof runRemediate
 }
 
 const FAKE_TREE: NonNullable<Parameters<typeof runRemediateTask>[0]['verifySeams']> = {
-  worktree: async (_o, fn) => fn('/tmp/fake-worktree'),
+  // Ref-addressed paths so an install seam can fail the CANDIDATE while the
+  // base-attribution probe (a second worktree at baseHead) installs clean.
+  worktree: async (o, fn) => fn(`/wt/${o.ref}`),
   install: () => ({ status: 'installed', argv: ['npm', 'ci'] }),
   changedFiles: () => ['src/a.ts'],
 };
@@ -283,12 +285,17 @@ describe('the verified frame (the agent is never trusted)', () => {
       base(fakeDriver({ completed: true }), {
         verifySeams: {
           ...FAKE_TREE,
-          install: () => ({
-            status: 'failed',
-            argv: ['npm', 'ci', '--legacy-peer-deps'],
-            output:
-              'npm ERR! code EUSAGE\nnpm ERR! package.json and package-lock.json are not in sync',
-          }),
+          // Fails the candidate only: the base-attribution probe installs
+          // clean, so the failure is NET-NEW and the verdict blames the run.
+          install: (wt) =>
+            wt.endsWith('head1111')
+              ? {
+                  status: 'failed',
+                  argv: ['npm', 'ci', '--legacy-peer-deps'],
+                  output:
+                    'npm ERR! code EUSAGE\nnpm ERR! package.json and package-lock.json are not in sync',
+                }
+              : { status: 'installed', argv: ['npm', 'ci'] },
         },
       }),
     );
@@ -296,6 +303,27 @@ describe('the verified frame (the agent is never trusted)', () => {
     expect(r.note).toContain('EUSAGE');
     expect(r.ledger).toContain('outcome: **install-failed**');
     expect(r.ledger).toContain('FAILED on a clean checkout');
+    // The guardrail was deliberately not consulted — the ledger says so,
+    // never a fabricated failure.
+    expect(r.guardrailVerdict).toBe('not consulted (verification stopped at install)');
+  });
+
+  it('a PRE-EXISTING broken install (base fails too) is disclosed, never blamed — the run still verifies', async () => {
+    const r = await runRemediateTask(
+      base(fakeDriver({}), {
+        verifySeams: {
+          ...FAKE_TREE,
+          install: () => ({
+            status: 'failed',
+            argv: ['npm', 'ci'],
+            output: 'npm ERR! code EUSAGE',
+          }),
+        },
+      }),
+    );
+    expect(r.outcome).toBe('verified');
+    expect(r.ledger).toContain('pre-existing');
+    expect(r.ledger).toContain('not caused by this change');
   });
 
   it('the verification runs against the committed HEAD in a clean worktree, diff-scoped vs base', async () => {

@@ -3,10 +3,12 @@ import { mkdtempSync, writeFileSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import {
+  detectLockfile,
   frozenInstallFor,
   isPeerConflictOnly,
   lockfileSyncCheck,
   renderInstallDependenciesShell,
+  LOCKFILES,
   type PackageManager,
 } from '../src/package-manager';
 
@@ -65,6 +67,36 @@ describe('frozenInstallFor', () => {
       }
     });
   }
+
+  // Rule 2.30 parity (the shrinkwrap class): INSTALL_BRANCHES and
+  // detectLockfile must read ONE lockfile-set definition. For every lockfile
+  // either projection recognizes, both must agree on the PM and the frozen
+  // install must be that PM's — a shrinkwrap-only repo once dry-ran `npm ci`
+  // on the floor while its CI ran a plain `npm install`.
+  it('every lockfile detectLockfile knows selects the SAME pm in frozenInstallFor', () => {
+    const frozenArgv: Record<PackageManager, string> = {
+      pnpm: 'pnpm install --frozen-lockfile',
+      yarn: 'yarn install --immutable',
+      bun: 'bun install --frozen-lockfile',
+      npm: 'npm ci',
+    };
+    const shell = renderInstallDependenciesShell('');
+    for (const [pm, files] of Object.entries(LOCKFILES) as [PackageManager, readonly string[]][]) {
+      for (const file of files) {
+        const dir = repoWith(['package.json', file]);
+        try {
+          expect(detectLockfile(dir)?.pm, `${file} detects as ${pm}`).toBe(pm);
+          const plan = frozenInstallFor(dir)!;
+          expect(plan.pm, `${file} installs with ${pm}`).toBe(pm);
+          expect(plan.argv.join(' ')).toBe(frozenArgv[pm]);
+          // And the rendered CI chain tests for this lockfile too.
+          expect(shell, `rendered shell tests for ${file}`).toContain(`[ -f ${file} ]`);
+        } finally {
+          rmSync(dir, { recursive: true, force: true });
+        }
+      }
+    }
+  });
 
   it('no package.json → nothing to install', () => {
     const dir = repoWith([]);

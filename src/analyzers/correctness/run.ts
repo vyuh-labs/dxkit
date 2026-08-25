@@ -125,6 +125,11 @@ export interface CorrectnessFloorResult {
    *  surface can say WHY the full suite ran on a fast surface. `files` names
    *  the matched manifests (empty only in the no-declared-patterns fail-safe
    *  case, where escalation is still the honest default). */
+  /** The EFFECTIVE scope this run executed at (post-escalation), so a
+   *  renderer never has to guess — the ledger once hardcoded "full scope"
+   *  while the verification floor ran `affected`. Optional only for older
+   *  serialized snapshots; every fresh run carries it. */
+  readonly scope?: CorrectnessScope;
   readonly scopeEscalated?: {
     readonly reason: 'dependency-manifest-changed';
     readonly files: readonly string[];
@@ -410,11 +415,16 @@ export function runCorrectnessFloor(opts: CorrectnessFloorOptions): CorrectnessF
       if (structural !== null) checks.push(structural);
     }
     // The lockfile-sync check (4.4.5): decided ONCE here, like the scope
-    // escalation above, never per pack. It runs at FULL scope only, which
-    // after escalation means "CI's scope, or a diff that touched a dependency
-    // manifest" — the only diffs that can move a lockfile out of sync. A
-    // source-only fast run never pays the dry-run.
-    if (provider.lockfileCheck && scope === 'full') {
+    // escalation above, never per pack. It runs at FULL scope (after
+    // escalation that means "CI's scope, or a diff that touched a dependency
+    // manifest" — the only diffs that can move a lockfile out of sync), and
+    // ALSO on an affected run whose changed set is EMPTY: an undeterminable
+    // diff reads as full for every pack's own builders (the documented
+    // contract), so this check must not silently thin out there — the diff
+    // that drifted the lockfile may simply be invisible. Only a determinate
+    // source-only fast run skips the dry-run.
+    const lockfileDue = scope === 'full' || ctx.changedFiles.length === 0;
+    if (provider.lockfileCheck && lockfileDue) {
       const lock = runLockfileCheck(id, provider, ctx, exec);
       if (lock !== null) checks.push(lock);
     }
@@ -422,7 +432,7 @@ export function runCorrectnessFloor(opts: CorrectnessFloorOptions): CorrectnessF
 
   const ran = checks.some((c) => c.status === 'pass' || c.status === 'fail');
   const blocks = checks.some((c) => c.status === 'fail');
-  return { ran, checks, blocks, ...(scopeEscalated ? { scopeEscalated } : {}) };
+  return { ran, checks, blocks, scope, ...(scopeEscalated ? { scopeEscalated } : {}) };
 }
 
 /** One-line disclosure of a manifest-driven scope escalation (null when the

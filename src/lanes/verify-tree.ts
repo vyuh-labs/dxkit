@@ -14,21 +14,33 @@
  *
  *   1. a CLEAN worktree of that head (Rule 11's `withRefWorktree`, never a
  *      second `git worktree add`);
- *   2. the repo's frozen install with the repo's own fallback
- *      (`frozenInstallFor`, the same table the CI templates render from);
- *   3. the correctness floor DIFF-SCOPED against `baseHead` (`changedFiles`
- *      from the one changed-files primitive; the runner escalates to full on
- *      a manifest change and runs the lockfile-sync check there);
- *   4. attribution vs the entry floor through the ONE comparator;
- *   5. the guardrail.
+ *   2. the diff vs `baseHead` — computed BEFORE the install, so install
+ *      artifacts (a rewritten lockfile, an unignored node_modules) can never
+ *      read as the agent's changed files;
+ *   3. the repo's frozen install with the repo's own fallback
+ *      (`frozenInstallFor`, the same table the CI templates render from).
+ *      A failed install is ATTRIBUTED like a floor failure: the same install
+ *      is probed at `baseHead`, and a failure that predates the change is
+ *      PRE-EXISTING — disclosed, never blamed on the candidate;
+ *   4. the correctness floor DIFF-SCOPED (the runner escalates to full on a
+ *      manifest change and runs the lockfile-sync check there);
+ *   5. attribution vs the entry floor through the ONE comparator;
+ *   6. the guardrail.
+ *
+ * SECURITY (Rule 17): the install runs the repo's lifecycle scripts and the
+ * floor runs repo-declared commands, so the seam gates on the REQUIRED trust
+ * context itself — an untrusted tree yields a disclosed `skipped-untrusted`
+ * verdict before anything spawns, by design rather than caller convention.
  *
  * Fail-open discipline, the `GateFailure` shape: every infrastructure
  * failure (a ref that cannot be checked out, a package manager not on PATH,
- * a throw anywhere) is a DISCLOSED step failure with the step named, never a
- * silent pass and never a false block. An install that RAN and failed is not
- * infrastructure: it is the exact defect this module exists to catch, so it
- * is its own verdict (`install-failed`). The consumer decides what an
- * unverifiable tree means for landing (the agent lane: nothing lands).
+ * an install that timed out or overflowed the capture buffer, a throw
+ * anywhere) is a DISCLOSED step failure with the step named, never a silent
+ * pass and never a false block. An install that RAN TO COMPLETION and failed
+ * is not infrastructure: it is the exact defect this module exists to catch,
+ * so it is its own verdict (`install-failed`) — once the base probe rules
+ * out a pre-existing break. The consumer decides what an unverifiable tree
+ * means for landing (the agent lane: nothing lands).
  *
  * Every step is injectable (`seams`) so the composition is unit-testable
  * without a git repo, a package manager, or a scanner toolchain.
@@ -57,20 +69,32 @@ export type InstallOutcome =
        *  succeeded, with the reason the fallback exists. Disclosed. */
       readonly fallback?: { readonly argv: readonly string[]; readonly reason: string };
     }
-  | { readonly status: 'failed'; readonly argv: readonly string[]; readonly output: string }
+  | {
+      readonly status: 'failed';
+      readonly argv: readonly string[];
+      readonly output: string;
+      /** True when the SAME frozen install also fails at `baseHead`: the
+       *  break predates the candidate. Disclosed, never blamed on the change
+       *  — verification proceeds (the floor's pre-existing doctrine applied
+       *  to the install). */
+      readonly preExisting?: boolean;
+    }
   /** The repo has no package.json: nothing to install, nothing claimed. */
   | { readonly status: 'nothing-to-install' };
 
 export type VerifyTreeVerdict =
   /** Clean worktree installs, the floor has no net-new failure, the guardrail passes. */
   | 'verified'
-  /** The frozen install of the candidate tree FAILED: CI could not install
-   *  this tree, so no gate would ever run on it. */
+  /** The frozen install of the candidate tree FAILED where the base's did
+   *  not: CI could not install this tree, and the change is the cause. */
   | 'install-failed'
   /** The floor has a NET-NEW failure vs the entry floor. */
   | 'floor-red'
   /** The guardrail ran and did not pass (BLOCKED or the CANNOT-GATE tier). */
   | 'guardrail-red'
+  /** The trust context does not allow repo execution here: nothing spawned,
+   *  nothing verified. `failure` carries the disclosure (step `trust`). */
+  | 'skipped-untrusted'
   /** Verification itself could not run: `failure` names the step. */
   | 'error';
 
@@ -83,7 +107,8 @@ export interface VerifyTreeResult {
   readonly floor?: CorrectnessFloorResult;
   readonly floorAttribution?: readonly AttributedFloorFailure[];
   readonly guardrail?: GuardrailGateResult;
-  /** Present on `error`: the step that failed and why. */
+  /** Present on `error` (the step that failed and why) and on
+   *  `skipped-untrusted` (the trust disclosure, step `trust`). */
   readonly failure?: GateFailure;
 }
 
@@ -126,20 +151,33 @@ export interface VerifyTreeOptions {
   readonly seams?: VerifyTreeSeams;
 }
 
-/** The steps, in order; also the `GateFailure.step` vocabulary. */
+/** The steps, in order; also the `GateFailure.step` vocabulary (plus `trust`,
+ *  the pre-spawn refusal that precedes them all). `base-install` runs only
+ *  when the candidate install failed — the attribution probe. */
 export type VerifyTreeStep =
   | 'worktree'
-  | 'install'
   | 'changed-files'
+  | 'install'
+  | 'base-install'
   | 'floor'
   | 'attribution'
   | 'guardrail';
 
+/** Phrase an infrastructure-shaped exec end (timeout / capture overflow), or
+ *  null when the command ran to completion. */
+function infraEnd(timedOut?: boolean, overflowed?: boolean): string | null {
+  if (timedOut) return 'timed out';
+  if (overflowed) return 'overflowed the capture buffer';
+  return null;
+}
+
 /**
  * Run the repo's frozen install in a worktree: the primary, then the declared
- * fallback when the primary fails (the CI template's `a || b`). A package
- * manager that is not on PATH THROWS (infrastructure: the caller's catch
- * turns it into a disclosed step failure, never an install verdict).
+ * fallback when the primary fails (the CI template's `a || b`). Infrastructure
+ * THROWS — a package manager missing from PATH, a timeout, a capture overflow
+ * (on the primary or the fallback alike) say nothing about the tree, so the
+ * caller's catch turns them into a disclosed step failure, never an install
+ * verdict (the bounded-exec fail-open doctrine).
  */
 export function runFrozenInstall(worktreePath: string, exec: CommandExec): InstallOutcome {
   const plan = frozenInstallFor(worktreePath);
@@ -152,13 +190,30 @@ export function runFrozenInstall(worktreePath: string, exec: CommandExec): Insta
         (primary.output ? `: ${primary.output}` : ''),
     );
   }
-  if (primary.code === 0 && !primary.timedOut && !primary.overflowed) {
-    return { status: 'installed', argv: plan.argv };
+  const primaryInfra = infraEnd(primary.timedOut, primary.overflowed);
+  if (primaryInfra !== null) {
+    throw new Error(
+      `frozen install (\`${plan.argv.join(' ')}\`) ${primaryInfra} — infrastructure, not a verdict on the tree`,
+    );
   }
+  if (primary.code === 0) return { status: 'installed', argv: plan.argv };
   if (plan.fallback) {
     const [fbin, ...fargs] = plan.fallback.argv;
     const fallback = exec({ bin: fbin, args: fargs }, worktreePath);
-    if (fallback.available && fallback.code === 0 && !fallback.timedOut && !fallback.overflowed) {
+    if (!fallback.available) {
+      throw new Error(
+        `${plan.pm} is not available in the verification environment` +
+          (fallback.output ? `: ${fallback.output}` : ''),
+      );
+    }
+    const fallbackInfra = infraEnd(fallback.timedOut, fallback.overflowed);
+    if (fallbackInfra !== null) {
+      throw new Error(
+        `frozen install fallback (\`${plan.fallback.argv.join(' ')}\`) ${fallbackInfra} — ` +
+          'infrastructure, not a verdict on the tree',
+      );
+    }
+    if (fallback.code === 0) {
       return { status: 'installed', argv: plan.argv, fallback: plan.fallback };
     }
     return {
@@ -169,15 +224,26 @@ export function runFrozenInstall(worktreePath: string, exec: CommandExec): Insta
       ),
     };
   }
-  return {
-    status: 'failed',
-    argv: plan.argv,
-    output: tail(primary.timedOut ? `${primary.output}\n(timed out)` : primary.output),
-  };
+  return { status: 'failed', argv: plan.argv, output: tail(primary.output) };
 }
 
 /** Verify a candidate head the way CI would. Never throws. */
 export async function verifyTree(opts: VerifyTreeOptions): Promise<VerifyTreeResult> {
+  // Rule 17, decided by the seam itself: the install runs lifecycle scripts
+  // and the floor runs repo-declared commands, so an untrusted tree gets a
+  // disclosed refusal BEFORE any worktree exists or any command spawns.
+  if (!opts.trust.repoExecutionAllowed) {
+    return {
+      verdict: 'skipped-untrusted',
+      failure: {
+        step: 'trust',
+        message:
+          `repo execution is not allowed under this trust context (${opts.trust.source}) — ` +
+          'the frozen install and the correctness floor execute repo-declared commands, so ' +
+          'an untrusted tree is never verified here',
+      },
+    };
+  }
   const seams = opts.seams ?? {};
   const exec = makeCommandExec(opts.timeoutMs);
   const worktree = seams.worktree ?? withRefWorktree;
@@ -205,12 +271,30 @@ export async function verifyTree(opts: VerifyTreeOptions): Promise<VerifyTreeRes
   try {
     enter('worktree');
     return await worktree({ cwd: opts.cwd, ref: opts.head }, async (wt) => {
-      enter('install');
-      const installed = install(wt);
-      if (installed.status === 'failed') return { verdict: 'install-failed', install: installed };
-
+      // The diff FIRST, on the pristine checkout: an install can rewrite the
+      // lockfile or drop node_modules into an unignored tree, and those
+      // artifacts must never read as the agent's changed files (they would
+      // force a manifest escalation and misattribute the diff).
       enter('changed-files');
       const changedFiles = changed(wt, opts.baseHead) ?? [];
+
+      enter('install');
+      let installed = install(wt);
+      if (installed.status === 'failed') {
+        // Attribute before blaming (the floor's doctrine applied to the
+        // install): probe the SAME frozen install at baseHead. A lockfile
+        // already drifted at the base fails there too — pre-existing debt,
+        // disclosed, never pinned on the candidate; verification proceeds.
+        enter('base-install');
+        const baseOutcome = await worktree({ cwd: opts.cwd, ref: opts.baseHead }, async (bwt) =>
+          install(bwt),
+        );
+        if (baseOutcome.status === 'failed') {
+          installed = { ...installed, preExisting: true };
+        } else {
+          return { verdict: 'install-failed', install: installed, changedFiles };
+        }
+      }
 
       enter('floor');
       const floor = runFloor({ cwd: wt, changedFiles });
@@ -256,6 +340,10 @@ export function describeInstall(install: InstallOutcome | undefined): string | n
             `succeeded (${install.fallback.reason}).`
         : `Install: \`${install.argv.join(' ')}\` succeeded on a clean checkout.`;
     case 'failed':
-      return `Install: \`${install.argv.join(' ')}\` FAILED on a clean checkout (CI cannot install this tree).`;
+      return install.preExisting
+        ? `Install: \`${install.argv.join(' ')}\` fails on a clean checkout of the BASE too — ` +
+            'pre-existing (not caused by this change), disclosed. CI installs will keep failing ' +
+            'until the lockfile is repaired on the default branch.'
+        : `Install: \`${install.argv.join(' ')}\` FAILED on a clean checkout (CI cannot install this tree).`;
   }
 }

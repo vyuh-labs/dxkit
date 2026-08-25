@@ -45,7 +45,10 @@ export function renderFloorVerification(
   const unattributed = attributed.filter((a) => a.attribution === 'unattributed');
   const checks = floor.checks.map(renderCheckLine).join('\n');
   const lines = [
-    `Correctness floor (full scope, attributed vs ${entryLabel}): ` +
+    // The ACTUAL scope the run executed at — the verification floor runs
+    // `affected` (escalating on manifests); hardcoding "full" here misstated
+    // what was verified. Older snapshots without the field were full-scope.
+    `Correctness floor (${floor.scope ?? 'full'} scope, attributed vs ${entryLabel}): ` +
       `**${netNew.length > 0 ? 'FAILED — net-new failures' : 'passed'}**`,
     checks,
     '',

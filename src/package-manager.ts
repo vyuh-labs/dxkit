@@ -52,7 +52,7 @@ export function detectPackageManager(cwd: string): PackageManager {
 /** The lockfile filename(s) each PM writes, most-specific first. One source of
  *  truth for "the file a lockfile-aware tool should be pointed at" (mirrors the
  *  detection order in `detectPackageManager`). */
-const LOCKFILES: Record<PackageManager, string[]> = {
+export const LOCKFILES: Readonly<Record<PackageManager, readonly string[]>> = {
   pnpm: ['pnpm-lock.yaml'],
   yarn: ['yarn.lock'],
   bun: ['bun.lock', 'bun.lockb'],
@@ -213,11 +213,18 @@ const LEGACY_PEER_DEPS_REASON =
   'the tree only resolves under --legacy-peer-deps (a peer conflict the repo already ' +
   'tolerates); the flag skips the peer check, it never fabricates a different tree';
 
+// Each lockfile-keyed branch reads its trigger set from LOCKFILES — the ONE
+// lockfile-set definition `detectLockfile` also reads — so the two
+// projections cannot disagree (the shipped shape: the npm branch keyed on
+// package-lock.json alone while detectLockfile also accepted
+// npm-shrinkwrap.json, so a shrinkwrap repo's floor dry-ran `npm ci` while
+// its CI ran a plain `npm install`). Pinned by the parity test in
+// test/package-manager-frozen-install.test.ts.
 const INSTALL_BRANCHES: readonly InstallBranch[] = [
-  { pm: 'pnpm', when: ['pnpm-lock.yaml'], argv: ['pnpm', 'install', '--frozen-lockfile'] },
+  { pm: 'pnpm', when: LOCKFILES.pnpm, argv: ['pnpm', 'install', '--frozen-lockfile'] },
   {
     pm: 'yarn',
-    when: ['yarn.lock'],
+    when: LOCKFILES.yarn,
     argv: ['yarn', 'install', '--immutable'],
     quietPrimary: true,
     fallback: ['yarn', 'install', '--frozen-lockfile'],
@@ -225,13 +232,13 @@ const INSTALL_BRANCHES: readonly InstallBranch[] = [
   },
   {
     pm: 'bun',
-    when: ['bun.lockb', 'bun.lock'],
+    when: LOCKFILES.bun,
     shellSetup: ['npm install -g bun >/dev/null 2>&1 || true'],
     argv: ['bun', 'install', '--frozen-lockfile'],
   },
   {
     pm: 'npm',
-    when: ['package-lock.json'],
+    when: LOCKFILES.npm,
     argv: ['npm', 'ci'],
     fallback: ['npm', 'ci', '--legacy-peer-deps'],
     fallbackReason: LEGACY_PEER_DEPS_REASON,
