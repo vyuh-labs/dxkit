@@ -90,6 +90,22 @@ ${path}` keys, which discards catch-all structure — so it did exact membership
   leading `{var}` has no anchor → warn, not block);
 - benign secret / env conventions → `isPlaceholderSecret` / `isExampleEnvFile`
   (Rule 5's benign module), consulted by BOTH secret detectors.
+- the `contentHash` a LOCATED finding carries (the git-independent, whitespace-
+  normalized identity the matcher's content-hash pass pairs on, the ONE pass
+  that survives a whole-file reformat) → `contentStamper` in
+  `src/baseline/content-stamp.ts`, consumed by EVERY producer of a
+  line-carrying kind (secret/code/config, duplication, stale-allow,
+  custom-check). The shipped shape (4.4.5): the security producer stamped
+  through a local closure and the custom-check producer stamped nothing, so
+  one 4-space to 2-space reindent read a repo's whole grandfathered lint
+  backlog as resolved plus dozens of net-new. The arch-check confines
+  `computeContentHashFromCommit(` to that module (annotate
+  `// content-stamp-ok` for a justified exception), and
+  `test/baseline/content-stamp-parity.test.ts` iterates `PRODUCERS` and
+  asserts every line-carrying entry is stamped (synthetic-injection guarded).
+  Path-identity kinds (large-file, test-gap, stale-file) carry no line and no
+  stamp; a pre-scheme baseline without the field degrades to the git and
+  identity passes, no migration or rescan.
 - what the working tree CHANGED vs a base → `computeChangedFiles` +
   `createChangedLineIndex`, BOTH in `src/baseline/changed-files.ts`, both
   diffing base → WORKING TREE (staged + unstaged + untracked; an untracked

@@ -590,7 +590,7 @@ export type BaselineEntry =
        * 4.2 (consumers fall back to the kind default and SAY so). */
       severity?: FindingSeverity;
       /** 16-char hex hash of normalized context around `line` at
-       * baseline-create time. Stamped via `computeContentHashFromCommit`;
+       * baseline-create time. Stamped via the shared `contentStamper`;
        * the matcher's third pass uses it as a fallback when git-aware
        * location matching fails (shallow clones, force-pushed base,
        * context survives but line shifts past the fuzz window). Absent
@@ -738,6 +738,13 @@ export type BaselineEntry =
        * output tail for a binary failure). Display metadata only — NOT hashed
        * (it is tool-captured text; Rule 9 forbids it from identity). */
       message?: string;
+      /** Content-hash of the located finding's surrounding context (same
+       * scheme as secret/code/config), so the matcher's content-hash pass
+       * relocates a lint finding across a whole-file reformat that both moves
+       * it past the identity window and rewrites its line in the diff. Absent
+       * for a binary finding, when no commit was available, and on baselines
+       * written before the stamp (those degrade to the git + identity passes). */
+      contentHash?: string;
     }
   | {
       id: FindingId;

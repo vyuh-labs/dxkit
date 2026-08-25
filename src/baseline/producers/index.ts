@@ -58,6 +58,7 @@ import type { CustomCheckFinding } from '../../analyzers/custom-checks/types';
 import type { BaselineEntry, RichBaselineEntry } from '../types';
 import { RECALL_EPOCHS, type RecallContext, type RecallMap } from '../recall';
 import { resolveToolInputs, splitTools, toolRecall } from './recall-inputs';
+import { contentStampSource } from '../content-stamp';
 import { customCheckFindingsToBaselineEntries } from './custom-checks';
 import { LICENSES_PRODUCER } from './licenses';
 import { largeFilesToBaselineEntries } from './health';
@@ -357,7 +358,11 @@ const CUSTOM_CHECK_PRODUCER: BaselineProducer = {
   name: 'custom-check',
   contributes: ['custom-check'],
   produce(ctx) {
-    return customCheckFindingsToBaselineEntries(ctx.customCheckFindings);
+    // Stamped through the shared content-hash entry point (content-stamp.ts) so a
+    // located lint finding survives a whole-file reformat like every other
+    // located kind; the source is the context's anchor commit (absent on a
+    // bare tree, in which case nothing is stamped).
+    return customCheckFindingsToBaselineEntries(ctx.customCheckFindings, contentStampSource(ctx));
   },
   recallContexts(ctx) {
     // Resolved by the seam (Rule 17's one entry point) across all three of its

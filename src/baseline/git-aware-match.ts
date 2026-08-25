@@ -65,7 +65,7 @@ const LINE_FUZZ_RANGE = 2;
  *  bytes alone." For low-severity findings (default threshold 0.90),
  *  a content-hash pair demotes to `'uncertain'`; for critical
  *  findings (threshold 0.75), it passes through cleanly. */
-const CONFIDENCE_CONTENT_HASH = 0.8;
+export const CONFIDENCE_CONTENT_HASH = 0.8;
 /** Confidence assigned to a modified-hunk endpoint pair (#271): the
  *  line itself changed, so there is no line-map image and no byte
  *  identity — the evidence is the hunk STRUCTURE plus an unambiguous

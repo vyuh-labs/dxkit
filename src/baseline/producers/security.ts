@@ -27,8 +27,9 @@
  * across file moves).
  *
  * Content-hash stamping (third-pass matcher fallback): when `cwd` +
- * `commitSha` are supplied, the producer reads each file at the
- * baseline commit and hashes the normalized context window around
+ * `commitSha` are supplied, the shared `contentStamper` (the one
+ * stamping entry point every located kind uses) reads each file at
+ * the baseline commit and hashes the normalized context window around
  * the finding's line. The hash lands in `BaselineEntry.contentHash`
  * for the secret / code / config kinds; the matcher's content-hash
  * pass uses it to pair findings across runs even when git diff can't
@@ -38,7 +39,7 @@
  * work.
  */
 
-import { computeContentHashFromCommit } from '../content-hash';
+import { contentStamper } from '../content-stamp';
 import type { SecurityAggregate } from '../../analyzers/security/aggregator';
 import { identityFor } from '../finding-identity';
 import type {
@@ -50,7 +51,7 @@ import type {
 } from '../types';
 
 export interface SecurityProducerOptions {
-  /** Repo path; used by `computeContentHashFromCommit` to invoke
+  /** Repo path; used by the shared `contentStamper` to invoke
    * `git show`. Omitting it disables content-hash stamping. */
   readonly cwd?: string;
   /** Commit SHA the baseline is anchored to. When the working tree
@@ -71,11 +72,13 @@ export function securityAggregateToBaselineEntries(
   options: SecurityProducerOptions = {},
 ): RichBaselineEntry[] {
   const out: RichBaselineEntry[] = [];
-  const stamp = (file: string, line: number): string | undefined => {
-    if (!options.cwd || !options.commitSha || line <= 0) return undefined;
-    const hash = computeContentHashFromCommit(options.cwd, options.commitSha, file, line);
-    return hash ?? undefined;
-  };
+  // The ONE stamping entry point (content-stamp.ts): no commit, a whole-file
+  // line 0, or an unreadable file all yield no stamp.
+  const stamp = contentStamper(
+    options.cwd && options.commitSha
+      ? { cwd: options.cwd, commitSha: options.commitSha }
+      : undefined,
+  );
 
   for (const f of aggregate.findingsByCategory.secret) {
     const input: SecretIdentityInput = {

@@ -12,10 +12,11 @@
  *
  * Pipeline:
  *
- *   1. The producer (Phase 3 baseline-create) reads each finding's
- *      surrounding context lines, normalizes whitespace, and
- *      computes a SHA-1[0:16] hash. The hash is stamped on the
- *      finding entry in the baseline file.
+ *   1. Every producer of a located kind stamps its entries through
+ *      the ONE `contentStamper` (`content-stamp.ts`), which reads the
+ *      finding's surrounding context lines at the anchor commit,
+ *      normalizes whitespace, and computes a SHA-1[0:16] hash here.
+ *      The hash is stamped on the finding entry in the baseline file.
  *   2. At guardrail-check time, the current scan computes content
  *      hashes the same way for its own findings.
  *   3. The matcher's content-hash pass pairs prior + current
@@ -122,8 +123,9 @@ export function readFileFromCommit(cwd: string, sha: string, file: string): stri
 /**
  * Combined helper: read the file at a commit and compute its
  * content hash at the given line. Returns null when the file
- * couldn't be read. Used by the producer (Phase 3 baseline-create)
- * to stamp content hashes on baseline entries.
+ * couldn't be read. Called ONLY by `contentStamper` in
+ * `content-stamp.ts` (the arch-check pins that); producers use the
+ * stamper, never this helper directly.
  */
 export function computeContentHashFromCommit(
   cwd: string,

@@ -48,7 +48,7 @@ import { lineWindowFor } from '../../analyzers/tools/fingerprint';
 import type { SecurityAggregate } from '../../analyzers/security/aggregator';
 import type { InlineAllowlistOccurrence } from '../../allowlist/gather';
 import { coveredLineFor } from '../../allowlist/inline-synth';
-import { computeContentHashFromCommit } from '../content-hash';
+import { contentStamper } from '../content-stamp';
 import { identityFor } from '../finding-identity';
 import type { RichBaselineEntry, StaleAllowIdentityInput } from '../types';
 
@@ -86,6 +86,7 @@ export function staleAllowToBaselineEntries(input: StaleAllowInput): RichBaselin
   if (input.aggregate === null) return [];
 
   const covered = buildCoveredLocations(input.aggregate);
+  const stamp = contentStamper(input.commit);
   const out: RichBaselineEntry[] = [];
   for (const occ of input.annotations) {
     // Check the line the annotation COVERS (above-line → the finding below it),
@@ -100,14 +101,7 @@ export function staleAllowToBaselineEntries(input: StaleAllowInput): RichBaselin
       line: occ.line,
       category: occ.category,
     };
-    const contentHash = input.commit
-      ? (computeContentHashFromCommit(
-          input.commit.cwd,
-          input.commit.commitSha,
-          occ.file,
-          occ.line,
-        ) ?? undefined)
-      : undefined;
+    const contentHash = stamp(occ.file, occ.line);
     out.push({
       id: identityFor(identityInput),
       kind: 'stale-allow',

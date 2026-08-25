@@ -196,12 +196,16 @@ export function entryToLocated(entry: BaselineEntry): LocatedIdentity {
       // two different diagnostics on one line (or two checks) never cross-pair.
       // BINARY (`file` absent): identity is just the check name → line-
       // independent → locator-less; the multiset pass pairs by identity-hash.
+      // The contentHash rides along for the git-independent content pass: it is
+      // the only pass that survives a whole-file reformat (the git pass has no
+      // line-map image for a rewritten line; the identity window has moved).
       return entry.file !== undefined
         ? {
             id: entry.id,
             file: entry.file,
             line: entry.line ?? 0,
             rule: entry.rule !== undefined ? `${entry.check}/${entry.rule}` : entry.check,
+            ...(entry.contentHash !== undefined ? { contentHash: entry.contentHash } : {}),
           }
         : { id: entry.id };
     case 'dep-vuln':

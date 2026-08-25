@@ -27,7 +27,7 @@
  *     positions, not just counts. Pending in a follow-up commit.
  */
 
-import { computeContentHashFromCommit } from '../content-hash';
+import { contentStamper } from '../content-stamp';
 import { duplicationCanonicalSides, identityFor } from '../finding-identity';
 import type { RichBaselineEntry, DuplicationIdentityInput, StaleFileIdentityInput } from '../types';
 import type { DuplicationResult } from '../../languages/capabilities/types';
@@ -55,6 +55,7 @@ export function duplicationToBaselineEntries(
 ): RichBaselineEntry[] {
   if (!duplication) return [];
   const out: RichBaselineEntry[] = [];
+  const stamp = contentStamper(opts);
   for (const clone of duplication.topClones) {
     const input: DuplicationIdentityInput = {
       kind: 'duplication',
@@ -64,17 +65,13 @@ export function duplicationToBaselineEntries(
       startLineA: clone.a.startLine,
       startLineB: clone.b.startLine,
     };
-    let contentHash: string | undefined;
-    if (opts) {
-      const [first] = duplicationCanonicalSides(
-        clone.a.file,
-        clone.a.startLine,
-        clone.b.file,
-        clone.b.startLine,
-      );
-      contentHash =
-        computeContentHashFromCommit(opts.cwd, opts.commitSha, first[0], first[1]) ?? undefined;
-    }
+    const [first] = duplicationCanonicalSides(
+      clone.a.file,
+      clone.a.startLine,
+      clone.b.file,
+      clone.b.startLine,
+    );
+    const contentHash = stamp(first[0], first[1]);
     out.push({
       id: identityFor(input),
       kind: 'duplication',
