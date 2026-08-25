@@ -9,6 +9,7 @@
  */
 import { describeEntryLocation } from '../../gate/context';
 import { SHARED_RULES } from '../tasks';
+import { RECIPE_REGISTRY } from './recipes-registry';
 import type { WorkOrder, WorkOrderFinding } from './types';
 import { WORK_ORDER_CLASSES, isBuiltinWorkOrderClass } from './types';
 
@@ -132,8 +133,11 @@ export function renderWorkOrderPrompt(order: WorkOrder): string {
 
 /** One line per order for the plan surface. */
 export function renderWorkOrderSummary(order: WorkOrder): string {
+  const executable = RECIPE_REGISTRY.find((r) => r.id === order.recipe)?.implemented === true;
   const tier =
-    order.tier === 'recipe' ? `recipe ${order.recipe} (declared, not yet executable)` : 'agent';
+    order.tier === 'recipe'
+      ? `recipe ${order.recipe}${executable ? '' : ' (declared, not yet executable)'}`
+      : 'agent';
   const attribution = order.findings.some((f) => f.attribution === 'net-new')
     ? 'net-new'
     : order.findings.some((f) => f.attribution === 'deferred')

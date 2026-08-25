@@ -112,7 +112,12 @@ describe('recipe registry drives the tier (synthetic injection)', () => {
       .filter(([, d]) => d.recipe !== null)
       .map(([c, d]) => [d.recipe, c]);
     expect(RECIPE_REGISTRY.map((r) => [r.id, r.class]).sort()).toEqual(fromTable.sort());
-    for (const r of RECIPE_REGISTRY) expect(r.implemented).toBe(false);
+    // `implemented` and `execute` are one fact stated twice (4.4.5): the
+    // plan surface reads the flag, the phase runner calls the function.
+    for (const r of RECIPE_REGISTRY) {
+      expect(r.implemented).toBe(r.execute !== undefined);
+      expect(r.implemented).toBe(true);
+    }
     // a class with no producer carries a reason (the DEFERRED_KINDS discipline)
     for (const d of Object.values(WORK_ORDER_CLASSES) as WorkOrderClassDeclaration[]) {
       if (d.producers.includes('pending')) expect(d.pendingReason).toBeTruthy();

@@ -108,11 +108,33 @@ export interface LintGateRecallContext extends LintGateContext {
 
 import type { ExecutionRequirement } from '../../execution';
 
+/** What the lint-autofix recipe hands a pack's fix builder: the repo and the
+ *  exact files a work order allows the fixer to touch. */
+export interface LintFixContext {
+  readonly cwd: string;
+  /** Repo-relative files the fix run may rewrite: the work order's
+   *  envelope, never the whole tree. */
+  readonly files: readonly string[];
+}
+
 /** A pack's lint-gate provider. Pure command builder — it resolves the linter
  *  and returns the command (or `null` to skip); execution + fail-open policy
  *  live in the custom-check runner (a pack never shells out itself). */
 export interface LintGateProvider {
   lintCommand(ctx: LintGateContext): LintGateCommand | null;
+
+  /**
+   * OPTIONAL (4.4.5, the lint-autofix recipe): the linter's own fix mode,
+   * scoped to `ctx.files`. Same pure-builder contract as `lintCommand`:
+   * the recipe executor runs it through bounded exec under the required
+   * trust context; the pack never shells out. The command's `parse` reads
+   * the REMAINING (unfixed) findings out of the same run, so one execution
+   * both applies the ecosystem's fixes and reports what it could not fix;
+   * that leftover set is the recipe's verify input. A pack without a
+   * stable fix mode omits this; the recipe then refuses its orders with
+   * the reason named (declared absence, never a silent skip).
+   */
+  fixCommand?(ctx: LintFixContext): LintGateCommand | null;
 
   /**
    * What the gate NEEDS from the environment that runs it (CLAUDE.md Rule 20).
