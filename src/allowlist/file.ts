@@ -373,6 +373,22 @@ export function isEntryActive(entry: AllowlistEntry, now: Date = new Date()): bo
 }
 
 /**
+ * The ACTIVE `deferred` entries, soonest expiry first: the findings a lane
+ * must work inside their window (they re-block on expiry). The ONE selector
+ * both `debt` and the remediation planner read, so the two surfaces cannot
+ * disagree about what is deferred.
+ */
+export function activeDeferredEntries(
+  file: AllowlistFile | null,
+  now: Date = new Date(),
+): AllowlistEntry[] {
+  return (file?.entries ?? [])
+    .filter((e) => e.category === 'deferred' && typeof e.expiresAt === 'string')
+    .filter((e) => isEntryActive(e, now))
+    .sort((a, b) => (a.expiresAt! < b.expiresAt! ? -1 : a.expiresAt! > b.expiresAt! ? 1 : 0));
+}
+
+/**
  * Days remaining until an ISO `YYYY-MM-DD` expiry date, counted in whole
  * UTC days from today. Negative means already expired by that many days.
  *

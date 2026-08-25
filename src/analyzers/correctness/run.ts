@@ -104,6 +104,11 @@ export interface CorrectnessCheckResult {
    *  npm peer conflict because CI's install retries under
    *  `--legacy-peer-deps`). Never present on a failure. */
   readonly note?: string;
+  /** The import-resolution check's structured `{ specifier, file }` pairs
+   *  (one per unresolved import, every importer the check saw). `findings`
+   *  is the identity projection of this; consumers that need the importing
+   *  file read THIS, never the prose in `output`. */
+  readonly unresolved?: readonly { readonly specifier: string; readonly file: string }[];
 }
 
 export interface CorrectnessFloorResult {

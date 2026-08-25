@@ -30,7 +30,7 @@ import * as logger from './logger';
 import { pathForBaseline, readBaselineFile, type BaselineFile } from './baseline/baseline-file';
 import { captureFloorDebt, failingFloorDebt, type FloorDebt } from './baseline/floor-debt';
 import { checkKey } from './analyzers/correctness/attribution';
-import { daysUntilDate, tryLoadAllowlist } from './allowlist/file';
+import { activeDeferredEntries, daysUntilDate, tryLoadAllowlist } from './allowlist/file';
 import { KIND_DEFAULT_SEVERITY, describeEntryLocation } from './baseline/check';
 import type { BaselineEntry, FindingSeverity } from './baseline/types';
 
@@ -251,8 +251,7 @@ export function buildDebtReport(
   // something works the item during the window.
   const now = opts.now ?? new Date();
   const allowlist = tryLoadAllowlist(cwd);
-  const deferred: DebtDeferredEntry[] = (allowlist?.entries ?? [])
-    .filter((e) => e.category === 'deferred' && typeof e.expiresAt === 'string')
+  const deferred: DebtDeferredEntry[] = activeDeferredEntries(allowlist, now)
     .map((e) => ({
       fingerprint: e.fingerprint,
       kind: e.kind,

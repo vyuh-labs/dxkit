@@ -26,7 +26,7 @@ import { walkSourceFiles, commentSyntaxFor, isCommentLine } from '../tools/walk-
 import * as path from 'path';
 import { SecurityFinding, DepVulnSummary, Severity } from './types';
 import { buildSecurityAggregate, type SecurityAggregate } from './aggregator';
-import { discoverNestedDepRoots, mergeDepVulnOutcomes } from './nested-dep-roots';
+import { discoverPackDepRoots, mergeDepVulnOutcomes } from './nested-dep-roots';
 import { loadAllowlist } from '../../allowlist/file';
 import { gatherInlineAllowlistAnnotations } from '../../allowlist/gather';
 import { defaultDispatcher } from '../dispatcher';
@@ -356,9 +356,8 @@ export async function gatherPackDepVulnsAcrossRoots(
   opts: DepVulnGatherOptions | undefined,
 ): Promise<DepVulnGatherOutcome> {
   const root = await gatherOutcomeWithDeadline(pack, cwd, opts, '');
-  const patterns = pack.capabilities!.depVulns!.lockfilePatterns ?? [];
-  if (patterns.length === 0) return root;
-  const discovery = discoverNestedDepRoots(cwd, patterns);
+  if ((pack.capabilities!.depVulns!.lockfilePatterns ?? []).length === 0) return root;
+  const discovery = discoverPackDepRoots(cwd, pack);
   if (discovery.roots.length === 0) return root;
   if (discovery.dropped.length > 0) {
     process.stderr.write(

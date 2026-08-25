@@ -19,7 +19,7 @@ import {
   gatherOsvScannerDepVulnsResult,
   mergeMaliciousOsvFindings,
 } from '../analyzers/tools/osv-scanner-deps';
-import { detectLockfile, lockfileSyncCheck } from '../package-manager';
+import { detectLockfile, lockfileSyncCheck, provisionArgv } from '../package-manager';
 import { fileExists, run, runJSON } from '../analyzers/tools/runner';
 import { walkPaths } from '../analyzers/tools/walk-paths';
 import { installedNodeMajor, readRepoFile, repoFileExists } from './version-detect';
@@ -2860,6 +2860,15 @@ export const typescript: LanguageSupport = {
 
   upgradeCommand(name, version) {
     return `npm install ${name}@${version}`;
+  },
+
+  provision(cwd) {
+    // A lockfile-less repo has nothing `npm ci` (or a frozen install) can
+    // provision from: return null per the contract, disclosed downstream.
+    const lock = detectLockfile(cwd);
+    if (!lock) return null;
+    const [bin, ...args] = provisionArgv(lock.pm);
+    return { bin, args };
   },
 
   // Path conventions span both backend Node frameworks (Express,

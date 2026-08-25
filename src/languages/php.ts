@@ -700,6 +700,12 @@ export const php: LanguageSupport = {
     '[\'"]verify_peer[\'"][[:space:]]*=>[[:space:]]*(false|FALSE)',
   ],
 
+  provision(cwd) {
+    if (fs.existsSync(path.join(cwd, 'composer.lock')))
+      return { bin: 'composer', args: ['install'] };
+    return null;
+  },
+
   upgradeCommand(name, version) {
     return `composer require ${name}:^${version}`;
   },

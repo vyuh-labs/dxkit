@@ -1762,6 +1762,16 @@ export const python: LanguageSupport = {
   // env-var convention in Django/Flask configs.
   tlsBypassPatterns: ['verify[[:space:]]*=[[:space:]]*False', 'VERIFY_SSL.*[Ff]alse'],
 
+  provision(cwd) {
+    // The ecosystem's own provision step, keyed on the artifact present.
+    if (fs.existsSync(path.join(cwd, 'poetry.lock'))) return { bin: 'poetry', args: ['install'] };
+    if (fs.existsSync(path.join(cwd, 'uv.lock'))) return { bin: 'uv', args: ['sync'] };
+    if (fs.existsSync(path.join(cwd, 'Pipfile.lock'))) return { bin: 'pipenv', args: ['install'] };
+    if (fs.existsSync(path.join(cwd, 'requirements.txt')))
+      return { bin: 'pip', args: ['install', '-r', 'requirements.txt'] };
+    return null;
+  },
+
   upgradeCommand(name, version) {
     return `pip install '${name}==${version}'`;
   },

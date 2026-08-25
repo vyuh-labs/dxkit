@@ -16,6 +16,7 @@
  */
 import { readPolicySection } from '../baseline/policy-text';
 import { knownTaskIds, remediateTaskById, type RemediateTask, type RemediateTaskId } from './tasks';
+import { DEFAULT_MAX_SLICE_SIZE } from './work-orders/shared';
 
 export interface RemediateBudget {
   readonly maxTurns: number;
@@ -73,6 +74,12 @@ export interface RemediateConfig {
    *  partial can never grandfather its own breakage. Hard cap of
    *  MAX_RESUME_ATTEMPTS per branch (resume.ts). */
   readonly resume: boolean;
+  /** Work-order planning knobs (`remediate.workOrders`). */
+  readonly workOrders: {
+    /** Largest number of findings one debt slice may carry
+     *  (`remediate.workOrders.maxSliceSize`, default 25). */
+    readonly maxSliceSize: number;
+  };
 }
 
 /**
@@ -204,5 +211,11 @@ export function resolveRemediateConfig(cwd: string): RemediateConfig {
         ? raw.maxDispatchBudget
         : 0,
     resume: raw.resume === true,
+    workOrders: {
+      maxSliceSize: positiveNumber(
+        ((raw.workOrders ?? {}) as Record<string, unknown>).maxSliceSize,
+        DEFAULT_MAX_SLICE_SIZE,
+      ),
+    },
   };
 }
