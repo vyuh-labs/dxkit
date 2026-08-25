@@ -23,7 +23,7 @@
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { execFileSync } from 'child_process';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 
@@ -37,6 +37,20 @@ import {
   type CorrectnessFloorResult,
 } from '../src/analyzers/correctness/run';
 import { attributeFloorFailures } from '../src/analyzers/correctness/attribution';
+import { attributePrePushResolution } from '../src/analyzers/correctness/resolution-attribution';
+import {
+  typescript,
+  tsResolutionCheck,
+  tsRelativeImportIdentities,
+  tsJudgesFileForResolution,
+} from '../src/languages/typescript';
+
+/** The refuted list alone (null when the base was unreadable), for the
+ *  package-class cases that predate the disclosure channel. */
+const refutedList = (...args: Parameters<typeof refutedResolutionSpecifiers>): string[] | null => {
+  const ev = refutedResolutionSpecifiers(...args);
+  return ev === null ? null : [...ev.refuted];
+};
 import type { LanguageSupport } from '../src/languages/types';
 import type {
   CorrectnessContext,
@@ -141,22 +155,22 @@ describe('refutedResolutionSpecifiers — the base probe', () => {
   afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
   it('refutes a phantom: absent from every base manifest, imported (quoted) at base', () => {
-    expect(refutedResolutionSpecifiers(dir, baseSha, packs, ['ghost-pkg', 'left-pad'])).toEqual([
+    expect(refutedList(dir, baseSha, packs, ['ghost-pkg', 'left-pad'])).toEqual([
       'ghost-pkg',
       'left-pad',
     ]);
   });
 
   it('keeps a specifier the base lockfile mentions (the genuine un-hoist class blocks)', () => {
-    expect(refutedResolutionSpecifiers(dir, baseSha, packs, ['hoisted-pkg'])).toEqual([]);
+    expect(refutedList(dir, baseSha, packs, ['hoisted-pkg'])).toEqual([]);
   });
 
   it('keeps a newly-added import (absent from base source — the change introduced it)', () => {
-    expect(refutedResolutionSpecifiers(dir, baseSha, packs, ['new-ghost'])).toEqual([]);
+    expect(refutedList(dir, baseSha, packs, ['new-ghost'])).toEqual([]);
   });
 
   it('yields no refutation at all when the base is unreadable', () => {
-    expect(refutedResolutionSpecifiers(dir, 'not-a-sha', packs, ['ghost-pkg'])).toBeNull();
+    expect(refutedList(dir, 'not-a-sha', packs, ['ghost-pkg'])).toBeNull();
   });
 });
 
@@ -220,11 +234,11 @@ describe('refutedResolutionSpecifiers — #284 lockfile evidence (peer metadata,
     // as a substring of @render-three/fiber) → kept blocking. New behavior:
     // no installed-tree entry names it → already unresolvable at base →
     // pre-existing, refuted.
-    expect(refutedResolutionSpecifiers(dir, baseSha, packs, ['three'])).toEqual(['three']);
+    expect(refutedList(dir, baseSha, packs, ['three'])).toEqual(['three']);
   });
 
   it('keeps a package with an actual installed-tree entry (nothing over-refutes)', () => {
-    expect(refutedResolutionSpecifiers(dir, baseSha, packs, ['@render-three/fiber'])).toEqual([]);
+    expect(refutedList(dir, baseSha, packs, ['@render-three/fiber'])).toEqual([]);
   });
 
   it('an unparseable lockfile falls back to containment (keep the block)', () => {
@@ -240,8 +254,8 @@ describe('refutedResolutionSpecifiers — #284 lockfile evidence (peer metadata,
     git(dir, ['add', '.']);
     git(dir, ['commit', '-q', '-m', 'mention in broken blob']);
     const mentionedBase = git(dir, ['rev-parse', 'HEAD']).trim();
-    expect(refutedResolutionSpecifiers(dir, brokenBase, packs, ['three'])).toEqual(['three']);
-    expect(refutedResolutionSpecifiers(dir, mentionedBase, packs, ['three'])).toEqual([]);
+    expect(refutedList(dir, brokenBase, packs, ['three'])).toEqual(['three']);
+    expect(refutedList(dir, mentionedBase, packs, ['three'])).toEqual([]);
   });
 });
 
@@ -369,19 +383,19 @@ describe('runFloorForSurface pre-push — floor-debt envelope demotes grandfathe
  * Relative-import identities (4.4.5). A missing `./x` target carries a
  * project-path identity (`./src/x`) and is never a manifest question: it was
  * pre-existing iff the base tree ALSO lacked the target AND a base file
- * already imported it (resolved from that file's directory, so a same-named
- * module elsewhere cannot refute a genuinely new miss). A target the base
- * tree HAD (deleted by this change) keeps the block.
+ * already imported it, decided by the PACK'S OWN extractor on the base blob
+ * (the same comment stripping, template blanking and test / static-dir
+ * exclusions the current side uses), so a commented-out import, a template
+ * string, a test file or a public/ file at base cannot refute a genuinely
+ * NEW production miss. A target the base tree HAD (deleted by this change)
+ * keeps the block.
  */
 describe('refutedResolutionSpecifiers: relative (project-path) identities', () => {
   let dir: string;
   let baseSha: string;
-  const packs = [
-    {
-      ...packWithResolution({ kind: 'clean', checkedSpecifiers: 0 }),
-      sourceExtensions: ['.js', '.ts'],
-    } as unknown as LanguageSupport,
-  ];
+  const packs = [typescript];
+  const refutedOf = (specs: string[]) =>
+    refutedResolutionSpecifiers(dir, baseSha, packs, specs)?.refuted ?? null;
 
   beforeAll(() => {
     dir = mkdtempSync(join(tmpdir(), 'dxkit-floor-attrib-rel-'));
@@ -390,8 +404,9 @@ describe('refutedResolutionSpecifiers: relative (project-path) identities', () =
     git(dir, ['config', 'user.name', 'test']);
     git(dir, ['config', 'commit.gpgsign', 'false']);
     writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'fixture', version: '1.0' }));
-    mkdirSync(join(dir, 'src', 'components'), { recursive: true });
-    mkdirSync(join(dir, 'src', 'other'), { recursive: true });
+    for (const d of ['src/components', 'src/other', 'src/__tests__', 'public/vendor']) {
+      mkdirSync(join(dir, d), { recursive: true });
+    }
     // Base: one bare phantom, one relative import already dangling at base,
     // one relative import that RESOLVES at base, and a same-named module in
     // another directory (the decoy the resolve-from-importer rule exists for).
@@ -405,6 +420,24 @@ describe('refutedResolutionSpecifiers: relative (project-path) identities', () =
       "const c = require('./categoryIcon');\nmodule.exports = c;\n",
     );
     writeFileSync(join(dir, 'src', 'other', 'categoryIcon.js'), 'module.exports = 1;\n');
+    // The unsafe-direction shapes: each mentions a missing module in a way
+    // the current side would NOT count as an import.
+    writeFileSync(
+      join(dir, 'src', 'components', 'Shapes.js'),
+      [
+        "// const c = require('./commentedOut');",
+        "const tpl = `import x from './inTemplate';`;",
+        'module.exports = tpl;',
+      ].join('\n') + '\n',
+    );
+    writeFileSync(
+      join(dir, 'src', '__tests__', 'Card.test.js'),
+      "const f = require('./fromTestOnly');\nmodule.exports = f;\n",
+    );
+    writeFileSync(
+      join(dir, 'public', 'vendor', 'bundle.js'),
+      "var q = require('./fromPublicOnly');\nmodule.exports = q;\n",
+    );
     git(dir, ['add', '.']);
     git(dir, ['commit', '-q', '-m', 'base']);
     baseSha = git(dir, ['rev-parse', 'HEAD']).trim();
@@ -412,33 +445,38 @@ describe('refutedResolutionSpecifiers: relative (project-path) identities', () =
   afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
   it('refutes a relative miss the base already carried (target absent + imported there)', () => {
-    expect(
-      refutedResolutionSpecifiers(dir, baseSha, packs, ['./src/components/legacyIcon']),
-    ).toEqual(['./src/components/legacyIcon']);
+    expect(refutedOf(['./src/components/legacyIcon'])).toEqual(['./src/components/legacyIcon']);
   });
 
   it('keeps a NEW relative miss (the uncommitted-file class), despite a same-named module elsewhere', () => {
-    expect(
-      refutedResolutionSpecifiers(dir, baseSha, packs, ['./src/components/categoryIcon']),
-    ).toEqual([]);
+    expect(refutedOf(['./src/components/categoryIcon'])).toEqual([]);
   });
 
   it('keeps a target the base tree served (this change deleted it)', () => {
-    expect(refutedResolutionSpecifiers(dir, baseSha, packs, ['./src/components/theme'])).toEqual(
-      [],
-    );
+    expect(refutedOf(['./src/components/theme'])).toEqual([]);
+  });
+
+  it('a commented-out import, a template string, a test file or a public/ file at base never refutes', () => {
+    expect(
+      refutedOf([
+        './src/components/commentedOut',
+        './src/components/inTemplate',
+        './src/__tests__/fromTestOnly',
+        './public/vendor/fromPublicOnly',
+      ]),
+    ).toEqual([]);
   });
 
   it('end to end through the ONE comparator: only the new relative miss is net-new', () => {
     // Current side: the pre-existing bare phantom, the pre-existing relative
     // miss, and the new relative miss, all in one failing check.
     const current = ['ghost-pkg', './src/components/legacyIcon', './src/components/categoryIcon'];
-    const refuted = refutedResolutionSpecifiers(dir, baseSha, packs, current);
+    const refuted = refutedOf(current);
     expect(refuted).toEqual(['ghost-pkg', './src/components/legacyIcon']);
     const result: CorrectnessFloorResult = {
       checks: [
         {
-          pack: 'synthetic',
+          pack: 'typescript',
           label: IMPORT_RESOLUTION_LABEL,
           bin: '',
           status: 'fail',
@@ -449,12 +487,157 @@ describe('refutedResolutionSpecifiers: relative (project-path) identities', () =
     } as unknown as CorrectnessFloorResult;
     const attributed = attributeFloorFailures(
       result,
-      [{ pack: 'synthetic', label: IMPORT_RESOLUTION_LABEL, status: 'fail', findings: refuted! }],
+      [{ pack: 'typescript', label: IMPORT_RESOLUTION_LABEL, status: 'fail', findings: refuted! }],
       { absentMeans: 'net-new' },
     );
     expect(attributed).toHaveLength(1);
     expect(attributed[0].attribution).toBe('net-new');
     expect(attributed[0].precision).toBe('finding');
     expect(attributed[0].netNewFindings).toEqual(['./src/components/categoryIcon']);
+  });
+
+  it('the pre-push note splits the remedy per identity class', () => {
+    const current = ['ghost-pkg', './src/components/legacyIcon', './src/components/categoryIcon'];
+    const result = {
+      ran: true,
+      blocks: true,
+      checks: [
+        {
+          pack: 'typescript',
+          label: IMPORT_RESOLUTION_LABEL,
+          bin: '',
+          status: 'fail',
+          output: '',
+          findings: current,
+        },
+      ],
+    } as unknown as CorrectnessFloorResult;
+    const out = attributePrePushResolution(dir, baseSha, packs, result);
+    expect(out?.blocks).toBe(true);
+    expect(out?.note).toContain('1 unresolved package import(s) are PRE-EXISTING');
+    expect(out?.note).toContain('1 missing relative import target(s) are PRE-EXISTING');
+    expect(out?.note).toContain('Commit the missing file');
+    expect(out?.note).toContain(
+      'net-new unresolved import(s) BLOCK: ./src/components/categoryIcon',
+    );
+  });
+
+  it('discloses (and keeps the block) when the basename is too common to read', () => {
+    // 2001 base files mention `config`: past the candidate ceiling, so the
+    // probe declines to decide, says so, and keeps the block.
+    const many = mkdtempSync(join(tmpdir(), 'dxkit-floor-attrib-many-'));
+    try {
+      git(many, ['init', '-q', '-b', 'main']);
+      git(many, ['config', 'user.email', 'test@example.com']);
+      git(many, ['config', 'user.name', 'test']);
+      git(many, ['config', 'commit.gpgsign', 'false']);
+      mkdirSync(join(many, 'src'));
+      for (let i = 0; i < 2001; i++) {
+        writeFileSync(join(many, 'src', `m${i}.js`), "const c = require('./config');\n");
+      }
+      git(many, ['add', '.']);
+      git(many, ['commit', '-q', '-m', 'base']);
+      const sha = git(many, ['rev-parse', 'HEAD']).trim();
+      const ev = refutedResolutionSpecifiers(many, sha, packs, ['./src/config']);
+      expect(ev?.refuted).toEqual([]);
+      expect(ev?.disclosures.join('\n')).toContain('too many to read');
+    } finally {
+      rmSync(many, { recursive: true, force: true });
+    }
+  });
+});
+
+/**
+ * PARITY (Rule 2.30): the current-side check and the base-side probe hold
+ * different shapes of one concept (a walked working tree vs blobs at a ref)
+ * and MUST agree. On a committed fixture where base == current, every
+ * project-path identity the check reports must be refuted by the probe
+ * (it existed, dangling, at that very commit), and every identity the
+ * pack's content reader mints for a file must be exactly what the check
+ * would probe for it.
+ */
+describe('parity: current-side relative findings vs base-side refutation', () => {
+  it('base == current: every current relative miss is refuted; nothing else is', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dxkit-floor-parity-'));
+    try {
+      git(dir, ['init', '-q', '-b', 'main']);
+      git(dir, ['config', 'user.email', 'test@example.com']);
+      git(dir, ['config', 'user.name', 'test']);
+      git(dir, ['config', 'commit.gpgsign', 'false']);
+      writeFileSync(join(dir, 'package.json'), '{}');
+      writeFileSync(join(dir, '.gitignore'), 'node_modules/\n');
+      mkdirSync(join(dir, 'node_modules'));
+      for (const d of ['src/a', 'src/b', 'src/__tests__', 'public']) {
+        mkdirSync(join(dir, d), { recursive: true });
+      }
+      writeFileSync(join(dir, 'src', 'a', 'present.ts'), 'export const p = 1;\n');
+      writeFileSync(
+        join(dir, 'src', 'a', 'index.ts'),
+        [
+          "import { p } from './present';",
+          "import { m } from './missing';",
+          "import { m2 } from '../b/missing.js';",
+          "import { w } from '../b/widgets/index';",
+          "import { s } from './users.service';",
+          "import './styles.css';",
+          "const t = `import { z } from './in-template';`;",
+          "// import { c } from './commented';",
+          'export default [p, m, m2, w, s, t];',
+        ].join('\n') + '\n',
+      );
+      // A multi-line import: the matched grep line alone carries no
+      // `import`, so the decision must read the whole blob.
+      writeFileSync(
+        join(dir, 'src', 'b', 'other.ts'),
+        "import {\n  w,\n} from './widgets';\nexport default w;\n",
+      );
+      writeFileSync(
+        join(dir, 'src', '__tests__', 'x.test.ts'),
+        "import { t } from './test-only-missing';\nexport default t;\n",
+      );
+      writeFileSync(join(dir, 'public', 'v.js'), "require('./public-only');\n");
+      git(dir, ['add', '.']);
+      git(dir, ['commit', '-q', '-m', 'base']);
+      const sha = git(dir, ['rev-parse', 'HEAD']).trim();
+
+      const current = tsResolutionCheck({ cwd: dir, changedFiles: [], scope: 'full' });
+      expect(current.kind).toBe('unresolved');
+      const found = current.kind === 'unresolved' ? current.unresolved.map((u) => u.specifier) : [];
+      expect(found.sort()).toEqual(
+        ['./src/a/missing', './src/b/missing', './src/b/widgets', './src/a/users.service'].sort(),
+      );
+      // Base == current, so every one of them was already dangling at base.
+      const ev = refutedResolutionSpecifiers(dir, sha, [typescript], found);
+      expect(ev?.disclosures).toEqual([]);
+      expect([...(ev?.refuted ?? [])].sort()).toEqual([...found].sort());
+      // And identities the current side never minted are never refuted.
+      const never = [
+        './src/a/in-template',
+        './src/a/commented',
+        './src/__tests__/test-only-missing',
+        './public/public-only',
+      ];
+      expect(refutedResolutionSpecifiers(dir, sha, [typescript], never)?.refuted).toEqual([]);
+
+      // The content reader is the current side's own candidate set, file by file.
+      for (const rel of [
+        'src/a/index.ts',
+        'src/b/other.ts',
+        'src/__tests__/x.test.ts',
+        'public/v.js',
+      ]) {
+        const content = readFileSync(join(dir, rel), 'utf8');
+        const minted = tsRelativeImportIdentities(rel, content);
+        const judged = tsJudgesFileForResolution(rel);
+        expect(minted === null).toBe(!judged);
+        if (minted !== null) {
+          for (const f of found.filter((id) => minted.includes(id))) expect(minted).toContain(f);
+          expect(minted).not.toContain('./src/a/in-template');
+          expect(minted).not.toContain('./src/a/commented');
+        }
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
