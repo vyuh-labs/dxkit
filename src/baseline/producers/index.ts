@@ -31,8 +31,8 @@
  *   2. Reads from the shared `ProducerContext` (gathered once by
  *      the orchestrator so multiple producers don't re-shell the
  *      same analyzer).
- *   3. Returns `BaselineEntry[]` — pure or near-pure, depending on
- *      whether content-hash stamping is needed.
+ *   3. Returns `BaselineEntry[]` — a pure map. Content-hash stamping is the
+ *      ORCHESTRATOR's job (`stampEntries`), never a producer's.
  *
  * # Adding a new identity kind
  *
@@ -58,6 +58,7 @@ import type { CustomCheckFinding } from '../../analyzers/custom-checks/types';
 import type { BaselineEntry, RichBaselineEntry } from '../types';
 import { RECALL_EPOCHS, type RecallContext, type RecallMap } from '../recall';
 import { resolveToolInputs, splitTools, toolRecall } from './recall-inputs';
+import { stampEntries } from '../content-stamp';
 import { customCheckFindingsToBaselineEntries } from './custom-checks';
 import { LICENSES_PRODUCER } from './licenses';
 import { largeFilesToBaselineEntries } from './health';
@@ -98,9 +99,9 @@ export interface HygieneSnapshot {
 export interface ProducerContext {
   /** Absolute repo path. */
   readonly cwd: string;
-  /** Commit SHA the baseline anchors to. Empty string when not in
-   *  a git repo — content-hash stamping is then disabled but other
-   *  producers still emit normally. */
+  /** Commit SHA the baseline anchors to; display/provenance only. Empty
+   *  string when not in a git repo. Content-hash stamping does NOT depend
+   *  on it — the orchestrator stamps from the working tree (`cwd`). */
   readonly commitSha: string;
   /** Resolved repo salt (from `resolveSalt`). Threaded into
    *  producers that compute HMACs. */
@@ -216,10 +217,7 @@ const SECURITY_PRODUCER: BaselineProducer = {
   produce(ctx) {
     const aggregate = ctx.analysisResult.capabilities.securityAggregate;
     if (!aggregate) return [];
-    return securityAggregateToBaselineEntries(aggregate, {
-      cwd: ctx.cwd,
-      commitSha: ctx.commitSha || undefined,
-    });
+    return securityAggregateToBaselineEntries(aggregate);
   },
   recallContexts(ctx) {
     const p = ctx.analysisResult.capabilities.securityAggregate?.provenance;
@@ -278,10 +276,7 @@ const QUALITY_PRODUCER: BaselineProducer = {
   contributes: ['duplication', 'stale-file'],
   produce(ctx) {
     return [
-      ...duplicationToBaselineEntries(ctx.analysisResult.capabilities.duplication, {
-        cwd: ctx.cwd,
-        commitSha: ctx.commitSha,
-      }),
+      ...duplicationToBaselineEntries(ctx.analysisResult.capabilities.duplication),
       ...staleFilesToBaselineEntries(ctx.hygiene.staleFiles),
     ];
   },
@@ -341,7 +336,6 @@ const STALE_ALLOW_PRODUCER: BaselineProducer = {
     return staleAllowToBaselineEntries({
       annotations: ctx.inlineAllowlistAnnotations,
       aggregate: ctx.analysisResult.capabilities.securityAggregate ?? null,
-      commit: { cwd: ctx.cwd, commitSha: ctx.commitSha },
     });
   },
   recallContexts(ctx) {
@@ -357,6 +351,8 @@ const CUSTOM_CHECK_PRODUCER: BaselineProducer = {
   name: 'custom-check',
   contributes: ['custom-check'],
   produce(ctx) {
+    // Stamped through the shared content-hash entry point (content-stamp.ts) so a
+    // located lint finding survives a whole-file reformat like every other located kind.
     return customCheckFindingsToBaselineEntries(ctx.customCheckFindings);
   },
   recallContexts(ctx) {
@@ -404,7 +400,10 @@ export function runProducers(
   for (const producer of producers) {
     out.push(...producer.produce(ctx));
   }
-  return out;
+  // Stamp ONCE, through the same located projection the matcher pairs on
+  // (content-stamp.ts): a producer cannot forget to stamp, and a new located
+  // kind is stamped the day it lands.
+  return stampEntries(out, ctx.cwd);
 }
 
 /**

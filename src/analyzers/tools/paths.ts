@@ -25,3 +25,23 @@ export function toProjectRelative(cwd: string, fileFromTool: string): string {
   const absFile = path.isAbsolute(fileFromTool) ? fileFromTool : path.resolve(absCwd, fileFromTool);
   return path.relative(absCwd, absFile).split(path.sep).join('/');
 }
+
+/**
+ * Resolve a finding's path against the repo root and answer with the POSIX
+ * repo-relative form, or `null` when the path does not stay inside the repo
+ * (absolute paths outside it, or `..` segments escaping it). ONE containment
+ * predicate — the content stamper and the custom-check parse boundary both
+ * route through it, so "is this path inside the repo" cannot fork. A file
+ * whose NAME merely begins with dots (`..config.ts`) resolves fine; only a
+ * genuine escape answers null.
+ */
+export function resolveInsideRepo(cwd: string, file: string): string | null {
+  const absCwd = path.resolve(cwd);
+  const abs = path.isAbsolute(file) ? file : path.resolve(absCwd, file);
+  const rel = path.relative(absCwd, abs);
+  if (rel === '' || path.isAbsolute(rel)) return null;
+  // Escape = a leading `..` path SEGMENT after resolution; a NAME that merely
+  // begins with dots (`..config.ts`) stays inside the repo.
+  if (rel === '..' || rel.startsWith(`..${path.sep}`)) return null;
+  return rel.split(path.sep).join('/');
+}

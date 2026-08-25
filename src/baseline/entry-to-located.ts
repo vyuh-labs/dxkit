@@ -48,7 +48,7 @@
  *     (identity = `(file, symbol)`, survives vertical drift) → whole-file
  *     locator; a RANGE-anchored gap (no symbol) is line-dependent → it gets
  *     a line locator at the range start. (Its producer is not wired yet; when
- *     it lands it should also stamp a contentHash, like the kinds above.)
+ *     it lands the orchestrator stamps it like every located kind.)
  *   - `dep-vuln` and `secret-hmac` stay locator-less: their identities are
  *     genuinely line-independent (advisory id; value HMAC), so the multiset
  *     pass pairs them by exact identity-hash equality with no locator.
@@ -114,7 +114,13 @@ export function entryToLocated(entry: BaselineEntry): LocatedIdentity {
       // relocation invariant in the module header.)
       return entry.symbol !== undefined
         ? { id: entry.id, file: entry.file, rule: entry.kind }
-        : { id: entry.id, file: entry.file, line: entry.lineRange?.[0], rule: entry.kind };
+        : {
+            id: entry.id,
+            file: entry.file,
+            line: entry.lineRange?.[0],
+            rule: entry.kind,
+            ...(entry.contentHash !== undefined ? { contentHash: entry.contentHash } : {}),
+          };
     case 'test-gap':
     case 'test-file-degradation':
     case 'god-file':
@@ -176,7 +182,13 @@ export function entryToLocated(entry: BaselineEntry): LocatedIdentity {
                 ? 1
                 : 0,
       );
-      return { id: entry.id, file: first.file, line: first.line, rule: `dup:${first.symbol}` };
+      return {
+        id: entry.id,
+        file: first.file,
+        line: first.line,
+        rule: `dup:${first.symbol}`,
+        ...(entry.contentHash !== undefined ? { contentHash: entry.contentHash } : {}),
+      };
     }
     case 'model-schema-drift':
       // LOCATION-free identity ((model, field, changeClass)) → whole-file
@@ -196,12 +208,16 @@ export function entryToLocated(entry: BaselineEntry): LocatedIdentity {
       // two different diagnostics on one line (or two checks) never cross-pair.
       // BINARY (`file` absent): identity is just the check name → line-
       // independent → locator-less; the multiset pass pairs by identity-hash.
+      // The contentHash rides along for the git-independent content pass: it is
+      // the only pass that survives a whole-file reformat (the git pass has no
+      // line-map image for a rewritten line; the identity window has moved).
       return entry.file !== undefined
         ? {
             id: entry.id,
             file: entry.file,
             line: entry.line ?? 0,
             rule: entry.rule !== undefined ? `${entry.check}/${entry.rule}` : entry.check,
+            ...(entry.contentHash !== undefined ? { contentHash: entry.contentHash } : {}),
           }
         : { id: entry.id };
     case 'dep-vuln':

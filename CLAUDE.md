@@ -90,6 +90,27 @@ ${path}` keys, which discards catch-all structure — so it did exact membership
   leading `{var}` has no anchor → warn, not block);
 - benign secret / env conventions → `isPlaceholderSecret` / `isExampleEnvFile`
   (Rule 5's benign module), consulted by BOTH secret detectors.
+- the `contentHash` a LOCATED finding carries (the git-independent, whitespace-
+  normalized identity the matcher's content-hash pass pairs on, the ONE pass
+  that survives a whole-file reformat) → stamped ONCE by the ORCHESTRATOR
+  (`stampEntries` in `src/baseline/content-stamp.ts`, called from
+  `runProducers` and `captureFragment`), deciding locatedness via the same
+  `entryToLocated` projection the matcher consumes — so "what is located" and
+  "what gets stamped" are one definition and a producer cannot ship unstamped
+  (the 4.4.4 class: the security producer stamped through a local closure, the
+  custom-check producer stamped nothing, and one reindent read a repo's whole
+  grandfathered lint backlog as resolved plus net-new). The stamp reads the
+  WORKING TREE, the tree every scanner read and whose line numbers the finding
+  carries (reading the anchor commit instead hashed pre-change content at
+  post-change lines on every dirty-tree surface); the one commit-anchored read
+  is the migrate lane's `restampAtCommit`, which backfills pre-scheme
+  baselines on `vyuh-dxkit update`. The arch-check confines the hash
+  primitive `computeContentHash` (any reference, aliased imports included) to
+  `content-hash.ts` + `content-stamp.ts` (annotate `// content-stamp-ok` for a
+  justified exception), and `test/baseline/content-stamp-parity.test.ts` pins
+  the orchestrator + fragment paths (synthetic-injection guarded, with an
+  outside-the-repo negative control). Path-identity kinds (large-file,
+  test-gap, stale-file) carry no line and no stamp.
 - what the working tree CHANGED vs a base → `computeChangedFiles` +
   `createChangedLineIndex`, BOTH in `src/baseline/changed-files.ts`, both
   diffing base → WORKING TREE (staged + unstaged + untracked; an untracked

@@ -31,7 +31,8 @@
 
 import * as fs from 'fs';
 import { createBaseline, gatherCurrentScan } from './create';
-import { pathForBaseline, readBaselineFile } from './baseline-file';
+import { pathForBaseline, readBaselineFile, writeBaselineFile } from './baseline-file';
+import { restampAtCommit } from './content-stamp';
 import type { BaselineFile } from './baseline-file';
 import { identityFor } from './finding-identity';
 import { RECALL_EPOCHS } from './recall';
@@ -228,6 +229,48 @@ export type StaleRecall =
   /** dxkit changed what it observes for a kind since the baseline was
    *  captured (an epoch bump), so that kind degrades to warn. */
   | 'epoch-gap';
+
+/** What a content-hash restamp did (see `restampContentHashes`). */
+export interface RestampSummary {
+  readonly restamped: number;
+  readonly unreadable: number;
+}
+
+/**
+ * Restamp a pre-scheme baseline's located entries with content hashes.
+ *
+ * A baseline written before the 4.4.5 stamp scheme has located entries with
+ * no `contentHash`, so the matcher's content pass (the one that survives a
+ * whole-file reformat) is silently unavailable until the next refresh. The
+ * fix needs no rescan: the baseline's line numbers describe the tree at its
+ * anchor commit, so the files can be read AT THAT COMMIT and hashed
+ * (`restampAtCommit` — the migrate lane is the one commit-read call site).
+ * Rides `vyuh-dxkit update` beside the scheme/recall probes; returns null
+ * when there is nothing to do (no baseline, nothing bare, no resolvable
+ * anchor). Files unreadable at the anchor leave their entries bare,
+ * disclosed via the summary, never a throw.
+ */
+export function restampContentHashes(cwd: string, baselineName = 'main'): RestampSummary | null {
+  const blPath = pathForBaseline(cwd, baselineName);
+  if (!fs.existsSync(blPath)) return null;
+  let file: BaselineFile;
+  try {
+    file = readBaselineFile(blPath);
+  } catch {
+    return null;
+  }
+  const sha = file.repo?.commitSha;
+  if (!sha) return null;
+  const result = restampAtCommit(file.findings, cwd, sha);
+  if (result.restamped === 0 && result.unreadable === 0) return null;
+  if (result.restamped > 0) {
+    writeBaselineFile(blPath, { ...file, findings: result.entries });
+  }
+  // restamped 0 + unreadable > 0 (an unreachable anchor: shallow clone,
+  // force-pushed history): nothing to write, but the caller must SAY so.
+  // Silence here would read as "reformat-tolerant matching is active".
+  return { restamped: result.restamped, unreadable: result.unreadable };
+}
 
 /**
  * Detect whether a repo's committed baseline predates the current recall

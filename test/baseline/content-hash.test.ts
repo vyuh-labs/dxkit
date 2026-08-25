@@ -1,14 +1,5 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { execFileSync } from 'child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'fs';
-import { join } from 'path';
-import { tmpdir } from 'os';
-import {
-  CONTENT_HASH_CONTEXT_LINES,
-  computeContentHash,
-  computeContentHashFromCommit,
-  readFileFromCommit,
-} from '../../src/baseline/content-hash';
+import { describe, it, expect } from 'vitest';
+import { CONTENT_HASH_CONTEXT_LINES, computeContentHash } from '../../src/baseline/content-hash';
 
 function lines(...ls: string[]): string {
   return ls.join('\n') + '\n';
@@ -104,60 +95,5 @@ describe('computeContentHash — pure function', () => {
   it('exposes the default context-line count as a constant', () => {
     expect(CONTENT_HASH_CONTEXT_LINES).toBeGreaterThan(0);
     expect(CONTENT_HASH_CONTEXT_LINES).toBeLessThan(20); // sanity bound
-  });
-});
-
-describe('readFileFromCommit + computeContentHashFromCommit — git I/O', () => {
-  let dir: string;
-  beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), 'dxkit-content-hash-'));
-    execFileSync('git', ['init', '--quiet', '--initial-branch=main'], { cwd: dir });
-    execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: dir });
-    execFileSync('git', ['config', 'user.name', 'Test'], { cwd: dir });
-    execFileSync('git', ['config', 'commit.gpgsign', 'false'], { cwd: dir });
-  });
-  afterEach(() => {
-    rmSync(dir, { recursive: true, force: true });
-  });
-
-  function commit(msg: string): string {
-    execFileSync('git', ['add', '-A'], { cwd: dir });
-    execFileSync('git', ['commit', '--quiet', '-m', msg], { cwd: dir });
-    return execFileSync('git', ['rev-parse', 'HEAD'], { cwd: dir, encoding: 'utf8' }).trim();
-  }
-
-  it('reads file content from a past commit', () => {
-    writeFileSync(join(dir, 'a.ts'), lines('one', 'two', 'three'));
-    const sha = commit('initial');
-    const content = readFileFromCommit(dir, sha, 'a.ts');
-    expect(content).toBe(lines('one', 'two', 'three'));
-  });
-
-  it('returns null when the file did not exist at the commit', () => {
-    writeFileSync(join(dir, 'a.ts'), lines('one'));
-    const sha = commit('initial');
-    expect(readFileFromCommit(dir, sha, 'b.ts')).toBeNull();
-  });
-
-  it('returns null when the commit SHA is unreachable', () => {
-    writeFileSync(join(dir, 'a.ts'), lines('one'));
-    commit('initial');
-    expect(readFileFromCommit(dir, '0000000000000000000000000000000000000000', 'a.ts')).toBeNull();
-  });
-
-  it('computes a content hash directly from a commit-and-line pair', () => {
-    writeFileSync(join(dir, 'a.ts'), lines('alpha', 'beta', 'gamma', 'delta', 'epsilon'));
-    const sha = commit('initial');
-    const hash = computeContentHashFromCommit(dir, sha, 'a.ts', 3);
-    expect(hash).toMatch(/^[0-9a-f]{16}$/);
-    // Should match the pure-function output on the same content.
-    const expected = computeContentHash(lines('alpha', 'beta', 'gamma', 'delta', 'epsilon'), 3);
-    expect(hash).toBe(expected);
-  });
-
-  it('returns null from computeContentHashFromCommit when the file is missing', () => {
-    writeFileSync(join(dir, 'a.ts'), lines('one'));
-    const sha = commit('initial');
-    expect(computeContentHashFromCommit(dir, sha, 'missing.ts', 1)).toBeNull();
   });
 });

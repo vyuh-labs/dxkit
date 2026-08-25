@@ -22,7 +22,16 @@
 
 import { describe, it, expect, beforeAll } from 'vitest';
 import { execFileSync } from 'child_process';
-import { cpSync, existsSync, mkdtempSync, mkdirSync, renameSync, rmSync } from 'fs';
+import {
+  cpSync,
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from 'fs';
 import { dirname, join } from 'path';
 import { tmpdir } from 'os';
 import { gatherFileFindings } from '../src/analyzers/security/gather';
@@ -33,6 +42,10 @@ import { gatherRepoModelSet } from '../src/analyzers/model-schema/gather';
 import { summarize } from '../src/analyzers/flow/model';
 import { buildReachable } from '../src/analyzers/tests/import-graph';
 import { trustedLocalContext } from '../src/analysis-trust';
+import { createBaseline } from '../src/baseline/create';
+import { runGuardrailCheck } from '../src/baseline/check';
+import { CONFIDENCE_CONTENT_HASH_SAME_FILE } from '../src/baseline/git-aware-match';
+import { isSanitized } from '../src/baseline/sanitize';
 
 const FIXTURES = join(__dirname, 'fixtures', 'analysis');
 
@@ -412,4 +425,100 @@ describe('analysis fixtures — flow resolution (flow-capable packs)', () => {
     expect(model.dynamicCalls).toHaveLength(1);
     expect(model.dynamicCalls[0].receiver).toBe('client');
   });
+});
+
+describe('analysis fixtures: identity survives a whole-file reformat (custom-check content hash)', () => {
+  // The class this guards: a repo with a grandfathered lint backlog reindents
+  // one file. Every finding moves past the 3-line identity window AND every
+  // line is rewritten in the diff, so neither the fingerprint nor the git line
+  // map can pair a finding with its moved self. Only the content-hash pass
+  // (whitespace-normalized) can, and it only fires when the producer stamped a
+  // hash on BOTH sides. Before the shared stamper, custom-check entries carried
+  // none, so a reformat read as "resolved" for the whole backlog plus
+  // "net-new" for every finding the diff happened to touch. dxkit's own repo
+  // has no custom-check backlog, so the self-guardrail cannot see this shape.
+  // Not in STACKS: this fixture exists for the gate, not the per-stack
+  // invariants, and it is staged on demand to keep the matrix cheap.
+  const FIXTURE = 'ts-lint-backlog';
+  const FILE = 'src/legacy.ts';
+  let dir: string;
+  const vcs = (...a: string[]) =>
+    execFileSync('git', a, { cwd: dir, stdio: ['ignore', 'pipe', 'ignore'] });
+  const commitTree = (message: string) => {
+    vcs('add', '-A');
+    vcs('commit', '-qm', message);
+  };
+  const reformat = (src: string) =>
+    src
+      .replace(/\n\n\n/g, '\n\n')
+      .split('\n')
+      .map((l) => l.replace(/^( {4})+/, (m) => ' '.repeat(m.length / 2)))
+      .join('\n');
+  const customCheckPairs = (result: Awaited<ReturnType<typeof runGuardrailCheck>>) =>
+    result.pairs.filter((p) => p.kind === 'custom-check');
+
+  beforeAll(() => {
+    dir = stageFixture(FIXTURE);
+    return () => rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('a reindent of a file with a lint backlog yields zero net-new custom-check findings end-to-end', async () => {
+    const created = await createBaseline({ cwd: dir });
+    const entries = (created.file?.findings ?? []).filter((f) => f.kind === 'custom-check');
+    // The whole backlog is captured, located, and stamped on the baseline side.
+    expect(entries.length).toBe(8);
+    for (const e of entries) {
+      expect(e.kind === 'custom-check' && !isSanitized(e) && e.file).toBe(FILE);
+      expect(e.kind === 'custom-check' && !isSanitized(e) && e.contentHash).toMatch(
+        /^[0-9a-f]{16}$/,
+      );
+    }
+    // Commit the baseline (committed mode anchors on the tree), then reformat.
+    commitTree('baseline');
+    const before = readFileSync(join(dir, FILE), 'utf8');
+    const after = reformat(before);
+    expect(after).not.toBe(before);
+    expect(after.split('\n').length).toBeLessThan(before.split('\n').length);
+    writeFileSync(join(dir, FILE), after);
+    commitTree('reformat: 4-space to 2-space, collapse double blanks');
+
+    const result = await runGuardrailCheck({ trust: trustedLocalContext(), cwd: dir });
+    const pairs = customCheckPairs(result);
+    expect(pairs.length).toBe(8);
+    expect(pairs.filter((p) => p.classification.status === 'added')).toEqual([]);
+    expect(pairs.filter((p) => p.classification.status === 'removed')).toEqual([]);
+    expect(pairs.every((p) => p.classification.blocks === false)).toBe(true);
+    // Seven findings sit on reindented lines: the diff rewrote them, so the
+    // git line map has no image and only the content pass can pair them. The
+    // eighth (`function debugLog(`) is unindented, so git maps it directly.
+    // A SAME-FILE content pair carries the 0.90 tier, which clears every
+    // default per-severity threshold: the whole backlog reads PERSISTED,
+    // never `uncertain`, never `added`, never a block.
+    const byContent = pairs.filter((p) =>
+      p.classification.reasons.some((r) => r.code === 'content-hash'),
+    );
+    expect(byContent.length).toBe(7);
+    for (const p of byContent) {
+      expect(p.pair.confidence).toBe(CONFIDENCE_CONTENT_HASH_SAME_FILE);
+      expect(p.classification.status).toBe('persisted');
+    }
+    expect(pairs.length - byContent.length).toBe(1);
+
+    // The negative: a genuinely new call after the reformat is still net-new,
+    // and the ones that moved stay grandfathered. Appended past every existing
+    // finding's context window, so nothing else changes identity.
+    writeFileSync(
+      join(dir, FILE),
+      readFileSync(join(dir, FILE), 'utf8') +
+        "\nexport function extra(): void {\n  debugLog('extra');\n}\n",
+    );
+    commitTree('introduce a new debugLog call');
+    const again = await runGuardrailCheck({ trust: trustedLocalContext(), cwd: dir });
+    const added = customCheckPairs(again).filter((p) => p.classification.status === 'added');
+    expect(added.length).toBe(1);
+    expect(added[0].classification.blocks).toBe(true);
+    expect(customCheckPairs(again).filter((p) => p.classification.status === 'removed')).toEqual(
+      [],
+    );
+  }, 120_000);
 });

@@ -27,8 +27,7 @@
  *     positions, not just counts. Pending in a follow-up commit.
  */
 
-import { computeContentHashFromCommit } from '../content-hash';
-import { duplicationCanonicalSides, identityFor } from '../finding-identity';
+import { identityFor } from '../finding-identity';
 import type { RichBaselineEntry, DuplicationIdentityInput, StaleFileIdentityInput } from '../types';
 import type { DuplicationResult } from '../../languages/capabilities/types';
 
@@ -41,17 +40,10 @@ const STALE_SUFFIXES = new Set(['swp', 'swo', 'bak', 'orig', 'tmp', 'log', 'pyc'
 /**
  * Build `duplication` entries from a jscpd-style envelope.
  *
- * When `opts` carries the repo + baseline commit, each entry is stamped with a
- * `contentHash` of the block content at the canonical representative side — the
- * same `(file, startLine)` the matcher's locator uses, so prior + current agree
- * on what to hash. That lets the matcher's content-hash pass relocate the clone
- * across a line shift WITHOUT git history (shallow clones / force-pushed
- * baselines), matching the protection secret/code/hygiene already have. Omitted
- * (best-effort) when no commit is available or the file can't be read.
+ * The `contentHash` stamp is applied by the orchestrator (content-stamp.ts).
  */
 export function duplicationToBaselineEntries(
   duplication: DuplicationResult | undefined,
-  opts?: { readonly cwd: string; readonly commitSha: string },
 ): RichBaselineEntry[] {
   if (!duplication) return [];
   const out: RichBaselineEntry[] = [];
@@ -64,17 +56,6 @@ export function duplicationToBaselineEntries(
       startLineA: clone.a.startLine,
       startLineB: clone.b.startLine,
     };
-    let contentHash: string | undefined;
-    if (opts) {
-      const [first] = duplicationCanonicalSides(
-        clone.a.file,
-        clone.a.startLine,
-        clone.b.file,
-        clone.b.startLine,
-      );
-      contentHash =
-        computeContentHashFromCommit(opts.cwd, opts.commitSha, first[0], first[1]) ?? undefined;
-    }
     out.push({
       id: identityFor(input),
       kind: 'duplication',
@@ -83,7 +64,6 @@ export function duplicationToBaselineEntries(
       lines: clone.lines,
       startLineA: clone.a.startLine,
       startLineB: clone.b.startLine,
-      ...(contentHash !== undefined ? { contentHash } : {}),
     });
   }
   return out;
