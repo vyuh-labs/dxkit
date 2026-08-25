@@ -27,7 +27,7 @@
 import { runCorrectnessFloor } from '../analyzers/correctness/run';
 import { detectActiveLanguages } from '../languages';
 import { renderRemediateLedger } from './ledger-render';
-import { verifyTree, type VerifyTreeStep } from '../lanes/verify-tree';
+import { installFailedNote, verifyCommittedHead } from './verify';
 import { resolveModelSetting, type AgentRunResult } from './driver';
 import { AGENT_DRIVERS, knownDriverIds } from './registry';
 import type { RemediateTask } from './tasks';
@@ -377,38 +377,12 @@ export async function runRemediateTask(opts: RemediateRunOptions): Promise<Remed
   // guardrail. Never the agent's dirty workspace: the class this closes was
   // a "verified" draft whose lockfile CI could not install.
   const head = git.head();
-  const phaseOf: Partial<Record<VerifyTreeStep, Parameters<NonNullable<typeof opts.onPhase>>[0]>> =
-    { install: 'verify-install', floor: 'verify-floor', guardrail: 'guardrail' };
-  const verified = await verifyTree({
-    cwd: opts.cwd,
+  const { verified, guardrail } = await verifyCommittedHead(opts, {
     head,
     baseHead,
-    trust: opts.trust,
     entryFloor,
-    // The entry floor always ran (above): an absent base check is a check
-    // the agent's change introduced — net-new (conservative).
-    absentMeans: 'net-new',
-    onStep: (step) => {
-      const phase = phaseOf[step];
-      if (phase) opts.onPhase?.(phase);
-    },
-    seams: {
-      ...opts.verifySeams,
-      ...(opts.runFloor ? { runFloor: () => runFloor() } : {}),
-      ...(opts.runGuardrail ? { runGuardrail: () => opts.runGuardrail!() } : {}),
-    },
+    runFloor,
   });
-
-  // A verification that could not run at all (a worktree or package manager
-  // failure, the step named by the fail-open capture) reads as an UNRUNNABLE
-  // guardrail: same fail-closed arm below, with the step in the verdict.
-  const guardrail = verified.guardrail ?? {
-    verdict:
-      `unavailable (verification failed at step '${verified.failure?.step ?? 'unknown'}': ` +
-      `${verified.failure?.message ?? 'unknown'})`,
-    ran: false,
-    passesGate: false,
-  };
 
   const common = {
     task: task.id,
@@ -429,15 +403,7 @@ export async function runRemediateTask(opts: RemediateRunOptions): Promise<Remed
     return finish({
       outcome: 'install-failed',
       ...common,
-      note:
-        "a clean checkout of the agent's commits cannot be installed the way CI installs it " +
-        `(\`${verified.install?.status === 'failed' ? verified.install.argv.join(' ') : 'frozen install'}\` ` +
-        'failed) — nothing lands. CI would have died before any gate ran, so the draft would ' +
-        'read "NOT gated"; the usual cause is a manifest edited without re-running the install ' +
-        'so the lockfile records it.' +
-        (verified.install?.status === 'failed'
-          ? `\n\nInstall output:\n\`\`\`\n${verified.install.output}\n\`\`\``
-          : ''),
+      note: installFailedNote(verified),
     });
   }
 
