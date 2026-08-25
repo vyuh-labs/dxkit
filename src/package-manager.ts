@@ -390,3 +390,50 @@ export function lockfileSyncCheck(pm: PackageManager): LockfileSyncCheck {
       };
   }
 }
+
+// ---------------------------------------------------------------------------
+// Lock-WRITING install (the recipe tier's resync, 4.4.5): the ONE definition
+// of "make the lockfile record the manifest" per PM, beside the frozen table
+// above so the two cannot drift. A frozen install (`npm ci`) REFUSES an
+// out-of-sync lockfile by design; repairing one needs the ecosystem's
+// re-resolving install. Fabricating a different tree is exactly what the
+// frozen CI install exists to prevent, so this command is only ever run by a
+// surface whose PURPOSE is to update the lockfile (the lockfile-sync /
+// override-pin recipes), never by a verification.
+// ---------------------------------------------------------------------------
+
+/** The install that (re)writes the lockfile from the manifest, with the same
+ *  declared fallback doctrine as the frozen table (`isPeerConflictOnly` is
+ *  the shared gate on when the fallback may run). */
+export interface ResyncInstall {
+  readonly pm: PackageManager;
+  readonly argv: readonly string[];
+  readonly fallback?: { readonly argv: readonly string[]; readonly reason: string };
+}
+
+/**
+ * The lock-writing install per PM. npm re-resolves and writes
+ * `package-lock.json` (`--no-audit --no-fund` keeps it quiet and offline-ish);
+ * its peer-conflict fallback mirrors the frozen install's declared doctrine.
+ * pnpm/yarn/bun re-resolve and write their lockfiles by default; pnpm gets the
+ * explicit flag because a CI environment flips its default to frozen.
+ */
+export function resyncInstallFor(pm: PackageManager): ResyncInstall {
+  switch (pm) {
+    case 'npm':
+      return {
+        pm,
+        argv: ['npm', 'install', '--no-audit', '--no-fund'],
+        fallback: {
+          argv: ['npm', 'install', '--legacy-peer-deps', '--no-audit', '--no-fund'],
+          reason: LEGACY_PEER_DEPS_REASON,
+        },
+      };
+    case 'pnpm':
+      return { pm, argv: ['pnpm', 'install', '--no-frozen-lockfile'] };
+    case 'yarn':
+      return { pm, argv: ['yarn', 'install'] };
+    case 'bun':
+      return { pm, argv: ['bun', 'install'] };
+  }
+}

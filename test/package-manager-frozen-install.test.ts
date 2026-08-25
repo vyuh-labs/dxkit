@@ -8,6 +8,7 @@ import {
   isPeerConflictOnly,
   lockfileSyncCheck,
   renderInstallDependenciesShell,
+  resyncInstallFor,
   LOCKFILES,
   type PackageManager,
 } from '../src/package-manager';
@@ -192,5 +193,27 @@ describe('lockfileSyncCheck', () => {
     const c = lockfileSyncCheck('yarn');
     expect(c.kind).toBe('skipped');
     if (c.kind === 'skipped') expect(c.reason).toContain('immutable');
+  });
+});
+
+describe('resyncInstallFor (the lock-writing install, 4.4.5)', () => {
+  it('npm re-resolves quietly, with the SAME declared peer-conflict fallback doctrine', () => {
+    const plan = resyncInstallFor('npm');
+    expect(plan.argv).toEqual(['npm', 'install', '--no-audit', '--no-fund']);
+    expect(plan.fallback?.argv).toContain('--legacy-peer-deps');
+    // The fallback reason is the one shared doctrine string, not a fork of it.
+    const dir = repoWith(['package.json', 'package-lock.json']);
+    expect(plan.fallback?.reason).toBe(frozenInstallFor(dir)!.fallback!.reason);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('every PM has a lock-writing form, and none of them is the frozen install', () => {
+    for (const pm of ['npm', 'pnpm', 'yarn', 'bun'] as const) {
+      const resync = resyncInstallFor(pm);
+      expect(resync.argv.length).toBeGreaterThan(1);
+      expect(resync.argv.join(' ')).not.toContain('--frozen-lockfile');
+      expect(resync.argv).not.toContain('ci');
+    }
+    expect(resyncInstallFor('pnpm').argv).toContain('--no-frozen-lockfile');
   });
 });
