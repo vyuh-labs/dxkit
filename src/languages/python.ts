@@ -1320,6 +1320,12 @@ export function pyDeclaredDeps(cwd: string): Set<string> {
   return out;
 }
 
+/** What this pack's import-resolution check declines, disclosed at runtime
+ *  on every answer (Rule 19: a limit is stated, never a source comment). */
+const PY_RELATIVE_NOT_JUDGED = [
+  'relative imports (`from . import x`) are not judged: a dotted relative target may be a module, a package or a name re-exported from an `__init__`, and generated siblings (`_version.py`, `*_pb2.py`) are common, so a missing file is not distinguishable from install-state; the syntax floor and pytest see the ImportError live',
+];
+
 /**
  * The Python import-resolution check (`CorrectnessProvider.resolutionCheck`).
  * Reuses the pack's ONE import extraction (column-0 only) and local resolver;
@@ -1393,7 +1399,9 @@ export function pyResolutionCheck(ctx: CorrectnessContext): ResolutionCheckResul
       else unresolved.set(top, rel);
     }
   }
-  if (unresolved.size === 0) return { kind: 'clean', checkedSpecifiers: checked };
+  if (unresolved.size === 0) {
+    return { kind: 'clean', checkedSpecifiers: checked, disclosures: PY_RELATIVE_NOT_JUDGED };
+  }
   if (unresolved.size > 10) {
     return {
       kind: 'skipped',
@@ -1403,15 +1411,11 @@ export function pyResolutionCheck(ctx: CorrectnessContext): ResolutionCheckResul
   return {
     kind: 'unresolved',
     unresolved: [...unresolved.entries()].map(([specifier, file]) => ({ specifier, file })),
+    disclosures: PY_RELATIVE_NOT_JUDGED,
   };
 }
 
 const pyCorrectnessProvider: CorrectnessProvider = {
-  // Relative imports (`from . import x`) are NOT judged here (4.4.5): a dotted
-  // relative target may be a module, a package, or a name re-exported from an
-  // `__init__`, and generated siblings (`_version.py`, `*_pb2.py`) are common,
-  // so a missing file is not distinguishable from install-state. Disclosed
-  // limit; the syntax floor and pytest see the ImportError live.
   resolutionCheck: pyResolutionCheck,
 
   // Rule 20: host-agnostic, needs the Python runtime; py_compile + pytest run

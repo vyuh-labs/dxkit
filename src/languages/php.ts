@@ -550,6 +550,12 @@ export function phpAutoloadRoots(cwd: string): Set<string> {
   return roots;
 }
 
+/** What this pack's import-resolution check declines, disclosed at runtime
+ *  on every answer (Rule 19: a limit is stated, never a source comment). */
+const PHP_RELATIVE_NOT_JUDGED = [
+  "file-path includes (`require __DIR__ . '/x.php'`) are not judged: the path is concatenated at runtime, so the literal is not resolvable; `php -l` and the test run see the missing file live",
+];
+
 /**
  * The PHP import-resolution check. Reuses the pack's one `use` extraction;
  * a namespace is reported only when its root is served by NO autoload map —
@@ -605,7 +611,9 @@ export function phpResolutionCheck(ctx: CorrectnessContext): ResolutionCheckResu
       else unresolved.set(key, rel);
     }
   }
-  if (unresolved.size === 0) return { kind: 'clean', checkedSpecifiers: checked };
+  if (unresolved.size === 0) {
+    return { kind: 'clean', checkedSpecifiers: checked, disclosures: PHP_RELATIVE_NOT_JUDGED };
+  }
   if (unresolved.size > 10) {
     return {
       kind: 'skipped',
@@ -615,14 +623,11 @@ export function phpResolutionCheck(ctx: CorrectnessContext): ResolutionCheckResu
   return {
     kind: 'unresolved',
     unresolved: [...unresolved.entries()].map(([specifier, file]) => ({ specifier, file })),
+    disclosures: PHP_RELATIVE_NOT_JUDGED,
   };
 }
 
 const phpCorrectnessProvider: CorrectnessProvider = {
-  // File-path includes (`require __DIR__ . "/x.php"`) are NOT judged here
-  // (4.4.5): they are concatenated at runtime, so the literal is not a path
-  // the check can resolve. Disclosed limit; `php -l` and the test run see the
-  // missing file live.
   resolutionCheck: phpResolutionCheck,
 
   execution: () => PHP_CLI_EXECUTION,

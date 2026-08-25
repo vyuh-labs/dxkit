@@ -80,9 +80,19 @@ export function isProjectPathIdentity(specifier: string): boolean {
   return specifier.startsWith(PROJECT_PATH_IDENTITY_PREFIX);
 }
 
-/** Build the project-path identity for a repo-relative POSIX target path. */
+/**
+ * Build the project-path identity for a repo-relative POSIX target path.
+ * The ONE normalizer both the current side (the pack's check) and the base
+ * side (the attribution probe) mint through: a trailing `/index` folds into
+ * the directory (`./widgets`, `./widgets/`, `./widgets/index` and
+ * `./widgets/index.js` name one module), so respelling an import is never
+ * read as a net-new miss.
+ */
 export function projectPathIdentity(targetRel: string): string {
-  return PROJECT_PATH_IDENTITY_PREFIX + targetRel.replace(/^\.\//, '');
+  let rel = targetRel.replace(/^\.\//, '').replace(/\/+$/, '');
+  while (rel.endsWith('/index')) rel = rel.slice(0, -'/index'.length);
+  if (rel === 'index') rel = '';
+  return PROJECT_PATH_IDENTITY_PREFIX + rel;
 }
 
 /** One import specifier that demonstrably does not resolve against the
@@ -96,6 +106,10 @@ export interface UnresolvedImport {
   /** Repo-relative POSIX path of an importing file (the first one seen), so
    *  the failure is actionable without re-running the walk. */
   readonly file: string;
+  /** What the check actually observed about the target, phrased truthfully
+   *  (`is not in the git tree`, `exists on disk but is not tracked in git`);
+   *  rendered in place of the generic message when present. */
+  readonly detail?: string;
 }
 
 /**
@@ -189,6 +203,18 @@ export interface CorrectnessProvider {
    * runner treats a throw as a disclosed skip (fail-open).
    */
   resolutionCheck?(ctx: CorrectnessContext): ResolutionCheckResult;
+  /**
+   * OPTIONAL, paired with `resolutionCheck` when it judges RELATIVE imports:
+   * the project-path identities (`projectPathIdentity`) a source file's
+   * relative imports would mint if their targets were missing, from the
+   * file's CONTENT alone (no tree access), or null when the pack would not
+   * judge that file (a test, a declaration file, a static-asset dir). The
+   * base-side attribution probe reads base blobs through this, so "was it
+   * imported at the base" is decided by the same extractor, plausibility
+   * filter and exclusion set as the current side (Rule 2.30), never by a
+   * regex over raw lines.
+   */
+  relativeImportIdentities?(file: string, content: string): readonly string[] | null;
   /**
    * OPTIONAL: verify artifacts of a class NO parser covers are at least
    * STRUCTURALLY plausible (#309 — the `.bdef` class: generation cutoffs,

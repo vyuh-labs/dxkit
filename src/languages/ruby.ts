@@ -834,6 +834,12 @@ function foldRequire(nameOrPath: string): string {
   return nameOrPath.toLowerCase().replace(/[-_/]/g, '');
 }
 
+/** What this pack's import-resolution check declines, disclosed at runtime
+ *  on every answer (Rule 19: a limit is stated, never a source comment). */
+const RUBY_RELATIVE_NOT_JUDGED = [
+  '`require_relative` is not judged: a target may be a `.rb`, a native `.so`/`.bundle`, or served by an autoload/Zeitwerk root, so a missing file is not distinguishable from an unmodeled load path; the syntax floor and the test run see the LoadError live',
+];
+
 /**
  * The Ruby import-resolution check. Reuses the pack's one require
  * extraction; a require is reported only when no folded candidate (first
@@ -903,7 +909,9 @@ export function rubyResolutionCheck(ctx: CorrectnessContext): ResolutionCheckRes
       else unresolved.set(spec, rel);
     }
   }
-  if (unresolved.size === 0) return { kind: 'clean', checkedSpecifiers: checked };
+  if (unresolved.size === 0) {
+    return { kind: 'clean', checkedSpecifiers: checked, disclosures: RUBY_RELATIVE_NOT_JUDGED };
+  }
   if (unresolved.size > 10) {
     return {
       kind: 'skipped',
@@ -913,14 +921,11 @@ export function rubyResolutionCheck(ctx: CorrectnessContext): ResolutionCheckRes
   return {
     kind: 'unresolved',
     unresolved: [...unresolved.entries()].map(([specifier, file]) => ({ specifier, file })),
+    disclosures: RUBY_RELATIVE_NOT_JUDGED,
   };
 }
 
 const rubyCorrectnessProvider: CorrectnessProvider = {
-  // `require_relative` is NOT judged here (4.4.5): a target may be a `.rb`,
-  // a native `.so`/`.bundle`, or served by an autoload/Zeitwerk root, so a
-  // missing file is not distinguishable from an unmodeled load path.
-  // Disclosed limit; the syntax floor and the test run see the LoadError live.
   resolutionCheck: rubyResolutionCheck,
 
   // Rule 20: host-agnostic, needs the Ruby runtime; the floor runs the

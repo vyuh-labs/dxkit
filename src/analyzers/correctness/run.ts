@@ -96,6 +96,12 @@ export interface CorrectnessCheckResult {
    *  granularity is the check — item for the failure-level attribution
    *  refinement). */
   readonly findings?: readonly string[];
+  /** What an in-process check DECLINED to judge while still answering (a
+   *  specifier class it stepped back from, and why). Present on pass and on
+   *  fail; rendered by `describeEnvironmentSkips`, the one disclosure line
+   *  every surface prints, so a partial answer never hides behind a green
+   *  check (Rule 19). */
+  readonly disclosures?: readonly string[];
 }
 
 export interface CorrectnessFloorResult {
@@ -140,6 +146,17 @@ export interface CorrectnessFloorOptions {
  *  every renderer. */
 export const IMPORT_RESOLUTION_LABEL = 'import-resolution';
 
+/** The remedy line per unresolved-identity class: ONE rendering shared by
+ *  the check's failure output and the pre-push attribution note. */
+export const UNRESOLVED_REMEDY = {
+  package:
+    'An import of an uninstalled/undeclared package fails at build or run time. ' +
+    'Declare it in the dependency manifest and install it (or remove the import).',
+  projectPath:
+    'A relative import of a file the pushed tree does not carry fails at build time. ' +
+    'Commit the missing file (or remove the import).',
+} as const;
+
 /** Run a command's optional failure parser defensively: a parser throw or a
  *  non-array result is "not parseable" (null → check-level precision), never
  *  an error that breaks the floor. Results are deduped and order-normalized —
@@ -172,36 +189,26 @@ function runResolutionCheck(
   try {
     const res = provider.resolutionCheck!(ctx);
     const disclosed = res.kind === 'skipped' ? [] : (res.disclosures ?? []);
-    if (res.kind === 'clean') {
-      return disclosed.length > 0
-        ? { ...base, status: 'pass', output: disclosed.join('\n') }
-        : { ...base, status: 'pass' };
-    }
+    const withDisclosures = disclosed.length > 0 ? { disclosures: disclosed } : {};
+    if (res.kind === 'clean') return { ...base, status: 'pass', ...withDisclosures };
     if (res.kind === 'unresolved') {
       const lines = res.unresolved.map((u) =>
         isProjectPathIdentity(u.specifier)
-          ? `'${u.specifier}' does not exist in the repo tree (relative import in ${u.file})`
+          ? `'${u.specifier}' ${u.detail ?? 'does not exist in the repo tree'} (relative import in ${u.file})`
           : `'${u.specifier}' does not resolve against the installed tree (imported by ${u.file})`,
       );
-      const hasPackage = res.unresolved.some((u) => !isProjectPathIdentity(u.specifier));
-      const hasProjectPath = res.unresolved.some((u) => isProjectPathIdentity(u.specifier));
-      if (hasPackage) {
-        lines.push(
-          'An import of an uninstalled/undeclared package fails at build or run time. ' +
-            'Declare it in the dependency manifest and install it (or remove the import).',
-        );
+      if (res.unresolved.some((u) => !isProjectPathIdentity(u.specifier))) {
+        lines.push(UNRESOLVED_REMEDY.package);
       }
-      if (hasProjectPath) {
-        lines.push(
-          'A relative import of a file that is not in the tree fails at build time. ' +
-            'Commit the missing file (or remove the import).',
-        );
+      if (res.unresolved.some((u) => isProjectPathIdentity(u.specifier))) {
+        lines.push(UNRESOLVED_REMEDY.projectPath);
       }
       return {
         ...base,
         status: 'fail',
-        output: [...lines, ...disclosed].join('\n'),
+        output: lines.join('\n'),
         findings: [...new Set(res.unresolved.map((u) => u.specifier))],
+        ...withDisclosures,
       };
     }
     return { ...base, status: 'skipped-unavailable', output: res.reason };
@@ -461,5 +468,10 @@ export function describeEnvironmentSkips(result: CorrectnessFloorResult): string
     ...result.checks
       .filter((c) => c.status === 'skipped-unavailable' && c.output)
       .map((c) => `${c.pack} ${c.label} skipped: ${c.output}`),
+    // A check that ANSWERED but declined part of its question (a specifier
+    // class it stepped back from) discloses that on pass and fail alike.
+    ...result.checks.flatMap((c) =>
+      (c.disclosures ?? []).map((d) => `${c.pack} ${c.label} disclosed: ${d}`),
+    ),
   ];
 }

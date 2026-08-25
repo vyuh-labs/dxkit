@@ -12,7 +12,6 @@
  */
 
 import { execFileSync } from 'child_process';
-import { posix } from 'path';
 
 import { dependencyManifestFilesIn } from '../../languages';
 import { basePackageEvidence } from './lockfile-evidence';
@@ -21,8 +20,53 @@ import {
   PROJECT_PATH_IDENTITY_PREFIX,
   isProjectPathIdentity,
 } from '../../languages/capabilities/correctness';
-import { IMPORT_RESOLUTION_LABEL, type CorrectnessFloorResult } from './run';
+import { IMPORT_RESOLUTION_LABEL, UNRESOLVED_REMEDY, type CorrectnessFloorResult } from './run';
 import { attributeFloorFailures, type FloorBaseCheck } from './attribution';
+
+/** Base-side evidence for a failing resolution check: the identities refuted
+ *  as pre-existing, plus every disclosure the probe owes (an identity it
+ *  could not decide, and why: never a silent flip of refutation). */
+export interface ResolutionRefutation {
+  readonly refuted: readonly string[];
+  readonly disclosures: readonly string[];
+}
+
+/** Candidate-file ceiling per project-path identity: past it the basename
+ *  is too common to read cheaply, so the probe declines (keeps the block)
+ *  and says so. */
+const MAX_BASE_CANDIDATE_FILES = 2000;
+
+/**
+ * Read many blobs at a ref in ONE git process (`cat-file --batch`), byte-
+ * exact: a header `<oid> blob <size>` precedes each body. Returns the
+ * content per requested path (absent when git reports it missing).
+ */
+function readBlobsAtRef(
+  cwd: string,
+  baseSha: string,
+  files: readonly string[],
+): Map<string, string> {
+  const out = new Map<string, string>();
+  if (files.length === 0) return out;
+  const buf = execFileSync('git', ['cat-file', '--batch'], {
+    cwd,
+    input: files.map((f) => `${baseSha}:${f}`).join('\n') + '\n',
+    maxBuffer: 512 * 1024 * 1024,
+  });
+  let pos = 0;
+  for (const file of files) {
+    const nl = buf.indexOf(0x0a, pos);
+    if (nl < 0) break;
+    const header = buf.toString('utf8', pos, nl);
+    pos = nl + 1;
+    const m = /^\S+ blob (\d+)$/.exec(header);
+    if (!m) continue; // `<name> missing` (or a non-blob): nothing to read
+    const size = Number(m[1]);
+    out.set(file, buf.toString('utf8', pos, pos + size));
+    pos += size + 1; // body + trailing newline
+  }
+  return out;
+}
 
 /**
  * Sound base-side evidence for unresolved import specifiers, WITHOUT a base
@@ -45,13 +89,19 @@ import { attributeFloorFailures, type FloorBaseCheck } from './attribution';
  *   ⇒ the specifier was ALREADY unresolvable at the base: pre-existing
  *     phantom-dependency debt this change cannot have caused. Refuted.
  *
+ * A PROJECT-PATH identity (a relative import whose target is missing) is
+ * never a manifest question: it is refuted only when the base tree ALSO
+ * lacked the target AND a base source file already imported it, decided by
+ * the pack's own extractor on the base blob (`projectPathMissingAtBase`).
+ *
  * Everything else stays attributable (the un-hoist class the resolution
  * check exists for: a specifier the base lockfile DID provide transitively
  * is an installed-tree KEY, reads as present, and keeps blocking; a newly-
  * added import of an undeclared package is absent from base source and
  * keeps blocking). Every uncertainty lands on "keep blocking" — the
- * refutation only fires when the base evidence is decisive. Returns null
- * when the base side is unreadable (no refutation, behavior unchanged).
+ * refutation only fires when the base evidence is decisive, and a probe
+ * that could not decide says so in `disclosures`. Returns null when the
+ * base side is unreadable (no refutation, behavior unchanged).
  * Exported for tests.
  */
 export function refutedResolutionSpecifiers(
@@ -59,12 +109,14 @@ export function refutedResolutionSpecifiers(
   baseSha: string,
   packs: readonly LanguageSupport[],
   specifiers: readonly string[],
-): string[] | null {
-  if (specifiers.length === 0) return [];
+): ResolutionRefutation | null {
+  if (specifiers.length === 0) return { refuted: [], disclosures: [] };
   const git = (args: string[]): string =>
     execFileSync('git', args, { cwd, encoding: 'utf8', maxBuffer: 128 * 1024 * 1024 });
   try {
-    const treeFiles = git(['ls-tree', '-r', '--name-only', baseSha]).split('\n').filter(Boolean);
+    const treeFiles = git(['ls-tree', '-r', '--name-only', '-z', baseSha])
+      .split('\0')
+      .filter(Boolean);
     const manifestPaths = dependencyManifestFilesIn(treeFiles, packs);
     const manifestBlobs = manifestPaths.map((p) => {
       const blob = ((): string => {
@@ -81,12 +133,12 @@ export function refutedResolutionSpecifiers(
       return { blob, evidence: basePackageEvidence(p, blob) };
     });
     const refuted: string[] = [];
+    const disclosures: string[] = [];
     for (const spec of specifiers) {
       if (isProjectPathIdentity(spec)) {
-        // A missing RELATIVE target is never a manifest question: it was
-        // pre-existing iff the base tree ALSO lacked the target and some base
-        // file already imported it (resolved from that file, not by name).
-        if (projectPathMissingAtBase(git, baseSha, treeFiles, packs, spec)) refuted.push(spec);
+        const verdict = projectPathMissingAtBase(cwd, git, baseSha, treeFiles, packs, spec);
+        if (verdict === true) refuted.push(spec);
+        else if (typeof verdict === 'string') disclosures.push(verdict);
         continue;
       }
       const maybeProvidedAtBase = manifestBlobs.some(({ blob, evidence }) =>
@@ -105,7 +157,7 @@ export function refutedResolutionSpecifiers(
       });
       if (importedAtBase) refuted.push(spec);
     }
-    return refuted;
+    return { refuted, disclosures };
   } catch {
     return null;
   }
@@ -113,48 +165,79 @@ export function refutedResolutionSpecifiers(
 
 /**
  * Was a project-path identity (`./src/x`, see `projectPathIdentity`) ALREADY
- * unreachable at the base? Decisive only when BOTH hold: no base tree entry
- * serves the target (the exact path, any extension, or anything below it as
- * a directory), AND a base source file carries a quoted relative specifier
- * that resolves, from THAT file's directory, to the target. Resolving from
- * the importer (rather than matching the specifier text) keeps a same-named
- * module elsewhere from refuting a genuinely new miss. A false "absent"
- * merely keeps the block.
+ * unreachable at the base? `true` only when BOTH hold: no base tree entry
+ * serves the target (the exact path, any extension, or anything below it
+ * as a directory), AND a base source file's relative imports, read through
+ * the PACK'S OWN `relativeImportIdentities` on the blob (the same
+ * extractor, comment/template handling and test/static-dir exclusions the
+ * current side used, Rule 2.30), mint that identity. `false` keeps the
+ * block. A string is a DISCLOSURE: the probe could not decide (a git
+ * failure, too many candidate blobs) and the block is kept, with the
+ * reason surfaced rather than a silent "not imported at base".
  */
 function projectPathMissingAtBase(
+  cwd: string,
   git: (args: string[]) => string,
   baseSha: string,
   treeFiles: readonly string[],
   packs: readonly LanguageSupport[],
   identity: string,
-): boolean {
+): boolean | string {
   const target = identity.slice(PROJECT_PATH_IDENTITY_PREFIX.length);
   const served = treeFiles.some(
     (f) => f === target || f.startsWith(target + '.') || f.startsWith(target + '/'),
   );
   if (served) return false;
+  const readers = packs
+    .map((p) => p.correctness?.relativeImportIdentities)
+    .filter((r): r is NonNullable<typeof r> => typeof r === 'function');
+  if (readers.length === 0) return false;
   const basename = target.slice(target.lastIndexOf('/') + 1);
-  let hits: string;
+  const pathspecs = [...new Set(packs.flatMap((p) => p.sourceExtensions ?? []))].map(
+    (e) => `*${e}`,
+  );
+  // Candidate FILES by bare basename (`-l -z`: NUL-delimited, a path
+  // containing `:` still parses; no quote suffix, so `./x.js` and
+  // `./x/index` spellings are seen), then every candidate's WHOLE blob in
+  // one batch read, decided by the pack's reader with complete comment and
+  // template context (a multi-line `import {...} from './x'` needs the
+  // whole file, not the matched line). Exit 1 = no hit.
+  let candidates: string[];
   try {
-    const pathspecs = [...new Set(packs.flatMap((p) => p.sourceExtensions ?? []))].map(
-      (e) => `*${e}`,
-    );
-    hits = git(['grep', '-n', '--fixed-strings', basename, baseSha, '--', ...pathspecs]);
-  } catch {
-    return false; // no quoted mention at base: not imported there, keep the block
+    candidates = git([
+      'grep',
+      '-l',
+      '-z',
+      '--fixed-strings',
+      '-e',
+      basename,
+      baseSha,
+      '--',
+      ...pathspecs,
+    ])
+      .split('\0')
+      .filter(Boolean)
+      .map((entry) => entry.slice(entry.indexOf(':') + 1));
+  } catch (err) {
+    const status = (err as { status?: number }).status;
+    if (status === 1) return false; // no candidate: not imported at base
+    return `${identity}: could not read the base for prior importers (git grep failed: ${
+      err instanceof Error ? err.message.split('\n')[0] : String(err)
+    }); kept as attributable`;
   }
-  const quoted = /['"](\.\.?\/[^'"\s]*)['"]/g;
-  for (const line of hits.split('\n')) {
-    // `<sha>:<path>:<lineno>:<text>`
-    const m = /^[^:]+:([^:]+):\d+:(.*)$/.exec(line);
-    if (!m) continue;
-    const fromDir = posix.dirname(m[1]);
-    for (const q of m[2].matchAll(quoted)) {
-      const spec = q[1];
-      const ext = posix.extname(spec);
-      const stem = ext ? spec.slice(0, -ext.length) : spec;
-      if (posix.normalize(posix.join(fromDir, stem)) === target) return true;
-    }
+  if (candidates.length > MAX_BASE_CANDIDATE_FILES) {
+    return `${identity}: ${candidates.length} base files mention '${basename}', too many to read; kept as attributable`;
+  }
+  let blobs: Map<string, string>;
+  try {
+    blobs = readBlobsAtRef(cwd, baseSha, candidates);
+  } catch (err) {
+    return `${identity}: could not read base blobs (${
+      err instanceof Error ? err.message.split('\n')[0] : String(err)
+    }); kept as attributable`;
+  }
+  for (const [file, blob] of blobs) {
+    if (readers.some((read) => read(file, blob)?.includes(identity))) return true;
   }
   return false;
 }
@@ -204,10 +287,18 @@ export function attributePrePushResolution(
 
   const baseRows: FloorBaseCheck[] = [];
   const resolutionCovered = new Set<string>();
+  const probeDisclosures: string[] = [];
   for (const check of failingResolution) {
-    const refuted = refutedResolutionSpecifiers(cwd, baseSha, packs, check.findings ?? []);
-    if (refuted === null || refuted.length === 0) continue;
-    baseRows.push({ pack: check.pack, label: check.label, status: 'fail', findings: refuted });
+    const evidence = refutedResolutionSpecifiers(cwd, baseSha, packs, check.findings ?? []);
+    if (evidence === null) continue;
+    probeDisclosures.push(...evidence.disclosures);
+    if (evidence.refuted.length === 0) continue;
+    baseRows.push({
+      pack: check.pack,
+      label: check.label,
+      status: 'fail',
+      findings: evidence.refuted,
+    });
     resolutionCovered.add(`${check.pack}\0${check.label}`);
   }
   // Floor-debt rows for FAILING checks not already covered by the stronger
@@ -224,7 +315,7 @@ export function attributePrePushResolution(
     baseRows.push({ pack: row.pack, label: row.label, status: 'fail' });
     debtDemoted.push(`${row.pack} ${row.label}`);
   }
-  if (baseRows.length === 0) return null;
+  if (baseRows.length === 0 && probeDisclosures.length === 0) return null;
 
   const attributed = attributeFloorFailures(result, baseRows, { absentMeans: 'net-new' });
   const blocks = attributed.some((a) => a.attribution === 'net-new');
@@ -232,14 +323,24 @@ export function attributePrePushResolution(
   for (const a of attributed) {
     if (a.check.label !== IMPORT_RESOLUTION_LABEL) continue;
     if (!resolutionCovered.has(`${a.check.pack}\0${a.check.label}`)) continue;
-    const refutedCount =
-      (a.check.findings?.length ?? 0) -
-      (a.attribution === 'net-new' ? (a.netNewFindings?.length ?? 0) : 0);
-    if (refutedCount > 0) {
+    const netNew = new Set(a.attribution === 'net-new' ? (a.netNewFindings ?? []) : []);
+    const refutedHere = (a.check.findings ?? []).filter((f) => !netNew.has(f));
+    // One note per identity class, the same split the check's own output
+    // makes: a package is a manifest question, a project path is a tree one.
+    const packages = refutedHere.filter((f) => !isProjectPathIdentity(f));
+    const projectPaths = refutedHere.filter(isProjectPathIdentity);
+    if (packages.length > 0) {
       parts.push(
-        `${refutedCount} unresolved import(s) are PRE-EXISTING — already unresolvable at the ` +
+        `${packages.length} unresolved package import(s) are PRE-EXISTING: already unresolvable at the ` +
           `merge base ${baseSha.slice(0, 12)} (absent from its manifests/lockfiles, already ` +
-          `imported there) — not blocked; declare or remove them`,
+          `imported there), not blocked. ${UNRESOLVED_REMEDY.package}`,
+      );
+    }
+    if (projectPaths.length > 0) {
+      parts.push(
+        `${projectPaths.length} missing relative import target(s) are PRE-EXISTING: the merge base ` +
+          `${baseSha.slice(0, 12)} lacked them too and already imported them, not blocked. ` +
+          UNRESOLVED_REMEDY.projectPath,
       );
     }
     if (a.attribution === 'net-new' && a.netNewFindings?.length) {
@@ -254,5 +355,6 @@ export function attributePrePushResolution(
         `CI's two-sided floor is authoritative`,
     );
   }
+  parts.push(...probeDisclosures);
   return { blocks, note: parts.length > 0 ? ` [${parts.join('; ')}]` : '' };
 }
