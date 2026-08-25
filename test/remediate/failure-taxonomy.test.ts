@@ -212,6 +212,7 @@ function config(): RemediateConfig {
     maxSpendPerRun: 0,
     maxDispatchBudget: 0,
     resume: false,
+    workOrders: { maxSliceSize: 25 },
   };
 }
 

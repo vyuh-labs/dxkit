@@ -11,9 +11,39 @@ import { AGENT_DRIVERS, driverById } from './registry';
 import { remediateTaskById } from './tasks';
 import { remediateBranchFor } from '../lanes/branches';
 import { describeDeliveryProbe, probeDeliveryPreconditions } from '../lanes/delivery-preconditions';
+import { planRepoWorkOrders, type GatherWorkOrderOptions } from './work-orders/gather';
+import { renderWorkOrderSummary } from './work-orders/render';
+import type { WorkOrderPlan } from './work-orders/types';
 
 export interface RemediatePlanOptions {
   readonly json?: boolean;
+  /** Injected for tests (a fake floor run, a fixed clock). */
+  readonly gather?: GatherWorkOrderOptions;
+}
+
+/** The plan surface's projection of one order: what a reader needs to see
+ *  where determinism applies and what each unit costs, without the full
+ *  evidence payload. */
+function projectWorkOrders(plan: WorkOrderPlan) {
+  return {
+    workOrders: plan.orders.map((o) => ({
+      id: o.id,
+      class: o.class,
+      tier: o.tier,
+      recipe: o.recipe ?? null,
+      findings: o.findings.length,
+      findingIds: o.findings.map((f) => f.id),
+      attribution: [...new Set(o.findings.map((f) => f.attribution))],
+      envelope: o.envelope,
+      budget: o.budget,
+      done: { verifier: o.done.verifier, command: o.done.command, absent: o.done.absentIds.length },
+      provenance: o.provenance,
+    })),
+    undispatchable: plan.undispatchable.map((u) => ({
+      reason: u.reason,
+      findings: u.findings.map((f) => ({ kind: f.kind, id: f.id })),
+    })),
+  };
 }
 
 /** `remediate plan` — the resolution chain, computed not narrated. */
@@ -49,6 +79,19 @@ export function runRemediatePlan(cwd: string, opts: RemediatePlanOptions = {}): 
     0,
   );
 
+  // The work-order plan (remediate rethink, section 3A): the finite units the
+  // lane would dispatch, from the live entry floor + debt + deferrals via the
+  // ONE gather adapter. Fail-open: a gather failure is disclosed, never a
+  // crashed plan.
+  let plan: WorkOrderPlan | null = null;
+  let planError: string | null = null;
+  try {
+    plan = planRepoWorkOrders(cwd, config, opts.gather);
+  } catch (err) {
+    planError = err instanceof Error ? err.message : String(err);
+  }
+  const projected = plan ? projectWorkOrders(plan) : { workOrders: [], undispatchable: [] };
+
   if (opts.json) {
     process.stdout.write(
       JSON.stringify(
@@ -74,6 +117,11 @@ export function runRemediatePlan(cwd: string, opts: RemediatePlanOptions = {}): 
            *  budgetSupport. */
           projectedMaxSpendUsd,
           unknownTasks: config.unknownTasks,
+          /** The planned work orders (tier / recipe / budget / done summary)
+           *  and the findings no class could take, with the reason. */
+          workOrders: projected.workOrders,
+          undispatchable: projected.undispatchable,
+          workOrderPlanError: planError,
           /** Per-dimension driver capability: 'enforced' | 'reported' |
            *  'none'. A dimension below 'enforced' also appears in
            *  unenforceableCaps. */
@@ -149,6 +197,21 @@ export function runRemediatePlan(cwd: string, opts: RemediatePlanOptions = {}): 
       `  spend ceiling ($${config.maxSpendPerRun}/run): ${ceiling.deferred.join(', ')} ` +
         'deferred to the next firing (disclosed, never dropped).',
     );
+  }
+
+  if (planError) {
+    logger.warn(`work orders: could not plan (${planError})`);
+  } else if (plan) {
+    logger.info(
+      `work orders: ${plan.orders.length} planned` +
+        (plan.undispatchable.length > 0
+          ? `, ${plan.undispatchable.reduce((n, u) => n + u.findings.length, 0)} finding(s) undispatchable`
+          : ''),
+    );
+    for (const order of plan.orders) logger.info(`  ${renderWorkOrderSummary(order)}`);
+    for (const u of plan.undispatchable) {
+      logger.dim(`  undispatchable (${u.findings.length}): ${u.reason}`);
+    }
   }
 
   // The delivery line (#287): can the lanes actually LAND here? The ONE

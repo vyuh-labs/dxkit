@@ -20,7 +20,12 @@ vyuh-dxkit remediate configured [path] [--land pr] [--json]
 
 - `plan` shows, per enabled task, the task > tier > driver-native model
   resolution, the effective per-task budget, and the spend-ceiling-trimmed
-  matrix the managed workflow reads.
+  matrix the managed workflow reads. It also lists the planned WORK ORDERS
+  (`workOrders` in `--json`): the finite units the lane would dispatch, built
+  from the live entry floor, deferred advisories inside their window, and the
+  lint backlog, each with its class, tier (`recipe` where a registered recipe
+  matches, else `agent`), derived budget, and done criterion. Findings no
+  class can take are listed under `undispatchable` with the reason.
 - `--task <id>` runs one task. With `--land pr` a `verified` outcome (or a
   `budget-exhausted` one under the `draft-pr` salvage policy) pushes the
   standing branch `dxkit/remediate-<task>` and opens or updates its PR.
