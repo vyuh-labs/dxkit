@@ -91,7 +91,9 @@ export function isProjectPathIdentity(specifier: string): boolean {
 export function projectPathIdentity(targetRel: string): string {
   let rel = targetRel.replace(/^\.\//, '').replace(/\/+$/, '');
   while (rel.endsWith('/index')) rel = rel.slice(0, -'/index'.length);
-  if (rel === 'index') rel = '';
+  // The ROOT barrel folds to itself, never to the degenerate './' (which
+  // any dotfile would appear to serve).
+  if (rel === '') rel = 'index';
   return PROJECT_PATH_IDENTITY_PREFIX + rel;
 }
 
@@ -138,7 +140,13 @@ export type ResolutionCheckResult =
        *  verdict: a partial answer is disclosed, never silent (Rule 19). */
       readonly disclosures?: readonly string[];
     }
-  | { readonly kind: 'skipped'; readonly reason: string };
+  | {
+      readonly kind: 'skipped';
+      readonly reason: string;
+      /** Disclosures accumulated before the check stepped back: a skip
+       *  must not discard what was already worth saying (Rule 19). */
+      readonly disclosures?: readonly string[];
+    };
 
 /** One structurally broken artifact — identity is the FILE (a second
  *  problem in the same file is the same broken artifact; a NEW broken
@@ -196,8 +204,11 @@ export interface CorrectnessProvider {
    *
    * Unlike the two command builders this is a direct computation — the pack
    * already extracts import specifiers (Rule 6), and checking them against the
-   * installed tree needs no external tool. It must be read-only, never spawn,
-   * and bias hard toward false NEGATIVES (benign.ts discipline): skip builtins,
+   * installed tree needs no external tool. It must be READ-ONLY: it may read
+   * the repo tree, including read-only git ENUMERATION (`git ls-files`, built
+   * lazily and only when a judged relative specifier exists): it never
+   * writes, never runs repo code, and never reaches the network. Bias hard
+   * toward false NEGATIVES (benign.ts discipline): skip builtins,
    * `#`-imports, path aliases, anything ambiguous — only report a specifier
    * whose package demonstrably does not exist on the resolution path. The
    * runner treats a throw as a disclosed skip (fail-open).

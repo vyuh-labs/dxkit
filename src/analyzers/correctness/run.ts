@@ -188,7 +188,7 @@ function runResolutionCheck(
   const base = { pack: id, label: IMPORT_RESOLUTION_LABEL, bin: '' };
   try {
     const res = provider.resolutionCheck!(ctx);
-    const disclosed = res.kind === 'skipped' ? [] : (res.disclosures ?? []);
+    const disclosed = res.disclosures ?? [];
     const withDisclosures = disclosed.length > 0 ? { disclosures: disclosed } : {};
     if (res.kind === 'clean') return { ...base, status: 'pass', ...withDisclosures };
     if (res.kind === 'unresolved') {
@@ -211,7 +211,7 @@ function runResolutionCheck(
         ...withDisclosures,
       };
     }
-    return { ...base, status: 'skipped-unavailable', output: res.reason };
+    return { ...base, status: 'skipped-unavailable', output: res.reason, ...withDisclosures };
   } catch (err) {
     return {
       ...base,

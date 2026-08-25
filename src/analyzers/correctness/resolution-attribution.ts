@@ -23,18 +23,29 @@ import {
 import { IMPORT_RESOLUTION_LABEL, UNRESOLVED_REMEDY, type CorrectnessFloorResult } from './run';
 import { attributeFloorFailures, type FloorBaseCheck } from './attribution';
 
-/** Base-side evidence for a failing resolution check: the identities refuted
- *  as pre-existing, plus every disclosure the probe owes (an identity it
- *  could not decide, and why: never a silent flip of refutation). */
+/** Base-side evidence for a failing resolution check: the identities
+ *  refuted as pre-existing, the identities the probe could NOT decide
+ *  (rendered non-blocking by the caller: a common basename is the repo's
+ *  shape, not the developer's fault), and every disclosure the probe owes:
+ *  never a silent flip in either direction. */
 export interface ResolutionRefutation {
   readonly refuted: readonly string[];
+  /** Identities whose base evidence hit a ceiling: not refuted, not
+   *  attributable. The pre-push caller folds them into the base side so
+   *  they WARN instead of blocking; each carries a disclosure. */
+  readonly undecided: readonly string[];
   readonly disclosures: readonly string[];
 }
 
 /** Candidate-file ceiling per project-path identity: past it the basename
- *  is too common to read cheaply, so the probe declines (keeps the block)
- *  and says so. */
+ *  is too common to read cheaply, so the identity degrades to DISCLOSED
+ *  undecided (warn, never block: on the first run after an upgrade there
+ *  is no debt envelope to mitigate a false block). */
 const MAX_BASE_CANDIDATE_FILES = 2000;
+
+/** How many candidate blobs to batch-read per round: a hit in an early
+ *  round terminates without reading the rest. */
+const BLOB_READ_CHUNK = 100;
 
 /**
  * Read many blobs at a ref in ONE git process (`cat-file --batch`), byte-
@@ -110,7 +121,7 @@ export function refutedResolutionSpecifiers(
   packs: readonly LanguageSupport[],
   specifiers: readonly string[],
 ): ResolutionRefutation | null {
-  if (specifiers.length === 0) return { refuted: [], disclosures: [] };
+  if (specifiers.length === 0) return { refuted: [], undecided: [], disclosures: [] };
   const git = (args: string[]): string =>
     execFileSync('git', args, { cwd, encoding: 'utf8', maxBuffer: 128 * 1024 * 1024 });
   try {
@@ -133,12 +144,20 @@ export function refutedResolutionSpecifiers(
       return { blob, evidence: basePackageEvidence(p, blob) };
     });
     const refuted: string[] = [];
+    const undecided: string[] = [];
     const disclosures: string[] = [];
     for (const spec of specifiers) {
       if (isProjectPathIdentity(spec)) {
         const verdict = projectPathMissingAtBase(cwd, git, baseSha, treeFiles, packs, spec);
         if (verdict === true) refuted.push(spec);
-        else if (typeof verdict === 'string') disclosures.push(verdict);
+        else if (verdict !== false) {
+          if ('undecided' in verdict) {
+            undecided.push(spec);
+            disclosures.push(verdict.undecided);
+          } else {
+            disclosures.push(verdict.kept); // block kept, reason surfaced
+          }
+        }
         continue;
       }
       const maybeProvidedAtBase = manifestBlobs.some(({ blob, evidence }) =>
@@ -157,7 +176,7 @@ export function refutedResolutionSpecifiers(
       });
       if (importedAtBase) refuted.push(spec);
     }
-    return { refuted, disclosures };
+    return { refuted, undecided, disclosures };
   } catch {
     return null;
   }
@@ -171,9 +190,11 @@ export function refutedResolutionSpecifiers(
  * the PACK'S OWN `relativeImportIdentities` on the blob (the same
  * extractor, comment/template handling and test/static-dir exclusions the
  * current side used, Rule 2.30), mint that identity. `false` keeps the
- * block. A string is a DISCLOSURE: the probe could not decide (a git
- * failure, too many candidate blobs) and the block is kept, with the
- * reason surfaced rather than a silent "not imported at base".
+ * block. The two non-boolean verdicts are DISCLOSED, never silent: a
+ * candidate ceiling yields `{ undecided }` (the caller renders the
+ * identity non-blocking, a warn, since a common basename is not the
+ * developer's doing), and a git failure yields `{ kept }` (block kept,
+ * reason surfaced).
  */
 function projectPathMissingAtBase(
   cwd: string,
@@ -182,7 +203,7 @@ function projectPathMissingAtBase(
   treeFiles: readonly string[],
   packs: readonly LanguageSupport[],
   identity: string,
-): boolean | string {
+): boolean | { undecided: string } | { kept: string } {
   const target = identity.slice(PROJECT_PATH_IDENTITY_PREFIX.length);
   const served = treeFiles.some(
     (f) => f === target || f.startsWith(target + '.') || f.startsWith(target + '/'),
@@ -196,12 +217,16 @@ function projectPathMissingAtBase(
   const pathspecs = [...new Set(packs.flatMap((p) => p.sourceExtensions ?? []))].map(
     (e) => `*${e}`,
   );
-  // Candidate FILES by bare basename (`-l -z`: NUL-delimited, a path
-  // containing `:` still parses; no quote suffix, so `./x.js` and
-  // `./x/index` spellings are seen), then every candidate's WHOLE blob in
-  // one batch read, decided by the pack's reader with complete comment and
-  // template context (a multi-line `import {...} from './x'` needs the
-  // whole file, not the matched line). Exit 1 = no hit.
+  // Candidate FILES by import-shaped needles (`-l -z`: NUL-delimited, a
+  // path containing `:` still parses). A relative specifier always carries
+  // `/` before its basename (`./db` and `../x/db` both contain `/db`), and
+  // ends at a quote, an extension dot, or a deeper segment, so the four
+  // fixed needles cover every spelling while keeping a short basename
+  // (`db`, `ui`) from matching arbitrary prose. Every candidate's WHOLE
+  // blob is then batch-read in chunks (a hit terminates early), decided by
+  // the pack's reader with complete comment and template context (a
+  // multi-line `import {...} from './x'` needs the whole file, not the
+  // matched line). Exit 1 = no hit.
   let candidates: string[];
   try {
     candidates = git([
@@ -210,7 +235,13 @@ function projectPathMissingAtBase(
       '-z',
       '--fixed-strings',
       '-e',
-      basename,
+      `/${basename}'`,
+      '-e',
+      `/${basename}"`,
+      '-e',
+      `/${basename}.`,
+      '-e',
+      `/${basename}/`,
       baseSha,
       '--',
       ...pathspecs,
@@ -221,23 +252,32 @@ function projectPathMissingAtBase(
   } catch (err) {
     const status = (err as { status?: number }).status;
     if (status === 1) return false; // no candidate: not imported at base
-    return `${identity}: could not read the base for prior importers (git grep failed: ${
-      err instanceof Error ? err.message.split('\n')[0] : String(err)
-    }); kept as attributable`;
+    return {
+      kept: `${identity}: could not read the base for prior importers (git grep failed: ${
+        err instanceof Error ? err.message.split('\n')[0] : String(err)
+      }); kept as attributable`,
+    };
   }
   if (candidates.length > MAX_BASE_CANDIDATE_FILES) {
-    return `${identity}: ${candidates.length} base files mention '${basename}', too many to read; kept as attributable`;
+    return {
+      undecided: `${identity}: ${candidates.length} base files mention '/${basename}', too many to read; cannot attribute, so it warns instead of blocking here (CI's two-sided floor is authoritative)`,
+    };
   }
-  let blobs: Map<string, string>;
-  try {
-    blobs = readBlobsAtRef(cwd, baseSha, candidates);
-  } catch (err) {
-    return `${identity}: could not read base blobs (${
-      err instanceof Error ? err.message.split('\n')[0] : String(err)
-    }); kept as attributable`;
-  }
-  for (const [file, blob] of blobs) {
-    if (readers.some((read) => read(file, blob)?.includes(identity))) return true;
+  for (let start = 0; start < candidates.length; start += BLOB_READ_CHUNK) {
+    const chunk = candidates.slice(start, start + BLOB_READ_CHUNK);
+    let blobs: Map<string, string>;
+    try {
+      blobs = readBlobsAtRef(cwd, baseSha, chunk);
+    } catch (err) {
+      return {
+        kept: `${identity}: could not read base blobs (${
+          err instanceof Error ? err.message.split('\n')[0] : String(err)
+        }); kept as attributable`,
+      };
+    }
+    for (const [file, blob] of blobs) {
+      if (readers.some((read) => read(file, blob)?.includes(identity))) return true;
+    }
   }
   return false;
 }
@@ -287,19 +327,24 @@ export function attributePrePushResolution(
 
   const baseRows: FloorBaseCheck[] = [];
   const resolutionCovered = new Set<string>();
+  const evidenceByKey = new Map<string, ResolutionRefutation>();
   const probeDisclosures: string[] = [];
   for (const check of failingResolution) {
     const evidence = refutedResolutionSpecifiers(cwd, baseSha, packs, check.findings ?? []);
     if (evidence === null) continue;
     probeDisclosures.push(...evidence.disclosures);
-    if (evidence.refuted.length === 0) continue;
+    if (evidence.refuted.length === 0 && evidence.undecided.length === 0) continue;
+    // Undecided identities join the base side so they WARN (each already
+    // carries its disclosure), so the comparator reports net-new only
+    // for identities the probe positively could not find at the base.
     baseRows.push({
       pack: check.pack,
       label: check.label,
       status: 'fail',
-      findings: evidence.refuted,
+      findings: [...evidence.refuted, ...evidence.undecided],
     });
     resolutionCovered.add(`${check.pack}\0${check.label}`);
+    evidenceByKey.set(`${check.pack}\0${check.label}`, evidence);
   }
   // Floor-debt rows for FAILING checks not already covered by the stronger
   // finding-level evidence (a debt row for the resolution check would erase
@@ -324,7 +369,12 @@ export function attributePrePushResolution(
     if (a.check.label !== IMPORT_RESOLUTION_LABEL) continue;
     if (!resolutionCovered.has(`${a.check.pack}\0${a.check.label}`)) continue;
     const netNew = new Set(a.attribution === 'net-new' ? (a.netNewFindings ?? []) : []);
-    const refutedHere = (a.check.findings ?? []).filter((f) => !netNew.has(f));
+    const undecidedHere = new Set(
+      evidenceByKey.get(`${a.check.pack}\0${a.check.label}`)?.undecided ?? [],
+    );
+    const refutedHere = (a.check.findings ?? []).filter(
+      (f) => !netNew.has(f) && !undecidedHere.has(f),
+    );
     // One note per identity class, the same split the check's own output
     // makes: a package is a manifest question, a project path is a tree one.
     const packages = refutedHere.filter((f) => !isProjectPathIdentity(f));
