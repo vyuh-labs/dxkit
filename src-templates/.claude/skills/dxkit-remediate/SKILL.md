@@ -62,6 +62,11 @@ default branch only, with dxkit-authored prompts only.
   the guardrail. Pre-existing debt listed in the ledger was already failing
   before the agent ran; it is disclosed, not the agent's doing.
 - `no-op` — the agent ran and committed nothing; the job summary says so.
+- `install-failed` — a clean checkout of the agent's commits cannot be
+  installed the way CI installs it (the frozen-lockfile install failed, most
+  often a manifest edited without re-running the install so the lockfile
+  records it). Nothing lands: CI would have died before any gate ran. The
+  ledger carries the install output.
 - `floor-red` — the agent's change introduced a net-new floor failure; no
   PR was opened, on purpose. The ledger names the failing checks.
 - `guardrail-red` — the guardrail blocked, refused to gate, or could not

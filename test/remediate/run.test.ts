@@ -107,9 +107,19 @@ function base(driver: AgentDriver, extra: Partial<Parameters<typeof runRemediate
     git: fakeGit({ diff: true }),
     runFloor: () => GREEN_FLOOR,
     runGuardrail: async () => ({ verdict: 'PASSED', ran: true, passesGate: true }),
+    // The ONE tree verification (4.4.5) runs in a clean worktree after a
+    // frozen install; both are seamed here so no git repo or package manager
+    // is needed. The floor + guardrail seams above are forwarded into it.
+    verifySeams: FAKE_TREE,
     ...extra,
   };
 }
+
+const FAKE_TREE: NonNullable<Parameters<typeof runRemediateTask>[0]['verifySeams']> = {
+  worktree: async (_o, fn) => fn('/tmp/fake-worktree'),
+  install: () => ({ status: 'installed', argv: ['npm', 'ci'] }),
+  changedFiles: () => ['src/a.ts'],
+};
 
 describe('refusal + infra arms (each truthful and distinct)', () => {
   it('refuses an untrusted tree before anything spawns', async () => {
@@ -262,6 +272,70 @@ describe('the verified frame (the agent is never trusted)', () => {
     expect(r.outcome).toBe('floor-red');
     expect(r.note).toContain('NET-NEW');
     expect(r.ledger).toContain('FAILED — net-new failures');
+  });
+
+  // 4.4.5: the lane verifies the COMMITTED head on a clean checkout with the
+  // repo's frozen install, exactly as CI will. A tree CI cannot install is
+  // its own outcome and lands nothing; the ledger says what CI's install
+  // step would have done.
+  it('install-failed: a clean checkout CI cannot install lands nothing, even with a green floor', async () => {
+    const r = await runRemediateTask(
+      base(fakeDriver({ completed: true }), {
+        verifySeams: {
+          ...FAKE_TREE,
+          install: () => ({
+            status: 'failed',
+            argv: ['npm', 'ci', '--legacy-peer-deps'],
+            output:
+              'npm ERR! code EUSAGE\nnpm ERR! package.json and package-lock.json are not in sync',
+          }),
+        },
+      }),
+    );
+    expect(r.outcome).toBe('install-failed');
+    expect(r.note).toContain('EUSAGE');
+    expect(r.ledger).toContain('outcome: **install-failed**');
+    expect(r.ledger).toContain('FAILED on a clean checkout');
+  });
+
+  it('the verification runs against the committed HEAD in a clean worktree, diff-scoped vs base', async () => {
+    let ref: string | undefined;
+    let floorArgs: unknown;
+    const r = await runRemediateTask(
+      base(fakeDriver({}), {
+        verifySeams: {
+          ...FAKE_TREE,
+          worktree: async (o, fn) => {
+            ref = o.ref;
+            return fn('/tmp/clean-wt');
+          },
+          changedFiles: (wt, baseHead) => {
+            floorArgs = { wt, baseHead };
+            return ['src/a.ts'];
+          },
+        },
+      }),
+    );
+    expect(r.outcome).toBe('verified');
+    expect(ref).toBe('head1111');
+    expect(floorArgs).toEqual({ wt: '/tmp/clean-wt', baseHead: 'base0000' });
+    expect(r.ledger).toContain('`npm ci` succeeded on a clean checkout');
+  });
+
+  it('a verification that cannot run (worktree failure) fails CLOSED with the step named', async () => {
+    const r = await runRemediateTask(
+      base(fakeDriver({}), {
+        verifySeams: {
+          ...FAKE_TREE,
+          worktree: async () => {
+            throw new Error('Cannot resolve baseline ref head1111.');
+          },
+        },
+      }),
+    );
+    expect(r.outcome).toBe('guardrail-red');
+    expect(r.guardrailVerdict).toContain("step 'worktree'");
+    expect(r.note).toContain('could not run');
   });
 
   it('pre-existing floor debt discloses without blocking', async () => {
@@ -609,7 +683,14 @@ describe('WP5: fast-exit, phases, cap accounting, blocked evidence', () => {
     const phases: string[] = [];
     const r = await runRemediateTask(base(fakeDriver({}), { onPhase: (p) => phases.push(p) }));
     expect(r.outcome).toBe('verified');
-    expect(phases).toEqual(['entry-floor', 'agent', 'sweep', 'verify-floor', 'guardrail']);
+    expect(phases).toEqual([
+      'entry-floor',
+      'agent',
+      'sweep',
+      'verify-install',
+      'verify-floor',
+      'guardrail',
+    ]);
   });
 
   it('a guardrail-red ledger names the blocking findings (evidence survives the runner)', async () => {
