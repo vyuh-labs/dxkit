@@ -13,23 +13,35 @@
  * "token tier: GitHub App" the same day) was told by `doctor` to go
  * configure it.
  *
- * So the answer is a TRI-STATE, and the negative is asserted only when
- * every scope the lane could read was actually read:
+ * So the answer mirrors the workflow's own precedence (the App id
+ * variable decides the mode, then the PAT, then the default token), and
+ * a negative is asserted only when every scope the lane could read was
+ * actually ENUMERATED IN FULL. The list endpoints paginate (GitHub caps
+ * the variables endpoints at 30 per page), so enumeration follows pages
+ * until `total_count` is accounted for and a truncated listing reads as
+ * unreadable, never as absence:
  *
- *   - `configured`      a tier was seen (with which tier and in which scope);
- *   - `not-configured`  every applicable scope was enumerated and none of
- *                       the names is present: the remedy is honest;
- *   - `unobservable`    some applicable scope could not be enumerated (a
- *                       403/404 on the org endpoints, no admin scope, no
- *                       gh, offline): "could not verify", with the scopes
- *                       that were unreadable named, never a negative.
+ *   - `configured`       a tier was seen (which tier, in which scope);
+ *   - `half-configured`  the App tier has exactly one of its two halves,
+ *                        in either direction: the id without the key
+ *                        makes the mint step die loudly on every run, the
+ *                        key without the id silently never picks App mode;
+ *   - `not-configured`   every applicable scope was fully enumerated and
+ *                        none of the names is present: the remedy is honest;
+ *   - `unobservable`     some applicable scope could not be enumerated
+ *                        (a 403/404 on the org endpoints, no admin scope,
+ *                        a truncated listing, no gh, offline): "could not
+ *                        verify", with the unreadable scopes named, never
+ *                        a negative. `cause` separates "no GitHub here"
+ *                        (the caller stays silent, the old fail-open
+ *                        contract) from a permissions gap (advice).
  *
  * The names probed come from lane-token.ts: this module holds no second
  * tier table. Consumers: `doctor` (6d). The probe is injected so every
  * state is testable without a network.
  */
 
-import { type ApiProbe, makeGhApiProbe, repoSlug } from './delivery-preconditions';
+import { type ApiProbe, makeGhApiProbe, probeJson, repoView } from './delivery-preconditions';
 import {
   LANE_TOKEN_APP_ID_VARIABLE_NAME,
   LANE_TOKEN_APP_KEY_SECRET_NAME,
@@ -47,6 +59,11 @@ export type LaneTokenTierProbe =
       readonly tier: LaneTokenTier;
       /** The scope the deciding name was found in (`app`: the App id variable). */
       readonly scope: LaneTokenScope;
+    }
+  | {
+      readonly state: 'half-configured';
+      /** Which App-tier half is definitively absent. */
+      readonly missing: 'app-id-variable' | 'app-private-key-secret';
       readonly evidence: string;
     }
   | {
@@ -55,74 +72,97 @@ export type LaneTokenTierProbe =
     }
   | {
       readonly state: 'unobservable';
-      /** Which scopes could not be enumerated, and so why no negative is asserted. */
+      /** `no-github`: not a GitHub checkout / no gh CLI, the caller stays
+       *  silent (fail-open, the pre-#325 contract). `permissions`: GitHub
+       *  answered for some scopes but not all, advice, never a negative. */
+      readonly cause: 'no-github' | 'permissions';
+      /** Which scopes could not be enumerated, so why no negative is asserted. */
       readonly reason: string;
     };
 
-/** The remedy for a genuinely absent tier, derived from the one name set. */
-export const LANE_TOKEN_REMEDY_COMMAND = `gh variable set ${LANE_TOKEN_APP_ID_VARIABLE_NAME} && gh secret set ${LANE_TOKEN_APP_KEY_SECRET_NAME}`;
-
-/** One scope's enumeration: the names seen, or null when unreadable. */
+/** One scope's full enumeration: the names, or null when unreadable. */
 type ScopeRead = ReadonlySet<string> | null;
 
-/** Names from an Actions list payload (`{ variables: [...] }` or
- *  `{ secrets: [...] }`); null when the read failed or is unparseable. */
-function namesFrom(raw: string | null, key: 'variables' | 'secrets'): ScopeRead {
-  if (raw === null) return null;
-  try {
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
-    const list = parsed[key];
+/** Follow-the-pages ceiling: 20 pages of 30 covers 600 variables, far past
+ *  any real Actions configuration; beyond it the scope reads as unreadable
+ *  (never as absence). */
+const MAX_SCOPE_PAGES = 20;
+
+/**
+ * Fully enumerate one Actions list endpoint (`{ total_count, variables|
+ * secrets: [{ name }] }`), following pagination. GitHub caps the variables
+ * endpoints at 30 per page (secrets at 100). Returns null when the scope
+ * cannot be READ IN FULL (an error, an unparseable payload, or a listing
+ * that never accounts for `total_count`), because a partial listing cannot
+ * back an absence claim (the #325 class, one page deeper).
+ */
+function readScope(probe: ApiProbe, basePath: string, key: 'variables' | 'secrets'): ScopeRead {
+  const perPage = key === 'variables' ? 30 : 100;
+  const names = new Set<string>();
+  let total = 0;
+  for (let page = 1; page <= MAX_SCOPE_PAGES; page++) {
+    const parsed = probeJson(probe, `${basePath}?per_page=${perPage}&page=${page}`);
+    if (parsed === null || typeof parsed !== 'object') return null;
+    const rec = parsed as Record<string, unknown>;
+    if (typeof rec.total_count !== 'number') return null;
+    total = rec.total_count;
+    const list = rec[key];
     if (!Array.isArray(list)) return null;
-    const names = new Set<string>();
     for (const item of list) {
       const name = (item as { name?: unknown })?.name;
       if (typeof name === 'string') names.add(name);
     }
-    return names;
-  } catch {
-    return null;
+    if (names.size >= total || list.length === 0) break;
   }
+  return names.size >= total ? names : null;
 }
 
-/** Is the repo owned by an organization? null when the API could not say
- *  (then the org scopes are treated as applicable: the probe must not
- *  assume "no org" to reach a negative). */
-function ownerIsOrganization(probe: ApiProbe, slug: string): boolean | null {
-  const raw = probe(`repos/${slug}`);
-  if (raw === null) return null;
-  try {
-    const type = (JSON.parse(raw) as { owner?: { type?: unknown } })?.owner?.type;
-    return typeof type === 'string' ? type === 'Organization' : null;
-  } catch {
-    return null;
-  }
-}
+const EMPTY_SCOPE: ReadonlySet<string> = new Set();
 
 /**
- * Probe the tier against the repo AND org scopes. Pure over the injected
- * probe: every state is reachable from fixture payloads.
+ * Probe the tier against the repo AND org scopes, mirroring the workflow
+ * chain's precedence. Pure over the injected probe: every state is
+ * reachable from fixture payloads.
+ *
+ * `ownerInOrganization` comes from the caller's one `gh repo view` call
+ * (`repoView`): `false` confirms a user-owned repo (no org scope exists,
+ * so empty repo scopes ARE a genuine absence); `true` or null keeps the
+ * org scopes applicable, the probe never assumes "no org" to reach a
+ * negative.
  */
-export function probeLaneTokenTier(probe: ApiProbe, slug: string): LaneTokenTierProbe {
-  const page = '?per_page=100';
-  const repoVars = namesFrom(probe(`repos/${slug}/actions/variables${page}`), 'variables');
-  const repoSecrets = namesFrom(probe(`repos/${slug}/actions/secrets${page}`), 'secrets');
+export function probeLaneTokenTier(
+  probe: ApiProbe,
+  slug: string,
+  ownerInOrganization: boolean | null,
+): LaneTokenTierProbe {
+  const repoVars = readScope(probe, `repos/${slug}/actions/variables`, 'variables');
+  const repoSecrets = readScope(probe, `repos/${slug}/actions/secrets`, 'secrets');
 
-  // A user-owned repo has no org scope: an unreadable org endpoint there is
-  // expected, not a gap. Only a CONFIRMED user owner narrows the scopes.
-  const orgApplies = ownerIsOrganization(probe, slug) !== false;
+  // Short-circuit: a fully-configured App tier in the repo scope needs no
+  // org reads (positive evidence already decides the mode).
+  if (
+    repoVars?.has(LANE_TOKEN_APP_ID_VARIABLE_NAME) === true &&
+    repoSecrets?.has(LANE_TOKEN_APP_KEY_SECRET_NAME) === true
+  ) {
+    return { state: 'configured', tier: 'app', scope: 'repo' };
+  }
+
+  const orgApplies = ownerInOrganization !== false;
   const orgVars: ScopeRead = orgApplies
-    ? namesFrom(probe(`repos/${slug}/actions/organization-variables${page}`), 'variables')
-    : new Set();
+    ? readScope(probe, `repos/${slug}/actions/organization-variables`, 'variables')
+    : EMPTY_SCOPE;
   const orgSecrets: ScopeRead = orgApplies
-    ? namesFrom(probe(`repos/${slug}/actions/organization-secrets${page}`), 'secrets')
-    : new Set();
+    ? readScope(probe, `repos/${slug}/actions/organization-secrets`, 'secrets')
+    : EMPTY_SCOPE;
 
   const appIdScope: LaneTokenScope | null = repoVars?.has(LANE_TOKEN_APP_ID_VARIABLE_NAME)
     ? 'repo'
     : orgVars?.has(LANE_TOKEN_APP_ID_VARIABLE_NAME)
       ? 'org'
       : null;
-  const appKeySeen =
+  const varsFullyRead = repoVars !== null && orgVars !== null;
+  const secretsFullyRead = repoSecrets !== null && orgSecrets !== null;
+  const keySeen =
     repoSecrets?.has(LANE_TOKEN_APP_KEY_SECRET_NAME) === true ||
     orgSecrets?.has(LANE_TOKEN_APP_KEY_SECRET_NAME) === true;
   const patScope: LaneTokenScope | null = repoSecrets?.has(LANE_TOKEN_PAT_SECRET_NAME)
@@ -131,63 +171,110 @@ export function probeLaneTokenTier(probe: ApiProbe, slug: string): LaneTokenTier
       ? 'org'
       : null;
 
-  // Positive evidence wins regardless of what else was unreadable: a tier
-  // seen is a tier the lane will use (the mint step keys on the same names).
-  if (appIdScope !== null && appKeySeen) {
+  // The workflow's mode expression picks App mode on the id ALONE, so the
+  // id's presence decides first, exactly as at runtime.
+  if (appIdScope !== null) {
+    if (keySeen) return { state: 'configured', tier: 'app', scope: appIdScope };
+    if (secretsFullyRead) {
+      return {
+        state: 'half-configured',
+        missing: 'app-private-key-secret',
+        evidence:
+          `the ${LANE_TOKEN_APP_ID_VARIABLE_NAME} variable is set (${appIdScope}-level) but no ` +
+          `${LANE_TOKEN_APP_KEY_SECRET_NAME} secret exists in the repo or org scope`,
+      };
+    }
     return {
-      state: 'configured',
-      tier: 'app',
-      scope: appIdScope,
-      evidence: `GitHub App tier: ${LANE_TOKEN_APP_ID_VARIABLE_NAME} (${appIdScope}-level) + ${LANE_TOKEN_APP_KEY_SECRET_NAME}`,
-    };
-  }
-  if (patScope !== null) {
-    return {
-      state: 'configured',
-      tier: 'pat',
-      scope: patScope,
-      evidence: `PAT tier: ${LANE_TOKEN_PAT_SECRET_NAME} (${patScope}-level secret)`,
+      state: 'unobservable',
+      cause: 'permissions',
+      reason:
+        `the ${LANE_TOKEN_APP_ID_VARIABLE_NAME} variable is set (${appIdScope}-level) but ` +
+        `${unreadableScopes(repoVars, repoSecrets, orgVars, orgSecrets)} could not be ` +
+        `enumerated with this token, so the ${LANE_TOKEN_APP_KEY_SECRET_NAME} secret ` +
+        `cannot be verified`,
     };
   }
 
+  // No id seen. A PAT is positive evidence of a working tier.
+  if (patScope !== null) return { state: 'configured', tier: 'pat', scope: patScope };
+
+  // The other half-configured direction: the key exists but the id is
+  // definitively absent, so the workflow never picks App mode.
+  if (keySeen && varsFullyRead) {
+    return {
+      state: 'half-configured',
+      missing: 'app-id-variable',
+      evidence:
+        `a ${LANE_TOKEN_APP_KEY_SECRET_NAME} secret exists but the ` +
+        `${LANE_TOKEN_APP_ID_VARIABLE_NAME} variable is absent from the repo and org scope`,
+    };
+  }
+
+  if (varsFullyRead && secretsFullyRead) {
+    return {
+      state: 'not-configured',
+      evidence:
+        `neither ${LANE_TOKEN_APP_ID_VARIABLE_NAME} + ${LANE_TOKEN_APP_KEY_SECRET_NAME} nor ` +
+        `${LANE_TOKEN_PAT_SECRET_NAME} is present in the repo or org scope`,
+    };
+  }
+
+  return {
+    state: 'unobservable',
+    cause: 'permissions',
+    reason:
+      `${unreadableScopes(repoVars, repoSecrets, orgVars, orgSecrets)} could not be enumerated ` +
+      `with this token (an org-level ${LANE_TOKEN_APP_ID_VARIABLE_NAME} / ` +
+      `${LANE_TOKEN_APP_KEY_SECRET_NAME} or ${LANE_TOKEN_PAT_SECRET_NAME} would be invisible here)`,
+  };
+}
+
+function unreadableScopes(
+  repoVars: ScopeRead,
+  repoSecrets: ScopeRead,
+  orgVars: ScopeRead,
+  orgSecrets: ScopeRead,
+): string {
   const unreadable: string[] = [];
   if (repoVars === null) unreadable.push('repo variables');
   if (repoSecrets === null) unreadable.push('repo secrets');
   if (orgVars === null) unreadable.push('org variables');
   if (orgSecrets === null) unreadable.push('org secrets');
-  if (unreadable.length > 0) {
-    return {
-      state: 'unobservable',
-      reason:
-        `could not enumerate ${unreadable.join(', ')} with this token (an org-level ` +
-        `${LANE_TOKEN_APP_ID_VARIABLE_NAME} / ${LANE_TOKEN_APP_KEY_SECRET_NAME} or ${LANE_TOKEN_PAT_SECRET_NAME} ` +
-        `would be invisible here); the lane run's "Disclose token mode" step shows the tier ` +
-        `actually used`,
-    };
-  }
-  return {
-    state: 'not-configured',
-    evidence:
-      `neither ${LANE_TOKEN_APP_ID_VARIABLE_NAME} + ${LANE_TOKEN_APP_KEY_SECRET_NAME} nor ` +
-      `${LANE_TOKEN_PAT_SECRET_NAME} is present in the repo or org scope`,
-  };
+  return unreadable.join(', ');
 }
 
 /**
- * The probe for a checkout: resolves the slug and the gh-backed probe,
- * both injectable. No GitHub repo or no gh CLI is `unobservable`, never a
+ * The probe for a checkout. `slug` / `ownerInOrganization` are injectable
+ * so a caller that already ran `repoView` (doctor resolves it once and
+ * shares it across its lane checks) never triggers a second gh shell; an
+ * explicit `slug: null` means "resolved, and there is none". No GitHub
+ * repo or no gh CLI is `unobservable` with cause `no-github`, never a
  * negative.
  */
 export function probeLaneTokenTierHere(
   cwd: string,
-  opts: { readonly probe?: ApiProbe; readonly slug?: string } = {},
+  opts: {
+    readonly probe?: ApiProbe;
+    readonly slug?: string | null;
+    readonly ownerInOrganization?: boolean | null;
+  } = {},
 ): LaneTokenTierProbe {
-  const slug = opts.slug ?? repoSlug(cwd);
+  let slug: string | null;
+  let ownerInOrganization: boolean | null;
+  if (opts.slug !== undefined) {
+    slug = opts.slug;
+    ownerInOrganization = opts.ownerInOrganization ?? null;
+  } else {
+    const view = repoView(cwd);
+    slug = view?.slug ?? null;
+    ownerInOrganization = opts.ownerInOrganization ?? view?.inOrganization ?? null;
+  }
   if (slug === null) {
     return {
       state: 'unobservable',
+      cause: 'no-github',
       reason: 'not a GitHub repo here, or the gh CLI is unavailable',
     };
   }
-  return probeLaneTokenTier(opts.probe ?? makeGhApiProbe(cwd), slug);
+  return probeLaneTokenTier(opts.probe ?? makeGhApiProbe(cwd), slug, ownerInOrganization);
 }

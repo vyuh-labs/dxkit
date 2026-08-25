@@ -6,6 +6,7 @@
  * max_turns silently governed real spend).
  */
 
+import { LANE_TOKEN_PAT_SECRET_NAME } from '../lanes/lane-token';
 import type { AgentDriver } from './driver';
 import type { RemediateBudget } from './config';
 
@@ -43,7 +44,7 @@ export function clampBudgetToTokenLifetime(
       `maxMinutes ${budget.maxMinutes} clamped to ${APP_TOKEN_SAFE_MINUTES}: this lane pushes ` +
         `with a GitHub App installation token, which GitHub hard-caps at one hour, and the ` +
         `landing must fit inside it — a longer run would spend its full agent budget and then ` +
-        `fail to deliver. For longer runs use the DXKIT_BOT_TOKEN PAT tier or lower the budget.`,
+        `fail to deliver. For longer runs use the ${LANE_TOKEN_PAT_SECRET_NAME} PAT tier or lower the budget.`,
     ],
   };
 }

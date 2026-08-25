@@ -63,7 +63,7 @@ export interface LandRefreshOptions {
    * Stamp `[skip ci]` on the PR-mode head commit too (#304). Default FALSE:
    * GitHub honors the marker for `pull_request` workflows, so a stamped
    * standing PR can never run a single check — a code-carrying lane PR then
-   * presents with zero CI, silently defeats the DXKIT_BOT_TOKEN's stated
+   * presents with zero CI, silently defeats the lane PAT tier's stated
    * purpose, and under required checks is permanently unmergeable (the
    * PR-mode sibling of the push-mode deadlock enforcement.ts documents).
    * Only an artifact-only refresh PR that deliberately wants silent updates

@@ -34,6 +34,16 @@ export const LANE_TOKEN_APP_ID_VARIABLE_NAME = 'DXKIT_APP_ID';
 export const LANE_TOKEN_APP_KEY_SECRET_NAME = 'DXKIT_APP_PRIVATE_KEY';
 export const LANE_TOKEN_PAT_SECRET_NAME = 'DXKIT_BOT_TOKEN';
 
+/**
+ * The remedy for a genuinely absent tier, and the per-half remedies for a
+ * half-configured App tier. Co-located with the names so every consumer
+ * (doctor, install notes, disclosures) derives its advice from the one
+ * definition instead of restating the names.
+ */
+export const LANE_TOKEN_REMEDY_COMMAND = `gh variable set ${LANE_TOKEN_APP_ID_VARIABLE_NAME} && gh secret set ${LANE_TOKEN_APP_KEY_SECRET_NAME}`;
+export const LANE_TOKEN_APP_ID_REMEDY_COMMAND = `gh variable set ${LANE_TOKEN_APP_ID_VARIABLE_NAME}`;
+export const LANE_TOKEN_APP_KEY_REMEDY_COMMAND = `gh secret set ${LANE_TOKEN_APP_KEY_SECRET_NAME}`;
+
 /** Tier chain for checkout credentials and gh calls: App → PAT → default. */
 export const LANE_TOKEN_CHAIN = `\${{ steps.dxkit-app-token.outputs.token || secrets.${LANE_TOKEN_PAT_SECRET_NAME} || github.token }}`;
 
@@ -87,13 +97,33 @@ export const LANE_TOKEN_STEPS = `      # The lane token, tier chain: GitHub App 
           fi`;
 
 /**
+ * The task-time RE-MINT step (the remediate lane): an App installation
+ * token is hard-capped at one hour by GitHub and the first mint happens
+ * before checkout + toolchain install, so a long agent budget could
+ * outlive it and 401 the landing push after the full agent spend.
+ * Rendered from the same name constants as the first mint; the template
+ * carries the __DXKIT_LANE_TOKEN_TASK_STEPS__ placeholder (it hardcoded
+ * these names once, which is exactly the drift this module exists to
+ * prevent). 6-space indentation matches the templates' step nesting.
+ */
+export const LANE_TOKEN_TASK_STEPS = `      - name: Re-mint the lane token before the task (App tier)
+        id: dxkit-app-token-task
+        if: \${{ vars.${LANE_TOKEN_APP_ID_VARIABLE_NAME} != '' }}
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: \${{ vars.${LANE_TOKEN_APP_ID_VARIABLE_NAME} }}
+          private-key: \${{ secrets.${LANE_TOKEN_APP_KEY_SECRET_NAME} }}`;
+
+/**
  * The substitution map the ONE workflow writer applies to EVERY template,
  * unconditionally — a callsite cannot forget it, and a template without
  * the placeholders is untouched (split/join no-op). Order matters only in
- * that keys never overlap; _TASK and _MODE sort before the bare token key
- * here so the bare key can never eat their prefixes.
+ * that keys never overlap; the longer _TASK_STEPS / _TASK / _MODE keys
+ * sort before the bare token key here so the bare key can never eat
+ * their prefixes.
  */
 export const LANE_TOKEN_SUBSTITUTIONS: Readonly<Record<string, string>> = {
+  __DXKIT_LANE_TOKEN_TASK_STEPS__: LANE_TOKEN_TASK_STEPS,
   __DXKIT_LANE_TOKEN_STEPS__: LANE_TOKEN_STEPS,
   __DXKIT_LANE_TOKEN_TASK__: LANE_TOKEN_CHAIN_TASK,
   __DXKIT_LANE_TOKEN_MODE__: LANE_TOKEN_MODE_EXPR,

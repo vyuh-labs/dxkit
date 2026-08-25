@@ -38,7 +38,7 @@ import {
 import { baselineRefreshCron, loadPolicyFromCwd } from './baseline/policy';
 import { cronFromCadence, DEFAULT_DEPBUMP_CRON } from './baseline/policy-sections';
 import { BOT_IDENTITY } from './land-refresh';
-import { LANE_TOKEN_SUBSTITUTIONS } from './lanes/lane-token';
+import { LANE_TOKEN_PAT_SECRET_NAME, LANE_TOKEN_SUBSTITUTIONS } from './lanes/lane-token';
 import { resolveRemediateConfig } from './remediate/config';
 import { driverById } from './remediate/registry';
 import { knownTaskIds } from './remediate/tasks';
@@ -1118,9 +1118,9 @@ export function installCiRemediate(cwd: string, opts: InstallerOpts = {}): ShipI
         `lands one standing PR per task. Set the ${
           driver?.credentialEnv.join(', ') || 'driver credential'
         } repo secret (a scoped key with a spend limit) before the first run. ` +
-        'Recommended: also set a DXKIT_BOT_TOKEN secret (a PAT with repo scope) — PRs ' +
-        'opened with the default GITHUB_TOKEN trigger no workflow runs, so they arrive ' +
-        'with no checks. See docs/getting-started.md "Lane credentials".',
+        `Recommended: also set a ${LANE_TOKEN_PAT_SECRET_NAME} secret (a PAT with repo scope), ` +
+        'since PRs opened with the default GITHUB_TOKEN trigger no workflow runs, so they ' +
+        'arrive with no checks. See docs/getting-started.md "Lane credentials".',
     );
   }
   return result;
@@ -1153,9 +1153,9 @@ export function installCiDepBump(cwd: string, opts: InstallerOpts = {}): ShipIns
         'Monday 07:00 UTC) it turns the fixable subset of dependency vulnerabilities into ' +
         'one standing PR (dxkit/dep-bump) — bumps from the scanners’ own fix versions, ' +
         'verified by the correctness floor + guardrail before opening. Majors are skipped ' +
-        'unless depBump.allowMajor. Recommended: set a DXKIT_BOT_TOKEN secret (a PAT with ' +
-        'repo scope) so the lane PR runs checks — default-token pushes trigger no ' +
-        'workflows. See docs/getting-started.md "Lane credentials".',
+        `unless depBump.allowMajor. Recommended: set a ${LANE_TOKEN_PAT_SECRET_NAME} secret ` +
+        '(a PAT with repo scope) so the lane PR runs checks; default-token pushes trigger ' +
+        'no workflows. See docs/getting-started.md "Lane credentials".',
     );
   }
   return result;

@@ -22,16 +22,21 @@ import { EXTERNAL_SNAPSHOT_STALE_DAYS, snapshotAgeDays } from './ingest/engine-f
 import { diagnoseFlow, type FlowDiagnosis } from './analyzers/flow/diagnose';
 import { gatherRecommendations, type CommandRecommendation } from './discovery/commands';
 import { trustedLocalContext } from './analysis-trust';
-import { probeDeliveryPreconditions } from './lanes/delivery-preconditions';
 import {
-  LANE_TOKEN_REMEDY_COMMAND,
-  probeLaneTokenTierHere,
-  type LaneTokenTierProbe,
-} from './lanes/lane-token-probe';
+  makeGhApiProbe,
+  probeDeliveryPreconditions,
+  probeJson,
+  repoView,
+  type ApiProbe,
+} from './lanes/delivery-preconditions';
+import { probeLaneTokenTierHere, type LaneTokenTierProbe } from './lanes/lane-token-probe';
 import {
+  LANE_TOKEN_APP_ID_REMEDY_COMMAND,
   LANE_TOKEN_APP_ID_VARIABLE_NAME,
+  LANE_TOKEN_APP_KEY_REMEDY_COMMAND,
   LANE_TOKEN_APP_KEY_SECRET_NAME,
   LANE_TOKEN_PAT_SECRET_NAME,
+  LANE_TOKEN_REMEDY_COMMAND,
 } from './lanes/lane-token';
 
 /**
@@ -121,14 +126,48 @@ export interface DoctorReport {
 /**
  * The 6d lane-token check for a probe result (dxkit #325). Pure so every
  * state is pinned by test: a genuine absence is the red finding with the
- * remedy; an UNOBSERVABLE scope (org-level names this token cannot list)
- * is advice that says what could not be verified and where the truth is,
- * never the negative assertion; a configured tier is no finding at all.
+ * remedy; a HALF-configured App tier is a red finding naming exactly the
+ * missing half (in either direction); an UNOBSERVABLE scope (org-level
+ * names this token cannot list) is advice that says what could not be
+ * verified and where the truth is, never the negative assertion; the
+ * no-GitHub / no-gh case stays SILENT (the pre-#325 fail-open contract);
+ * a configured tier is no finding at all.
  */
 export function laneTokenTierCheck(result: LaneTokenTierProbe): CheckResult | null {
   switch (result.state) {
     case 'configured':
       return null;
+    case 'half-configured':
+      return result.missing === 'app-private-key-secret'
+        ? {
+            label: `lane token App tier is half-configured: the ${LANE_TOKEN_APP_ID_VARIABLE_NAME} variable is set but the ${LANE_TOKEN_APP_KEY_SECRET_NAME} secret is missing`,
+            ok: false,
+            tier: 'operational',
+            fix: {
+              hint:
+                `The lane workflows pick App mode on the ${LANE_TOKEN_APP_ID_VARIABLE_NAME} ` +
+                'variable alone, and their mint step fails loudly without the private key, so ' +
+                `every lane run dies before doing any work. Probed: ${result.evidence}. Set the ` +
+                `${LANE_TOKEN_APP_KEY_SECRET_NAME} secret (the App's PEM private key), or unset ` +
+                `the variable to fall back to another tier.`,
+              command: LANE_TOKEN_APP_KEY_REMEDY_COMMAND,
+              skill: 'dxkit-fix',
+            },
+          }
+        : {
+            label: `lane token App tier is half-configured: the ${LANE_TOKEN_APP_KEY_SECRET_NAME} secret is set but the ${LANE_TOKEN_APP_ID_VARIABLE_NAME} variable is missing`,
+            ok: false,
+            tier: 'operational',
+            fix: {
+              hint:
+                `Without the ${LANE_TOKEN_APP_ID_VARIABLE_NAME} variable the lane workflows ` +
+                'never pick App mode: they silently fall back to the PAT or the default token ' +
+                `and the configured key is dead weight. Probed: ${result.evidence}. Set the ` +
+                `variable to the GitHub App's id.`,
+              command: LANE_TOKEN_APP_ID_REMEDY_COMMAND,
+              skill: 'dxkit-fix',
+            },
+          };
     case 'not-configured':
       return {
         label: 'lane PRs will run no checks: no lane token tier is configured',
@@ -149,6 +188,11 @@ export function laneTokenTierCheck(result: LaneTokenTierProbe): CheckResult | nu
         },
       };
     case 'unobservable':
+      // No GitHub repo / no gh CLI: the environment cannot answer at all,
+      // so stay silent (the pre-#325 fail-open contract). Only a
+      // permissions-shaped gap (GitHub answered for some scopes but not
+      // all) is worth a line of advice.
+      if (result.cause === 'no-github') return null;
       return {
         label: 'lane token tier could not be verified from here',
         ok: false,
@@ -156,10 +200,11 @@ export function laneTokenTierCheck(result: LaneTokenTierProbe): CheckResult | nu
         advisory: true,
         fix: {
           hint:
-            `Doctor ${result.reason}. This is not a finding: an org-level tier is ` +
-            'common and works without being visible to a repo-scoped token. To verify, ' +
-            'open a recent dep-bump / remediate run and read its "Disclose token mode" ' +
-            `step, or re-run doctor with a token that can list org Actions variables and secrets.`,
+            `Could not verify the lane token tier: ${result.reason}. This is not a ` +
+            'finding: an org-level tier is common and works without being visible to a ' +
+            'repo-scoped token. To verify, open a recent dep-bump / remediate run and read ' +
+            'its "Disclose token mode" step, or re-run doctor with a token that can list ' +
+            'org Actions variables and secrets.',
           skill: 'dxkit-fix',
         },
       };
@@ -167,22 +212,18 @@ export function laneTokenTierCheck(result: LaneTokenTierProbe): CheckResult | nu
 }
 
 /**
- * Can GitHub Actions create pull requests in this repo? Same tri-state
- * fail-open contract as `botTokenSecretAbsent`: `false` only when the API
- * answered and the setting is off; `true` when on; `null` when unknowable
- * (no gh, no access, offline) — the caller stays silent on null.
+ * Can GitHub Actions create pull requests in this repo? Tri-state and
+ * fail-open: `false` only when the API answered and the setting is off;
+ * `true` when on; `null` when unknowable (no slug, no access, offline);
+ * the caller stays silent on null. Reads through the caller's shared
+ * ApiProbe + already-resolved slug (one `gh repo view` for all of 6d-6f).
  */
-function actionsCanCreatePrs(cwd: string): boolean | null {
-  try {
-    const out = execSync(
-      'gh api repos/{owner}/{repo}/actions/permissions/workflow --jq .can_approve_pull_request_reviews',
-      { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 15_000 },
-    );
-    const v = out.trim();
-    return v === 'true' ? true : v === 'false' ? false : null;
-  } catch {
-    return null;
-  }
+function actionsCanCreatePrs(probe: ApiProbe, slug: string | null): boolean | null {
+  if (slug === null) return null;
+  const parsed = probeJson(probe, `repos/${slug}/actions/permissions/workflow`);
+  const v = (parsed as { can_approve_pull_request_reviews?: unknown } | null)
+    ?.can_approve_pull_request_reviews;
+  return typeof v === 'boolean' ? v : null;
 }
 
 function commandAvailable(cmd: string): boolean {
@@ -1030,12 +1071,24 @@ function runOperationalChecks(cwd: string, hasManifest: boolean): CheckResult[] 
     const prLaneInstalled = ['dxkit-dep-bump.yml', 'dxkit-remediate.yml'].some((f) =>
       fs.existsSync(path.join(cwd, '.github', 'workflows', f)),
     );
+    // ONE `gh repo view` and ONE ApiProbe shared by 6d/6e/6f: each check
+    // used to shell its own slug resolution, tripling the startup cost of
+    // this block for identical answers.
+    const repo = prLaneInstalled ? repoView(cwd) : null;
+    const apiProbe = makeGhApiProbe(cwd);
     // Red only when NEITHER tier is configured AND every scope the lane
-    // reads (repo + org variables/secrets) was actually enumerated. An
-    // org-level tier a repo-scoped token cannot list is UNOBSERVABLE, and
-    // reads as "could not verify" advice, never as absent (dxkit #325).
+    // reads (repo + org variables/secrets) was actually enumerated in
+    // full. An org-level tier a repo-scoped token cannot list is
+    // UNOBSERVABLE, and reads as "could not verify" advice, never as
+    // absent (dxkit #325).
     if (prLaneInstalled) {
-      const check = laneTokenTierCheck(probeLaneTokenTierHere(cwd));
+      const check = laneTokenTierCheck(
+        probeLaneTokenTierHere(cwd, {
+          probe: apiProbe,
+          slug: repo?.slug ?? null,
+          ownerInOrganization: repo?.inOrganization ?? null,
+        }),
+      );
       if (check) checks.push(check);
     }
 
@@ -1045,7 +1098,7 @@ function runOperationalChecks(cwd: string, hasManifest: boolean): CheckResult[] 
     // fails to open the PR (the run log names this setting; the onboard
     // preflight probes it too — this is the local-doctor sibling of that
     // probe). Tri-state fail-open: silent unless the API said "off".
-    if (prLaneInstalled && actionsCanCreatePrs(cwd) === false) {
+    if (prLaneInstalled && actionsCanCreatePrs(apiProbe, repo?.slug ?? null) === false) {
       checks.push({
         label:
           "lane PRs cannot be opened — 'Allow GitHub Actions to create and approve pull requests' is off",
@@ -1071,7 +1124,10 @@ function runOperationalChecks(cwd: string, hasManifest: boolean): CheckResult[] 
     // consumes the same module. Fail-open: an unanswerable probe stays
     // silent here — doctor never invents a refusal.
     if (prLaneInstalled) {
-      const delivery = probeDeliveryPreconditions(cwd);
+      const delivery = probeDeliveryPreconditions(cwd, {
+        slug: repo?.slug ?? null,
+        probe: apiProbe,
+      });
       for (const p of delivery.probes.filter((p) => p.verdict === 'blocked')) {
         checks.push({
           label: `lanes cannot deliver here — branch creation is blocked for ${p.branch}`,
