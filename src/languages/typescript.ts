@@ -19,7 +19,7 @@ import {
   gatherOsvScannerDepVulnsResult,
   mergeMaliciousOsvFindings,
 } from '../analyzers/tools/osv-scanner-deps';
-import { detectLockfile, lockfileSyncCheck } from '../package-manager';
+import { detectLockfile, detectPackageManager, lockfileSyncCheck, provisionArgv } from '../package-manager';
 import { fileExists, run, runJSON } from '../analyzers/tools/runner';
 import { walkPaths } from '../analyzers/tools/walk-paths';
 import { installedNodeMajor, readRepoFile, repoFileExists } from './version-detect';
@@ -2860,6 +2860,11 @@ export const typescript: LanguageSupport = {
 
   upgradeCommand(name, version) {
     return `npm install ${name}@${version}`;
+  },
+
+  provision(cwd) {
+    const [bin, ...args] = provisionArgv(detectPackageManager(cwd));
+    return { bin, args };
   },
 
   // Path conventions span both backend Node frameworks (Express,

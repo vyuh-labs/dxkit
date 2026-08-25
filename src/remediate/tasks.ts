@@ -12,7 +12,7 @@
  */
 import type { ModelTier } from './driver';
 import { dxkitCli } from '../self-invocation';
-import type { WorkOrderClass } from './work-orders/types';
+import { classesSelectedBy, type WorkOrderClass } from './work-orders/types';
 
 /** How a prompt tells the agent to invoke dxkit inside the TARGET repo:
  *  the local install first, the canonical binary invocation as fallback
@@ -57,10 +57,12 @@ export interface RemediateTask {
   readonly verify: 'floor' | 'guardrail';
   /**
    * The work-order classes this task SELECTS (remediate rethink, section 3A):
+   * a READ of `WORK_ORDER_CLASSES` (each class names its selecting task), so
    * a task is a selector over the planner's orders, not an open goal. An
    * open-ended task (docs, tests) selects nothing and says so via
    * `openEnded`; every bounded task selects at least one class (pinned by
-   * the task-catalog test).
+   * the task-catalog test). Selection is consumed by the executor unit; this
+   * unit declares it.
    */
   readonly selects: readonly WorkOrderClass[];
   /** True for a task with no finite finding set to close (score-hinged,
@@ -140,7 +142,7 @@ Ground rules (non-negotiable):
 export const REMEDIATE_TASKS: readonly RemediateTask[] = [
   {
     id: 'fix-build',
-    selects: ['unresolved-import', 'stale-lockfile', 'floor-failure'],
+    selects: classesSelectedBy('fix-build'),
     openEnded: false,
     summary: 'fix the grandfathered broken build / failing tests (floor debt)',
     tier: 'standard',
@@ -160,7 +162,7 @@ message. When you believe you are done, re-run the failing commands and then
   },
   {
     id: 'fix-vulns',
-    selects: ['dep-advisory'],
+    selects: classesSelectedBy('fix-vulns'),
     openEnded: false,
     summary: 'remediate baselined dependency vulnerabilities the bump lane could not close',
     tier: 'standard',
@@ -188,7 +190,7 @@ in docs/DXKIT-REMEDIATION-NOTES.md so the reviewer sees what was compared.` + SH
   },
   {
     id: 'fix-lint',
-    selects: ['lint-located'],
+    selects: classesSelectedBy('fix-lint'),
     openEnded: false,
     summary: 'burn down the grandfathered lint backlog, oldest and highest-signal first',
     tier: 'light',

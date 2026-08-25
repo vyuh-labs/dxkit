@@ -1,15 +1,12 @@
 /**
  * Work-order rendering: the agent-facing prompt (section 3C) and the
- * one-line plan summary. Prose here is human-toned and uses no em-dashes.
+ * one-line plan summary. The shared ground rules every remediation prompt
+ * carries (`SHARED_RULES`) are appended here, never restated. Prose here is
+ * human-toned and uses no em-dashes.
  */
+import { SHARED_RULES } from '../tasks';
 import type { WorkOrder, WorkOrderFinding } from './types';
 import { WORK_ORDER_CLASSES, isBuiltinWorkOrderClass } from './types';
-
-/** Repo facts the prompt needs that the order itself does not carry. */
-export interface RepoFacts {
-  /** The pm-aware install command as one string (`npm ci`, `pnpm install`). */
-  readonly installCommand?: string;
-}
 
 function describeFinding(f: WorkOrderFinding): string {
   const e = f.evidence;
@@ -17,7 +14,9 @@ function describeFinding(f: WorkOrderFinding): string {
     case 'floor':
       return e.specifier
         ? `${f.id}: '${e.specifier}' does not resolve` +
-            (e.importingFile ? ` (imported by ${e.importingFile})` : '')
+            (e.importingFiles && e.importingFiles.length > 0
+              ? ` (imported by ${e.importingFiles.join(', ')})`
+              : '')
         : `${f.id}: ${e.pack} ${e.label} fails (repro: ${e.command || 'see the floor check'})`;
     case 'dep-vuln':
       return (
@@ -32,6 +31,8 @@ function describeFinding(f: WorkOrderFinding): string {
         `${f.id}: ${e.file ?? e.check}${e.line !== undefined ? `:${e.line}` : ''} ` +
         `${e.rule ?? e.check}${e.message ? `: ${e.message}` : ''}`
       );
+    case 'none':
+      return `${f.id} (${f.kind}; identity only)`;
   }
 }
 
@@ -56,7 +57,7 @@ export function attributionSentence(order: WorkOrder): string {
 }
 
 /** The agent-facing prompt for one order. */
-export function renderWorkOrderPrompt(order: WorkOrder, repo: RepoFacts = {}): string {
+export function renderWorkOrderPrompt(order: WorkOrder): string {
   const classSummary = isBuiltinWorkOrderClass(order.class)
     ? WORK_ORDER_CLASSES[order.class].summary
     : order.class;
@@ -67,10 +68,10 @@ export function renderWorkOrderPrompt(order: WorkOrder, repo: RepoFacts = {}): s
   for (const f of order.findings) lines.push(`- ${describeFinding(f)}`);
   lines.push('');
   lines.push(`Attribution: ${attributionSentence(order)}`);
-  if (order.evidence.length > 0) {
+  if (order.outputTail) {
     lines.push('');
-    lines.push('Evidence dxkit already holds:');
-    for (const e of order.evidence) lines.push(e);
+    lines.push('Captured output of the failing command:');
+    lines.push(order.outputTail);
   }
   lines.push('');
   lines.push('Envelope (the only paths you may change):');
@@ -82,13 +83,16 @@ export function renderWorkOrderPrompt(order: WorkOrder, repo: RepoFacts = {}): s
   );
   lines.push('');
   lines.push('Constraints:');
-  const install =
-    repo.installCommand ??
-    (order.constraints.install
-      ? [order.constraints.install.bin, ...order.constraints.install.args].join(' ')
-      : undefined);
-  if (install) {
-    lines.push(`- the repo installs with: ${install} (use exactly this, never another form)`);
+  if (order.constraints.install) {
+    const { bin, args } = order.constraints.install;
+    lines.push(
+      `- the repo installs with: ${[bin, ...args].join(' ')} (the frame runs it; use exactly this form if you must reproduce)`,
+    );
+  } else if (order.envelope.manifests) {
+    lines.push(
+      '- no install command is known for this repo (no active language pack declares one); ' +
+        'do not install anything, write what a human must run in docs/DXKIT-REMEDIATION-NOTES.md',
+    );
   }
   for (const f of order.constraints.forbidden) lines.push(`- do not: ${f}`);
   lines.push('');
@@ -100,7 +104,7 @@ export function renderWorkOrderPrompt(order: WorkOrder, repo: RepoFacts = {}): s
     `Budget: ${order.budget.turns} turns, ${order.budget.minutes} minutes, ` +
       `$${order.budget.usd} (${order.budget.derivation}). Hitting the cap early is a signal, not a spend.`,
   );
-  return lines.join('\n');
+  return lines.join('\n') + '\n' + SHARED_RULES;
 }
 
 /** One line per order for the plan surface. */

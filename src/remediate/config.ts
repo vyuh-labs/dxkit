@@ -16,7 +16,7 @@
  */
 import { readPolicySection } from '../baseline/policy-text';
 import { knownTaskIds, remediateTaskById, type RemediateTask, type RemediateTaskId } from './tasks';
-import { DEFAULT_MAX_SLICE_SIZE } from './work-orders/planner';
+import { DEFAULT_MAX_SLICE_SIZE } from './work-orders/shared';
 
 export interface RemediateBudget {
   readonly maxTurns: number;

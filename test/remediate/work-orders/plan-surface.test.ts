@@ -1,9 +1,10 @@
 /**
  * `remediate plan --json` on a fixture repo: the work orders come from the
- * ONE gather adapter (entry floor attributed against the baseline's floor
- * envelope, lint debt from the baseline, active deferrals joined to their
- * entries), the policy knob caps slice size, and a gather failure is
- * disclosed rather than crashing the plan.
+ * ONE gather adapter (a cheap stored floor by default, the live floor only
+ * behind --with-floor; deferrals joined to the live dependency scan with the
+ * baseline as fallback; debt excludes every active allowlist entry; repo
+ * facts from the packs), the policy knob caps slice size, and a gather
+ * failure is disclosed rather than crashing the plan.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'fs';
@@ -12,10 +13,14 @@ import { tmpdir } from 'os';
 import { runRemediatePlan } from '../../../src/remediate/plan-cli';
 import {
   gatherWorkOrderInputs,
+  installCommandFor,
+  manifestRoots,
   planRepoWorkOrders,
 } from '../../../src/remediate/work-orders/gather';
 import { resolveRemediateConfig } from '../../../src/remediate/config';
+import { LANGUAGES, getLanguage } from '../../../src/languages';
 import type { CorrectnessFloorResult } from '../../../src/analyzers/correctness/run';
+import type { DepVulnFinding } from '../../../src/languages/capabilities/types';
 
 let repo: string;
 
@@ -29,6 +34,9 @@ beforeEach(() => {
 afterEach(() => {
   rmSync(repo, { recursive: true, force: true });
 });
+
+const TS = [getLanguage('typescript')!];
+const NO_FLOOR: CorrectnessFloorResult = { ran: false, blocks: false, checks: [] };
 
 function writePolicy(policy: object): void {
   writeFileSync(join(repo, '.dxkit', 'policy.json'), JSON.stringify(policy));
@@ -73,6 +81,20 @@ const lintEntry = (id: string, file: string, line: number, rule: string) => ({
   rule,
 });
 
+const FLOOR_DEBT = {
+  capturedAtCommit: 'base',
+  capturedAt: '2026-08-01T00:00:00.000Z',
+  checks: [
+    {
+      pack: 'typescript',
+      label: 'typecheck',
+      command: 'npx tsc --noEmit',
+      status: 'fail',
+      output: 'stored tail',
+    },
+  ],
+};
+
 const FAILING_FLOOR: CorrectnessFloorResult = {
   ran: true,
   blocks: true,
@@ -88,14 +110,29 @@ const FAILING_FLOOR: CorrectnessFloorResult = {
   ],
 };
 
-function captureJson(run: () => void): Record<string, unknown> {
+/** The shape the deferral producers emit: the deferred advisory is NOT in the
+ *  baseline; it exists in the live scan (fingerprint-stamped). */
+const LIVE_SCAN: DepVulnFinding[] = [
+  {
+    id: 'GHSA-1',
+    package: 'js-yaml',
+    installedVersion: '3.13.0',
+    tool: 'osv-scanner',
+    severity: 'high',
+    fixedVersion: '4.1.0',
+    reachable: true,
+    fingerprint: 'dead000011112222',
+  },
+];
+
+async function captureJson(run: () => Promise<void>): Promise<Record<string, unknown>> {
   const chunks: string[] = [];
   const spy = vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
     chunks.push(String(chunk));
     return true;
   });
   try {
-    run();
+    await run();
   } finally {
     spy.mockRestore();
   }
@@ -103,29 +140,21 @@ function captureJson(run: () => void): Record<string, unknown> {
 }
 
 describe('remediate plan --json: work orders', () => {
-  it('lists orders from the entry floor + lint debt + deferrals, with tier/budget/done and undispatchable', () => {
+  it('reads the stored floor envelope by default (no live floor), joins deferrals to the live scan, excludes every active allowlist entry from debt', async () => {
     writePolicy({ remediate: { enabled: true, tasks: ['fix-build', 'fix-lint', 'fix-vulns'] } });
     writeBaseline(
       [
         lintEntry('l1', 'src/a.ts', 1, 'eqeqeq'),
         lintEntry('l2', 'src/a.ts', 9, 'eqeqeq'),
         lintEntry('l3', 'src/b.ts', 2, 'no-unused-vars'),
-        { id: 'v1', kind: 'dep-vuln', package: 'js-yaml', advisoryId: 'GHSA-1', severity: 'high' },
+        lintEntry('fp1', 'src/c.ts', 2, 'eqeqeq'),
         { id: 'bin1', kind: 'custom-check', check: 'arch-check', blocking: true },
       ],
-      // The recorded floor envelope says typecheck was already failing:
-      // the live failure attributes pre-existing, not net-new.
-      {
-        capturedAtCommit: 'base',
-        capturedAt: '2026-08-01T00:00:00.000Z',
-        checks: [
-          { pack: 'typescript', label: 'typecheck', command: 'npx tsc --noEmit', status: 'fail' },
-        ],
-      },
+      FLOOR_DEBT,
     );
     writeAllowlist([
       {
-        fingerprint: 'v1',
+        fingerprint: 'dead000011112222',
         kind: 'dep-vuln',
         category: 'deferred',
         reason: 'lane will fix',
@@ -133,15 +162,33 @@ describe('remediate plan --json: work orders', () => {
         addedAt: '2026-08-01',
         expiresAt: '2026-09-15',
       },
+      // an accepted false positive: NOT debt to close
+      {
+        fingerprint: 'fp1',
+        kind: 'custom-check',
+        category: 'false-positive',
+        reason: 'not real',
+        addedBy: 't',
+        addedAt: '2026-08-01',
+      },
     ]);
-    const out = captureJson(() =>
+    let liveFloorRan = false;
+    const out = await captureJson(() =>
       runRemediatePlan(repo, {
         json: true,
-        gather: { runFloor: () => FAILING_FLOOR, now: new Date('2026-08-25T00:00:00Z') },
+        gather: {
+          packs: TS,
+          runFloor: undefined,
+          scanDepVulns: async () => LIVE_SCAN,
+          now: new Date('2026-08-25T00:00:00Z'),
+        },
+      }).then(() => {
+        liveFloorRan = false;
       }),
     );
-    expect(out.schema).toBe('remediate-plan.v1');
+    expect(liveFloorRan).toBe(false);
     expect(out.workOrderPlanError).toBeNull();
+    expect(out.workOrderFloorSource).toBe('baseline-envelope');
     const orders = out.workOrders as Array<Record<string, unknown>>;
     expect(orders.map((o) => o.id)).toEqual([
       'dep-advisory:js-yaml',
@@ -152,53 +199,108 @@ describe('remediate plan --json: work orders', () => {
     const floorOrder = orders[1];
     expect(floorOrder.attribution).toEqual(['pre-existing']);
     expect(floorOrder.tier).toBe('agent');
+    expect(floorOrder.install).toEqual({ bin: 'npm', args: ['ci'] });
     expect(floorOrder.done).toMatchObject({ verifier: 'floor', absent: 1 });
-    expect((floorOrder.budget as { derivation: string }).derivation).toContain('clamp(');
     const advisory = orders[0];
     expect(advisory.attribution).toEqual(['deferred']);
     expect(advisory.provenance).toEqual({
-      source: 'deferred-advisory',
+      source: 'advisories',
+      blocking: 0,
+      deferred: 1,
       earliestExpiry: '2026-09-15',
     });
+    // joined to the live scan: fixed version known, so override-pin tiers recipe
+    expect(advisory.tier).toBe('recipe');
+    expect(advisory.recipe).toBe('override-pin');
     expect(advisory.envelope).toEqual({
-      paths: ['package.json', 'package-lock.json'],
+      paths: ['package-lock.json', 'package.json'],
       manifests: true,
     });
-    const lintA = orders[2];
-    expect(lintA.findings).toBe(2);
-    expect(lintA.tier).toBe('recipe');
-    expect(lintA.recipe).toBe('lint-autofix');
-    // the binary custom-check has no file to scope to: disclosed, not dropped
+    expect(orders[2].findings).toBe(2);
+    // fp1 (false-positive, active) is not planned anywhere
+    expect(JSON.stringify(out)).not.toContain('"fp1"');
     const undispatchable = out.undispatchable as Array<{ reason: string; findings: unknown[] }>;
     expect(undispatchable).toHaveLength(1);
     expect(undispatchable[0].reason).toContain('binary');
-    expect(undispatchable[0].findings).toEqual([{ kind: 'custom-check', id: 'bin1' }]);
   });
 
-  it('an absent floor envelope attributes a live failure unattributed (never net-new by default)', () => {
+  it('--with-floor runs the live floor, attributed against the envelope through the one comparator', async () => {
     writePolicy({ remediate: { enabled: true } });
-    writeBaseline([]);
-    const plan = planRepoWorkOrders(repo, resolveRemediateConfig(repo), {
+    writeBaseline([], FLOOR_DEBT);
+    const withEnvelope = await planRepoWorkOrders(repo, resolveRemediateConfig(repo), {
+      packs: TS,
       runFloor: () => FAILING_FLOOR,
     });
-    expect(plan.orders).toHaveLength(1);
-    expect(plan.orders[0].findings[0].attribution).toBe('unattributed');
+    expect(withEnvelope.floorSource).toBe('live');
+    expect(withEnvelope.plan.orders[0].findings[0].attribution).toBe('pre-existing');
+    expect(withEnvelope.plan.orders[0].outputTail).toBe('src/a.ts(1,1): error TS1');
+    writeBaseline([]);
+    const noEnvelope = await planRepoWorkOrders(repo, resolveRemediateConfig(repo), {
+      packs: TS,
+      runFloor: () => FAILING_FLOOR,
+    });
+    expect(noEnvelope.plan.orders[0].findings[0].attribution).toBe('unattributed');
+    // and without a stored source or --with-floor there is simply no floor, disclosed
+    const none = await planRepoWorkOrders(repo, resolveRemediateConfig(repo), { packs: TS });
+    expect(none.floorSource).toBe('none');
+    expect(none.plan.orders).toEqual([]);
   });
 
-  it('remediate.workOrders.maxSliceSize caps a debt slice and reaches the planner through the config', () => {
-    writePolicy({ remediate: { enabled: true, workOrders: { maxSliceSize: 2 } } });
+  it('a deferral joined to neither the live scan nor the baseline is undispatchable, and the scan runs only when a dep-vuln deferral exists', async () => {
+    writePolicy({ remediate: { enabled: true } });
+    writeBaseline([]);
+    writeAllowlist([
+      {
+        fingerprint: 'gone',
+        kind: 'dep-vuln',
+        category: 'deferred',
+        reason: 'r',
+        addedBy: 't',
+        addedAt: '2026-08-01',
+        expiresAt: '2026-09-15',
+      },
+    ]);
+    let scans = 0;
+    const joined = await planRepoWorkOrders(repo, resolveRemediateConfig(repo), {
+      packs: TS,
+      scanDepVulns: async () => {
+        scans += 1;
+        return [];
+      },
+      now: new Date('2026-08-25T00:00:00Z'),
+    });
+    expect(scans).toBe(1);
+    expect(joined.plan.undispatchable[0].findings[0].id).toBe('gone');
+    writeAllowlist([]);
+    await planRepoWorkOrders(repo, resolveRemediateConfig(repo), {
+      packs: TS,
+      scanDepVulns: async () => {
+        scans += 1;
+        return [];
+      },
+    });
+    expect(scans).toBe(1);
+  });
+
+  it('remediate.workOrders.maxSliceSize caps a debt slice, and each class is capped by its task budget', async () => {
+    writePolicy({
+      remediate: {
+        enabled: true,
+        workOrders: { maxSliceSize: 2 },
+        taskBudgets: { 'fix-lint': { maxTurns: 3 } },
+      },
+    });
     writeBaseline([1, 2, 3, 4, 5].map((n) => lintEntry(`l${n}`, 'src/a.ts', n, 'eqeqeq')));
     const config = resolveRemediateConfig(repo);
     expect(config.workOrders.maxSliceSize).toBe(2);
-    const plan = planRepoWorkOrders(repo, config, {
-      runFloor: () => ({ ran: false, blocks: false, checks: [] }),
-    });
+    const { plan } = await planRepoWorkOrders(repo, config, { packs: TS });
     expect(plan.orders.map((o) => o.id)).toEqual([
       'lint-located:src/a.ts#1',
       'lint-located:src/a.ts#2',
       'lint-located:src/a.ts#3',
     ]);
     expect(plan.orders.map((o) => o.findings.length)).toEqual([2, 2, 1]);
+    expect(plan.orders.every((o) => o.budget.turns === 3)).toBe(true);
   });
 
   it('the default slice size is 25 and an invalid knob falls back to it', () => {
@@ -206,23 +308,36 @@ describe('remediate plan --json: work orders', () => {
     expect(resolveRemediateConfig(repo).workOrders.maxSliceSize).toBe(25);
   });
 
-  it('gathers the repo facts once: pm install command and the root manifest + lockfile', () => {
+  it('repo facts come from the packs: install = the first pack-declared provision, roots from the manifest-pattern union + nested discovery', async () => {
     writePolicy({});
-    const input = gatherWorkOrderInputs(repo, resolveRemediateConfig(repo), {
-      runFloor: () => ({ ran: false, blocks: false, checks: [] }),
+    mkdirSync(join(repo, 'packages', 'api'), { recursive: true });
+    writeFileSync(join(repo, 'packages', 'api', 'package.json'), '{}');
+    writeFileSync(join(repo, 'packages', 'api', 'pnpm-lock.yaml'), '');
+    expect(installCommandFor(repo, TS)).toEqual({ bin: 'npm', args: ['ci'] });
+    expect(manifestRoots(repo, TS)).toEqual([
+      { dir: '', files: ['package-lock.json', 'package.json'] },
+      { dir: 'packages/api', files: ['package.json', 'pnpm-lock.yaml'] },
+    ]);
+    // a stack whose packs declare no provision command: install is UNDEFINED, never npm
+    const go = [getLanguage('go')!];
+    expect(installCommandFor(repo, go)).toBeUndefined();
+    const { input } = await gatherWorkOrderInputs(repo, resolveRemediateConfig(repo), {
+      packs: go,
+      runFloor: () => NO_FLOOR,
     });
-    expect(input.install).toEqual({ bin: 'npm', args: ['ci'] });
-    expect(input.manifests).toEqual([{ dir: '', files: ['package.json', 'package-lock.json'] }]);
-    expect(input.entryFloor).toBeNull();
+    expect(input.install).toBeUndefined();
+    expect(input.manifests[0].files).not.toContain('package.json');
     expect(input.blocking).toEqual([]);
+    expect(LANGUAGES.length).toBeGreaterThan(0);
   });
 
-  it('a gather failure is disclosed in the JSON, never a crashed plan', () => {
+  it('a gather failure is disclosed in the JSON, never a crashed plan', async () => {
     writePolicy({ remediate: { enabled: true } });
-    const out = captureJson(() =>
+    const out = await captureJson(() =>
       runRemediatePlan(repo, {
         json: true,
         gather: {
+          packs: TS,
           runFloor: () => {
             throw new Error('floor exploded');
           },

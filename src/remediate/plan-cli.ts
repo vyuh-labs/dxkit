@@ -11,14 +11,35 @@ import { AGENT_DRIVERS, driverById } from './registry';
 import { remediateTaskById } from './tasks';
 import { remediateBranchFor } from '../lanes/branches';
 import { describeDeliveryProbe, probeDeliveryPreconditions } from '../lanes/delivery-preconditions';
-import { planRepoWorkOrders, type GatherWorkOrderOptions } from './work-orders/gather';
+import {
+  planRepoWorkOrders,
+  type FloorSource,
+  type GatherWorkOrderOptions,
+} from './work-orders/gather';
 import { renderWorkOrderSummary } from './work-orders/render';
 import type { WorkOrderPlan } from './work-orders/types';
 
 export interface RemediatePlanOptions {
   readonly json?: boolean;
+  /** Run the live correctness floor for the work-order plan (default: read
+   *  the baseline's recorded envelope, so the plan stays a $0 dry-run). */
+  readonly withFloor?: boolean;
   /** Injected for tests (a fake floor run, a fixed clock). */
   readonly gather?: GatherWorkOrderOptions;
+}
+
+/** Human phrasing of which floor source the work-order plan read. */
+function describeFloorSource(source: FloorSource): string {
+  switch (source) {
+    case 'live':
+      return 'live floor run (--with-floor)';
+    case 'baseline-envelope':
+      return "the baseline's recorded floor envelope (pass --with-floor to re-run it)";
+    case 'loop-snapshot':
+      return "the loop's floor snapshot (pass --with-floor to re-run it)";
+    case 'none':
+      return 'no floor source (no baseline envelope, no loop snapshot; pass --with-floor)';
+  }
 }
 
 /** The plan surface's projection of one order: what a reader needs to see
@@ -35,6 +56,7 @@ function projectWorkOrders(plan: WorkOrderPlan) {
       findingIds: o.findings.map((f) => f.id),
       attribution: [...new Set(o.findings.map((f) => f.attribution))],
       envelope: o.envelope,
+      install: o.constraints.install ?? null,
       budget: o.budget,
       done: { verifier: o.done.verifier, command: o.done.command, absent: o.done.absentIds.length },
       provenance: o.provenance,
@@ -47,7 +69,10 @@ function projectWorkOrders(plan: WorkOrderPlan) {
 }
 
 /** `remediate plan` — the resolution chain, computed not narrated. */
-export function runRemediatePlan(cwd: string, opts: RemediatePlanOptions = {}): void {
+export async function runRemediatePlan(
+  cwd: string,
+  opts: RemediatePlanOptions = {},
+): Promise<void> {
   const config = resolveRemediateConfig(cwd);
   const driver = driverById(config.agent.driver);
 
@@ -84,9 +109,15 @@ export function runRemediatePlan(cwd: string, opts: RemediatePlanOptions = {}): 
   // ONE gather adapter. Fail-open: a gather failure is disclosed, never a
   // crashed plan.
   let plan: WorkOrderPlan | null = null;
+  let floorSource: FloorSource | null = null;
   let planError: string | null = null;
   try {
-    plan = planRepoWorkOrders(cwd, config, opts.gather);
+    const gathered = await planRepoWorkOrders(cwd, config, {
+      ...(opts.withFloor ? { withFloor: true } : {}),
+      ...opts.gather,
+    });
+    plan = gathered.plan;
+    floorSource = gathered.floorSource;
   } catch (err) {
     planError = err instanceof Error ? err.message : String(err);
   }
@@ -121,6 +152,8 @@ export function runRemediatePlan(cwd: string, opts: RemediatePlanOptions = {}): 
            *  and the findings no class could take, with the reason. */
           workOrders: projected.workOrders,
           undispatchable: projected.undispatchable,
+          /** Which floor source the plan read: 'live' only with --with-floor. */
+          workOrderFloorSource: floorSource,
           workOrderPlanError: planError,
           /** Per-dimension driver capability: 'enforced' | 'reported' |
            *  'none'. A dimension below 'enforced' also appears in
@@ -202,6 +235,7 @@ export function runRemediatePlan(cwd: string, opts: RemediatePlanOptions = {}): 
   if (planError) {
     logger.warn(`work orders: could not plan (${planError})`);
   } else if (plan) {
+    logger.dim(`work orders: floor read from ${describeFloorSource(floorSource ?? 'none')}`);
     logger.info(
       `work orders: ${plan.orders.length} planned` +
         (plan.undispatchable.length > 0

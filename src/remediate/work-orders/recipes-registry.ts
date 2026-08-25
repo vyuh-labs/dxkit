@@ -8,12 +8,11 @@
  * apply. The executors (`apply(order) -> diff`, `verify`) land in the next
  * unit and attach to these same ids; nothing is stubbed in their place.
  *
- * Mirrors the pack/capability architecture: the registry is the one place a
- * class is mapped to a recipe, and the planner reads it (a synthetic entry
- * injected in tests must flip the tier, or the planner has stopped reading
- * the registry).
+ * The class each recipe serves is a READ of the class table (`recipe` on
+ * `WORK_ORDER_CLASSES`); the contract test pins that every declared recipe
+ * id is named there and vice versa.
  */
-import type { WorkOrder, WorkOrderClass } from './types';
+import { WORK_ORDER_CLASSES, type WorkOrder, type WorkOrderClass } from './types';
 
 export interface RecipeDeclaration {
   readonly id: string;
@@ -25,32 +24,42 @@ export interface RecipeDeclaration {
    *  and planning only; the plan says "recipe (not yet executable)". */
   readonly implemented: boolean;
   /** Does this recipe apply to THIS order? Pure over the order's findings and
-   *  evidence (a recipe never inspects the repo at planning time). */
+   *  evidence (a recipe never inspects the repo at planning time). Called only
+   *  for orders of the recipe's own class. */
   readonly matches: (order: WorkOrder) => boolean;
 }
 
 /** A bare specifier: not relative, not absolute, not a URL scheme. */
+const NOT_BARE = /^(\.{1,2}\/|\/|[a-z]+:)/i;
 function isBareSpecifier(specifier: string): boolean {
-  return !/^(\.{1,2}\/|\/|[a-z]+:)/i.test(specifier);
+  return !NOT_BARE.test(specifier);
+}
+
+/** The class a recipe id serves, from the one table. */
+function classServedBy(recipeId: string): WorkOrderClass {
+  const found = (Object.keys(WORK_ORDER_CLASSES) as Array<keyof typeof WORK_ORDER_CLASSES>).find(
+    (c) => WORK_ORDER_CLASSES[c].recipe === recipeId,
+  );
+  if (!found) throw new Error(`recipe '${recipeId}' is not named by any work-order class`);
+  return found;
 }
 
 export const RECIPE_REGISTRY: readonly RecipeDeclaration[] = [
   {
     id: 'lockfile-sync',
-    class: 'stale-lockfile',
+    class: classServedBy('lockfile-sync'),
     summary: "reinstall with the repo's package manager so the lockfile follows the manifest",
     implemented: false,
-    matches: (order) => order.class === 'stale-lockfile',
+    matches: () => true,
   },
   {
     id: 'override-pin',
-    class: 'dep-advisory',
+    class: classServedBy('override-pin'),
     summary: 'pin a fixed version through a pm-aware override when no direct upgrade path exists',
     implemented: false,
     // Needs a known fixed version for EVERY advisory in the order; an
     // advisory with no fix is agent (or human) territory.
     matches: (order) =>
-      order.class === 'dep-advisory' &&
       order.findings.length > 0 &&
       order.findings.every(
         (f) => f.evidence.type === 'dep-vuln' && typeof f.evidence.fixedVersion === 'string',
@@ -58,12 +67,11 @@ export const RECIPE_REGISTRY: readonly RecipeDeclaration[] = [
   },
   {
     id: 'declare-dependency',
-    class: 'unresolved-import',
+    class: classServedBy('declare-dependency'),
     summary:
       'declare and install a bare import, refusing with the reason when the candidate carries a block-tier advisory',
     implemented: false,
     matches: (order) =>
-      order.class === 'unresolved-import' &&
       order.findings.length > 0 &&
       order.findings.every(
         (f) =>
@@ -74,14 +82,13 @@ export const RECIPE_REGISTRY: readonly RecipeDeclaration[] = [
   },
   {
     id: 'lint-autofix',
-    class: 'lint-located',
+    class: classServedBy('lint-autofix'),
     summary: "the pack linter's own autofix, restricted to the order's file and rules",
     implemented: false,
     // Every finding must carry a rule: an unparsed diagnostic cannot be
     // scoped to a fixer. Which rules a pack's fixer covers is the executor's
     // (pack-declared) knowledge, not the registry's.
     matches: (order) =>
-      order.class === 'lint-located' &&
       order.findings.length > 0 &&
       order.findings.every(
         (f) => f.evidence.type === 'custom-check' && typeof f.evidence.rule === 'string',
@@ -89,17 +96,26 @@ export const RECIPE_REGISTRY: readonly RecipeDeclaration[] = [
   },
 ];
 
-/** The first registry entry that matches the order, or undefined. */
+const byClassCache = new WeakMap<readonly RecipeDeclaration[], Map<string, RecipeDeclaration[]>>();
+
+function indexByClass(registry: readonly RecipeDeclaration[]): Map<string, RecipeDeclaration[]> {
+  let index = byClassCache.get(registry);
+  if (!index) {
+    index = new Map();
+    for (const r of registry) {
+      const list = index.get(r.class) ?? [];
+      list.push(r);
+      index.set(r.class, list);
+    }
+    byClassCache.set(registry, index);
+  }
+  return index;
+}
+
+/** The first recipe of the order's class whose `matches` accepts it. */
 export function matchRecipe(
   order: WorkOrder,
   registry: readonly RecipeDeclaration[] = RECIPE_REGISTRY,
 ): RecipeDeclaration | undefined {
-  return registry.find((r) => r.matches(order));
-}
-
-export function recipeById(
-  id: string,
-  registry: readonly RecipeDeclaration[] = RECIPE_REGISTRY,
-): RecipeDeclaration | undefined {
-  return registry.find((r) => r.id === id);
+  return (indexByClass(registry).get(order.class) ?? []).find((r) => r.matches(order));
 }

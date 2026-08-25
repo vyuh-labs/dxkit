@@ -1,10 +1,11 @@
 /**
- * The task catalog as selectors: every bounded task selects at least one
- * registered work-order class; open-ended tasks select nothing and say so.
+ * The task catalog as selectors: `selects` is a READ of the class table, so
+ * every bounded task selects at least one class, the bounded tasks cover
+ * every class with no overlap, and open-ended tasks select nothing.
  */
 import { describe, it, expect } from 'vitest';
 import { REMEDIATE_TASKS, customDispatchTask } from '../../../src/remediate/tasks';
-import { WORK_ORDER_CLASSES } from '../../../src/remediate/work-orders/types';
+import { WORK_ORDER_CLASSES, classesSelectedBy } from '../../../src/remediate/work-orders/types';
 
 describe('remediate tasks select work-order classes', () => {
   for (const task of REMEDIATE_TASKS) {
@@ -14,14 +15,15 @@ describe('remediate tasks select work-order classes', () => {
         expect(task.completion).toBe('open-ended');
       } else {
         expect(task.selects.length).toBeGreaterThan(0);
-        for (const c of task.selects) expect(Object.keys(WORK_ORDER_CLASSES)).toContain(c);
+        expect([...task.selects]).toEqual(classesSelectedBy(task.id));
       }
     });
   }
 
-  it('the three bounded tasks cover every built-in class between them, with no overlap', () => {
-    const bounded = REMEDIATE_TASKS.filter((t) => !t.openEnded);
-    const all = bounded.flatMap((t) => [...t.selects]);
+  it('every class names a real bounded task, and the bounded tasks cover every class with no overlap', () => {
+    const bounded = REMEDIATE_TASKS.filter((t) => !t.openEnded).map((t) => t.id);
+    for (const [, d] of Object.entries(WORK_ORDER_CLASSES)) expect(bounded).toContain(d.task);
+    const all = REMEDIATE_TASKS.flatMap((t) => [...t.selects]);
     expect(new Set(all).size).toBe(all.length);
     expect([...new Set(all)].sort()).toEqual(Object.keys(WORK_ORDER_CLASSES).sort());
   });

@@ -166,15 +166,21 @@ export function upgradeArgv(
 /** The command to (re)provision `node_modules` from the manifest + lockfile —
  *  the "your project-local tools aren't installed, run this" hint. */
 export function provisionCommand(pm: PackageManager): string {
+  return provisionArgv(pm).join(' ');
+}
+
+/** The same provision command as an argv (`[bin, ...args]`), for callers
+ *  that execFile it. `provisionCommand` is the display projection of this. */
+export function provisionArgv(pm: PackageManager): [string, ...string[]] {
   switch (pm) {
     case 'pnpm':
-      return 'pnpm install';
+      return ['pnpm', 'install'];
     case 'yarn':
-      return 'yarn install';
+      return ['yarn', 'install'];
     case 'bun':
-      return 'bun install';
+      return ['bun', 'install'];
     case 'npm':
-      return 'npm ci';
+      return ['npm', 'ci'];
   }
 }
 

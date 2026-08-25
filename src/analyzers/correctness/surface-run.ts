@@ -58,6 +58,7 @@ import {
   readBaselineFile,
 } from '../../baseline/baseline-file';
 import { loadAnchorFromBranch } from '../../baseline/anchor';
+import { floorDebtToBaseChecks } from '../../baseline/floor-debt';
 import { readPolicySection } from '../../baseline/policy-text';
 
 /** The surfaces this runner serves (the loop-stop surface has its own runner). */
@@ -282,7 +283,7 @@ function loadFloorDebtEvidence(cwd: string): PrePushDebtEvidence | null {
     if (!file) return null;
     const debt = readBaselineFile(file).floorDebt;
     if (!debt) return null;
-    const rows = debt.checks
+    const rows = floorDebtToBaseChecks(debt)
       .filter((c) => c.status === 'fail')
       .map((c) => ({ pack: c.pack, label: c.label, status: 'fail' as const }));
     if (rows.length === 0) return null;

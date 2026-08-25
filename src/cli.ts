@@ -398,6 +398,7 @@ export async function run(argv: string[]): Promise<void> {
       'no-scan': { type: 'boolean', default: false },
       rescan: { type: 'boolean', default: false },
       json: { type: 'boolean', default: false },
+      'with-floor': { type: 'boolean', default: false },
       since: { type: 'string' },
       // `policy get <path> --default <v>` — fallback value for scripts.
       default: { type: 'string' },
@@ -3171,7 +3172,10 @@ export async function run(argv: string[]): Promise<void> {
       const { runRemediate, runRemediatePlan, runRemediateConfigured, remediateUsage } =
         await import('./remediate/cli');
       if (positionals[1] === 'plan') {
-        runRemediatePlan(resolveRepoPath(positionals[2]), { json: !!values.json });
+        await runRemediatePlan(resolveRepoPath(positionals[2]), {
+          json: !!values.json,
+          withFloor: !!values['with-floor'],
+        });
         break;
       }
       if (positionals[1] === 'configured') {

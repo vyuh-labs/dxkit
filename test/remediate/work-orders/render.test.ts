@@ -1,7 +1,8 @@
 /**
  * Work-order rendering: the agent prompt carries the ids, the attribution
- * split, the envelope, the pm install command, and the done command; the
- * summary line carries tier + budget; neither uses an em-dash.
+ * split, the envelope, the install command (or its disclosed absence), the
+ * done command, and the ONE shared ground-rules list; the summary line
+ * carries tier + budget; neither uses an em-dash.
  */
 import { describe, it, expect } from 'vitest';
 import {
@@ -9,6 +10,7 @@ import {
   renderWorkOrderPrompt,
   renderWorkOrderSummary,
 } from '../../../src/remediate/work-orders/render';
+import { SHARED_RULES } from '../../../src/remediate/tasks';
 import type { WorkOrder } from '../../../src/remediate/work-orders/types';
 
 const ORDER: WorkOrder = {
@@ -50,20 +52,17 @@ const ORDER: WorkOrder = {
     absentIds: ['aaaa000011112222', 'bbbb000011112222'],
     verifier: 'guardrail',
     command: 'npx vyuh-dxkit guardrail check',
-    noNetNewInsideEnvelope: true,
-    identityScheme: 'v3',
   },
-  budget: { turns: 16, minutes: 9, usd: 1, derivation: 'turns = clamp(8 + 4 * 2, 10, 80) = 16' },
+  budget: { turns: 16, minutes: 9, usd: 1, derivation: 'turns = min(80, max(10, 8 + 4 * 2)) = 16' },
   tier: 'recipe',
   recipe: 'override-pin',
-  evidence: ['axios@1.6.0: GHSA-1 (high), fixed in 1.7.0, reachable'],
-  provenance: { source: 'guardrail-blocking' },
+  provenance: { source: 'advisories', blocking: 1, deferred: 1, earliestExpiry: '2026-09-01' },
 };
 
 describe('renderWorkOrderPrompt', () => {
-  const text = renderWorkOrderPrompt(ORDER, { installCommand: 'pnpm install --frozen-lockfile' });
+  const text = renderWorkOrderPrompt(ORDER);
 
-  it('names every finding id and its evidence', () => {
+  it('names every finding id and its structured evidence', () => {
     expect(text).toContain('aaaa000011112222');
     expect(text).toContain('bbbb000011112222');
     expect(text).toContain('GHSA-1');
@@ -78,26 +77,56 @@ describe('renderWorkOrderPrompt', () => {
     expect(text).toContain('Everything else in the repo is grandfathered');
   });
 
-  it('carries the envelope, the injected pm install command, and the constraints', () => {
+  it('carries the envelope, the pack-declared install command, and the constraints', () => {
     expect(text).toContain('- package.json');
     expect(text).toContain('- pnpm-lock.yaml');
     expect(text).toContain('manifests and lockfiles inside the envelope may change');
-    expect(text).toContain('pnpm install --frozen-lockfile');
+    expect(text).toContain('installs with: pnpm install');
     expect(text).toContain('do not: editing anything outside the envelope');
   });
 
-  it("falls back to the order's own install constraint when no repo fact is injected", () => {
-    expect(renderWorkOrderPrompt(ORDER)).toContain('installs with: pnpm install');
+  it('discloses a missing install command instead of guessing one', () => {
+    const none = renderWorkOrderPrompt({ ...ORDER, constraints: { forbidden: [] } });
+    expect(none).toContain('no install command is known for this repo');
+    expect(none).not.toContain('npm ci');
   });
 
-  it('carries the done command and the budget derivation', () => {
+  it('carries the done command, the budget derivation, and the ONE shared ground rules list', () => {
     expect(text).toContain('Check with: npx vyuh-dxkit guardrail check');
     expect(text).toContain('16 turns, 9 minutes, $1');
-    expect(text).toContain('turns = clamp(8 + 4 * 2, 10, 80) = 16');
+    expect(text).toContain('turns = min(80, max(10, 8 + 4 * 2)) = 16');
+    expect(text.endsWith(SHARED_RULES)).toBe(true);
   });
 
-  it('uses no em-dash anywhere', () => {
-    expect(text).not.toContain('—');
+  it('renders the captured output tail once per order and every importer of a floor finding', () => {
+    const floor: WorkOrder = {
+      ...ORDER,
+      id: 'unresolved-import:typescript:.',
+      class: 'unresolved-import',
+      outputTail: 'the tail',
+      findings: [
+        {
+          kind: 'floor-check',
+          id: 'typescript/import-resolution#lodash',
+          attribution: 'net-new',
+          evidence: {
+            type: 'floor',
+            pack: 'typescript',
+            label: 'import-resolution',
+            command: '',
+            specifier: 'lodash',
+            importingFiles: ['src/a.ts', 'src/z.ts'],
+          },
+        },
+      ],
+    };
+    const t = renderWorkOrderPrompt(floor);
+    expect(t).toContain('imported by src/a.ts, src/z.ts');
+    expect(t.split('the tail')).toHaveLength(2);
+  });
+
+  it('uses no em-dash in the order prose (the appended shared rules are the existing task constant)', () => {
+    expect(text.slice(0, text.length - SHARED_RULES.length)).not.toContain('—');
     expect(renderWorkOrderSummary(ORDER)).not.toContain('—');
     expect(attributionSentence(ORDER)).not.toContain('—');
   });
