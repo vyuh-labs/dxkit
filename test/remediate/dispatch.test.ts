@@ -182,6 +182,12 @@ describe('runRemediateTask — the custom dispatch task', () => {
       git: fakeGit(),
       runFloor: () => GREEN_FLOOR,
       runGuardrail: async () => ({ verdict: 'PASSED', ran: true, passesGate: true }),
+      verifySeams: {
+        worktree: async <T>(_o: unknown, fn: (wt: string) => Promise<T>) =>
+          fn('/tmp/fake-worktree'),
+        install: () => ({ status: 'installed' as const, argv: ['npm', 'ci'] }),
+        changedFiles: () => ['src/a.ts'],
+      },
     });
     expect(r.outcome).toBe('refused');
     expect(r.note).toContain('prompt');
@@ -199,6 +205,12 @@ describe('runRemediateTask — the custom dispatch task', () => {
       git: fakeGit(),
       runFloor: () => GREEN_FLOOR,
       runGuardrail: async () => ({ verdict: 'PASSED', ran: true, passesGate: true }),
+      verifySeams: {
+        worktree: async <T>(_o: unknown, fn: (wt: string) => Promise<T>) =>
+          fn('/tmp/fake-worktree'),
+        install: () => ({ status: 'installed' as const, argv: ['npm', 'ci'] }),
+        changedFiles: () => ['src/a.ts'],
+      },
       dispatch: {
         budget: DEFAULT_REMEDIATE_BUDGET,
         customPrompt: 'Raise docstring coverage in src/api only.',

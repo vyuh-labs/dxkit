@@ -176,6 +176,30 @@ export type StructureCheckResult =
   | { readonly kind: 'skipped'; readonly label: string; readonly reason: string }
   | { readonly kind: 'none' };
 
+/** The one label the lockfile-sync check reports under, shared by the pack
+ *  that builds it, the runner that executes it, and every renderer. */
+export const LOCKFILE_SYNC_LABEL = 'lockfile-sync';
+
+/**
+ * A pack's answer to "would a frozen-lockfile install of this tree succeed?"
+ * (4.4.5): a non-installing dry-run command, or a DISCLOSED skip for an
+ * ecosystem whose package manager has no reliable dry-run. The command may
+ * name a `tolerated` failure: an exit the check passes WITH a disclosure
+ * because the frozen install's own fallback covers it (npm's peer conflict,
+ * which CI retries under `--legacy-peer-deps`). A tolerated failure is never
+ * silent: the runner attaches the disclosure to the passing check.
+ */
+export type LockfileCheck =
+  | {
+      readonly kind: 'command';
+      readonly command: CorrectnessCommand;
+      readonly tolerated?: {
+        readonly matches: (output: string) => boolean;
+        readonly disclosure: string;
+      };
+    }
+  | { readonly kind: 'skipped'; readonly reason: string };
+
 import type { ExecutionRequirement } from '../../execution';
 
 /**
@@ -239,6 +263,20 @@ export interface CorrectnessProvider {
    * verification, not syntax).
    */
   structureCheck?(ctx: CorrectnessContext): StructureCheckResult;
+  /**
+   * OPTIONAL: the lockfile-sync check (4.4.5), the floor item between
+   * "resolves against the installed tree" and "CI can install this tree at
+   * all". A manifest whose specs moved ahead of its lockfile passes every
+   * other check on the workspace that produced it (its node_modules were
+   * installed by the same edit) and then fails CI's frozen install before any
+   * gate runs. Pure command builder, like the other two: the pack returns the
+   * ecosystem's non-installing dry-run (from `src/package-manager.ts`, the one
+   * home of per-PM install commands), `null` when the repo has no lockfile to
+   * check, or a disclosed skip for a PM without a reliable dry-run. The
+   * runner decides WHEN it runs (full scope, or a diff touching the pack's
+   * manifest patterns), never the pack.
+   */
+  lockfileCheck?(ctx: CorrectnessContext): LockfileCheck | null;
   /**
    * What the floor NEEDS from the environment that runs it (CLAUDE.md Rule 20):
    * host OS, ambient toolchains, whether it builds the project, how its target

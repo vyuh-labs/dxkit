@@ -37,6 +37,7 @@ import {
 import { detectActiveLanguages } from '../languages';
 import {
   detectPackageManager,
+  isPeerConflictOnly,
   upgradeArgv,
   type DependencySection,
   type PackageManager,
@@ -314,8 +315,10 @@ export async function runDepsBump(opts: DepsBumpOptions): Promise<DepsBumpResult
     // conflict its own install already tolerates) must not fail the bump —
     // the same fallback doctrine as every shipped `npm ci || npm ci
     // --legacy-peer-deps` install step: the flag only skips the peer check
-    // that rejects the tree, it never fabricates a different resolution.
-    if (!r.ok && pm === 'npm' && /ERESOLVE|peer dep/i.test(r.output)) {
+    // that rejects the tree, it never fabricates a different resolution. The
+    // classifier is the one in package-manager.ts, shared with the lockfile-
+    // sync floor check, so "peer conflict" means the same thing everywhere.
+    if (!r.ok && pm === 'npm' && isPeerConflictOnly(r.output)) {
       r = execBump([...argv, '--legacy-peer-deps']);
     }
     applied.push({

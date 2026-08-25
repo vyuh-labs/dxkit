@@ -39,6 +39,7 @@ import { baselineRefreshCron, loadPolicyFromCwd } from './baseline/policy';
 import { cronFromCadence, DEFAULT_DEPBUMP_CRON } from './baseline/policy-sections';
 import { BOT_IDENTITY } from './land-refresh';
 import { LANE_TOKEN_PAT_SECRET_NAME, LANE_TOKEN_SUBSTITUTIONS } from './lanes/lane-token';
+import { INSTALL_DEPS_PLACEHOLDER, renderInstallDependenciesShell } from './package-manager';
 import { resolveRemediateConfig } from './remediate/config';
 import { driverById } from './remediate/registry';
 import { knownTaskIds } from './remediate/tasks';
@@ -557,6 +558,14 @@ function installWorkflow(
   for (const [key, value] of Object.entries(LANE_TOKEN_SUBSTITUTIONS)) {
     content = content.split(key).join(value);
   }
+  // The dependency-install block renders the same way: ONE definition
+  // (src/package-manager.ts, shared with the lane's own verification) through
+  // the ONE writer, so a workflow can never install a tree differently from
+  // the way the remediate lane verified it (4.4.5). Whole-line placeholder at
+  // the `run: |` body indent.
+  content = content
+    .split(`          ${INSTALL_DEPS_PLACEHOLDER}`)
+    .join(renderInstallDependenciesShell('          '));
   for (const [key, value] of Object.entries(substitutions)) {
     content = content.split(key).join(value);
   }

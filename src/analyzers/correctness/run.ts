@@ -21,13 +21,10 @@ import {
   dependencyManifestFilesIn,
 } from '../../languages';
 import type { LanguageId, LanguageSupport } from '../../languages/types';
-import type {
-  CorrectnessCommand,
-  CorrectnessContext,
-  CorrectnessProvider,
-  CorrectnessScope,
-} from '../../languages/capabilities/correctness';
-import { isProjectPathIdentity } from '../../languages/capabilities/correctness';
+import type { CorrectnessScope } from '../../languages/capabilities/correctness';
+import { runLockfileCheck } from './lockfile-check';
+import { parseFailuresSafely, runResolutionCheck, runStructureCheck } from './pure-checks';
+export { IMPORT_RESOLUTION_LABEL, UNRESOLVED_REMEDY } from './pure-checks';
 import {
   classifyEnvironmentFailure,
   currentEnvironment,
@@ -102,6 +99,11 @@ export interface CorrectnessCheckResult {
    *  every surface prints, so a partial answer never hides behind a green
    *  check (Rule 19). */
   readonly disclosures?: readonly string[];
+  /** A disclosure attached to a PASS: the check passed under a condition the
+   *  reader must know about (today: the lockfile-sync check tolerating an
+   *  npm peer conflict because CI's install retries under
+   *  `--legacy-peer-deps`). Never present on a failure. */
+  readonly note?: string;
 }
 
 export interface CorrectnessFloorResult {
@@ -119,6 +121,11 @@ export interface CorrectnessFloorResult {
    *  surface can say WHY the full suite ran on a fast surface. `files` names
    *  the matched manifests (empty only in the no-declared-patterns fail-safe
    *  case, where escalation is still the honest default). */
+  /** The EFFECTIVE scope this run executed at (post-escalation), so a
+   *  renderer never has to guess — the ledger once hardcoded "full scope"
+   *  while the verification floor ran `affected`. Optional only for older
+   *  serialized snapshots; every fresh run carries it. */
+  readonly scope?: CorrectnessScope;
   readonly scopeEscalated?: {
     readonly reason: 'dependency-manifest-changed';
     readonly files: readonly string[];
@@ -139,130 +146,6 @@ export interface CorrectnessFloorOptions {
   readonly exec?: CommandExec;
   /** Injected for tests; defaults to the real local host + toolchain probes. */
   readonly env?: ExecutionEnvironment;
-}
-
-/** The one label the import-resolution check reports under — shared by the
- *  floor-state snapshot, the attribution comparator's finding-level path, and
- *  every renderer. */
-export const IMPORT_RESOLUTION_LABEL = 'import-resolution';
-
-/** The remedy line per unresolved-identity class: ONE rendering shared by
- *  the check's failure output and the pre-push attribution note. */
-export const UNRESOLVED_REMEDY = {
-  package:
-    'An import of an uninstalled/undeclared package fails at build or run time. ' +
-    'Declare it in the dependency manifest and install it (or remove the import).',
-  projectPath:
-    'A relative import of a file the pushed tree does not carry fails at build time. ' +
-    'Commit the missing file (or remove the import).',
-} as const;
-
-/** Run a command's optional failure parser defensively: a parser throw or a
- *  non-array result is "not parseable" (null → check-level precision), never
- *  an error that breaks the floor. Results are deduped and order-normalized —
- *  identity must not depend on output order. */
-function parseFailuresSafely(cmd: CorrectnessCommand, output: string): string[] | null {
-  try {
-    const raw = cmd.parseFailures!(output);
-    if (raw === null || !Array.isArray(raw)) return null;
-    const cleaned = [...new Set(raw.filter((f) => typeof f === 'string' && f.length > 0))].sort();
-    return cleaned.length > 0 ? cleaned : null;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Execute a pack's optional import-resolution check (a pure computation, not a
- * command). Findings are keyed by SPECIFIER — the durable identity of "package
- * X does not resolve": a second file importing the same missing package is the
- * same root cause, while a NEW missing package on an already-red repo is a new
- * finding (the granularity the class fix requires). A throw is infrastructure:
- * disclosed skip, never a verdict.
- */
-function runResolutionCheck(
-  id: LanguageId,
-  provider: CorrectnessProvider,
-  ctx: CorrectnessContext,
-): CorrectnessCheckResult {
-  const base = { pack: id, label: IMPORT_RESOLUTION_LABEL, bin: '' };
-  try {
-    const res = provider.resolutionCheck!(ctx);
-    const disclosed = res.disclosures ?? [];
-    const withDisclosures = disclosed.length > 0 ? { disclosures: disclosed } : {};
-    if (res.kind === 'clean') return { ...base, status: 'pass', ...withDisclosures };
-    if (res.kind === 'unresolved') {
-      const lines = res.unresolved.map((u) =>
-        isProjectPathIdentity(u.specifier)
-          ? `'${u.specifier}' ${u.detail ?? 'does not exist in the repo tree'} (relative import in ${u.file})`
-          : `'${u.specifier}' does not resolve against the installed tree (imported by ${u.file})`,
-      );
-      if (res.unresolved.some((u) => !isProjectPathIdentity(u.specifier))) {
-        lines.push(UNRESOLVED_REMEDY.package);
-      }
-      if (res.unresolved.some((u) => isProjectPathIdentity(u.specifier))) {
-        lines.push(UNRESOLVED_REMEDY.projectPath);
-      }
-      return {
-        ...base,
-        status: 'fail',
-        output: lines.join('\n'),
-        findings: [...new Set(res.unresolved.map((u) => u.specifier))],
-        ...withDisclosures,
-      };
-    }
-    return { ...base, status: 'skipped-unavailable', output: res.reason, ...withDisclosures };
-  } catch (err) {
-    return {
-      ...base,
-      status: 'skipped-unavailable',
-      output: `import-resolution check errored: ${err instanceof Error ? err.message : String(err)}`,
-    };
-  }
-}
-
-/**
- * Execute a pack's optional STRUCTURE check (#309) — a pure computation
- * mirroring `runResolutionCheck`. Findings are keyed by FILE (the durable
- * identity of "this artifact is structurally broken"), so an already-red
- * tree still blocks on a NEW broken artifact through the one attribution
- * comparator. `none` returns null (nothing ran, nothing claimed); a throw
- * is infrastructure — disclosed skip, never a verdict.
- */
-function runStructureCheck(
-  id: LanguageId,
-  provider: CorrectnessProvider,
-  ctx: CorrectnessContext,
-): CorrectnessCheckResult | null {
-  try {
-    const res = provider.structureCheck!(ctx);
-    if (res.kind === 'none') return null;
-    const base = { pack: id, label: res.label, bin: '' };
-    if (res.kind === 'clean') return { ...base, status: 'pass' };
-    if (res.kind === 'broken') {
-      const lines = res.findings.map((f) => `${f.file}: ${f.problem}`);
-      lines.push(
-        'A structurally implausible artifact fails downstream consumers at import time. ' +
-          'This is a STRUCTURAL check (no parser covers this artifact class) — shallow by ' +
-          'design, so a pass means "plausible", never "parsed".',
-      );
-      return {
-        ...base,
-        status: 'fail',
-        output: lines.join('\n'),
-        findings: [...new Set(res.findings.map((f) => f.file))],
-      };
-    }
-    return { ...base, status: 'skipped-unavailable', output: res.reason };
-  } catch (err) {
-    return {
-      pack: id,
-      label: 'structure',
-      bin: '',
-      status: 'skipped-unavailable',
-      output: `structure check errored: ${err instanceof Error ? err.message : String(err)}`,
-    };
-  }
 }
 
 /**
@@ -403,11 +286,25 @@ export function runCorrectnessFloor(opts: CorrectnessFloorOptions): CorrectnessF
       const structural = runStructureCheck(id, provider, ctx);
       if (structural !== null) checks.push(structural);
     }
+    // The lockfile-sync check (4.4.5): decided ONCE here, like the scope
+    // escalation above, never per pack. It runs at FULL scope (after
+    // escalation that means "CI's scope, or a diff that touched a dependency
+    // manifest" — the only diffs that can move a lockfile out of sync), and
+    // ALSO on an affected run whose changed set is EMPTY: an undeterminable
+    // diff reads as full for every pack's own builders (the documented
+    // contract), so this check must not silently thin out there — the diff
+    // that drifted the lockfile may simply be invisible. Only a determinate
+    // source-only fast run skips the dry-run.
+    const lockfileDue = scope === 'full' || ctx.changedFiles.length === 0;
+    if (provider.lockfileCheck && lockfileDue) {
+      const lock = runLockfileCheck(id, provider, ctx, exec);
+      if (lock !== null) checks.push(lock);
+    }
   }
 
   const ran = checks.some((c) => c.status === 'pass' || c.status === 'fail');
   const blocks = checks.some((c) => c.status === 'fail');
-  return { ran, checks, blocks, ...(scopeEscalated ? { scopeEscalated } : {}) };
+  return { ran, checks, blocks, scope, ...(scopeEscalated ? { scopeEscalated } : {}) };
 }
 
 /** One-line disclosure of a manifest-driven scope escalation (null when the
@@ -437,6 +334,13 @@ export function describeFloorCapturePlan(cwd: string, packs: readonly LanguageSu
       if (cmd !== null) plan.push(`${id} ${cmd.label}: ${[cmd.bin, ...cmd.args].join(' ')}`);
     }
     if (provider.resolutionCheck) plan.push(`${id} import-resolution: read-only, sub-second`);
+    if (provider.lockfileCheck) {
+      const lock = provider.lockfileCheck(ctx);
+      if (lock?.kind === 'command') {
+        const c = lock.command;
+        plan.push(`${id} ${c.label}: ${[c.bin, ...c.args].join(' ')} (dry-run, installs nothing)`);
+      }
+    }
   }
   return plan;
 }
