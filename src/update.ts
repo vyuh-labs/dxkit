@@ -402,6 +402,14 @@ function restampIfBare(cwd: string): void {
   try {
     const summary = restampContentHashes(cwd);
     if (!summary) return;
+    if (summary.restamped === 0) {
+      logger.warn(
+        `Content-hash restamp could not run: the baseline's anchor commit is not readable here ` +
+          `(shallow clone or rewritten history). Reformat-tolerant matching stays off for the ` +
+          `existing entries until the next baseline refresh.`,
+      );
+      return;
+    }
     logger.success(
       `Content hashes stamped onto ${summary.restamped} baseline finding(s) ` +
         `(reformat-tolerant matching now covers them).`,

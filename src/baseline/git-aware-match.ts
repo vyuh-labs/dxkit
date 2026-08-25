@@ -526,10 +526,13 @@ export function gitAwareMatch(
       if (!p.contentHash || !p.rule || p.file === undefined) continue;
       const bucket = buckets.get(contentKey(p.rule, p.contentHash));
       if (!bucket) continue;
+      // A renamed-away file's OLD path now belongs to a different file (or to
+      // nothing): a window twin there is new code wearing familiar bytes, so
+      // after a detected rename only the renamed path qualifies for the
+      // same-file tier; the old path never falls back.
       const renamedTo = renames.get(p.file);
       const candidate =
-        (renamedTo !== undefined ? takeFromFile(bucket, renamedTo) : undefined) ??
-        takeFromFile(bucket, p.file);
+        renamedTo !== undefined ? takeFromFile(bucket, renamedTo) : takeFromFile(bucket, p.file);
       if (candidate) pairUp(p, candidate, CONFIDENCE_CONTENT_HASH_SAME_FILE);
     }
     // Phase 2: cross-file leftovers.

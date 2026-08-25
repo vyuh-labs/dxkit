@@ -702,7 +702,7 @@ ALLOW_FILTER_CS=""
 for f in $CONTENT_STAMP_ALLOWLIST; do
   ALLOW_FILTER_CS="$ALLOW_FILTER_CS -e ^${f}:"
 done
-ROGUE_STAMP=$(grep -rnE "(^|[^A-Za-z_])computeContentHash([^A-Za-z_]|$)" ${CONTENT_STAMP_SCAN_ROOT:-src}/ 2>/dev/null \
+ROGUE_STAMP=$(grep -rnE "(^|[^A-Za-z_])computeContentHash" ${CONTENT_STAMP_SCAN_ROOT:-src}/ 2>/dev/null \
   | grep -v "// content-stamp-ok" \
   | grep -v -E '^[^:]*:[0-9]+:[[:space:]]*(//|\*|/\*)' \
   | { [ -n "$ALLOW_FILTER_CS" ] && grep -v $ALLOW_FILTER_CS || cat; })

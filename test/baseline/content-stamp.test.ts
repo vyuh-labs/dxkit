@@ -158,6 +158,17 @@ describe('contentStamper (the one stamping policy)', () => {
     expect(contentStamper(dir)('real.txt', 1)).toBeDefined();
   });
 
+  it('refuses a path whose PARENT is a symlink out of the repo', () => {
+    const outside = mkdtempSync(join(tmpdir(), 'dxkit-outside-'));
+    try {
+      writeFileSync(join(outside, 'secret.txt'), 'outside\n');
+      symlinkSync(outside, join(dir, 'linkdir'));
+      expect(contentStamper(dir)('linkdir/secret.txt', 1)).toBeUndefined();
+    } finally {
+      rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
   it('refuses files over the size cap', () => {
     writeFileSync(join(dir, 'big.txt'), Buffer.alloc(CONTENT_STAMP_MAX_BYTES + 1, 0x61));
     expect(contentStamper(dir)('big.txt', 1)).toBeUndefined();
@@ -387,6 +398,42 @@ describe('the content pass across a reformat', () => {
     expect(result.added).toEqual([twinId]);
   });
 
+  it('after a detected rename, a twin at the OLD path never gets the same-file tier', () => {
+    const before = fourSpaceSource();
+    writeFileSync(join(dir, FILE), before);
+    const base = commit(dir, 'backlog at 4 spaces');
+    const prior = stampedEntries([lintFinding(46)], dir);
+    // Rename away (old path deleted in git terms is implied by mv), reformat
+    // the renamed file, and put a NEW file with the identical window at the
+    // OLD path. The renamed file's finding is fixed (absent), so the only
+    // candidate is the old-path twin: it must NOT pair at the same-file tier.
+    execFileSync('git', ['mv', FILE, 'src/handlers-v2.ts'], { cwd: dir });
+    const fixed = reformat(before).replace('  console.log(id);\n', ''); // slop-ok
+    writeFileSync(join(dir, 'src/handlers-v2.ts'), fixed);
+    writeFileSync(join(dir, FILE), before);
+    const head = commit(dir, 'rename + fix + twin at old path');
+    const status = execFileSync('git', ['diff', '--name-status', '--find-renames', base, head], {
+      cwd: dir,
+      encoding: 'utf8',
+    });
+    // Only exercise the invariant when git actually saw the rename.
+    if (/R\d+\tsrc\/handlers\.ts\tsrc\/handlers-v2\.ts/.test(status)) {
+      const current = stampedEntries([lintFinding(46)], dir);
+      const result = gitAwareMatch(entriesToLocated(prior), entriesToLocated(current), {
+        cwd: dir,
+        baseSha: base,
+        headSha: head,
+      });
+      const contentPair = result.pairs.find(
+        (p) => p.priorId === prior[0].id && p.reasons.some((r) => r.code === 'content-hash'),
+      );
+      if (contentPair) {
+        expect(contentPair.confidence).toBe(CONFIDENCE_CONTENT_HASH);
+        expect(contentPair.status).toBe('relocated');
+      }
+    }
+  });
+
   it('a cross-file pair (no same-file candidate anywhere) keeps the lower confidence tier', () => {
     const before = fourSpaceSource();
     writeFileSync(join(dir, FILE), before);
@@ -461,6 +508,39 @@ describe('restampAtCommit (the migrate lane, pre-scheme baselines)', () => {
   });
 });
 
+describe('restampContentHashes (the update-lane wrapper)', () => {
+  it('an unreachable anchor returns the disclosure summary and writes nothing', async () => {
+    const dir = makeRepo();
+    try {
+      mkdirSync(join(dir, 'src'), { recursive: true });
+      writeFileSync(join(dir, FILE), fourSpaceSource());
+      commit(dir, 'anchor');
+      const { restampContentHashes } = await import('../../src/baseline/migrate');
+      const { BASELINE_SCHEMA_VERSION, pathForBaseline, writeBaselineFile, readBaselineFile } =
+        await import('../../src/baseline/baseline-file');
+      const blPath = pathForBaseline(dir, 'main');
+      mkdirSync(join(dir, '.dxkit', 'baselines'), { recursive: true });
+      const bare = customCheckFindingsToBaselineEntries([lintFinding(46)]);
+      const base = {
+        schemaVersion: BASELINE_SCHEMA_VERSION,
+        name: 'main',
+        createdAt: new Date().toISOString(),
+        repo: { commitSha: '0'.repeat(40) },
+        findings: bare,
+      } as unknown as import('../../src/baseline/baseline-file').BaselineFile;
+      writeBaselineFile(blPath, base);
+      const summary = restampContentHashes(dir);
+      expect(summary).toEqual({ restamped: 0, unreadable: 1 });
+      const after = readBaselineFile(blPath);
+      expect(
+        'contentHash' in after.findings[0] ? after.findings[0].contentHash : undefined,
+      ).toBeUndefined();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('arch-check: a second stamping call site is rejected', () => {
   it.each([
     [
@@ -472,6 +552,11 @@ describe('arch-check: a second stamping call site is rejected', () => {
       'aliased import',
       "import { computeContentHash as windowHash } from '../content-hash';\n" +
         'export const h = windowHash(content, line);\n',
+    ],
+    [
+      'FromLines variant',
+      "import { computeContentHashFromLines } from '../content-hash';\n" +
+        'export const h = computeContentHashFromLines(lines, line);\n',
     ],
   ])('flags computeContentHash outside content-stamp.ts (%s)', (_name, rogueSource) => {
     const repoRoot = resolve(__dirname, '..', '..');

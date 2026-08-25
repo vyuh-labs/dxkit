@@ -719,6 +719,11 @@ export type BaselineEntry =
       /** Blended structural-similarity score in [0,1] at mint time — display
        * metadata only (identity is the anchor pair). Lets renderers rank. */
       score: number;
+      /** Content-hash of the canonical first anchor's context — the located
+       * projection carries a line, so the orchestrator stamps this kind like
+       * every other located entry (the stampEntries invariant: a line locator
+       * implies a declared contentHash field). */
+      contentHash?: string;
     }
   | {
       id: FindingId;

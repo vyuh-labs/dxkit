@@ -31,8 +31,8 @@
  *   2. Reads from the shared `ProducerContext` (gathered once by
  *      the orchestrator so multiple producers don't re-shell the
  *      same analyzer).
- *   3. Returns `BaselineEntry[]` — pure or near-pure, depending on
- *      whether content-hash stamping is needed.
+ *   3. Returns `BaselineEntry[]` — a pure map. Content-hash stamping is the
+ *      ORCHESTRATOR's job (`stampEntries`), never a producer's.
  *
  * # Adding a new identity kind
  *
@@ -352,8 +352,7 @@ const CUSTOM_CHECK_PRODUCER: BaselineProducer = {
   contributes: ['custom-check'],
   produce(ctx) {
     // Stamped through the shared content-hash entry point (content-stamp.ts) so a
-    // located lint finding survives a whole-file reformat like every other
-    // bare tree, in which case nothing is stamped).
+    // located lint finding survives a whole-file reformat like every other located kind.
     return customCheckFindingsToBaselineEntries(ctx.customCheckFindings);
   },
   recallContexts(ctx) {

@@ -49,13 +49,16 @@
  */
 
 import { execFileSync } from 'node:child_process';
-import { lstatSync, readFileSync } from 'node:fs';
+import { lstatSync, readFileSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { resolveInsideRepo } from '../analyzers/tools/paths';
 import { computeContentHashFromLines } from './content-hash';
 import { entryToLocated } from './entry-to-located';
 import type { BaselineEntry, RichBaselineEntry } from './types';
+
+/** Most files whose split lines the stamper keeps warm at once. */
+export const CONTENT_STAMP_CACHE_FILES = 128;
 
 /** Files above this size are never stamped (see the module header). */
 export const CONTENT_STAMP_MAX_BYTES = 10 * 1024 * 1024;
@@ -69,12 +72,22 @@ export type ContentStamper = (file: string, line: number) => string | undefined;
  */
 export function contentStamper(cwd: string | undefined): ContentStamper {
   if (!cwd) return () => undefined;
+  // Bounded LRU over split lines: entries usually arrive grouped by file, so
+  // a small window keeps the one-read-per-file property while capping peak
+  // memory on a run whose findings span thousands of files.
   const lines = new Map<string, readonly string[] | null>();
   const read = (file: string): readonly string[] | null => {
     const hit = lines.get(file);
-    if (hit !== undefined) return hit;
+    if (hit !== undefined) {
+      lines.delete(file);
+      lines.set(file, hit);
+      return hit;
+    }
     const content = readTreeLines(cwd, file);
     lines.set(file, content);
+    if (lines.size > CONTENT_STAMP_CACHE_FILES) {
+      lines.delete(lines.keys().next().value as string);
+    }
     return content;
   };
   return (file, line) => {
@@ -109,7 +122,7 @@ function stampOne(entry: RichBaselineEntry, stamp: ContentStamper): RichBaseline
   const contentHash = stamp(loc.file, loc.line);
   if (contentHash === undefined) return entry;
   // Safe: every entry variant `entryToLocated` gives a line locator declares
-  // an optional `contentHash` (pinned by the relocation-invariant test).
+  // an optional `contentHash` (pinned by the parity test's variant sweep).
   return { ...entry, contentHash } as RichBaselineEntry;
 }
 
@@ -182,9 +195,15 @@ function readTreeLines(cwd: string, file: string): readonly string[] | null {
   if (rel === null) return null;
   const abs = join(cwd, rel);
   try {
+    // Leaf must be a regular file (a symlink leaf is refused outright), and
+    // the REAL path must stay inside the repo: a symlinked parent directory
+    // would otherwise carry the read outside the tree (`lstat` on the leaf
+    // alone follows linked parents). realpath is the containment authority.
     const stat = lstatSync(abs);
     if (!stat.isFile() || stat.size > CONTENT_STAMP_MAX_BYTES) return null;
-    return readFileSync(abs, 'utf8').split('\n');
+    const real = realpathSync(abs);
+    if (resolveInsideRepo(realpathSync(cwd), real) === null) return null;
+    return readFileSync(real, 'utf8').split('\n');
   } catch {
     return null;
   }

@@ -262,8 +262,13 @@ export function restampContentHashes(cwd: string, baselineName = 'main'): Restam
   const sha = file.repo?.commitSha;
   if (!sha) return null;
   const result = restampAtCommit(file.findings, cwd, sha);
-  if (result.restamped === 0) return null;
-  writeBaselineFile(blPath, { ...file, findings: result.entries });
+  if (result.restamped === 0 && result.unreadable === 0) return null;
+  if (result.restamped > 0) {
+    writeBaselineFile(blPath, { ...file, findings: result.entries });
+  }
+  // restamped 0 + unreadable > 0 (an unreachable anchor: shallow clone,
+  // force-pushed history): nothing to write, but the caller must SAY so.
+  // Silence here would read as "reformat-tolerant matching is active".
   return { restamped: result.restamped, unreadable: result.unreadable };
 }
 

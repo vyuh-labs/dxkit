@@ -58,10 +58,8 @@ export interface StaleAllowInput {
 
 /**
  * Build `stale-allow` entries from the annotation list + the
- * canonical security aggregate. Deterministic over equal inputs; the
- * only I/O is the best-effort `contentHash` read when `input.commit`
- * is supplied (reading the annotation's context from the baseline
- * commit, same as the secret/code producer).
+ * canonical security aggregate. A pure map, deterministic over equal
+ * inputs; content-hash stamping is the orchestrator's job.
  *
  * Returns an empty array when:
  *   - The annotation list is empty (nothing to check).

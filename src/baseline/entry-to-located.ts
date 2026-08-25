@@ -182,7 +182,13 @@ export function entryToLocated(entry: BaselineEntry): LocatedIdentity {
                 ? 1
                 : 0,
       );
-      return { id: entry.id, file: first.file, line: first.line, rule: `dup:${first.symbol}` };
+      return {
+        id: entry.id,
+        file: first.file,
+        line: first.line,
+        rule: `dup:${first.symbol}`,
+        ...(entry.contentHash !== undefined ? { contentHash: entry.contentHash } : {}),
+      };
     }
     case 'model-schema-drift':
       // LOCATION-free identity ((model, field, changeClass)) → whole-file

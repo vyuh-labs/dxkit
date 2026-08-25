@@ -222,6 +222,85 @@ describe('content-stamp parity across the producer registry', () => {
     expect(unstampedLocatedEntries(escapee).map((e) => e.id)).toEqual(['synth0000feedbee0']);
   });
 
+  it('every entry variant with a line locator declares contentHash (the stampOne cast invariant)', () => {
+    // Compile-time sweep: constructing each line-locator variant with a
+    // contentHash must typecheck. A new located kind without the field breaks
+    // this block before the cast in stampOne can write an undeclared field.
+    const anchors: [
+      { file: string; line: number; symbol: string },
+      { file: string; line: number; symbol: string },
+    ] = [
+      { file: 'a.ts', line: 1, symbol: 'x' },
+      { file: 'b.ts', line: 2, symbol: 'y' },
+    ];
+    const variants: RichBaselineEntry[] = [
+      {
+        id: 'a'.repeat(16),
+        kind: 'code',
+        tool: 't',
+        rule: 'r',
+        file: 'a.ts',
+        line: 1,
+        contentHash: 'f'.repeat(16),
+      },
+      {
+        id: 'b'.repeat(16),
+        kind: 'hygiene',
+        file: 'a.ts',
+        line: 1,
+        marker: 'todo',
+        contentHash: 'f'.repeat(16),
+      },
+      {
+        id: 'c'.repeat(16),
+        kind: 'stale-allow',
+        file: 'a.ts',
+        line: 1,
+        category: 'deferred',
+        contentHash: 'f'.repeat(16),
+      },
+      {
+        id: 'd'.repeat(16),
+        kind: 'custom-check',
+        check: 'lint:x',
+        blocking: true,
+        file: 'a.ts',
+        line: 1,
+        contentHash: 'f'.repeat(16),
+      },
+      {
+        id: 'e'.repeat(16),
+        kind: 'duplication',
+        fileA: 'a.ts',
+        fileB: 'b.ts',
+        lines: 3,
+        startLineA: 1,
+        startLineB: 2,
+        contentHash: 'f'.repeat(16),
+      },
+      {
+        id: 'f'.repeat(16),
+        kind: 'coverage-gap',
+        file: 'a.ts',
+        lineRange: [1, 3],
+        contentHash: 'f'.repeat(16),
+      },
+      {
+        id: 'a1'.repeat(8),
+        kind: 'code-reimplementation',
+        anchors,
+        score: 0.9,
+        contentHash: 'f'.repeat(16),
+      },
+    ];
+    for (const v of variants) {
+      const loc = entryToLocated(v);
+      expect(loc.file, `${v.kind} keeps a file locator`).toBeDefined();
+      expect(loc.line, `${v.kind} keeps a line locator`).toBeGreaterThan(0);
+      expect(loc.contentHash, `${v.kind} forwards contentHash to the matcher`).toBe('f'.repeat(16));
+    }
+  });
+
   it('captureFragment output is stamped through the same entry point', async () => {
     const { captureFragment } = await import('../../src/baseline/fragment');
     const { trustedLocalContext } = await import('../../src/analysis-trust');
