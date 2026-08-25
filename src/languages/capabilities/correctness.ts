@@ -61,14 +61,57 @@ export interface CorrectnessCommand {
   readonly parseFailures?: (output: string) => string[] | null;
 }
 
+/**
+ * The identity prefix of an unresolved PROJECT-PATH import (a relative
+ * `./x` / `../x` specifier that reached no file in the repo tree). The
+ * identity is the repo-root-relative POSIX path of the missing target,
+ * extension-less, prefixed `./` (`./src/components/categoryIcon`), so two
+ * files importing the same missing module share ONE finding (the package
+ * granularity bare specifiers already have) and the attribution comparator
+ * diffs it like any other specifier. A bare package specifier never starts
+ * with `./`, so the prefix is the ONE discriminator every consumer reads
+ * (`isProjectPathIdentity`), never a second table.
+ */
+export const PROJECT_PATH_IDENTITY_PREFIX = './';
+
+/** Whether an unresolved-import identity names a repo-tree path (a relative
+ *  import whose target is missing) rather than a package. */
+export function isProjectPathIdentity(specifier: string): boolean {
+  return specifier.startsWith(PROJECT_PATH_IDENTITY_PREFIX);
+}
+
+/**
+ * Build the project-path identity for a repo-relative POSIX target path.
+ * The ONE normalizer both the current side (the pack's check) and the base
+ * side (the attribution probe) mint through: a trailing `/index` folds into
+ * the directory (`./widgets`, `./widgets/`, `./widgets/index` and
+ * `./widgets/index.js` name one module), so respelling an import is never
+ * read as a net-new miss.
+ */
+export function projectPathIdentity(targetRel: string): string {
+  let rel = targetRel.replace(/^\.\//, '').replace(/\/+$/, '');
+  while (rel.endsWith('/index')) rel = rel.slice(0, -'/index'.length);
+  // The ROOT barrel folds to itself, never to the degenerate './' (which
+  // any dotfile would appear to serve).
+  if (rel === '') rel = 'index';
+  return PROJECT_PATH_IDENTITY_PREFIX + rel;
+}
+
 /** One import specifier that demonstrably does not resolve against the
- *  installed dependency tree. */
+ *  installed dependency tree or the repo tree. */
 export interface UnresolvedImport {
-  /** The bare package specifier that failed to resolve (e.g. `form-data`). */
+  /** The identity of what failed to resolve: a bare package specifier
+   *  (`form-data`), or for a relative import the project-path identity of
+   *  the missing target (`./src/components/categoryIcon`, see
+   *  `projectPathIdentity`). */
   readonly specifier: string;
   /** Repo-relative POSIX path of an importing file (the first one seen), so
    *  the failure is actionable without re-running the walk. */
   readonly file: string;
+  /** What the check actually observed about the target, phrased truthfully
+   *  (`is not in the git tree`, `exists on disk but is not tracked in git`);
+   *  rendered in place of the generic message when present. */
+  readonly detail?: string;
 }
 
 /**
@@ -84,9 +127,26 @@ export interface UnresolvedImport {
  *     with the reason DISCLOSED, never silent.
  */
 export type ResolutionCheckResult =
-  | { readonly kind: 'clean'; readonly checkedSpecifiers: number }
-  | { readonly kind: 'unresolved'; readonly unresolved: readonly UnresolvedImport[] }
-  | { readonly kind: 'skipped'; readonly reason: string };
+  | {
+      readonly kind: 'clean';
+      readonly checkedSpecifiers: number;
+      readonly disclosures?: readonly string[];
+    }
+  | {
+      readonly kind: 'unresolved';
+      readonly unresolved: readonly UnresolvedImport[];
+      /** What the check declined to judge while still answering (a class of
+       *  specifier it stepped back from, and why). Rendered with the
+       *  verdict: a partial answer is disclosed, never silent (Rule 19). */
+      readonly disclosures?: readonly string[];
+    }
+  | {
+      readonly kind: 'skipped';
+      readonly reason: string;
+      /** Disclosures accumulated before the check stepped back: a skip
+       *  must not discard what was already worth saying (Rule 19). */
+      readonly disclosures?: readonly string[];
+    };
 
 /** One structurally broken artifact — identity is the FILE (a second
  *  problem in the same file is the same broken artifact; a NEW broken
@@ -144,13 +204,28 @@ export interface CorrectnessProvider {
    *
    * Unlike the two command builders this is a direct computation — the pack
    * already extracts import specifiers (Rule 6), and checking them against the
-   * installed tree needs no external tool. It must be read-only, never spawn,
-   * and bias hard toward false NEGATIVES (benign.ts discipline): skip builtins,
+   * installed tree needs no external tool. It must be READ-ONLY: it may read
+   * the repo tree, including read-only git ENUMERATION (`git ls-files`, built
+   * lazily and only when a judged relative specifier exists): it never
+   * writes, never runs repo code, and never reaches the network. Bias hard
+   * toward false NEGATIVES (benign.ts discipline): skip builtins,
    * `#`-imports, path aliases, anything ambiguous — only report a specifier
    * whose package demonstrably does not exist on the resolution path. The
    * runner treats a throw as a disclosed skip (fail-open).
    */
   resolutionCheck?(ctx: CorrectnessContext): ResolutionCheckResult;
+  /**
+   * OPTIONAL, paired with `resolutionCheck` when it judges RELATIVE imports:
+   * the project-path identities (`projectPathIdentity`) a source file's
+   * relative imports would mint if their targets were missing, from the
+   * file's CONTENT alone (no tree access), or null when the pack would not
+   * judge that file (a test, a declaration file, a static-asset dir). The
+   * base-side attribution probe reads base blobs through this, so "was it
+   * imported at the base" is decided by the same extractor, plausibility
+   * filter and exclusion set as the current side (Rule 2.30), never by a
+   * regex over raw lines.
+   */
+  relativeImportIdentities?(file: string, content: string): readonly string[] | null;
   /**
    * OPTIONAL: verify artifacts of a class NO parser covers are at least
    * STRUCTURALLY plausible (#309 — the `.bdef` class: generation cutoffs,

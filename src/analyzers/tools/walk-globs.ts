@@ -49,3 +49,17 @@ export function splitTestPatterns(patterns: string[]): {
   }
   return { nameOnly, pathAnchored };
 }
+
+/**
+ * Classify a repo-relative path as a test file against an explicit pattern
+ * list (name-only globs against the basename, path-anchored globs against
+ * the path). The walker's `includeTests` filter and any pack-side per-file
+ * predicate share this one definition.
+ */
+export function matchesTestPatterns(relPath: string, patterns: string[]): boolean {
+  const split = splitTestPatterns(patterns);
+  const basename = relPath.slice(relPath.lastIndexOf('/') + 1);
+  for (const pat of split.nameOnly) if (matchesBasenameGlob(pat, basename)) return true;
+  for (const pat of split.pathAnchored) if (matchesPathGlob(pat, relPath)) return true;
+  return false;
+}
