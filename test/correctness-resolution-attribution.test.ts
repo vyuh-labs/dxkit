@@ -31,7 +31,12 @@ import {
   runFloorForSurface,
   refutedResolutionSpecifiers,
 } from '../src/analyzers/correctness/surface-run';
-import type { CommandExec } from '../src/analyzers/correctness/run';
+import {
+  IMPORT_RESOLUTION_LABEL,
+  type CommandExec,
+  type CorrectnessFloorResult,
+} from '../src/analyzers/correctness/run';
+import { attributeFloorFailures } from '../src/analyzers/correctness/attribution';
 import type { LanguageSupport } from '../src/languages/types';
 import type {
   CorrectnessContext,
@@ -357,5 +362,99 @@ describe('runFloorForSurface pre-push — floor-debt envelope demotes grandfathe
       exec: failSyntaxExec,
     });
     expect(outcome.blocks).toBe(true);
+  });
+});
+
+/**
+ * Relative-import identities (4.4.5). A missing `./x` target carries a
+ * project-path identity (`./src/x`) and is never a manifest question: it was
+ * pre-existing iff the base tree ALSO lacked the target AND a base file
+ * already imported it (resolved from that file's directory, so a same-named
+ * module elsewhere cannot refute a genuinely new miss). A target the base
+ * tree HAD (deleted by this change) keeps the block.
+ */
+describe('refutedResolutionSpecifiers: relative (project-path) identities', () => {
+  let dir: string;
+  let baseSha: string;
+  const packs = [
+    {
+      ...packWithResolution({ kind: 'clean', checkedSpecifiers: 0 }),
+      sourceExtensions: ['.js', '.ts'],
+    } as unknown as LanguageSupport,
+  ];
+
+  beforeAll(() => {
+    dir = mkdtempSync(join(tmpdir(), 'dxkit-floor-attrib-rel-'));
+    git(dir, ['init', '-q', '-b', 'main']);
+    git(dir, ['config', 'user.email', 'test@example.com']);
+    git(dir, ['config', 'user.name', 'test']);
+    git(dir, ['config', 'commit.gpgsign', 'false']);
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'fixture', version: '1.0' }));
+    mkdirSync(join(dir, 'src', 'components'), { recursive: true });
+    mkdirSync(join(dir, 'src', 'other'), { recursive: true });
+    // Base: one bare phantom, one relative import already dangling at base,
+    // one relative import that RESOLVES at base, and a same-named module in
+    // another directory (the decoy the resolve-from-importer rule exists for).
+    writeFileSync(
+      join(dir, 'src', 'components', 'Card.js'),
+      "const g = require('ghost-pkg');\nconst i = require('./legacyIcon');\nconst t = require('./theme');\nmodule.exports = [g, i, t];\n",
+    );
+    writeFileSync(join(dir, 'src', 'components', 'theme.js'), 'module.exports = 1;\n');
+    writeFileSync(
+      join(dir, 'src', 'other', 'a.js'),
+      "const c = require('./categoryIcon');\nmodule.exports = c;\n",
+    );
+    writeFileSync(join(dir, 'src', 'other', 'categoryIcon.js'), 'module.exports = 1;\n');
+    git(dir, ['add', '.']);
+    git(dir, ['commit', '-q', '-m', 'base']);
+    baseSha = git(dir, ['rev-parse', 'HEAD']).trim();
+  });
+  afterAll(() => rmSync(dir, { recursive: true, force: true }));
+
+  it('refutes a relative miss the base already carried (target absent + imported there)', () => {
+    expect(
+      refutedResolutionSpecifiers(dir, baseSha, packs, ['./src/components/legacyIcon']),
+    ).toEqual(['./src/components/legacyIcon']);
+  });
+
+  it('keeps a NEW relative miss (the uncommitted-file class), despite a same-named module elsewhere', () => {
+    expect(
+      refutedResolutionSpecifiers(dir, baseSha, packs, ['./src/components/categoryIcon']),
+    ).toEqual([]);
+  });
+
+  it('keeps a target the base tree served (this change deleted it)', () => {
+    expect(refutedResolutionSpecifiers(dir, baseSha, packs, ['./src/components/theme'])).toEqual(
+      [],
+    );
+  });
+
+  it('end to end through the ONE comparator: only the new relative miss is net-new', () => {
+    // Current side: the pre-existing bare phantom, the pre-existing relative
+    // miss, and the new relative miss, all in one failing check.
+    const current = ['ghost-pkg', './src/components/legacyIcon', './src/components/categoryIcon'];
+    const refuted = refutedResolutionSpecifiers(dir, baseSha, packs, current);
+    expect(refuted).toEqual(['ghost-pkg', './src/components/legacyIcon']);
+    const result: CorrectnessFloorResult = {
+      checks: [
+        {
+          pack: 'synthetic',
+          label: IMPORT_RESOLUTION_LABEL,
+          bin: '',
+          status: 'fail',
+          output: '',
+          findings: current,
+        },
+      ],
+    } as unknown as CorrectnessFloorResult;
+    const attributed = attributeFloorFailures(
+      result,
+      [{ pack: 'synthetic', label: IMPORT_RESOLUTION_LABEL, status: 'fail', findings: refuted! }],
+      { absentMeans: 'net-new' },
+    );
+    expect(attributed).toHaveLength(1);
+    expect(attributed[0].attribution).toBe('net-new');
+    expect(attributed[0].precision).toBe('finding');
+    expect(attributed[0].netNewFindings).toEqual(['./src/components/categoryIcon']);
   });
 });

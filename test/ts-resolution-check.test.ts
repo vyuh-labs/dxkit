@@ -15,7 +15,11 @@ import { describe, it, expect, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { tsResolutionCheck, tsPackageNameOf } from '../src/languages/typescript';
+import {
+  tsResolutionCheck,
+  tsPackageNameOf,
+  unresolvedRelativeTarget,
+} from '../src/languages/typescript';
 
 const cleanups: string[] = [];
 afterEach(() => {
@@ -224,5 +228,176 @@ describe('tsResolutionCheck', () => {
       'src/types.d.ts': "import type { X } from 'types-only-pkg';\nexport type Y = X;\n",
     });
     expect(tsResolutionCheck(ctx(cwd)).kind).toBe('clean');
+  });
+});
+
+/**
+ * Relative imports (4.4.5). The class: a change adds `import x from
+ * './categoryIcon'` to two files and never commits `categoryIcon.js`. No
+ * manifest can explain it, so the bare-specifier floor reported nothing and
+ * only an opt-in lint rule saw the build break. A missing relative target is
+ * the repo tree's to answer, with the same false-negative bias: anything a
+ * loader might serve (an asset extension, a sibling with ANY extension, a
+ * directory) is never a finding.
+ */
+describe('tsResolutionCheck: relative imports', () => {
+  const installed = { 'package.json': '{}', 'node_modules/': '' };
+
+  it('flags a relative import whose target is not in the tree, once per target', () => {
+    const cwd = repo({
+      ...installed,
+      'src/components/Card.tsx':
+        "import { CategoryIcon } from './categoryIcon';\nexport default 1;\n",
+      'src/components/List.tsx':
+        "import { CategoryIcon } from './categoryIcon';\nexport default 2;\n",
+      'src/pages/Home.tsx':
+        "import { CategoryIcon } from '../components/categoryIcon';\nexport default 3;\n",
+    });
+    const r = tsResolutionCheck(ctx(cwd));
+    expect(r.kind).toBe('unresolved');
+    if (r.kind === 'unresolved') {
+      // ONE identity for the missing module, however many files import it,
+      // keyed by the repo-relative target (not the per-file specifier text).
+      expect(r.unresolved).toEqual([
+        { specifier: './src/components/categoryIcon', file: 'src/components/Card.tsx' },
+      ]);
+    }
+  });
+
+  it('resolves an omitted extension to .tsx / .js / an index barrel (clean)', () => {
+    const cwd = repo({
+      ...installed,
+      'src/Icon.tsx': 'export const Icon = 1;',
+      'src/legacy.js': 'module.exports = 1;',
+      'src/widgets/index.ts': 'export const w = 1;',
+      'src/a.ts':
+        "import { Icon } from './Icon';\nimport legacy from './legacy';\nimport { w } from './widgets';\nexport default [Icon, legacy, w];\n",
+    });
+    const r = tsResolutionCheck(ctx(cwd));
+    expect(r.kind).toBe('clean');
+    if (r.kind === 'clean') expect(r.checkedSpecifiers).toBe(3);
+  });
+
+  it("resolves TypeScript's ESM './x.js' convention to the .ts / .tsx source (clean)", () => {
+    const cwd = repo({
+      ...installed,
+      'src/util.ts': 'export const u = 1;',
+      'src/View.tsx': 'export const V = 1;',
+      'src/a.ts':
+        "import { u } from './util.js';\nimport { V } from './View.jsx';\nexport default [u, V];\n",
+    });
+    expect(tsResolutionCheck(ctx(cwd)).kind).toBe('clean');
+  });
+
+  it('never judges a non-code import (css, scss, json, svg, png, vue) or a target with ANY sibling', () => {
+    const cwd = repo({
+      ...installed,
+      'src/styles.module.css': '.a{}',
+      'src/data.json': '{}',
+      'src/a.ts': [
+        "import './missing.css';",
+        "import './missing.scss';",
+        "import logo from './missing.svg';",
+        "import png from './missing.png';",
+        "import cfg from './missing.json';",
+        "import App from './Missing.vue';",
+        // extension-less, but a sibling with a non-code extension exists:
+        "import styles from './styles.module';",
+        "import data from './data';",
+        'export default 1;',
+      ].join('\n'),
+    });
+    expect(tsResolutionCheck(ctx(cwd)).kind).toBe('clean');
+  });
+
+  it('a directory target (a package with its own main) is never a finding', () => {
+    const cwd = repo({
+      ...installed,
+      'src/lib/package.json': '{"main":"./dist/lib.js"}',
+      'src/a.ts': "import lib from './lib';\nexport default lib;\n",
+    });
+    expect(tsResolutionCheck(ctx(cwd)).kind).toBe('clean');
+  });
+
+  it('a relative path that escapes the repo, a glob, or a template fragment is not judged', () => {
+    const cwd = repo({
+      ...installed,
+      'src/a.ts': [
+        "import x from '../../outside-the-repo/x';",
+        "const pages = import.meta.glob('./pages/*');",
+        "const m = require('./' + name);",
+        'export default [x, pages, m];',
+      ].join('\n'),
+    });
+    expect(tsResolutionCheck(ctx(cwd)).kind).toBe('clean');
+  });
+
+  it('the tsconfig alias behavior is unchanged alongside relative resolution', () => {
+    const cwd = repo({
+      ...installed,
+      'tsconfig.json': JSON.stringify({ compilerOptions: { paths: { '@/*': ['src/*'] } } }),
+      'src/util.ts': 'export const u = 1;',
+      'src/a.ts':
+        "import { u } from '@/util';\nimport { g } from '@/gone';\nexport default [u, g];\n",
+      'src/b.ts': "import { v } from './vanished';\nexport default v;\n",
+    });
+    const r = tsResolutionCheck(ctx(cwd));
+    expect(r.kind).toBe('unresolved');
+    if (r.kind === 'unresolved') {
+      expect(r.unresolved).toEqual([{ specifier: './src/vanished', file: 'src/b.ts' }]);
+    }
+  });
+
+  it('a bare phantom and a relative miss are distinct findings in one result', () => {
+    const cwd = repo({
+      ...installed,
+      'src/a.js':
+        "const f = require('form-data');\nconst g = require('./gone');\nmodule.exports = [f, g];\n",
+    });
+    const r = tsResolutionCheck(ctx(cwd));
+    expect(r.kind).toBe('unresolved');
+    if (r.kind === 'unresolved') {
+      expect(r.unresolved.map((u) => u.specifier)).toEqual(['form-data', './src/gone']);
+    }
+  });
+
+  it('declines the relative class (disclosed) when implausibly many reach nothing, keeping the package verdict', () => {
+    const lines = Array.from({ length: 60 }, (_, i) => `import m${i} from './mods/m${i}';`);
+    const cwd = repo({
+      ...installed,
+      'src/a.ts': `${lines.join('\n')}\nimport f from 'form-data';\nexport default [f];\n`,
+    });
+    const r = tsResolutionCheck(ctx(cwd));
+    expect(r.kind).toBe('unresolved');
+    if (r.kind === 'unresolved') {
+      expect(r.unresolved.map((u) => u.specifier)).toEqual(['form-data']);
+      expect(r.disclosures?.join('\n')).toContain('60 relative imports');
+    }
+  });
+
+  it('a generated-output path and an import inside a template literal are never judged', () => {
+    const cwd = repo({
+      ...installed,
+      'src/a.ts': [
+        "import { Q } from './__generated__/graphql';",
+        "import { S } from './schema.generated';",
+        "import { T } from '../gen/types';",
+        "export const tpl = `import { x } from './embedded-template-only';`;",
+        'export default [Q, S, T];',
+      ].join('\n'),
+    });
+    expect(tsResolutionCheck(ctx(cwd)).kind).toBe('clean');
+  });
+});
+
+describe('unresolvedRelativeTarget', () => {
+  it('returns the project-path identity of a missing code target only', () => {
+    const cwd = repo({ 'src/x.ts': 'export const x = 1;' });
+    expect(unresolvedRelativeTarget('src/a.ts', './x', cwd)).toBeNull();
+    expect(unresolvedRelativeTarget('src/a.ts', './x.js', cwd)).toBeNull();
+    expect(unresolvedRelativeTarget('src/a.ts', './y', cwd)).toBe('./src/y');
+    expect(unresolvedRelativeTarget('src/a.ts', './y.ts', cwd)).toBe('./src/y');
+    expect(unresolvedRelativeTarget('src/deep/a.ts', '../y', cwd)).toBe('./src/y');
+    expect(unresolvedRelativeTarget('src/a.ts', './y.css', cwd)).toBeNull();
   });
 });
