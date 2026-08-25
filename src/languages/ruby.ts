@@ -917,6 +917,10 @@ export function rubyResolutionCheck(ctx: CorrectnessContext): ResolutionCheckRes
 }
 
 const rubyCorrectnessProvider: CorrectnessProvider = {
+  // `require_relative` is NOT judged here (4.4.5): a target may be a `.rb`,
+  // a native `.so`/`.bundle`, or served by an autoload/Zeitwerk root, so a
+  // missing file is not distinguishable from an unmodeled load path.
+  // Disclosed limit; the syntax floor and the test run see the LoadError live.
   resolutionCheck: rubyResolutionCheck,
 
   // Rule 20: host-agnostic, needs the Ruby runtime; the floor runs the

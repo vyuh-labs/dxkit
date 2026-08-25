@@ -12,10 +12,15 @@
  */
 
 import { execFileSync } from 'child_process';
+import { posix } from 'path';
 
 import { dependencyManifestFilesIn } from '../../languages';
 import { basePackageEvidence } from './lockfile-evidence';
 import type { LanguageSupport } from '../../languages/types';
+import {
+  PROJECT_PATH_IDENTITY_PREFIX,
+  isProjectPathIdentity,
+} from '../../languages/capabilities/correctness';
 import { IMPORT_RESOLUTION_LABEL, type CorrectnessFloorResult } from './run';
 import { attributeFloorFailures, type FloorBaseCheck } from './attribution';
 
@@ -77,6 +82,13 @@ export function refutedResolutionSpecifiers(
     });
     const refuted: string[] = [];
     for (const spec of specifiers) {
+      if (isProjectPathIdentity(spec)) {
+        // A missing RELATIVE target is never a manifest question: it was
+        // pre-existing iff the base tree ALSO lacked the target and some base
+        // file already imported it (resolved from that file, not by name).
+        if (projectPathMissingAtBase(git, baseSha, treeFiles, packs, spec)) refuted.push(spec);
+        continue;
+      }
       const maybeProvidedAtBase = manifestBlobs.some(({ blob, evidence }) =>
         evidence !== null ? evidence.has(spec) : blob.includes(spec),
       );
@@ -97,6 +109,54 @@ export function refutedResolutionSpecifiers(
   } catch {
     return null;
   }
+}
+
+/**
+ * Was a project-path identity (`./src/x`, see `projectPathIdentity`) ALREADY
+ * unreachable at the base? Decisive only when BOTH hold: no base tree entry
+ * serves the target (the exact path, any extension, or anything below it as
+ * a directory), AND a base source file carries a quoted relative specifier
+ * that resolves, from THAT file's directory, to the target. Resolving from
+ * the importer (rather than matching the specifier text) keeps a same-named
+ * module elsewhere from refuting a genuinely new miss. A false "absent"
+ * merely keeps the block.
+ */
+function projectPathMissingAtBase(
+  git: (args: string[]) => string,
+  baseSha: string,
+  treeFiles: readonly string[],
+  packs: readonly LanguageSupport[],
+  identity: string,
+): boolean {
+  const target = identity.slice(PROJECT_PATH_IDENTITY_PREFIX.length);
+  const served = treeFiles.some(
+    (f) => f === target || f.startsWith(target + '.') || f.startsWith(target + '/'),
+  );
+  if (served) return false;
+  const basename = target.slice(target.lastIndexOf('/') + 1);
+  let hits: string;
+  try {
+    const pathspecs = [...new Set(packs.flatMap((p) => p.sourceExtensions ?? []))].map(
+      (e) => `*${e}`,
+    );
+    hits = git(['grep', '-n', '--fixed-strings', basename, baseSha, '--', ...pathspecs]);
+  } catch {
+    return false; // no quoted mention at base: not imported there, keep the block
+  }
+  const quoted = /['"](\.\.?\/[^'"\s]*)['"]/g;
+  for (const line of hits.split('\n')) {
+    // `<sha>:<path>:<lineno>:<text>`
+    const m = /^[^:]+:([^:]+):\d+:(.*)$/.exec(line);
+    if (!m) continue;
+    const fromDir = posix.dirname(m[1]);
+    for (const q of m[2].matchAll(quoted)) {
+      const spec = q[1];
+      const ext = posix.extname(spec);
+      const stem = ext ? spec.slice(0, -ext.length) : spec;
+      if (posix.normalize(posix.join(fromDir, stem)) === target) return true;
+    }
+  }
+  return false;
 }
 
 /** Check-level base evidence for the pre-push surface: (pack, label) rows

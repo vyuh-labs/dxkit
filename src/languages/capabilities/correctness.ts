@@ -61,10 +61,37 @@ export interface CorrectnessCommand {
   readonly parseFailures?: (output: string) => string[] | null;
 }
 
+/**
+ * The identity prefix of an unresolved PROJECT-PATH import (a relative
+ * `./x` / `../x` specifier that reached no file in the repo tree). The
+ * identity is the repo-root-relative POSIX path of the missing target,
+ * extension-less, prefixed `./` (`./src/components/categoryIcon`), so two
+ * files importing the same missing module share ONE finding (the package
+ * granularity bare specifiers already have) and the attribution comparator
+ * diffs it like any other specifier. A bare package specifier never starts
+ * with `./`, so the prefix is the ONE discriminator every consumer reads
+ * (`isProjectPathIdentity`), never a second table.
+ */
+export const PROJECT_PATH_IDENTITY_PREFIX = './';
+
+/** Whether an unresolved-import identity names a repo-tree path (a relative
+ *  import whose target is missing) rather than a package. */
+export function isProjectPathIdentity(specifier: string): boolean {
+  return specifier.startsWith(PROJECT_PATH_IDENTITY_PREFIX);
+}
+
+/** Build the project-path identity for a repo-relative POSIX target path. */
+export function projectPathIdentity(targetRel: string): string {
+  return PROJECT_PATH_IDENTITY_PREFIX + targetRel.replace(/^\.\//, '');
+}
+
 /** One import specifier that demonstrably does not resolve against the
- *  installed dependency tree. */
+ *  installed dependency tree or the repo tree. */
 export interface UnresolvedImport {
-  /** The bare package specifier that failed to resolve (e.g. `form-data`). */
+  /** The identity of what failed to resolve: a bare package specifier
+   *  (`form-data`), or for a relative import the project-path identity of
+   *  the missing target (`./src/components/categoryIcon`, see
+   *  `projectPathIdentity`). */
   readonly specifier: string;
   /** Repo-relative POSIX path of an importing file (the first one seen), so
    *  the failure is actionable without re-running the walk. */
@@ -84,8 +111,19 @@ export interface UnresolvedImport {
  *     with the reason DISCLOSED, never silent.
  */
 export type ResolutionCheckResult =
-  | { readonly kind: 'clean'; readonly checkedSpecifiers: number }
-  | { readonly kind: 'unresolved'; readonly unresolved: readonly UnresolvedImport[] }
+  | {
+      readonly kind: 'clean';
+      readonly checkedSpecifiers: number;
+      readonly disclosures?: readonly string[];
+    }
+  | {
+      readonly kind: 'unresolved';
+      readonly unresolved: readonly UnresolvedImport[];
+      /** What the check declined to judge while still answering (a class of
+       *  specifier it stepped back from, and why). Rendered with the
+       *  verdict: a partial answer is disclosed, never silent (Rule 19). */
+      readonly disclosures?: readonly string[];
+    }
   | { readonly kind: 'skipped'; readonly reason: string };
 
 /** One structurally broken artifact — identity is the FILE (a second

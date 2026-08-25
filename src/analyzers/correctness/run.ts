@@ -27,6 +27,7 @@ import type {
   CorrectnessProvider,
   CorrectnessScope,
 } from '../../languages/capabilities/correctness';
+import { isProjectPathIdentity } from '../../languages/capabilities/correctness';
 import {
   classifyEnvironmentFailure,
   currentEnvironment,
@@ -170,20 +171,36 @@ function runResolutionCheck(
   const base = { pack: id, label: IMPORT_RESOLUTION_LABEL, bin: '' };
   try {
     const res = provider.resolutionCheck!(ctx);
-    if (res.kind === 'clean') return { ...base, status: 'pass' };
+    const disclosed = res.kind === 'skipped' ? [] : (res.disclosures ?? []);
+    if (res.kind === 'clean') {
+      return disclosed.length > 0
+        ? { ...base, status: 'pass', output: disclosed.join('\n') }
+        : { ...base, status: 'pass' };
+    }
     if (res.kind === 'unresolved') {
-      const lines = res.unresolved.map(
-        (u) =>
-          `'${u.specifier}' does not resolve against the installed tree (imported by ${u.file})`,
+      const lines = res.unresolved.map((u) =>
+        isProjectPathIdentity(u.specifier)
+          ? `'${u.specifier}' does not exist in the repo tree (relative import in ${u.file})`
+          : `'${u.specifier}' does not resolve against the installed tree (imported by ${u.file})`,
       );
-      lines.push(
-        'An import of an uninstalled/undeclared package fails at build or run time. ' +
-          'Declare it in the dependency manifest and install it (or remove the import).',
-      );
+      const hasPackage = res.unresolved.some((u) => !isProjectPathIdentity(u.specifier));
+      const hasProjectPath = res.unresolved.some((u) => isProjectPathIdentity(u.specifier));
+      if (hasPackage) {
+        lines.push(
+          'An import of an uninstalled/undeclared package fails at build or run time. ' +
+            'Declare it in the dependency manifest and install it (or remove the import).',
+        );
+      }
+      if (hasProjectPath) {
+        lines.push(
+          'A relative import of a file that is not in the tree fails at build time. ' +
+            'Commit the missing file (or remove the import).',
+        );
+      }
       return {
         ...base,
         status: 'fail',
-        output: lines.join('\n'),
+        output: [...lines, ...disclosed].join('\n'),
         findings: [...new Set(res.unresolved.map((u) => u.specifier))],
       };
     }

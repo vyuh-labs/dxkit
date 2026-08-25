@@ -619,6 +619,10 @@ export function phpResolutionCheck(ctx: CorrectnessContext): ResolutionCheckResu
 }
 
 const phpCorrectnessProvider: CorrectnessProvider = {
+  // File-path includes (`require __DIR__ . "/x.php"`) are NOT judged here
+  // (4.4.5): they are concatenated at runtime, so the literal is not a path
+  // the check can resolve. Disclosed limit; `php -l` and the test run see the
+  // missing file live.
   resolutionCheck: phpResolutionCheck,
 
   execution: () => PHP_CLI_EXECUTION,

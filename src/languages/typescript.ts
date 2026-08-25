@@ -39,6 +39,7 @@ import type {
   ResolutionCheckResult,
 } from './capabilities/correctness';
 import type { ExecutionRequirement } from '../execution';
+import { projectPathIdentity } from './capabilities/correctness';
 import type {
   CoverageResult,
   DepVulnFinding,
@@ -1329,6 +1330,79 @@ const TS_TEST_FILE_PATTERNS: readonly string[] = [
   '*.cy.jsx',
 ];
 
+/**
+ * Extensions a relative TS/JS import may carry and still be the pack's to
+ * verify. `.mts` / `.cts` are resolution-only (a project rarely walks them
+ * as sources, but an explicit `./x.mts` import is a code import). Anything
+ * else (`.css`, `.svg`, `.json`, `.vue`, ...) is a loader's or another
+ * pack's domain: the check cannot say it is missing, so it never says so.
+ */
+const TS_RELATIVE_CODE_EXT = [...TS_JS_EXT, '.mts', '.cts'];
+
+/**
+ * TypeScript's ESM convention: source writes `import './x.js'` and the
+ * compiler resolves it to `x.ts` / `x.tsx` (likewise `.mjs` to `.mts`,
+ * `.cjs` to `.cts`). The written extension is a promise about the OUTPUT,
+ * so resolution probes the source-side siblings before calling it missing.
+ */
+const TS_OUTPUT_EXT_SOURCES: Record<string, readonly string[]> = {
+  '.js': ['.ts', '.tsx', '.jsx'],
+  '.jsx': ['.tsx'],
+  '.mjs': ['.mts'],
+  '.cjs': ['.cts'],
+};
+
+/** Does ANYTHING live at this base: the exact path, a sibling with any
+ *  extension, or a directory. The false-negative floor of relative
+ *  resolution: a `./data` beside `data.json`, a `./styles` beside
+ *  `styles.module.css`, a `./pkg/` with a package.json main, are all shapes
+ *  a bundler may serve, so none is ever reported. */
+function anythingAt(baseAbs: string): boolean {
+  if (dirOrFileExists(baseAbs)) return true;
+  const stem = path.basename(baseAbs);
+  let entries: string[];
+  try {
+    entries = fs.readdirSync(path.dirname(baseAbs));
+  } catch {
+    return false;
+  }
+  return entries.some((e) => e.startsWith(stem + '.'));
+}
+
+/**
+ * Whether a relative specifier (`./x`, `../x`) reaches nothing in the repo
+ * tree. Returns the missing target's project-path identity, or null when it
+ * resolves or the pack declines to judge it. Reuses the one probe
+ * (`resolveTsFileAt`: exact path, extension appended, `index.*` barrel) that
+ * tsconfig-path targets already go through (Rule 2), then adds the ESM
+ * output-extension fold and the anything-exists floor. Judged only when the
+ * written extension (if any) is a code extension: the class this owns is a
+ * code file never committed, never an asset a loader serves.
+ */
+export function unresolvedRelativeTarget(
+  fromFile: string,
+  spec: string,
+  cwd: string,
+): string | null {
+  const ext = path.posix.extname(spec);
+  if (ext && !TS_RELATIVE_CODE_EXT.includes(ext)) return null;
+  const fromDir = path.dirname(path.join(cwd, fromFile));
+  const abs = path.resolve(fromDir, spec);
+  const rel = toRel(abs, cwd);
+  if (rel.startsWith('../')) return null; // escapes the repo: not the tree's to answer
+  if (GENERATED_SEGMENT.test(rel)) return null; // a build step's output, not a committed file
+  if (resolveTsFileAt(abs, cwd) !== null) return null;
+  const stemAbs = ext ? abs.slice(0, -ext.length) : abs;
+  for (const src of TS_OUTPUT_EXT_SOURCES[ext] ?? []) {
+    if (isFile(stemAbs + src)) return null;
+  }
+  for (const probeExt of ['.mts', '.cts', '.d.ts']) {
+    if (isFile(stemAbs + probeExt)) return null;
+  }
+  if (anythingAt(abs) || (ext && anythingAt(stemAbs))) return null;
+  return projectPathIdentity(toRel(stemAbs, cwd));
+}
+
 /** A cap on how many distinct unresolved packages the check will report as a
  *  FAILURE. Beyond it the repo almost certainly uses a resolution mechanism
  *  dxkit does not model (a bundler plugin, a custom loader), not dozens of
@@ -1336,12 +1410,45 @@ const TS_TEST_FILE_PATTERNS: readonly string[] = [
  *  than false-blocking (false-negative bias). */
 const MAX_CREDIBLE_UNRESOLVED = 10;
 
+/** The relative-import sibling of the cap above. Higher, because no alias
+ *  mechanism applies to `./` paths and only a NET-NEW identity ever gates
+ *  (a repo's pre-existing dangling imports in dead files are refuted or
+ *  diffed away by the attribution comparator); what the cap still guards is
+ *  a wholesale generated or loader-served tree. Exceeding it drops ONLY the
+ *  relative findings, disclosed, so the package verdict still stands. */
+const MAX_CREDIBLE_UNRESOLVED_RELATIVE = 50;
+
+/** A path segment that names generated output (`__generated__/`, `gen/`,
+ *  `schema.generated`, `types.gen`): a build step the tree does not carry
+ *  produces it, so its absence is install-state, never a finding. */
+const GENERATED_SEGMENT = /(^|[./_-])(gen|generated)([./_-]|$)/i;
+
 /** Shape of a plausible npm specifier worth reasoning about. Anything else —
  *  whitespace/newlines (the regex extractor matching import-looking text
  *  inside an embedded-code template literal), `${}` fragments, path noise —
  *  is extractor noise and is never flagged (false-negative bias). Verified on
  *  dxkit's own tree: without this, Go source embedded in a template string
  *  produced multi-line "specifiers". */
+/**
+ * Blank the bodies of template literals before extraction. Source that
+ * EMBEDS source (a scaffolder's file template, a code generator's emit
+ * string) carries import statements the regex extractor cannot tell from
+ * real ones, and a relative specifier resolved from the embedding file is
+ * meaningless (verified on dxkit's own tree: the pack scaffolder's template
+ * produced the only two relative-import findings). A dynamic
+ * `import(\`./x/${y}\`)` is excluded anyway. Naive pairing: an unbalanced
+ * backtick blanks the rest of the file, which only loses checks (never
+ * invents a finding).
+ */
+function blankTemplateLiterals(content: string): string {
+  return content.replace(/`[^`]*`/g, '``');
+}
+
+/** A relative specifier worth reasoning about: path segments only. A glob
+ *  (`import.meta.glob('./pages/*')`), a template fragment, whitespace, or a
+ *  bare `./` directory import are not judged. */
+const PLAUSIBLE_RELATIVE_SPECIFIER = /^\.\.?\/(?:[\w.@$-]+\/)*[\w.@$-]+\/?$/;
+
 const PLAUSIBLE_SPECIFIER = /^(@[a-z0-9][\w.-]*\/)?[a-z0-9][\w.-]*(\/[\w.-]+)*$/i;
 
 /** The npm package name a bare specifier resolves through (`@scope/pkg/sub`
@@ -1526,6 +1633,7 @@ export function tsResolutionCheck(ctx: CorrectnessContext): ResolutionCheckResul
     autogenPatterns: [],
   });
   const unresolved = new Map<string, string>(); // package → first importing file
+  const unresolvedRelative = new Map<string, string>(); // project-path identity → first importer
   const resolvedPkgs = new Set<string>(); // per-run cache (root-walk hits dominate)
   const declaredCache = new Map<string, ReadonlySet<string>>();
   let checked = 0;
@@ -1544,10 +1652,23 @@ export function tsResolutionCheck(ctx: CorrectnessContext): ResolutionCheckResul
     } catch {
       continue;
     }
-    for (const spec of extractTsImportsRaw(content)) {
-      if (spec.startsWith('./') || spec.startsWith('../') || spec.startsWith('/')) continue;
+    for (const spec of extractTsImportsRaw(blankTemplateLiterals(content))) {
       if (spec.startsWith('#')) continue; // package-imports field
       if (/[:!?~]/.test(spec)) continue; // node:/virtual: protocols, loader/query syntax
+      if (spec.startsWith('./') || spec.startsWith('../')) {
+        // A relative import is the repo tree's to answer: a missing target
+        // is a build break no manifest can explain (the uncommitted-file
+        // class). Glob / template fragments are extractor noise, never a
+        // finding.
+        if (!PLAUSIBLE_RELATIVE_SPECIFIER.test(spec)) continue;
+        checked++;
+        const missing = unresolvedRelativeTarget(rel, spec, cwd);
+        if (missing !== null && !unresolvedRelative.has(missing)) {
+          unresolvedRelative.set(missing, rel);
+        }
+        continue;
+      }
+      if (spec.startsWith('/')) continue; // absolute: a loader alias or a host path, not modeled
       if (!PLAUSIBLE_SPECIFIER.test(spec)) continue; // extractor noise, never a finding
       const pkg = tsPackageNameOf(spec);
       if (pkg === null) continue;
@@ -1570,16 +1691,31 @@ export function tsResolutionCheck(ctx: CorrectnessContext): ResolutionCheckResul
     }
   }
 
-  if (unresolved.size === 0) return { kind: 'clean', checkedSpecifiers: checked };
+  if (unresolved.size === 0 && unresolvedRelative.size === 0) {
+    return { kind: 'clean', checkedSpecifiers: checked };
+  }
   if (unresolved.size > MAX_CREDIBLE_UNRESOLVED) {
     return {
       kind: 'skipped',
       reason: `${unresolved.size} packages do not resolve — that many at once suggests a resolution mechanism dxkit does not model, not simultaneous breaks; declining rather than false-blocking`,
     };
   }
+  const disclosures: string[] = [];
+  if (unresolvedRelative.size > MAX_CREDIBLE_UNRESOLVED_RELATIVE) {
+    disclosures.push(
+      `${unresolvedRelative.size} relative imports reach no file: that many at once suggests a generated or loader-served tree dxkit does not model, not simultaneous breaks; relative imports were not judged here`,
+    );
+    unresolvedRelative.clear();
+  }
+  if (unresolved.size === 0 && unresolvedRelative.size === 0) {
+    return { kind: 'clean', checkedSpecifiers: checked, disclosures };
+  }
   return {
     kind: 'unresolved',
-    unresolved: [...unresolved.entries()].map(([specifier, file]) => ({ specifier, file })),
+    unresolved: [...unresolved.entries(), ...unresolvedRelative.entries()].map(
+      ([specifier, file]) => ({ specifier, file }),
+    ),
+    disclosures,
   };
 }
 
