@@ -71,3 +71,17 @@ export function unenforceableCapsFor(driver: AgentDriver, budget: RemediateBudge
   }
   return caps;
 }
+
+/** The budget-awareness paragraph appended to every agent prompt: the agent
+ *  is TOLD its caps so it lands work in mergeable increments instead of
+ *  being surprised mid-edit by the kill. Phrased here, the one home of
+ *  budget wording, never baked into the task prompts. */
+export function budgetPromptNote(budget: RemediateBudget): string {
+  return (
+    `\nBudget for this run (runner-enforced): ~${budget.maxMinutes} minutes, ` +
+    `${budget.maxTurns} turns, $${budget.maxUsd}. Commit completed units as you go, and ` +
+    `reserve the final minutes to commit ALL remaining work and record where you stopped ` +
+    `in docs/DXKIT-REMEDIATION-NOTES.md, since work committed before the cap survives ` +
+    `while uncommitted edits are swept into a single unlabeled-context commit.`
+  );
+}

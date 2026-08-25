@@ -34,10 +34,11 @@ import type { RemediateTask } from './tasks';
 import { resolveDispatchedTask } from './dispatch';
 import { resumePromptNote } from './resume';
 import { realGit } from './git-ops';
-import { armInLoopGate, type InLoopGateStatus } from './agent-trust';
-import { clampBudgetToTokenLifetime, unenforceableCapsFor } from './budget-notes';
+import { armGateForDriver } from './agent-trust';
+import { budgetPromptNote, clampBudgetToTokenLifetime, unenforceableCapsFor } from './budget-notes';
 import { evaluateScoreHinge, healthHingeScores } from './score-hinge';
 import { salvageForTask } from './config';
+import { recipeTierStep } from './recipes/complete';
 import type { AgentEnvelope, RemediateResult, RemediateRunOptions } from './outcome';
 
 // The outcome vocabulary lives in `./outcome` and the ledger renderer in
@@ -127,22 +128,10 @@ export async function runRemediateTask(opts: RemediateRunOptions): Promise<Remed
     ? 'api-key'
     : 'subscription';
 
-  // The in-loop gate (#305): pre-trust the lane's own CI checkout so the
-  // committed Stop hook can actually LOAD (an untrusted workspace made the
-  // in-loop gate silently absent on every CI lane run ever), then probe the
-  // wiring and disclose the result — armed vs backstop-only, with the
-  // reason, in the envelope. Drivers without an in-loop mechanism are
-  // honestly backstop-only. Injectable for tests (the runFloor seam pattern).
-  const armGate =
-    opts.armInLoopGate ??
-    ((): InLoopGateStatus =>
-      driver.inLoopGateMechanism === 'claude-stop-hook'
-        ? armInLoopGate(opts.cwd, { ci: process.env.GITHUB_ACTIONS === 'true' })
-        : {
-            mode: 'backstop-only',
-            reason: `driver ${driver.id} has no in-loop gate mechanism; post-run verification is the gate`,
-          });
-  const inLoopGate = armGate();
+  // The in-loop gate (#305): probe the wiring and disclose the result,
+  // armed vs backstop-only with the reason, in the envelope
+  // (`armGateForDriver`). Injectable for tests (the runFloor seam pattern).
+  const inLoopGate = (opts.armInLoopGate ?? (() => armGateForDriver(driver, opts.cwd)))();
 
   const envelopeBase = {
     driver: driver.id,
@@ -195,18 +184,21 @@ export async function runRemediateTask(opts: RemediateRunOptions): Promise<Remed
   const entryScores = task.scoreHinge ? await hingeProbe(task.scoreHinge) : undefined;
   const baseHead = git.head();
 
+  // The deterministic recipe tier (section 3B): plan the task's work orders
+  // and execute the recipe-tier ones FIRST, each committed inside its
+  // envelope. When EVERY selected order was recipe-tier the run completes
+  // right here without any agent spawn, with the ONE tree verification
+  // still the arbiter of the combined recipe commits. Fail-open on
+  // planning; the step itself never throws (`recipeTierStep`).
+  opts.onPhase?.('recipes');
+  const tier = await recipeTierStep(opts, { task, entryFloor, baseHead, git, runFloor });
+  const recipesDisclosure = { recipes: tier.recipes };
+  if (tier.done) return finish(tier.done);
+
   opts.onPhase?.('agent');
-  // Budget awareness: the agent is TOLD its caps so it lands work in
-  // mergeable increments instead of being surprised mid-edit by the kill —
-  // the difference between a salvageable 90% and a stranded one. Appended by
-  // the runner (the one place the effective budget is known), never baked
-  // into the task prompts.
-  const budgetNote =
-    `\nBudget for this run (runner-enforced): ~${budget.maxMinutes} minutes, ` +
-    `${budget.maxTurns} turns, $${budget.maxUsd}. Commit completed units as you go, and ` +
-    `reserve the final minutes to commit ALL remaining work and record where you stopped ` +
-    `in docs/DXKIT-REMEDIATION-NOTES.md — work committed before the cap survives; ` +
-    `uncommitted edits are swept into a single unlabeled-context commit.`;
+  // Budget awareness (`budgetPromptNote`): appended by the runner, the one
+  // place the effective budget is known, never baked into the task prompts.
+  const budgetNote = budgetPromptNote(budget);
   const resumeNote = opts.resume
     ? resumePromptNote(opts.resume.attempt, opts.resume.blockingContext)
     : '';
@@ -261,6 +253,7 @@ export async function runRemediateTask(opts: RemediateRunOptions): Promise<Remed
       return finish({
         outcome: 'agent-never-ran',
         task: task.id,
+        ...recipesDisclosure,
         envelope,
         floor: entryFloor,
         ...evidenceTail,
@@ -301,6 +294,7 @@ export async function runRemediateTask(opts: RemediateRunOptions): Promise<Remed
       return finish({
         outcome: 'agent-never-ran',
         task: task.id,
+        ...recipesDisclosure,
         envelope,
         floor: entryFloor,
         ...evidenceTail,
@@ -310,6 +304,7 @@ export async function runRemediateTask(opts: RemediateRunOptions): Promise<Remed
     return finish({
       outcome: 'sweep-failed',
       task: task.id,
+      ...recipesDisclosure,
       envelope,
       floor: entryFloor,
       ...evidenceTail,
@@ -336,6 +331,7 @@ export async function runRemediateTask(opts: RemediateRunOptions): Promise<Remed
       return finish({
         outcome: 'agent-failed',
         task: task.id,
+        ...recipesDisclosure,
         envelope,
         floor: entryFloor,
         ...evidenceTail,
@@ -350,6 +346,7 @@ export async function runRemediateTask(opts: RemediateRunOptions): Promise<Remed
     return finish({
       outcome: 'no-op',
       task: task.id,
+      ...recipesDisclosure,
       envelope,
       floor: entryFloor,
       ...evidenceTail,
@@ -386,6 +383,7 @@ export async function runRemediateTask(opts: RemediateRunOptions): Promise<Remed
 
   const common = {
     task: task.id,
+    ...recipesDisclosure,
     envelope,
     ...(verified.floor ? { floor: verified.floor } : {}),
     ...(verified.floorAttribution ? { floorAttribution: verified.floorAttribution } : {}),

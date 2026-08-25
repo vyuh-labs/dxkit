@@ -15,6 +15,7 @@ import type { DispatchOverrides } from './dispatch';
 import type { HingeEvidence, HingeScores } from './score-hinge';
 import type { RemediateConfig } from './config';
 import type { InLoopGateStatus } from './agent-trust';
+import type { RecipePhaseSummary, runRecipePhaseForTask } from './recipes/run-recipes';
 
 export type RemediateOutcome =
   | 'verified' // diff produced, floor net-new-clean, guardrail PASSED — ready to land
@@ -118,6 +119,10 @@ export interface RemediateResult {
   /** dxkit runtime-artifact paths dropped from the attempt (regenerable
    *  scan state the agent committed mid-run) — disclosed in the ledger. */
   readonly scrubbedArtifacts?: readonly string[];
+  /** The deterministic recipe phase (4.4.5): per-order applied / refused /
+   *  failed records, envelope drops, and the tier split, rendered into the
+   *  ledger whenever the phase was consulted. */
+  readonly recipes?: RecipePhaseSummary;
   /** The verification ledger — PR body / job summary markdown. */
   readonly ledger: string;
 }
@@ -180,11 +185,15 @@ export interface RemediateRunOptions {
    *  optional blockingContext is the prior attempt's guardrail findings
    *  (from its draft-PR ledger) — appended to the prompt, never the ledger. */
   readonly resume?: { readonly attempt: number; readonly blockingContext?: string };
+  /** Injected for tests: replaces the recipe phase (plan + execute the
+   *  deterministic tier), the armInLoopGate seam pattern. */
+  readonly runRecipePhase?: typeof runRecipePhaseForTask;
 }
 
 /** The runner's observable phases, in order. */
 export type RemediatePhase =
   | 'entry-floor'
+  | 'recipes'
   | 'agent'
   | 'sweep'
   | 'verify-install'

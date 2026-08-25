@@ -95,6 +95,7 @@ function config(
     maxDispatchBudget: 0,
     resume: false,
     workOrders: { maxSliceSize: 25 },
+    recipes: { enabled: true },
   };
 }
 
@@ -714,6 +715,7 @@ describe('WP5: fast-exit, phases, cap accounting, blocked evidence', () => {
     expect(r.outcome).toBe('verified');
     expect(phases).toEqual([
       'entry-floor',
+      'recipes',
       'agent',
       'sweep',
       'verify-install',
