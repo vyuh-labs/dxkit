@@ -57,6 +57,19 @@ export function standingLaneBranches(): string[] {
 
 export type ApiProbe = (path: string) => string | null;
 
+/** Probe + parse in one place: null when the read failed OR the payload is
+ *  not JSON. The one home of the null-guard + JSON.parse/catch boilerplate
+ *  every ApiProbe consumer used to repeat. */
+export function probeJson(probe: ApiProbe, apiPath: string): unknown {
+  const raw = probe(apiPath);
+  if (raw === null) return null;
+  try {
+    return JSON.parse(raw) as unknown;
+  } catch {
+    return null;
+  }
+}
+
 /** Real probe via the gh CLI (the ambient token). Null = unanswerable. */
 export function makeGhApiProbe(cwd: string): ApiProbe {
   return (apiPath) => {
@@ -73,20 +86,40 @@ export function makeGhApiProbe(cwd: string): ApiProbe {
   };
 }
 
-/** `owner/repo` for the checkout, or null (not GitHub / no gh). */
-export function repoSlug(cwd: string): string | null {
+/** What one `gh repo view` call can tell every probe: the slug plus the
+ *  owner shape. Resolved ONCE per consumer surface (doctor resolves it a
+ *  single time and shares it across 6d/6e/6f), never re-shelled per probe. */
+export interface RepoView {
+  readonly slug: string;
+  /** Org-owned repo? null when gh did not answer the field, so a consumer
+   *  must not assume "no org" from silence. */
+  readonly inOrganization: boolean | null;
+}
+
+/** The slug + owner shape for the checkout, or null (not GitHub / no gh). */
+export function repoView(cwd: string): RepoView | null {
   try {
-    const out = execFileSync('gh', ['repo', 'view', '--json', 'nameWithOwner'], {
+    const out = execFileSync('gh', ['repo', 'view', '--json', 'nameWithOwner,isInOrganization'], {
       cwd,
       encoding: 'utf8',
       timeout: 30_000,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
-    const slug = (JSON.parse(out) as { nameWithOwner?: string }).nameWithOwner;
-    return typeof slug === 'string' && slug.includes('/') ? slug : null;
+    const parsed = JSON.parse(out) as { nameWithOwner?: string; isInOrganization?: boolean };
+    const slug = parsed.nameWithOwner;
+    if (typeof slug !== 'string' || !slug.includes('/')) return null;
+    return {
+      slug,
+      inOrganization: typeof parsed.isInOrganization === 'boolean' ? parsed.isInOrganization : null,
+    };
   } catch {
     return null;
   }
+}
+
+/** `owner/repo` for the checkout, or null (not GitHub / no gh). */
+export function repoSlug(cwd: string): string | null {
+  return repoView(cwd)?.slug ?? null;
 }
 
 /**
@@ -99,20 +132,17 @@ export function probeBranchDelivery(
   slug: string,
   branch: string,
 ): BranchDeliveryProbe {
-  const raw = probe(`repos/${slug}/rules/branches/${encodeURIComponent(branch)}`);
-  if (raw === null) {
+  const parsed = probeJson(probe, `repos/${slug}/rules/branches/${encodeURIComponent(branch)}`);
+  if (parsed === null || !Array.isArray(parsed)) {
     return {
       branch,
       verdict: 'unknown',
-      evidence: 'could not verify: the branch-rules API was unreachable with the ambient token',
+      evidence:
+        'could not verify: the branch-rules API was unreachable with the ambient token, ' +
+        'or answered with an unparseable payload',
     };
   }
-  let rules: Array<{ type?: string }> = [];
-  try {
-    rules = JSON.parse(raw) as Array<{ type?: string }>;
-  } catch {
-    return { branch, verdict: 'unknown', evidence: 'could not verify: unparseable rules payload' };
-  }
+  const rules = parsed as Array<{ type?: string }>;
   const types = rules.map((r) => r.type).filter((t): t is string => typeof t === 'string');
   // Positive refusal evidence: an active `creation` rule on a branch the
   // lane must CREATE means the push 403s (the live class). The bypass list
@@ -154,12 +184,14 @@ export function probeDeliveryPreconditions(
   opts: {
     readonly branches?: readonly string[];
     readonly probe?: ApiProbe;
-    /** Injectable for tests: the `owner/repo` slug (skips the gh probe). */
-    readonly slug?: string;
+    /** Injectable: the `owner/repo` slug (skips the gh probe). An explicit
+     *  null means "already resolved, and there is none": the caller that
+     *  resolved it once (doctor) must not trigger a second gh shell here. */
+    readonly slug?: string | null;
   } = {},
 ): DeliveryPreconditions {
   const branches = opts.branches ?? standingLaneBranches();
-  const slug = opts.slug ?? repoSlug(cwd);
+  const slug = opts.slug !== undefined ? opts.slug : repoSlug(cwd);
   if (slug === null) {
     return {
       probes: branches.map((branch) => ({

@@ -245,13 +245,7 @@ __DXKIT_CI_RUNTIME_SETUP__
       # at agent launch, not at job start; the CLI additionally clamps the
       # agent budget on this tier so agent + verify + landing fit inside
       # the fresh token (disclosed in the ledger, never silent).
-      - name: Re-mint the lane token before the task (App tier)
-        id: dxkit-app-token-task
-        if: ${{ vars.DXKIT_APP_ID != '' }}
-        uses: actions/create-github-app-token@v2
-        with:
-          app-id: ${{ vars.DXKIT_APP_ID }}
-          private-key: ${{ secrets.DXKIT_APP_PRIVATE_KEY }}
+__DXKIT_LANE_TOKEN_TASK_STEPS__
 
       # The ONE landing credential, every tier. The checkout persisted
       # nothing (persist-credentials: false above), so this step is the
