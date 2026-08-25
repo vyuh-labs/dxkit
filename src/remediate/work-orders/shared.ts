@@ -1,8 +1,10 @@
 /**
  * Shared shapes and helpers for the planner's per-source builders: the draft
  * order (everything but tier), the ranked wrapper the planner sorts, the
- * done-criterion builder, the budget derivation, and the one `undispatch`
- * helper. Kept beside the builders so each stays small.
+ * done-criterion builder, the budget derivation, the one `undispatch`
+ * helper, and the single definitions of the install-forbidden line, the
+ * manifest-path projection, and the binary-custom-check reason. Kept beside
+ * the builders so each stays small.
  */
 import { dxkitCli } from '../../self-invocation';
 import type { RemediateBudget } from '../config';
@@ -39,15 +41,48 @@ export function compareRank(a: Ranked, b: Ranked): number {
   const x = a.rank[1];
   const y = b.rank[1];
   if (typeof x === 'number' && typeof y === 'number') return x - y;
-  const xs = String(x);
-  const ys = String(y);
-  return xs < ys ? -1 : xs > ys ? 1 : 0;
+  return byteOrder(String(x), String(y));
 }
 
 /** Byte-order string comparison (deterministic across locales). */
 export function byteOrder(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
 }
+
+/** The ONE phrasing of the install ban every order carries (the frame runs
+ *  the install; the agent never does). */
+export const INSTALL_FORBIDDEN =
+  'installing, adding, or removing packages yourself (the frame runs the install command)';
+
+/** The ONE reason a binary custom-check finding cannot be ordered. */
+export const BINARY_CUSTOM_CHECK_REASON =
+  'binary (whole-command) custom-check findings carry no file to scope an order to';
+
+/** A dependency root: the manifest and lockfile files a dependency fix
+ *  touches. `dir` is repo-relative (`''` for the root), files are relative
+ *  to `dir`. */
+export interface ManifestRoot {
+  readonly dir: string;
+  readonly files: readonly string[];
+}
+
+/** The ONE ManifestRoot -> repo-relative-paths projection. */
+export function manifestPaths(root: ManifestRoot): string[] {
+  return root.files.map((f) => (root.dir ? `${root.dir}/${f}` : f));
+}
+
+/** Every discovered root's manifest paths, deduplicated, byte-ordered. */
+export function allManifestPaths(roots: readonly ManifestRoot[]): string[] {
+  return [...new Set(roots.flatMap(manifestPaths))].sort(byteOrder);
+}
+
+/** Resolve an install command per producing ecosystem: the owning pack's
+ *  declared provision command when the finding names its pack; the single
+ *  unambiguous one when exactly one active pack declares any; else
+ *  undefined (disclosed at render, never guessed). */
+export type InstallFor = (
+  pack: string | undefined,
+) => { readonly bin: string; readonly args: readonly string[] } | undefined;
 
 export function doneFor(
   verifier: DoneCriterion['verifier'],
@@ -73,8 +108,8 @@ export const BUDGET_DERIVATION = {
   minMinutes: 5,
 } as const;
 
-/** `min(cap, max(floor, base + per * n))`: the policy cap always wins, even
- *  when it sits below the derivation's own minimum. */
+/** `min(cap, max(floor, value))`: the policy cap always wins, even when it
+ *  sits below the derivation's own minimum. */
 function bounded(value: number, floor: number, cap: number): number {
   return Math.min(cap, Math.max(floor, value));
 }

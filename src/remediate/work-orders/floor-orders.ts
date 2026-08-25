@@ -1,25 +1,34 @@
 /**
  * Entry-floor orders: one `unresolved-import` order per manifest root the
  * importing files share (envelope = every importer + that root's manifest and
- * lockfile), and one `floor-failure` order per failing check with no finer
- * identity. Findings come pre-attributed from the one comparator
+ * lockfile), and one `floor-failure` order per remaining failing check.
+ * Findings come pre-attributed from the one comparator
  * (`attributeFloorFailures`); this module never re-derives attribution.
+ *
+ * Decomposition is keyed on the STRUCTURED data a check carries, never on a
+ * label literal: `unresolved` pairs mint the unresolved-import class, and any
+ * check with finding-level identities (`findings`, e.g. parsed test
+ * failures) decomposes into per-finding attribution inside its floor-failure
+ * order, so a grandfathered failure is never blamed on the agent.
  */
-import { IMPORT_RESOLUTION_LABEL } from '../../analyzers/correctness/run';
 import type { AttributedFloorFailure } from '../../analyzers/correctness/attribution';
 import { FLOOR_FINDING_KIND, floorFindingId, type WorkOrderFinding } from './types';
 import {
+  INSTALL_FORBIDDEN,
   VALUE_BAND,
   byteOrder,
   deriveBudget,
   doneFor,
+  manifestPaths,
   type BudgetCapFor,
+  type InstallFor,
+  type ManifestRoot,
   type Ranked,
 } from './shared';
 
 /** One failing floor check as the planner reads it: attribution already
- *  decided, the command as one string, the structured unresolved pairs when
- *  the check decomposes. Built by `gather.ts` from whichever floor source it
+ *  decided, the command as one string, structured per-finding data when the
+ *  check decomposes. Built by `gather.ts` from whichever floor source it
  *  used (live run, baseline envelope, loop snapshot). */
 export interface FloorFailureInput {
   readonly pack: string;
@@ -29,19 +38,15 @@ export interface FloorFailureInput {
   readonly attribution: AttributedFloorFailure['attribution'];
   readonly precision?: AttributedFloorFailure['precision'];
   readonly netNewFindings?: readonly string[];
+  /** Finding-level identities when the check decomposes (Rule 9's floor
+   *  sibling: unresolved specifiers, parsed test-failure ids). */
+  readonly findings?: readonly string[];
   readonly unresolved?: readonly { readonly specifier: string; readonly file: string }[];
-}
-
-/** A dependency root: the manifest and lockfile an unresolved import's fix
- *  touches. `dir` is repo-relative (`''` for the root), files are relative. */
-export interface ManifestRoot {
-  readonly dir: string;
-  readonly files: readonly string[];
 }
 
 export interface FloorOrderContext {
   readonly manifests: readonly ManifestRoot[];
-  readonly install?: { readonly bin: string; readonly args: readonly string[] };
+  readonly installFor: InstallFor;
   readonly capFor: BudgetCapFor;
 }
 
@@ -56,21 +61,22 @@ function manifestRootFor(file: string, manifests: readonly ManifestRoot[]): Mani
   return best;
 }
 
-function manifestPaths(root: ManifestRoot): string[] {
-  return root.files.map((f) => (root.dir ? `${root.dir}/${f}` : f));
+/** Per-finding attribution inside a decomposed check: net-new exactly when
+ *  the comparator worked at finding precision and named it. */
+function findingAttribution(
+  check: FloorFailureInput,
+  finding: string,
+): WorkOrderFinding['attribution'] {
+  if (check.precision !== 'finding') return check.attribution;
+  return (check.netNewFindings ?? []).includes(finding) ? 'net-new' : 'pre-existing';
 }
 
-const INSTALL_FORBIDDEN =
-  'installing, adding, or removing packages yourself (the frame runs the install command)';
-
 function unresolvedImportOrders(check: FloorFailureInput, ctx: FloorOrderContext): Ranked[] {
-  const pairs = check.unresolved ?? [];
-  const netNew = new Set(check.netNewFindings ?? []);
   // specifier -> every importer, then group specifiers by the manifest root
   // the importers share (a specifier imported from two roots is one finding
   // in the first root it is seen in; the fix declares it there).
   const importersOf = new Map<string, string[]>();
-  for (const { specifier, file } of pairs) {
+  for (const { specifier, file } of check.unresolved ?? []) {
     const list = importersOf.get(specifier) ?? [];
     if (!list.includes(file)) list.push(file);
     importersOf.set(specifier, list);
@@ -82,12 +88,7 @@ function unresolvedImportOrders(check: FloorFailureInput, ctx: FloorOrderContext
     bucket.findings.push({
       kind: FLOOR_FINDING_KIND,
       id: floorFindingId(check.pack, check.label, specifier),
-      attribution:
-        check.precision === 'finding'
-          ? netNew.has(specifier)
-            ? 'net-new'
-            : 'pre-existing'
-          : check.attribution,
+      attribution: findingAttribution(check, specifier),
       evidence: {
         type: 'floor',
         pack: check.pack,
@@ -100,6 +101,7 @@ function unresolvedImportOrders(check: FloorFailureInput, ctx: FloorOrderContext
     byRoot.set(root.dir, bucket);
   }
   const out: Ranked[] = [];
+  const install = ctx.installFor(check.pack);
   for (const { root, findings } of byRoot.values()) {
     const importers = [
       ...new Set(
@@ -119,14 +121,11 @@ function unresolvedImportOrders(check: FloorFailureInput, ctx: FloorOrderContext
         class: 'unresolved-import',
         findings,
         envelope: { paths: [...importers, ...manifestPaths(root)], manifests: true },
-        constraints: {
-          ...(ctx.install ? { install: ctx.install } : {}),
-          forbidden: [INSTALL_FORBIDDEN],
-        },
+        constraints: { ...(install ? { install } : {}), forbidden: [INSTALL_FORBIDDEN] },
         done: doneFor('floor', findings),
         budget: deriveBudget(findings.length, ctx.capFor('unresolved-import')),
         ...(check.output !== undefined ? { outputTail: check.output } : {}),
-        provenance: { source: 'entry-floor', check: `${check.pack}/${check.label}` },
+        provenance: { source: 'entry-floor', check: floorFindingId(check.pack, check.label) },
       },
     });
   }
@@ -139,40 +138,57 @@ export function floorOrders(
 ): Ranked[] {
   const out: Ranked[] = [];
   for (const check of failures) {
-    if (
-      check.label === IMPORT_RESOLUTION_LABEL &&
-      check.unresolved &&
-      check.unresolved.length > 0
-    ) {
+    if (check.unresolved && check.unresolved.length > 0) {
       out.push(...unresolvedImportOrders(check, ctx));
       continue;
     }
-    const finding: WorkOrderFinding = {
-      kind: FLOOR_FINDING_KIND,
-      id: floorFindingId(check.pack, check.label),
-      attribution: check.attribution,
-      evidence: { type: 'floor', pack: check.pack, label: check.label, command: check.command },
-    };
+    // A check with finding-level identities decomposes into one finding per
+    // identity (per-finding attribution); otherwise the check IS the finding.
+    const findings: WorkOrderFinding[] =
+      check.findings && check.findings.length > 0
+        ? check.findings.map((f) => ({
+            kind: FLOOR_FINDING_KIND,
+            id: floorFindingId(check.pack, check.label, f),
+            attribution: findingAttribution(check, f),
+            evidence: {
+              type: 'floor',
+              pack: check.pack,
+              label: check.label,
+              command: check.command,
+            },
+          }))
+        : [
+            {
+              kind: FLOOR_FINDING_KIND,
+              id: floorFindingId(check.pack, check.label),
+              attribution: check.attribution,
+              evidence: {
+                type: 'floor',
+                pack: check.pack,
+                label: check.label,
+                command: check.command,
+              },
+            },
+          ];
+    const install = ctx.installFor(check.pack);
+    const anyNetNew = findings.some((f) => f.attribution === 'net-new');
     out.push({
       rank: [
-        check.attribution === 'net-new' ? VALUE_BAND.netNewFloor : VALUE_BAND.preExistingFloor,
+        anyNetNew ? VALUE_BAND.netNewFloor : VALUE_BAND.preExistingFloor,
         `${check.pack}/${check.label}`,
       ],
       draft: {
         id: `floor-failure:${check.pack}:${check.label}`,
         class: 'floor-failure',
-        findings: [finding],
+        findings,
         // A generic floor failure names no file; the whole tree minus
         // manifests is the honest envelope (a build/test fix is code).
         envelope: { paths: [''], manifests: false },
-        constraints: {
-          ...(ctx.install ? { install: ctx.install } : {}),
-          forbidden: [INSTALL_FORBIDDEN],
-        },
-        done: doneFor('floor', [finding]),
-        budget: deriveBudget(1, ctx.capFor('floor-failure')),
+        constraints: { ...(install ? { install } : {}), forbidden: [INSTALL_FORBIDDEN] },
+        done: doneFor('floor', findings),
+        budget: deriveBudget(findings.length, ctx.capFor('floor-failure')),
         ...(check.output !== undefined ? { outputTail: check.output } : {}),
-        provenance: { source: 'entry-floor', check: `${check.pack}/${check.label}` },
+        provenance: { source: 'entry-floor', check: floorFindingId(check.pack, check.label) },
       },
     });
   }

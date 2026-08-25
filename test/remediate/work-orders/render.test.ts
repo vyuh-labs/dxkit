@@ -11,6 +11,7 @@ import {
   renderWorkOrderSummary,
 } from '../../../src/remediate/work-orders/render';
 import { SHARED_RULES } from '../../../src/remediate/tasks';
+import { describeEntryLocation } from '../../../src/gate/context';
 import type { WorkOrder } from '../../../src/remediate/work-orders/types';
 
 const ORDER: WorkOrder = {
@@ -62,6 +63,46 @@ const ORDER: WorkOrder = {
 describe('renderWorkOrderPrompt', () => {
   const text = renderWorkOrderPrompt(ORDER);
 
+  it('location text comes from the ONE kind-aware descriptor (describeEntryLocation), remediation tail appended', () => {
+    const lintOrder: WorkOrder = {
+      ...ORDER,
+      findings: [
+        {
+          kind: 'custom-check',
+          id: 'cccc000011112222',
+          attribution: 'pre-existing',
+          evidence: {
+            type: 'custom-check',
+            check: 'lint:typescript',
+            rule: 'eqeqeq',
+            file: 'src/a.ts',
+            line: 4,
+            message: 'use ===',
+          },
+        },
+      ],
+    };
+    const t = renderWorkOrderPrompt(lintOrder);
+    const location = describeEntryLocation({
+      id: 'cccc000011112222',
+      kind: 'custom-check',
+      check: 'lint:typescript',
+      blocking: true,
+      file: 'src/a.ts',
+      line: 4,
+      rule: 'eqeqeq',
+    });
+    expect(t).toContain(`cccc000011112222: ${location}: use ===`);
+    const depLocation = describeEntryLocation({
+      id: 'aaaa000011112222',
+      kind: 'dep-vuln',
+      package: 'axios',
+      installedVersion: '1.6.0',
+      advisoryId: 'GHSA-1',
+    });
+    expect(text).toContain(`aaaa000011112222: ${depLocation}`);
+  });
+
   it('names every finding id and its structured evidence', () => {
     expect(text).toContain('aaaa000011112222');
     expect(text).toContain('bbbb000011112222');
@@ -73,7 +114,7 @@ describe('renderWorkOrderPrompt', () => {
 
   it('carries the attribution split sentence', () => {
     expect(text).toContain('1 of these are net-new');
-    expect(text).toContain('1 are deferred advisories');
+    expect(text).toContain('1 are deferred findings');
     expect(text).toContain('Everything else in the repo is grandfathered');
   });
 
@@ -87,7 +128,7 @@ describe('renderWorkOrderPrompt', () => {
 
   it('discloses a missing install command instead of guessing one', () => {
     const none = renderWorkOrderPrompt({ ...ORDER, constraints: { forbidden: [] } });
-    expect(none).toContain('no install command is known for this repo');
+    expect(none).toContain('no install command is known for this ecosystem');
     expect(none).not.toContain('npm ci');
   });
 

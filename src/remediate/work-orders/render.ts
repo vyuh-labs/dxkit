@@ -1,9 +1,13 @@
 /**
  * Work-order rendering: the agent-facing prompt (section 3C) and the
- * one-line plan summary. The shared ground rules every remediation prompt
- * carries (`SHARED_RULES`) are appended here, never restated. Prose here is
- * human-toned and uses no em-dashes.
+ * one-line plan summary. Location text comes from the ONE kind-aware
+ * descriptor (`describeEntryLocation` — "never re-derive location text in a
+ * renderer"); this module only appends the remediation tail. The shared
+ * ground rules every remediation prompt carries (`SHARED_RULES`) are
+ * appended here, never restated. Prose here is human-toned and uses no
+ * em-dashes.
  */
+import { describeEntryLocation } from '../../gate/context';
 import { SHARED_RULES } from '../tasks';
 import type { WorkOrder, WorkOrderFinding } from './types';
 import { WORK_ORDER_CLASSES, isBuiltinWorkOrderClass } from './types';
@@ -18,19 +22,38 @@ function describeFinding(f: WorkOrderFinding): string {
               ? ` (imported by ${e.importingFiles.join(', ')})`
               : '')
         : `${f.id}: ${e.pack} ${e.label} fails (repro: ${e.command || 'see the floor check'})`;
-    case 'dep-vuln':
+    case 'dep-vuln': {
+      const location = describeEntryLocation({
+        id: f.id,
+        kind: 'dep-vuln',
+        package: e.package,
+        ...(e.installedVersion !== undefined ? { installedVersion: e.installedVersion } : {}),
+        advisoryId: e.advisoryId,
+      });
       return (
-        `${f.id}: ${e.package}${e.installedVersion ? `@${e.installedVersion}` : ''} ${e.advisoryId}` +
+        `${f.id}: ${location}` +
         (e.severity ? ` (${e.severity})` : '') +
         (e.fixedVersion ? `, fixed in ${e.fixedVersion}` : ', no fixed version known here') +
         (e.reachable === true ? ', reachable from your code' : '') +
         (e.expiresAt ? `, deferred until ${e.expiresAt}` : '')
       );
-    case 'custom-check':
+    }
+    case 'custom-check': {
+      const location = describeEntryLocation({
+        id: f.id,
+        kind: 'custom-check',
+        check: e.check,
+        blocking: true,
+        ...(e.file !== undefined ? { file: e.file } : {}),
+        ...(e.line !== undefined ? { line: e.line } : {}),
+        ...(e.rule !== undefined ? { rule: e.rule } : {}),
+      });
       return (
-        `${f.id}: ${e.file ?? e.check}${e.line !== undefined ? `:${e.line}` : ''} ` +
-        `${e.rule ?? e.check}${e.message ? `: ${e.message}` : ''}`
+        `${f.id}: ${location}` +
+        (e.message ? `: ${e.message}` : '') +
+        (e.expiresAt ? ` (deferred until ${e.expiresAt})` : '')
       );
+    }
     case 'none':
       return `${f.id} (${f.kind}; identity only)`;
   }
@@ -45,7 +68,7 @@ export function attributionSentence(order: WorkOrder): string {
   if (counts['net-new'] > 0)
     parts.push(`${counts['net-new']} of these are net-new (introduced by the current change)`);
   if (counts.deferred > 0)
-    parts.push(`${counts.deferred} are deferred advisories that re-block on their expiry date`);
+    parts.push(`${counts.deferred} are deferred findings that re-block on their expiry date`);
   if (counts['pre-existing'] > 0)
     parts.push(`${counts['pre-existing']} are pre-existing debt this order asks you to close`);
   if (counts.unattributed > 0)
@@ -90,7 +113,7 @@ export function renderWorkOrderPrompt(order: WorkOrder): string {
     );
   } else if (order.envelope.manifests) {
     lines.push(
-      '- no install command is known for this repo (no active language pack declares one); ' +
+      '- no install command is known for this ecosystem (no active language pack declares one); ' +
         'do not install anything, write what a human must run in docs/DXKIT-REMEDIATION-NOTES.md',
     );
   }

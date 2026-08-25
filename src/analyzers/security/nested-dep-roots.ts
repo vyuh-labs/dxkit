@@ -40,6 +40,23 @@ export interface NestedRootDiscovery {
 }
 
 /**
+ * ONE pack's independent dependency roots, derived from its declared
+ * `lockfilePatterns` (Rule 6). THE derivation both the dep audit
+ * (`gatherPackDepVulnsAcrossRoots`) and the work-order gather read, so the
+ * two can never disagree about which sub-projects independently resolve.
+ */
+export function discoverPackDepRoots(
+  cwd: string,
+  pack: {
+    readonly capabilities?: {
+      readonly depVulns?: { readonly lockfilePatterns?: readonly string[] };
+    };
+  },
+): NestedRootDiscovery {
+  return discoverNestedDepRoots(cwd, [...(pack.capabilities?.depVulns?.lockfilePatterns ?? [])]);
+}
+
+/**
  * Directories below `cwd` (never the root itself — the root audit already
  * runs) containing one of the pack's independent-resolution lockfiles.
  * Exclusion-aware and deterministic (sorted by path, cap applied after).

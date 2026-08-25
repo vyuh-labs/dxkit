@@ -1,20 +1,25 @@
 /**
- * Located lint orders (`lint-located`): one order per file. Blocking and
- * deferred custom-check findings arrive attributed; grandfathered debt is cut
- * by file, then by rule and line, into slices of at most `maxSliceSize`.
+ * Located lint orders (`lint-located`): ONE order per file, unioning
+ * blocking, deferred, and grandfathered findings (a file in two sources is
+ * one unit of work; per-finding attribution records which is which). Large
+ * sets are cut into slices of at most `maxSliceSize` (suffix `#n` from the
+ * second slice, so ids never collide). Rank: a slice carrying a deferral
+ * sits in the expiring band by soonest expiry; one carrying a net-new
+ * finding in the blocking band; pure debt in the debt band.
+ *
  * Binary (whole-command) custom-check findings carry no file to scope an
- * order to and are reported undispatchable with that reason.
+ * order to and are reported undispatchable with the one shared reason.
  */
 import type { RichBaselineEntry } from '../../baseline/types';
-import type { UndispatchableGroup, WorkOrderFinding, WorkOrderProvenance } from './types';
+import type { UndispatchableGroup, WorkOrderFinding } from './types';
 import {
+  BINARY_CUSTOM_CHECK_REASON,
   VALUE_BAND,
   byteOrder,
   deriveBudget,
   doneFor,
   undispatch,
   type BudgetCapFor,
-  type Draft,
   type Ranked,
 } from './shared';
 
@@ -25,14 +30,19 @@ export interface LintOrderContext {
   readonly capFor: BudgetCapFor;
 }
 
-export function lintFinding(
-  entry: CustomCheckEntry,
-  attribution: WorkOrderFinding['attribution'],
-): WorkOrderFinding {
+export interface LintSource {
+  readonly entry: CustomCheckEntry;
+  readonly attribution: WorkOrderFinding['attribution'];
+  /** Present for a deferred finding: the day it re-blocks. */
+  readonly expiresAt?: string;
+}
+
+export function lintFinding(src: LintSource): WorkOrderFinding {
+  const { entry } = src;
   return {
     kind: 'custom-check',
     id: entry.id,
-    attribution,
+    attribution: src.attribution,
     evidence: {
       type: 'custom-check',
       check: entry.check,
@@ -40,104 +50,88 @@ export function lintFinding(
       ...(entry.file !== undefined ? { file: entry.file } : {}),
       ...(entry.line !== undefined ? { line: entry.line } : {}),
       ...(entry.message !== undefined ? { message: entry.message } : {}),
+      ...(src.expiresAt !== undefined ? { expiresAt: src.expiresAt } : {}),
     },
   };
 }
 
-function lintDraft(
+const ATTRIBUTION_ORDER: Record<WorkOrderFinding['attribution'], number> = {
+  'net-new': 0,
+  deferred: 1,
+  unattributed: 2,
+  'pre-existing': 3,
+};
+
+function sliceRank(
   file: string,
+  index: number,
   findings: readonly WorkOrderFinding[],
-  ctx: LintOrderContext,
-  provenance: WorkOrderProvenance,
-  idSuffix = '',
-): Draft {
-  return {
-    id: `lint-located:${file}${idSuffix}`,
-    class: 'lint-located',
-    findings,
-    envelope: { paths: [file], manifests: false },
-    constraints: { forbidden: [] },
-    done: doneFor('guardrail', findings),
-    budget: deriveBudget(findings.length, ctx.capFor('lint-located')),
-    provenance,
-  };
+): Ranked['rank'] {
+  const expiries = findings
+    .map((f) => (f.evidence.type === 'custom-check' ? f.evidence.expiresAt : undefined))
+    .filter((e): e is string => typeof e === 'string')
+    .sort(byteOrder);
+  if (expiries.length > 0) return [VALUE_BAND.expiringDeferral, expiries[0]];
+  if (findings.some((f) => f.attribution === 'net-new'))
+    return [VALUE_BAND.otherBlocking, `${file}#${index}`];
+  return [VALUE_BAND.debt, `${file}#${index}`];
 }
 
-/** Attributed (blocking / deferred) located findings: one order per file. */
-export function attributedLintOrders(
-  entries: ReadonlyArray<{
-    readonly entry: CustomCheckEntry;
-    readonly attribution: WorkOrderFinding['attribution'];
-  }>,
+/** One order per file over every source; slices capped by `maxSliceSize`. */
+export function lintOrders(
+  sources: readonly LintSource[],
   ctx: LintOrderContext,
   into: UndispatchableGroup[],
 ): Ranked[] {
-  const byFile = new Map<string, WorkOrderFinding[]>();
+  const byFile = new Map<string, LintSource[]>();
   const binary: WorkOrderFinding[] = [];
-  for (const { entry, attribution } of entries) {
-    const f = lintFinding(entry, attribution);
-    if (!entry.file) {
-      binary.push(f);
+  for (const src of sources) {
+    if (!src.entry.file) {
+      binary.push(lintFinding(src));
       continue;
     }
-    const list = byFile.get(entry.file) ?? [];
-    list.push(f);
-    byFile.set(entry.file, list);
+    const list = byFile.get(src.entry.file) ?? [];
+    list.push(src);
+    byFile.set(src.entry.file, list);
   }
-  undispatch(
-    into,
-    'binary (whole-command) custom-check findings carry no file to scope an order to',
-    binary,
-  );
-  return [...byFile.entries()]
-    .sort(([a], [b]) => byteOrder(a, b))
-    .map(([file, findings]) => ({
-      rank: [VALUE_BAND.otherBlocking, file],
-      draft: lintDraft(file, findings, ctx, { source: 'guardrail-blocking' }),
-    }));
-}
+  undispatch(into, BINARY_CUSTOM_CHECK_REASON, binary);
 
-/** Grandfathered debt: by file, then by rule and line, sliced. */
-export function debtLintOrders(
-  entries: readonly CustomCheckEntry[],
-  ctx: LintOrderContext,
-  into: UndispatchableGroup[],
-): Ranked[] {
-  const byFile = new Map<string, CustomCheckEntry[]>();
-  const binary: WorkOrderFinding[] = [];
-  for (const entry of entries) {
-    if (!entry.file) {
-      binary.push(lintFinding(entry, 'pre-existing'));
-      continue;
-    }
-    const list = byFile.get(entry.file) ?? [];
-    list.push(entry);
-    byFile.set(entry.file, list);
-  }
-  undispatch(
-    into,
-    'binary (whole-command) custom-check findings carry no file to scope an order to',
-    binary,
-  );
   const max = Math.max(1, ctx.maxSliceSize);
   const out: Ranked[] = [];
   for (const [file, list] of [...byFile.entries()].sort(([a], [b]) => byteOrder(a, b))) {
+    // Attributed findings first (they are the order's point), then debt by
+    // rule + line so a slice is one rule's worth of work wherever possible.
     const sorted = [...list].sort(
-      (a, b) => byteOrder(a.rule ?? '', b.rule ?? '') || (a.line ?? 0) - (b.line ?? 0),
+      (a, b) =>
+        ATTRIBUTION_ORDER[a.attribution] - ATTRIBUTION_ORDER[b.attribution] ||
+        byteOrder(a.entry.rule ?? '', b.entry.rule ?? '') ||
+        (a.entry.line ?? 0) - (b.entry.line ?? 0),
     );
-    const slices: CustomCheckEntry[][] = [];
+    const slices: LintSource[][] = [];
     for (let i = 0; i < sorted.length; i += max) slices.push(sorted.slice(i, i + max));
     slices.forEach((slice, index) => {
-      const findings = slice.map((e) => lintFinding(e, 'pre-existing'));
+      const findings = slice.map(lintFinding);
+      const blocking = findings.filter((f) => f.attribution === 'net-new').length;
+      const deferredCount = findings.filter((f) => f.attribution === 'deferred').length;
       out.push({
-        rank: [VALUE_BAND.debt, `${file}#${index + 1}`],
-        draft: lintDraft(
-          file,
+        rank: sliceRank(file, index + 1, findings),
+        draft: {
+          id: `lint-located:${file}${slices.length > 1 ? `#${index + 1}` : ''}`,
+          class: 'lint-located',
           findings,
-          ctx,
-          { source: 'debt-slice', file, slice: index + 1, of: slices.length },
-          slices.length > 1 ? `#${index + 1}` : '',
-        ),
+          envelope: { paths: [file], manifests: false },
+          constraints: { forbidden: [] },
+          done: doneFor('guardrail', findings),
+          budget: deriveBudget(findings.length, ctx.capFor('lint-located')),
+          provenance: {
+            source: 'debt-slice',
+            file,
+            slice: index + 1,
+            of: slices.length,
+            ...(blocking > 0 ? { blocking } : {}),
+            ...(deferredCount > 0 ? { deferred: deferredCount } : {}),
+          },
+        },
       });
     });
   }

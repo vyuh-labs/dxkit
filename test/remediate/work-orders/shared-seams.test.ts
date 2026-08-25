@@ -63,15 +63,38 @@ describe('provisionArgv is the one provision command', () => {
     });
   }
 
-  it('the typescript pack declares provision from the repo package manager', () => {
+  it('the typescript pack declares provision from the repo lockfile, null without one (npm ci would always fail)', () => {
     const dir = mkdtempSync(join(tmpdir(), 'dxkit-provision-'));
     try {
       writeFileSync(join(dir, 'package.json'), '{}');
+      expect(getLanguage('typescript')!.provision!(dir)).toBeNull();
       writeFileSync(join(dir, 'pnpm-lock.yaml'), '');
       expect(getLanguage('typescript')!.provision!(dir)).toEqual({
         bin: 'pnpm',
         args: ['install'],
       });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('the interpreted packs declare their own ecosystem provision commands (never npm)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dxkit-provision-eco-'));
+    try {
+      expect(getLanguage('python')!.provision!(dir)).toBeNull();
+      writeFileSync(join(dir, 'requirements.txt'), '');
+      expect(getLanguage('python')!.provision!(dir)).toEqual({
+        bin: 'pip',
+        args: ['install', '-r', 'requirements.txt'],
+      });
+      writeFileSync(join(dir, 'poetry.lock'), '');
+      expect(getLanguage('python')!.provision!(dir)).toEqual({ bin: 'poetry', args: ['install'] });
+      expect(getLanguage('ruby')!.provision!(dir)).toBeNull();
+      writeFileSync(join(dir, 'Gemfile.lock'), '');
+      expect(getLanguage('ruby')!.provision!(dir)).toEqual({ bin: 'bundle', args: ['install'] });
+      expect(getLanguage('php')!.provision!(dir)).toBeNull();
+      writeFileSync(join(dir, 'composer.lock'), '');
+      expect(getLanguage('php')!.provision!(dir)).toEqual({ bin: 'composer', args: ['install'] });
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

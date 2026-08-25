@@ -12,7 +12,6 @@
  */
 import type { ModelTier } from './driver';
 import { dxkitCli } from '../self-invocation';
-import { classesSelectedBy, type WorkOrderClass } from './work-orders/types';
 
 /** How a prompt tells the agent to invoke dxkit inside the TARGET repo:
  *  the local install first, the canonical binary invocation as fallback
@@ -55,19 +54,6 @@ export interface RemediateTask {
   /** Which verification the outcome hinges on (both always run; this names
    *  the primary signal for the ledger). */
   readonly verify: 'floor' | 'guardrail';
-  /**
-   * The work-order classes this task SELECTS (remediate rethink, section 3A):
-   * a READ of `WORK_ORDER_CLASSES` (each class names its selecting task), so
-   * a task is a selector over the planner's orders, not an open goal. An
-   * open-ended task (docs, tests) selects nothing and says so via
-   * `openEnded`; every bounded task selects at least one class (pinned by
-   * the task-catalog test). Selection is consumed by the executor unit; this
-   * unit declares it.
-   */
-  readonly selects: readonly WorkOrderClass[];
-  /** True for a task with no finite finding set to close (score-hinged,
-   *  opt-in, never scheduled by default). */
-  readonly openEnded: boolean;
   /**
    * The task's completion SHAPE — it decides the default salvage posture
    * (`salvageForTask`), because the two shapes need opposite defaults:
@@ -142,8 +128,6 @@ Ground rules (non-negotiable):
 export const REMEDIATE_TASKS: readonly RemediateTask[] = [
   {
     id: 'fix-build',
-    selects: classesSelectedBy('fix-build'),
-    openEnded: false,
     summary: 'fix the grandfathered broken build / failing tests (floor debt)',
     tier: 'standard',
     tierWhy: 'real diagnosis + repair across build config and test code',
@@ -162,8 +146,6 @@ message. When you believe you are done, re-run the failing commands and then
   },
   {
     id: 'fix-vulns',
-    selects: classesSelectedBy('fix-vulns'),
-    openEnded: false,
     summary: 'remediate baselined dependency vulnerabilities the bump lane could not close',
     tier: 'standard',
     tierWhy: 'cross-file reasoning; majors can require real code changes',
@@ -190,8 +172,6 @@ in docs/DXKIT-REMEDIATION-NOTES.md so the reviewer sees what was compared.` + SH
   },
   {
     id: 'fix-lint',
-    selects: classesSelectedBy('fix-lint'),
-    openEnded: false,
     summary: 'burn down the grandfathered lint backlog, oldest and highest-signal first',
     tier: 'light',
     tierWhy: 'mechanical, pattern-per-finding work',
@@ -210,8 +190,6 @@ is a bug, not a cleanup.` + SHARED_RULES,
   },
   {
     id: 'improve-tests',
-    selects: [],
-    openEnded: true,
     summary: 'add real behavioral tests for the highest-risk untested surfaces',
     tier: 'standard',
     tierWhy: 'design judgment about behavior worth pinning, not boilerplate',
@@ -230,8 +208,6 @@ coverage thresholds or edit test configuration to inflate numbers.` + SHARED_RUL
   },
   {
     id: 'write-docs',
-    selects: [],
-    openEnded: true,
     summary: 'write the documentation the repo is missing, verified by the score',
     tier: 'standard',
     tierWhy: 'grounded technical writing over real code, not boilerplate',
@@ -266,8 +242,6 @@ not drop — cosmetic edits that move nothing are rejected, not landed.` + SHARE
 export function customDispatchTask(prompt: string): RemediateTask {
   return {
     id: 'custom',
-    selects: [],
-    openEnded: true,
     summary: 'one-time dispatch campaign (custom prompt)',
     tier: 'standard',
     tierWhy: 'human-dispatched; pin agent.model (or the dispatch model input) to change',

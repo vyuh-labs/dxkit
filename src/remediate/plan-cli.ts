@@ -13,6 +13,7 @@ import { remediateBranchFor } from '../lanes/branches';
 import { describeDeliveryProbe, probeDeliveryPreconditions } from '../lanes/delivery-preconditions';
 import {
   planRepoWorkOrders,
+  type DepScanSource,
   type FloorSource,
   type GatherWorkOrderOptions,
 } from './work-orders/gather';
@@ -75,6 +76,17 @@ export async function runRemediatePlan(
 ): Promise<void> {
   const config = resolveRemediateConfig(cwd);
   const driver = driverById(config.agent.driver);
+  // Validate the driver BEFORE any gathering: an unknown driver is a config
+  // error the human surface reports without paying a scan.
+  if (!opts.json && !driver) {
+    logger.header('dxkit remediate plan');
+    logger.fail(
+      `unknown agent driver '${config.agent.driver}' — known drivers: ` +
+        AGENT_DRIVERS.map((d) => d.id).join(', '),
+    );
+    process.exitCode = 1;
+    return;
+  }
 
   const rows = config.tasks.map((taskId) => {
     const task = remediateTaskById(taskId)!;
@@ -110,6 +122,8 @@ export async function runRemediatePlan(
   // crashed plan.
   let plan: WorkOrderPlan | null = null;
   let floorSource: FloorSource | null = null;
+  let depScanSource: DepScanSource | null = null;
+  let disclosures: readonly string[] = [];
   let planError: string | null = null;
   try {
     const gathered = await planRepoWorkOrders(cwd, config, {
@@ -118,10 +132,11 @@ export async function runRemediatePlan(
     });
     plan = gathered.plan;
     floorSource = gathered.floorSource;
+    depScanSource = gathered.depScanSource;
+    disclosures = gathered.disclosures;
   } catch (err) {
     planError = err instanceof Error ? err.message : String(err);
   }
-  const projected = plan ? projectWorkOrders(plan) : { workOrders: [], undispatchable: [] };
 
   if (opts.json) {
     process.stdout.write(
@@ -150,10 +165,15 @@ export async function runRemediatePlan(
           unknownTasks: config.unknownTasks,
           /** The planned work orders (tier / recipe / budget / done summary)
            *  and the findings no class could take, with the reason. */
-          workOrders: projected.workOrders,
-          undispatchable: projected.undispatchable,
+          ...(plan ? projectWorkOrders(plan) : { workOrders: [], undispatchable: [] }),
           /** Which floor source the plan read: 'live' only with --with-floor. */
           workOrderFloorSource: floorSource,
+          /** Which source answered the deferral join (bom-artifact / live-scan
+           *  / injected / not-needed). */
+          workOrderDepScanSource: depScanSource,
+          /** Degraded gather reads, phrased for humans (corrupt baseline,
+           *  capped roots, which scan was paid). Empty = nothing degraded. */
+          workOrderDisclosures: disclosures,
           workOrderPlanError: planError,
           /** Per-dimension driver capability: 'enforced' | 'reported' |
            *  'none'. A dimension below 'enforced' also appears in
@@ -174,30 +194,24 @@ export async function runRemediatePlan(
   }
 
   logger.header('dxkit remediate plan');
-  if (!driver) {
-    logger.fail(
-      `unknown agent driver '${config.agent.driver}' — known drivers: ` +
-        AGENT_DRIVERS.map((d) => d.id).join(', '),
-    );
-    process.exitCode = 1;
-    return;
-  }
+  // The early return above guarantees a known driver on this path.
+  const d = driver!;
   logger.info(
-    `driver: ${driver.id}` +
+    `driver: ${d.id}` +
       (availability && !availability.ok ? ` (NOT available here: ${availability.reason})` : ''),
   );
   logger.info(
     `budget: ${config.agent.budget.maxTurns} turns, ${config.agent.budget.maxMinutes} min, ` +
       `$${config.agent.budget.maxUsd} — salvage: ${config.salvage}`,
   );
-  if (driver.budgetSupport.turns !== 'enforced') {
-    logger.warn(`maxTurns is not enforceable by ${driver.id}`);
+  if (d.budgetSupport.turns !== 'enforced') {
+    logger.warn(`maxTurns is not enforceable by ${d.id}`);
   }
-  if (driver.budgetSupport.cost === 'none') {
-    logger.warn(`maxUsd is not enforceable by ${driver.id} (no spend reporting)`);
-  } else if (driver.budgetSupport.cost === 'reported') {
+  if (d.budgetSupport.cost === 'none') {
+    logger.warn(`maxUsd is not enforceable by ${d.id} (no spend reporting)`);
+  } else if (d.budgetSupport.cost === 'reported') {
     logger.warn(
-      `maxUsd is ADVISORY for ${driver.id} (cost is reported after the run, not enforced ` +
+      `maxUsd is ADVISORY for ${d.id} (cost is reported after the run, not enforced ` +
         `mid-run) — the enforced turn cap and wall clock bound real spend`,
     );
   }
@@ -236,6 +250,7 @@ export async function runRemediatePlan(
     logger.warn(`work orders: could not plan (${planError})`);
   } else if (plan) {
     logger.dim(`work orders: floor read from ${describeFloorSource(floorSource ?? 'none')}`);
+    for (const d of disclosures) logger.dim(`work orders: ${d}`);
     logger.info(
       `work orders: ${plan.orders.length} planned` +
         (plan.undispatchable.length > 0

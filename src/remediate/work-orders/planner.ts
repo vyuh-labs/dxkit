@@ -11,12 +11,11 @@
  * and debt slices. The per-source builders live beside this module
  * (`floor-orders.ts`, `advisory-orders.ts`, `lint-orders.ts`).
  */
-import type { RemediateBudget } from '../config';
 import type { RichBaselineEntry } from '../../baseline/types';
 import { matchRecipe, RECIPE_REGISTRY, type RecipeDeclaration } from './recipes-registry';
-import { floorOrders, type FloorFailureInput, type ManifestRoot } from './floor-orders';
+import { floorOrders, type FloorFailureInput } from './floor-orders';
 import { advisoryOrders, type AdvisoryInput } from './advisory-orders';
-import { attributedLintOrders, debtLintOrders, type CustomCheckEntry } from './lint-orders';
+import { lintOrders, type CustomCheckEntry, type LintSource } from './lint-orders';
 import {
   compareRank,
   identityOnly,
@@ -24,6 +23,8 @@ import {
   undispatch,
   type BudgetCapFor,
   type Draft,
+  type InstallFor,
+  type ManifestRoot,
   type Ranked,
 } from './shared';
 import type {
@@ -34,8 +35,9 @@ import type {
   WorkOrderPlan,
 } from './types';
 
-export type { FloorFailureInput, ManifestRoot } from './floor-orders';
+export type { FloorFailureInput } from './floor-orders';
 export type { AdvisoryInput } from './advisory-orders';
+export type { ManifestRoot } from './shared';
 export { BUDGET_DERIVATION, DEFAULT_MAX_SLICE_SIZE, deriveBudget } from './shared';
 
 /** A finding of the guardrail's blocking set, already joined to its entry. */
@@ -78,12 +80,13 @@ export interface PlannerInput {
   readonly floorFailures: readonly FloorFailureInput[];
   readonly blocking: readonly BlockingInput[];
   readonly deferred: readonly DeferredInput[];
-  /** Grandfathered entries NOT under any active allowlist entry. */
+  /** Grandfathered entries NOT under any active allowlist entry, every kind
+   *  (the planner classifies and discloses; callers never pre-filter). */
   readonly debt: readonly RichBaselineEntry[];
   /** Dependency roots for envelope derivation (the root has `dir: ''`). */
   readonly manifests: readonly ManifestRoot[];
-  /** The pack-declared install command; undefined = none known (disclosed). */
-  readonly install?: { readonly bin: string; readonly args: readonly string[] };
+  /** Per producing pack, its declared install command (see `InstallFor`). */
+  readonly installFor: InstallFor;
   readonly policy: {
     readonly maxSliceSize: number;
     /** Per class, the selecting task's effective budget (`budgetForTask`). */
@@ -104,10 +107,16 @@ export function assignTier(
   return recipe ? { ...order, tier: 'recipe', recipe: recipe.id } : { ...order, tier: 'agent' };
 }
 
-/** A budget resolver that gives every class the same cap (tests, callers
- *  without a task catalog). */
-export function uniformBudget(cap: RemediateBudget): BudgetCapFor {
-  return () => cap;
+/** Baseline dep-vuln debt as an advisory input (identity + severity only;
+ *  the richer live-scan copy wins where both exist). */
+function advisoryFromDebt(e: Extract<RichBaselineEntry, { kind: 'dep-vuln' }>): AdvisoryInput {
+  return {
+    id: e.id,
+    package: e.package,
+    ...(e.installedVersion !== undefined ? { installedVersion: e.installedVersion } : {}),
+    advisoryId: e.advisoryId,
+    ...(e.severity !== undefined ? { severity: e.severity } : {}),
+  };
 }
 
 export function planWorkOrders(input: PlannerInput, opts: PlannerOptions = {}): WorkOrderPlan {
@@ -115,18 +124,18 @@ export function planWorkOrders(input: PlannerInput, opts: PlannerOptions = {}): 
   const undispatchable: UndispatchableGroup[] = [];
   const ctx = {
     manifests: input.manifests,
-    ...(input.install ? { install: input.install } : {}),
+    installFor: input.installFor,
     capFor: input.policy.budgetFor,
     maxSliceSize: input.policy.maxSliceSize,
   };
 
   const blockingAdvisories: AdvisoryInput[] = [];
-  const blockingLint: Array<{ entry: CustomCheckEntry; attribution: 'net-new' }> = [];
+  const lintSources: LintSource[] = [];
   const noClass: WorkOrderFinding[] = [];
   for (const b of input.blocking) {
     if (b.kind === 'dep-vuln') blockingAdvisories.push(b.advisory);
     else if (b.kind === 'custom-check')
-      blockingLint.push({ entry: b.entry, attribution: 'net-new' });
+      lintSources.push({ entry: b.entry, attribution: 'net-new' });
     else noClass.push(identityOnly(b.entry.kind, b.entry.id, 'net-new'));
   }
   undispatch(
@@ -136,14 +145,13 @@ export function planWorkOrders(input: PlannerInput, opts: PlannerOptions = {}): 
   );
 
   const deferredAdvisories: Array<{ advisory: AdvisoryInput; expiresAt: string }> = [];
-  const deferredLint: Array<{ entry: CustomCheckEntry; attribution: 'deferred' }> = [];
   const unjoined: WorkOrderFinding[] = [];
   const deferredNoClass: WorkOrderFinding[] = [];
   for (const d of input.deferred) {
     if (d.kind === 'dep-vuln')
       deferredAdvisories.push({ advisory: d.advisory, expiresAt: d.expiresAt });
     else if (d.kind === 'custom-check')
-      deferredLint.push({ entry: d.entry, attribution: 'deferred' });
+      lintSources.push({ entry: d.entry, attribution: 'deferred', expiresAt: d.expiresAt });
     else if (d.kind === 'unjoined')
       unjoined.push(identityOnly(d.declaredKind, d.fingerprint, 'deferred'));
     else deferredNoClass.push(identityOnly(d.entry.kind, d.entry.id, 'deferred'));
@@ -160,10 +168,11 @@ export function planWorkOrders(input: PlannerInput, opts: PlannerOptions = {}): 
     deferredNoClass,
   );
 
-  const debtLint: CustomCheckEntry[] = [];
+  const debtAdvisories: AdvisoryInput[] = [];
   const debtNoClass: WorkOrderFinding[] = [];
   for (const e of input.debt) {
-    if (e.kind === 'custom-check') debtLint.push(e);
+    if (e.kind === 'custom-check') lintSources.push({ entry: e, attribution: 'pre-existing' });
+    else if (e.kind === 'dep-vuln') debtAdvisories.push(advisoryFromDebt(e));
     else debtNoClass.push(identityOnly(e.kind, e.id, 'pre-existing'));
   }
   undispatch(
@@ -174,21 +183,41 @@ export function planWorkOrders(input: PlannerInput, opts: PlannerOptions = {}): 
 
   const ranked: Ranked[] = [
     ...floorOrders(input.floorFailures, ctx),
-    ...advisoryOrders(blockingAdvisories, deferredAdvisories, ctx),
-    ...attributedLintOrders([...blockingLint, ...deferredLint], ctx, undispatchable),
-    ...debtLintOrders(debtLint, ctx, undispatchable),
+    ...advisoryOrders(blockingAdvisories, deferredAdvisories, debtAdvisories, ctx),
+    ...lintOrders(lintSources, ctx, undispatchable),
   ].sort(compareRank);
 
   // Ids are unique by construction (one builder per class, one order per
-  // natural unit); a collision would be a builder bug, so it is surfaced,
-  // never silently deduplicated.
-  const seen = new Set<string>();
+  // natural unit). Defensively, a collision merges findings into the earlier
+  // (higher-value) order and is disclosed — a duplicate must never destroy
+  // the plan.
+  const byId = new Map<string, { order: WorkOrder; index: number }>();
   const orders: WorkOrder[] = [];
+  const collisions: WorkOrderFinding[] = [];
   for (const { draft } of ranked) {
-    if (seen.has(draft.id)) throw new Error(`work-order planner produced duplicate id ${draft.id}`);
-    seen.add(draft.id);
-    orders.push(assignTier(draft, registry));
+    const existing = byId.get(draft.id);
+    if (existing) {
+      const known = new Set(existing.order.findings.map((f) => f.id));
+      const extra = draft.findings.filter((f) => !known.has(f.id));
+      const merged = assignTier(
+        { ...existing.order, findings: [...existing.order.findings, ...extra] },
+        registry,
+      );
+      orders[existing.index] = merged;
+      byId.set(draft.id, { order: merged, index: existing.index });
+      collisions.push(...draft.findings);
+      continue;
+    }
+    const order = assignTier(draft, registry);
+    byId.set(draft.id, { order, index: orders.length });
+    orders.push(order);
   }
+  undispatch(
+    undispatchable,
+    'planner produced a duplicate order id (a builder bug — findings were merged into the ' +
+      'earlier order, nothing was dropped; please report this)',
+    collisions,
+  );
   return { orders, undispatchable };
 }
 

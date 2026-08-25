@@ -16,7 +16,7 @@
  * mapping are READS of this one table, so the three lists cannot drift.
  */
 import type { FindingSeverity } from '../../baseline/types';
-import type { FloorAttribution } from '../../analyzers/correctness/attribution';
+import { checkKey, type FloorAttribution } from '../../analyzers/correctness/attribution';
 
 /** Where a class's findings are produced from. `pending` is a declared,
  *  reasoned absence (the `DEFERRED_KINDS` discipline), never a silent one. */
@@ -131,6 +131,8 @@ export interface CustomCheckEvidence {
   readonly file?: string;
   readonly line?: number;
   readonly message?: string;
+  /** Present for a deferred finding: the day it re-blocks. */
+  readonly expiresAt?: string;
 }
 
 /** A finding dxkit holds only an identity for (an undispatchable entry of a
@@ -160,10 +162,13 @@ export interface WorkOrderFinding {
 
 export const FLOOR_FINDING_KIND = 'floor-check' as const;
 
-/** The one id formula for a floor finding: `pack/label`, plus the finding-level
- *  identity where the check decomposes (the import-resolution specifier). */
+/** The one id formula for a floor finding: the canonical `checkKey` (the
+ *  same key the floor snapshot and the attribution comparator join on),
+ *  plus a `#finding` suffix where the check decomposes (an unresolved
+ *  specifier, a parsed test-failure identity). */
 export function floorFindingId(pack: string, label: string, finding?: string): string {
-  return finding === undefined ? `${pack}/${label}` : `${pack}/${label}#${finding}`;
+  const key = checkKey(pack, label);
+  return finding === undefined ? key : `${key}#${finding}`;
 }
 
 /** What the fix may touch. Derived from the findings, never from the agent. */
@@ -220,6 +225,10 @@ export type WorkOrderProvenance =
       /** 1-based slice index and count when a unit was split by size. */
       readonly slice: number;
       readonly of: number;
+      /** How many of the slice's findings were blocking / deferred (a file
+       *  order unions every source; zero counts are omitted). */
+      readonly blocking?: number;
+      readonly deferred?: number;
     };
 
 export interface WorkOrder {

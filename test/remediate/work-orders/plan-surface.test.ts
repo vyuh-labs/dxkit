@@ -1,10 +1,11 @@
 /**
  * `remediate plan --json` on a fixture repo: the work orders come from the
  * ONE gather adapter (a cheap stored floor by default, the live floor only
- * behind --with-floor; deferrals joined to the live dependency scan with the
- * baseline as fallback; debt excludes every active allowlist entry; repo
- * facts from the packs), the policy knob caps slice size, and a gather
- * failure is disclosed rather than crashing the plan.
+ * behind --with-floor; deferrals joined to a dependency scan with the
+ * baseline as fallback, preferring a fresh persisted BoM artifact over a
+ * live audit; debt excludes every active allowlist entry; repo facts from
+ * the packs), the policy knob caps slice size, and every degraded read is
+ * disclosed rather than crashing or silently emptying the plan.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'fs';
@@ -12,13 +13,14 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import { runRemediatePlan } from '../../../src/remediate/plan-cli';
 import {
+  BOM_FRESHNESS_DAYS,
   gatherWorkOrderInputs,
-  installCommandFor,
+  installResolver,
   manifestRoots,
   planRepoWorkOrders,
 } from '../../../src/remediate/work-orders/gather';
 import { resolveRemediateConfig } from '../../../src/remediate/config';
-import { LANGUAGES, getLanguage } from '../../../src/languages';
+import { getLanguage } from '../../../src/languages';
 import type { CorrectnessFloorResult } from '../../../src/analyzers/correctness/run';
 import type { DepVulnFinding } from '../../../src/languages/capabilities/types';
 
@@ -37,6 +39,9 @@ afterEach(() => {
 
 const TS = [getLanguage('typescript')!];
 const NO_FLOOR: CorrectnessFloorResult = { ran: false, blocks: false, checks: [] };
+const THROWING_FLOOR = () => {
+  throw new Error('live floor must not run by default');
+};
 
 function writePolicy(policy: object): void {
   writeFileSync(join(repo, '.dxkit', 'policy.json'), JSON.stringify(policy));
@@ -110,20 +115,31 @@ const FAILING_FLOOR: CorrectnessFloorResult = {
   ],
 };
 
-/** The shape the deferral producers emit: the deferred advisory is NOT in the
- *  baseline; it exists in the live scan (fingerprint-stamped). */
-const LIVE_SCAN: DepVulnFinding[] = [
-  {
-    id: 'GHSA-1',
-    package: 'js-yaml',
-    installedVersion: '3.13.0',
-    tool: 'osv-scanner',
-    severity: 'high',
-    fixedVersion: '4.1.0',
-    reachable: true,
-    fingerprint: 'dead000011112222',
-  },
-];
+/** The shape the deferral producers emit: the deferred advisory is NOT in
+ *  the baseline; it exists only in a scan (fingerprint-stamped). */
+const SCAN_FINDING: DepVulnFinding = {
+  id: 'GHSA-1',
+  package: 'js-yaml',
+  installedVersion: '3.13.0',
+  tool: 'osv-scanner',
+  packId: 'typescript',
+  severity: 'high',
+  fixedVersion: '4.1.0',
+  reachable: true,
+  fingerprint: 'dead000011112222',
+};
+
+const DEFER_ENTRY = {
+  fingerprint: 'dead000011112222',
+  kind: 'dep-vuln',
+  category: 'deferred',
+  reason: 'lane will fix',
+  addedBy: 't',
+  addedAt: '2026-08-01',
+  expiresAt: '2026-09-15',
+};
+
+const NOW = new Date('2026-08-25T00:00:00Z');
 
 async function captureJson(run: () => Promise<void>): Promise<Record<string, unknown>> {
   const chunks: string[] = [];
@@ -140,7 +156,7 @@ async function captureJson(run: () => Promise<void>): Promise<Record<string, unk
 }
 
 describe('remediate plan --json: work orders', () => {
-  it('reads the stored floor envelope by default (no live floor), joins deferrals to the live scan, excludes every active allowlist entry from debt', async () => {
+  it('reads the stored floor by default (a live runFloor would throw), joins deferrals to the scan, excludes active allowlist entries from debt', async () => {
     writePolicy({ remediate: { enabled: true, tasks: ['fix-build', 'fix-lint', 'fix-vulns'] } });
     writeBaseline(
       [
@@ -153,15 +169,7 @@ describe('remediate plan --json: work orders', () => {
       FLOOR_DEBT,
     );
     writeAllowlist([
-      {
-        fingerprint: 'dead000011112222',
-        kind: 'dep-vuln',
-        category: 'deferred',
-        reason: 'lane will fix',
-        addedBy: 't',
-        addedAt: '2026-08-01',
-        expiresAt: '2026-09-15',
-      },
+      DEFER_ENTRY,
       // an accepted false positive: NOT debt to close
       {
         fingerprint: 'fp1',
@@ -172,23 +180,15 @@ describe('remediate plan --json: work orders', () => {
         addedAt: '2026-08-01',
       },
     ]);
-    let liveFloorRan = false;
     const out = await captureJson(() =>
       runRemediatePlan(repo, {
         json: true,
-        gather: {
-          packs: TS,
-          runFloor: undefined,
-          scanDepVulns: async () => LIVE_SCAN,
-          now: new Date('2026-08-25T00:00:00Z'),
-        },
-      }).then(() => {
-        liveFloorRan = false;
+        gather: { packs: TS, scanDepVulns: async () => [SCAN_FINDING], now: NOW },
       }),
     );
-    expect(liveFloorRan).toBe(false);
     expect(out.workOrderPlanError).toBeNull();
     expect(out.workOrderFloorSource).toBe('baseline-envelope');
+    expect(out.workOrderDepScanSource).toBe('injected');
     const orders = out.workOrders as Array<Record<string, unknown>>;
     expect(orders.map((o) => o.id)).toEqual([
       'dep-advisory:js-yaml',
@@ -209,13 +209,9 @@ describe('remediate plan --json: work orders', () => {
       deferred: 1,
       earliestExpiry: '2026-09-15',
     });
-    // joined to the live scan: fixed version known, so override-pin tiers recipe
+    // joined to the scan: fixed version known, so override-pin tiers recipe
     expect(advisory.tier).toBe('recipe');
     expect(advisory.recipe).toBe('override-pin');
-    expect(advisory.envelope).toEqual({
-      paths: ['package-lock.json', 'package.json'],
-      manifests: true,
-    });
     expect(orders[2].findings).toBe(2);
     // fp1 (false-positive, active) is not planned anywhere
     expect(JSON.stringify(out)).not.toContain('"fp1"');
@@ -224,62 +220,102 @@ describe('remediate plan --json: work orders', () => {
     expect(undispatchable[0].reason).toContain('binary');
   });
 
+  it('no live floor runs by default: a throwing runFloor injected as scanless default is never called without --with-floor', async () => {
+    writePolicy({ remediate: { enabled: true } });
+    writeBaseline([], FLOOR_DEBT);
+    // withFloor absent + runFloor absent: gatherFloor must read the envelope.
+    const stored = await planRepoWorkOrders(repo, resolveRemediateConfig(repo), { packs: TS });
+    expect(stored.floorSource).toBe('baseline-envelope');
+    expect(stored.plan.orders[0].outputTail).toBe('stored tail');
+    // proving the pin bites: an injected runFloor IS used (throw surfaces)
+    await expect(
+      planRepoWorkOrders(repo, resolveRemediateConfig(repo), {
+        packs: TS,
+        runFloor: THROWING_FLOOR,
+      }),
+    ).rejects.toThrow('live floor must not run by default');
+  });
+
   it('--with-floor runs the live floor, attributed against the envelope through the one comparator', async () => {
     writePolicy({ remediate: { enabled: true } });
     writeBaseline([], FLOOR_DEBT);
-    const withEnvelope = await planRepoWorkOrders(repo, resolveRemediateConfig(repo), {
+    const live = await planRepoWorkOrders(repo, resolveRemediateConfig(repo), {
       packs: TS,
       runFloor: () => FAILING_FLOOR,
     });
-    expect(withEnvelope.floorSource).toBe('live');
-    expect(withEnvelope.plan.orders[0].findings[0].attribution).toBe('pre-existing');
-    expect(withEnvelope.plan.orders[0].outputTail).toBe('src/a.ts(1,1): error TS1');
+    expect(live.floorSource).toBe('live');
+    expect(live.plan.orders[0].findings[0].attribution).toBe('pre-existing');
     writeBaseline([]);
     const noEnvelope = await planRepoWorkOrders(repo, resolveRemediateConfig(repo), {
       packs: TS,
       runFloor: () => FAILING_FLOOR,
     });
     expect(noEnvelope.plan.orders[0].findings[0].attribution).toBe('unattributed');
-    // and without a stored source or --with-floor there is simply no floor, disclosed
     const none = await planRepoWorkOrders(repo, resolveRemediateConfig(repo), { packs: TS });
     expect(none.floorSource).toBe('none');
     expect(none.plan.orders).toEqual([]);
   });
 
-  it('a deferral joined to neither the live scan nor the baseline is undispatchable, and the scan runs only when a dep-vuln deferral exists', async () => {
+  it('a corrupt baseline is a DISCLOSURE, never a silent "backlog clear"', async () => {
+    writePolicy({ remediate: { enabled: true } });
+    writeFileSync(join(repo, '.dxkit', 'baselines', 'main.json'), '{ not json');
+    const out = await captureJson(() =>
+      runRemediatePlan(repo, { json: true, gather: { packs: TS } }),
+    );
+    const disclosures = out.workOrderDisclosures as string[];
+    expect(disclosures.some((d) => d.includes('could not be read'))).toBe(true);
+    expect(out.workOrderPlanError).toBeNull();
+  });
+
+  it('prefers a fresh persisted BoM artifact over a live audit for the deferral join, disclosed; a stale one is ignored', async () => {
     writePolicy({ remediate: { enabled: true } });
     writeBaseline([]);
-    writeAllowlist([
-      {
-        fingerprint: 'gone',
-        kind: 'dep-vuln',
-        category: 'deferred',
-        reason: 'r',
-        addedBy: 't',
-        addedAt: '2026-08-01',
-        expiresAt: '2026-09-15',
-      },
-    ]);
-    let scans = 0;
-    const joined = await planRepoWorkOrders(repo, resolveRemediateConfig(repo), {
+    writeAllowlist([DEFER_ENTRY]);
+    const freshDate = new Date(NOW.getTime() - 86_400_000).toISOString();
+    writeFileSync(
+      join(repo, '.dxkit', 'bom.json'),
+      JSON.stringify({ analyzedAt: freshDate, entries: [{ vulns: [SCAN_FINDING] }] }),
+    );
+    const fresh = await planRepoWorkOrders(repo, resolveRemediateConfig(repo), {
       packs: TS,
-      scanDepVulns: async () => {
-        scans += 1;
-        return [];
-      },
-      now: new Date('2026-08-25T00:00:00Z'),
+      now: NOW,
+      runFloor: () => NO_FLOOR,
     });
-    expect(scans).toBe(1);
-    expect(joined.plan.undispatchable[0].findings[0].id).toBe('gone');
+    expect(fresh.depScanSource).toBe('bom-artifact');
+    expect(fresh.disclosures.some((d) => d.includes('bom.json'))).toBe(true);
+    expect(fresh.plan.orders[0].id).toBe('dep-advisory:js-yaml');
+    expect(fresh.plan.orders[0].tier).toBe('recipe');
+    // stale artifact: not read (the source would be the live audit)
+    const staleDate = new Date(NOW.getTime() - (BOM_FRESHNESS_DAYS + 1) * 86_400_000).toISOString();
+    writeFileSync(
+      join(repo, '.dxkit', 'bom.json'),
+      JSON.stringify({ analyzedAt: staleDate, entries: [{ vulns: [SCAN_FINDING] }] }),
+    );
+    const stale = await planRepoWorkOrders(repo, resolveRemediateConfig(repo), {
+      packs: TS,
+      now: NOW,
+      runFloor: () => NO_FLOOR,
+      // injected scan stands in for the live audit path's result
+      scanDepVulns: async () => [],
+    });
+    expect(stale.depScanSource).toBe('injected');
+    expect(stale.plan.undispatchable[0].findings[0].id).toBe('dead000011112222');
+  });
+
+  it('the scan runs only when a dep-vuln deferral exists', async () => {
+    writePolicy({ remediate: { enabled: true } });
+    writeBaseline([]);
     writeAllowlist([]);
+    let scans = 0;
     await planRepoWorkOrders(repo, resolveRemediateConfig(repo), {
       packs: TS,
+      runFloor: () => NO_FLOOR,
       scanDepVulns: async () => {
         scans += 1;
         return [];
       },
     });
-    expect(scans).toBe(1);
+    expect(scans).toBe(0);
   });
 
   it('remediate.workOrders.maxSliceSize caps a debt slice, and each class is capped by its task budget', async () => {
@@ -293,7 +329,10 @@ describe('remediate plan --json: work orders', () => {
     writeBaseline([1, 2, 3, 4, 5].map((n) => lintEntry(`l${n}`, 'src/a.ts', n, 'eqeqeq')));
     const config = resolveRemediateConfig(repo);
     expect(config.workOrders.maxSliceSize).toBe(2);
-    const { plan } = await planRepoWorkOrders(repo, config, { packs: TS });
+    const { plan } = await planRepoWorkOrders(repo, config, {
+      packs: TS,
+      runFloor: () => NO_FLOOR,
+    });
     expect(plan.orders.map((o) => o.id)).toEqual([
       'lint-located:src/a.ts#1',
       'lint-located:src/a.ts#2',
@@ -308,27 +347,43 @@ describe('remediate plan --json: work orders', () => {
     expect(resolveRemediateConfig(repo).workOrders.maxSliceSize).toBe(25);
   });
 
-  it('repo facts come from the packs: install = the first pack-declared provision, roots from the manifest-pattern union + nested discovery', async () => {
+  it('repo facts come from the packs: per-ecosystem install commands, glob-aware manifest roots via the shared per-pack discovery', async () => {
     writePolicy({});
     mkdirSync(join(repo, 'packages', 'api'), { recursive: true });
     writeFileSync(join(repo, 'packages', 'api', 'package.json'), '{}');
     writeFileSync(join(repo, 'packages', 'api', 'pnpm-lock.yaml'), '');
-    expect(installCommandFor(repo, TS)).toEqual({ bin: 'npm', args: ['ci'] });
-    expect(manifestRoots(repo, TS)).toEqual([
+    const installFor = installResolver(repo, TS);
+    expect(installFor('typescript')).toEqual({ bin: 'npm', args: ['ci'] });
+    // single-ecosystem repo: an unattributed finding still gets the one command
+    expect(installFor(undefined)).toEqual({ bin: 'npm', args: ['ci'] });
+    const disclosures: string[] = [];
+    expect(manifestRoots(repo, TS, disclosures)).toEqual([
       { dir: '', files: ['package-lock.json', 'package.json'] },
       { dir: 'packages/api', files: ['package.json', 'pnpm-lock.yaml'] },
     ]);
-    // a stack whose packs declare no provision command: install is UNDEFINED, never npm
+    expect(disclosures).toEqual([]);
+    // a GLOB-pattern ecosystem: requirements*.txt must match via the
+    // canonical matcher, not fs.existsSync on the literal
+    const py = [getLanguage('python')!];
+    writeFileSync(join(repo, 'requirements-dev.txt'), '');
+    writeFileSync(join(repo, 'requirements.txt'), '');
+    const pyRoots = manifestRoots(repo, py, []);
+    expect(pyRoots[0].files).toContain('requirements-dev.txt');
+    expect(pyRoots[0].files).toContain('requirements.txt');
+    // python's own provision command, per ecosystem, never npm
+    expect(installResolver(repo, py)('python')).toEqual({
+      bin: 'pip',
+      args: ['install', '-r', 'requirements.txt'],
+    });
+    // a pack with no derivable provision: undefined, disclosed at render
     const go = [getLanguage('go')!];
-    expect(installCommandFor(repo, go)).toBeUndefined();
+    expect(installResolver(repo, go)('go')).toBeUndefined();
     const { input } = await gatherWorkOrderInputs(repo, resolveRemediateConfig(repo), {
       packs: go,
       runFloor: () => NO_FLOOR,
     });
-    expect(input.install).toBeUndefined();
-    expect(input.manifests[0].files).not.toContain('package.json');
+    expect(input.installFor('go')).toBeUndefined();
     expect(input.blocking).toEqual([]);
-    expect(LANGUAGES.length).toBeGreaterThan(0);
   });
 
   it('a gather failure is disclosed in the JSON, never a crashed plan', async () => {

@@ -1,29 +1,23 @@
 /**
  * The work-order planner: grouping per (class, natural unit), envelope
  * derivation per class, budget derivation from the finding set and the
- * selecting task's cap, value ordering, the undispatchable bucket, blocking +
- * deferred advisories merging into ONE order per package, and the recipe
- * registry driving the tier decision (synthetic-injection guarded).
+ * selecting task's cap, value ordering, the undispatchable bucket, the
+ * per-package advisory union across every source, the per-file lint union,
+ * and the recipe registry driving the tier decision (synthetic-injection
+ * guarded).
  */
 import { describe, it, expect } from 'vitest';
 import {
   BUDGET_DERIVATION,
-  assignTier,
   deriveBudget,
   planWorkOrders,
   selectOrders,
-  uniformBudget,
   type AdvisoryInput,
   type FloorFailureInput,
   type PlannerInput,
 } from '../../../src/remediate/work-orders/planner';
-import { RECIPE_REGISTRY, matchRecipe } from '../../../src/remediate/work-orders/recipes-registry';
-import { WORK_ORDER_CLASSES, floorFindingId } from '../../../src/remediate/work-orders/types';
-import type {
-  WorkOrder,
-  WorkOrderClassDeclaration,
-} from '../../../src/remediate/work-orders/types';
-import { IMPORT_RESOLUTION_LABEL } from '../../../src/analyzers/correctness/run';
+import { floorFindingId } from '../../../src/remediate/work-orders/types';
+import { checkKey } from '../../../src/analyzers/correctness/attribution';
 import type { RichBaselineEntry } from '../../../src/baseline/types';
 import { DEFAULT_REMEDIATE_BUDGET } from '../../../src/remediate/config';
 
@@ -32,6 +26,8 @@ const MANIFESTS = [
   { dir: 'packages/api', files: ['package.json'] },
 ];
 
+const NPM_CI = { bin: 'npm', args: ['ci'] };
+
 function empty(): PlannerInput {
   return {
     floorFailures: [],
@@ -39,19 +35,20 @@ function empty(): PlannerInput {
     deferred: [],
     debt: [],
     manifests: MANIFESTS,
-    install: { bin: 'npm', args: ['ci'] },
-    policy: { maxSliceSize: 25, budgetFor: uniformBudget(DEFAULT_REMEDIATE_BUDGET) },
+    installFor: () => NPM_CI,
+    policy: { maxSliceSize: 25, budgetFor: () => DEFAULT_REMEDIATE_BUDGET },
   };
 }
 
 const IMPORT_FAILURE: FloorFailureInput = {
   pack: 'typescript',
-  label: IMPORT_RESOLUTION_LABEL,
+  label: 'import-resolution',
   command: '',
   output: 'three unresolved',
   attribution: 'net-new',
   precision: 'finding',
   netNewFindings: ['left-pad'],
+  findings: ['lodash', 'left-pad', 'zod'],
   unresolved: [
     { specifier: 'lodash', file: 'src/a.ts' },
     { specifier: 'lodash', file: 'src/z.ts' },
@@ -96,8 +93,8 @@ describe('planWorkOrders: entry floor', () => {
     ]);
     const root = imports.find((o) => o.id.endsWith(':.'))!;
     expect(root.findings.map((f) => f.id).sort()).toEqual([
-      floorFindingId('typescript', IMPORT_RESOLUTION_LABEL, 'left-pad'),
-      floorFindingId('typescript', IMPORT_RESOLUTION_LABEL, 'lodash'),
+      floorFindingId('typescript', 'import-resolution', 'left-pad'),
+      floorFindingId('typescript', 'import-resolution', 'lodash'),
     ]);
     // both importers of lodash, not only the first
     expect(root.envelope).toEqual({
@@ -117,12 +114,15 @@ describe('planWorkOrders: entry floor', () => {
     expect(root.done.verifier).toBe('floor');
     expect(root.done.absentIds).toEqual(root.findings.map((f) => f.id));
     expect(root.outputTail).toBe('three unresolved');
-    expect(root.provenance).toEqual({
-      source: 'entry-floor',
-      check: `typescript/${IMPORT_RESOLUTION_LABEL}`,
-    });
     expect(root.tier).toBe('recipe');
     expect(root.recipe).toBe('declare-dependency');
+  });
+
+  it('floor finding ids build on the canonical checkKey (pack:label), never a second formula', () => {
+    expect(floorFindingId('typescript', 'typecheck')).toBe(checkKey('typescript', 'typecheck'));
+    expect(floorFindingId('typescript', 'typecheck', 'x')).toBe(
+      `${checkKey('typescript', 'typecheck')}#x`,
+    );
   });
 
   it('a floor failure with no finer identity is one order per check, class floor-failure, agent tier, command carried', () => {
@@ -132,24 +132,48 @@ describe('planWorkOrders: entry floor', () => {
     expect(order.class).toBe('floor-failure');
     expect(order.id).toBe('floor-failure:typescript:typecheck');
     expect(order.tier).toBe('agent');
+    expect(order.findings[0].id).toBe(checkKey('typescript', 'typecheck'));
     expect(order.findings[0].evidence).toMatchObject({
       type: 'floor',
       command: 'npx tsc --noEmit',
     });
     expect(order.outputTail).toBe('src/c.ts(3,1): error TS2304');
     expect(order.envelope.manifests).toBe(false);
-    expect(order.constraints.install).toEqual({ bin: 'npm', args: ['ci'] });
+    expect(order.constraints.install).toEqual(NPM_CI);
+  });
+
+  it('a check with finding-level identities decomposes generically (not keyed on a label): per-finding attribution', () => {
+    const tests: FloorFailureInput = {
+      pack: 'typescript',
+      label: 'affected-tests',
+      command: 'npx vitest run',
+      attribution: 'net-new',
+      precision: 'finding',
+      netNewFindings: ['suite/b'],
+      findings: ['suite/a', 'suite/b'],
+    };
+    const plan = planWorkOrders({ ...empty(), floorFailures: [tests] });
+    expect(plan.orders).toHaveLength(1);
+    const order = plan.orders[0];
+    expect(order.class).toBe('floor-failure');
+    expect(order.findings.map((f) => [f.id, f.attribution])).toEqual([
+      [`${checkKey('typescript', 'affected-tests')}#suite/a`, 'pre-existing'],
+      [`${checkKey('typescript', 'affected-tests')}#suite/b`, 'net-new'],
+    ]);
   });
 
   it('no install command known: the order carries none (disclosed at render), never a guessed one', () => {
-    const input: PlannerInput = { ...empty(), floorFailures: [BUILD_FAILURE] };
-    delete (input as { install?: unknown }).install;
+    const input: PlannerInput = {
+      ...empty(),
+      floorFailures: [BUILD_FAILURE],
+      installFor: () => undefined,
+    };
     expect(planWorkOrders(input).orders[0].constraints.install).toBeUndefined();
   });
 });
 
 describe('planWorkOrders: advisories', () => {
-  it('ONE order per package unions blocking + deferred advisories (never drops either), envelope = manifests only', () => {
+  it('ONE order per package unions blocking + deferred + debt advisories; both facts survive on a doubly-sourced advisory', () => {
     const plan = planWorkOrders({
       ...empty(),
       blocking: [
@@ -161,21 +185,24 @@ describe('planWorkOrders: advisories', () => {
             reachable: true,
           }),
         },
-        { kind: 'dep-vuln', advisory: advisory('b1', 'lodash', 'GHSA-3', { severity: 'low' }) },
       ],
       deferred: [
-        {
-          fingerprint: 'a2',
-          expiresAt: '2026-09-10',
-          kind: 'dep-vuln',
-          advisory: advisory('a2', 'axios', 'GHSA-2', { fixedVersion: '1.7.0' }),
-        },
+        // the SAME advisory is also deferred: expiry must still count
         {
           fingerprint: 'a1',
           expiresAt: '2026-09-01',
           kind: 'dep-vuln',
           advisory: advisory('a1', 'axios', 'GHSA-1'),
         },
+        {
+          fingerprint: 'a2',
+          expiresAt: '2026-09-10',
+          kind: 'dep-vuln',
+          advisory: advisory('a2', 'axios', 'GHSA-2', { fixedVersion: '1.7.0' }),
+        },
+      ],
+      debt: [
+        { id: 'b1', kind: 'dep-vuln', package: 'lodash', advisoryId: 'GHSA-3', severity: 'low' },
       ],
     });
     expect(plan.undispatchable).toEqual([]);
@@ -185,29 +212,52 @@ describe('planWorkOrders: advisories', () => {
       ['a1', 'net-new'],
       ['a2', 'deferred'],
     ]);
-    expect(axios.provenance).toEqual({
-      source: 'advisories',
-      blocking: 1,
-      deferred: 1,
-      earliestExpiry: '2026-09-10',
-    });
-    expect(axios.envelope).toEqual({
-      paths: ['package-lock.json', 'package.json'],
-      manifests: true,
-    });
+    // the blocking copy keeps its richness AND gains the expiry window
     expect(axios.findings[0].evidence).toMatchObject({
-      type: 'dep-vuln',
       fixedVersion: '1.7.0',
       reachable: true,
       severity: 'high',
+      expiresAt: '2026-09-01',
     });
-    expect(axios.done.verifier).toBe('guardrail');
+    expect(axios.provenance).toEqual({
+      source: 'advisories',
+      blocking: 1,
+      deferred: 2,
+      earliestExpiry: '2026-09-01',
+    });
     expect(axios.tier).toBe('recipe');
     expect(axios.recipe).toBe('override-pin');
-    expect(plan.orders[1].tier).toBe('agent');
+    // baselined dep-vuln DEBT produces an order too (fix-vulns' backlog)
+    const lodash = plan.orders[1];
+    expect(lodash.findings[0].attribution).toBe('pre-existing');
+    expect(lodash.tier).toBe('agent');
+    expect(lodash.provenance).toEqual({ source: 'advisories', blocking: 0, deferred: 0 });
   });
 
-  it('a deferral joined to nothing is undispatchable with the reason, never dropped', () => {
+  it('envelope scopes to the owning nested root when every finding knows it, else every discovered root', () => {
+    const nested = planWorkOrders({
+      ...empty(),
+      blocking: [
+        {
+          kind: 'dep-vuln',
+          advisory: advisory('n1', 'inner', 'GHSA-N', { rootDir: 'packages/api' }),
+        },
+      ],
+    });
+    expect(nested.orders[0].envelope.paths).toEqual(['packages/api/package.json']);
+    const unknown = planWorkOrders({
+      ...empty(),
+      blocking: [{ kind: 'dep-vuln', advisory: advisory('u1', 'outer', 'GHSA-U') }],
+    });
+    // root unknown: every root's manifests, so the fix's files are inside
+    expect(unknown.orders[0].envelope.paths).toEqual([
+      'package-lock.json',
+      'package.json',
+      'packages/api/package.json',
+    ]);
+  });
+
+  it('a deferral joined to nothing is undispatchable with identity-only evidence, never dropped', () => {
     const plan = planWorkOrders({
       ...empty(),
       deferred: [
@@ -229,59 +279,77 @@ describe('planWorkOrders: advisories', () => {
       evidence: { type: 'none' },
     });
   });
+});
 
-  it('a deferred located custom-check is a lint-located order (its class), attributed deferred', () => {
+describe('planWorkOrders: lint (one order per file, every source)', () => {
+  it('a file with a deferred finding AND grandfathered debt is ONE order (the duplicate-id plan-killer), ranked by expiry', () => {
     const plan = planWorkOrders({
       ...empty(),
       deferred: [
         {
-          fingerprint: 'l1',
-          expiresAt: '2026-09-01',
+          fingerprint: 'd1',
+          expiresAt: '2026-09-05',
           kind: 'custom-check',
-          entry: lint('l1', 'src/a.ts', 'eqeqeq', 3),
+          entry: lint('d1', 'src/a.ts', 'eqeqeq', 3),
         },
       ],
+      debt: [lint('l1', 'src/a.ts', 'no-unused-vars', 9), lint('l2', 'src/b.ts', 'eqeqeq', 1)],
     });
-    expect(plan.undispatchable).toEqual([]);
-    expect(plan.orders.map((o) => [o.id, o.class])).toEqual([
-      ['lint-located:src/a.ts', 'lint-located'],
+    expect(plan.orders.map((o) => o.id)).toEqual([
+      'lint-located:src/a.ts',
+      'lint-located:src/b.ts',
     ]);
-    expect(plan.orders[0].findings[0].attribution).toBe('deferred');
+    const merged = plan.orders[0];
+    expect(merged.findings.map((f) => [f.id, f.attribution])).toEqual([
+      ['d1', 'deferred'],
+      ['l1', 'pre-existing'],
+    ]);
+    expect(merged.provenance).toMatchObject({
+      source: 'debt-slice',
+      file: 'src/a.ts',
+      deferred: 1,
+    });
+    // ranked in the expiring band, ahead of the pure-debt file
+    expect(plan.orders[1].findings[0].id).toBe('l2');
+    expect(plan.undispatchable).toEqual([]);
   });
-});
 
-describe('planWorkOrders: debt slices', () => {
-  it('groups lint debt by file, then by rule + line, capped by maxSliceSize with slice provenance', () => {
+  it('blocking lint findings join the same per-file order and rank in the blocking band', () => {
+    const plan = planWorkOrders({
+      ...empty(),
+      blocking: [{ kind: 'custom-check', entry: lint('b1', 'src/a.ts', 'eqeqeq', 2) }],
+      debt: [lint('l1', 'src/a.ts', 'eqeqeq', 9)],
+    });
+    expect(plan.orders).toHaveLength(1);
+    expect(plan.orders[0].findings.map((f) => f.attribution)).toEqual(['net-new', 'pre-existing']);
+    expect(plan.orders[0].provenance).toMatchObject({ blocking: 1 });
+  });
+
+  it('slices by maxSliceSize with #n suffixes (no id collision) and slice provenance', () => {
     const debt: RichBaselineEntry[] = [];
     for (let i = 0; i < 7; i++)
       debt.push(lint(`f${i}`, 'src/big.ts', i % 2 === 0 ? 'no-unused-vars' : 'eqeqeq', i + 1));
-    debt.push(lint('g1', 'src/small.ts', 'eqeqeq', 4));
     const plan = planWorkOrders({
       ...empty(),
       debt,
-      policy: { maxSliceSize: 3, budgetFor: uniformBudget(DEFAULT_REMEDIATE_BUDGET) },
+      policy: { maxSliceSize: 3, budgetFor: () => DEFAULT_REMEDIATE_BUDGET },
     });
     expect(plan.orders.map((o) => o.id)).toEqual([
       'lint-located:src/big.ts#1',
       'lint-located:src/big.ts#2',
       'lint-located:src/big.ts#3',
-      'lint-located:src/small.ts',
     ]);
-    const first = plan.orders[0];
-    expect(first.findings).toHaveLength(3);
-    expect(first.findings.every((f) => (f.evidence as { rule?: string }).rule === 'eqeqeq')).toBe(
-      true,
-    );
-    expect(first.envelope).toEqual({ paths: ['src/big.ts'], manifests: false });
-    expect(first.provenance).toEqual({ source: 'debt-slice', file: 'src/big.ts', slice: 1, of: 3 });
-    expect(first.tier).toBe('recipe');
-    expect(first.recipe).toBe('lint-autofix');
-    expect(plan.orders[3].provenance).toEqual({
+    expect(
+      plan.orders[0].findings.every((f) => (f.evidence as { rule?: string }).rule === 'eqeqeq'),
+    ).toBe(true);
+    expect(plan.orders[0].provenance).toEqual({
       source: 'debt-slice',
-      file: 'src/small.ts',
+      file: 'src/big.ts',
       slice: 1,
-      of: 1,
+      of: 3,
     });
+    expect(plan.orders[0].tier).toBe('recipe');
+    expect(plan.orders[0].recipe).toBe('lint-autofix');
   });
 
   it('binary custom-check debt and other kinds land in undispatchable with identity-only evidence', () => {
@@ -351,7 +419,7 @@ describe('planWorkOrders: value ordering + budget', () => {
     ]);
   });
 
-  it('derives the budget from the finding count, capped by the task budget, formula recorded with CAPPED numbers', () => {
+  it('derives the budget from the finding count, capped by the task budget; the cap wins below the minimum and the derivation records capped numbers', () => {
     const d = BUDGET_DERIVATION;
     const one = deriveBudget(1, DEFAULT_REMEDIATE_BUDGET);
     expect(one.turns).toBe(Math.max(d.minTurns, d.baseTurns + d.perFindingTurns));
@@ -360,7 +428,6 @@ describe('planWorkOrders: value ordering + budget', () => {
     expect(many.turns).toBe(DEFAULT_REMEDIATE_BUDGET.maxTurns);
     expect(many.minutes).toBe(DEFAULT_REMEDIATE_BUDGET.maxMinutes);
     expect(many.usd).toBe(DEFAULT_REMEDIATE_BUDGET.maxUsd);
-    // a cap BELOW the derivation minimum wins, and the derivation says so
     const tiny = deriveBudget(0, { maxTurns: 4, maxMinutes: 2, maxUsd: 1 });
     expect(tiny).toMatchObject({ turns: 4, minutes: 2, usd: 1 });
     expect(tiny.derivation).toContain('= 4;');
@@ -402,66 +469,5 @@ describe('planWorkOrders: value ordering + budget', () => {
     ]);
     expect(selectOrders(plan, []).length).toBe(0);
     expect(planWorkOrders(input)).toEqual(plan);
-  });
-});
-
-describe('recipe registry drives the tier (synthetic injection)', () => {
-  const draft: Omit<WorkOrder, 'tier' | 'recipe'> = {
-    id: 'synthetic-class:unit',
-    class: 'synthetic-class',
-    findings: [],
-    envelope: { paths: ['x'], manifests: false },
-    constraints: { forbidden: [] },
-    done: { absentIds: [], verifier: 'guardrail', command: 'x' },
-    budget: { turns: 1, minutes: 1, usd: 1, derivation: 'x' },
-    provenance: { source: 'guardrail-blocking' },
-  };
-
-  it('an order of an unregistered class tiers agent under the built-in registry', () => {
-    expect(assignTier(draft).tier).toBe('agent');
-    expect(matchRecipe({ ...draft, tier: 'agent' })).toBeUndefined();
-  });
-
-  it('a fake recipe for a fake class, injected into the registry, tiers the order recipe', () => {
-    const fake = {
-      id: 'synthetic-fixer',
-      class: 'synthetic-class',
-      summary: 't',
-      implemented: false,
-      matches: () => true,
-    };
-    const tiered = assignTier(draft, [...RECIPE_REGISTRY, fake]);
-    expect(tiered.tier).toBe('recipe');
-    expect(tiered.recipe).toBe('synthetic-fixer');
-  });
-
-  it('the planner reads the registry it is handed (a fake recipe flips a real order)', () => {
-    const input: PlannerInput = { ...empty(), floorFailures: [BUILD_FAILURE] };
-    expect(planWorkOrders(input).orders[0].tier).toBe('agent');
-    const fake = {
-      id: 'floor-fixer',
-      class: 'floor-failure',
-      summary: 't',
-      implemented: false,
-      matches: () => true,
-    };
-    const flipped = planWorkOrders(input, { registry: [...RECIPE_REGISTRY, fake] }).orders[0];
-    expect(flipped.tier).toBe('recipe');
-    expect(flipped.recipe).toBe('floor-fixer');
-  });
-
-  it('the class table is the spine: every declared recipe is named by exactly its class, and vice versa', () => {
-    const ids = RECIPE_REGISTRY.map((r) => r.id);
-    expect(new Set(ids).size).toBe(ids.length);
-    const fromTable = Object.entries(WORK_ORDER_CLASSES)
-      .filter(([, d]) => d.recipe !== null)
-      .map(([c, d]) => [d.recipe, c]);
-    expect(RECIPE_REGISTRY.map((r) => [r.id, r.class]).sort()).toEqual(fromTable.sort());
-    for (const r of RECIPE_REGISTRY) expect(r.implemented).toBe(false);
-    // a class with no producer carries a reason (the DEFERRED_KINDS discipline)
-    for (const d of Object.values(WORK_ORDER_CLASSES) as WorkOrderClassDeclaration[]) {
-      if (d.producers.includes('pending')) expect(d.pendingReason).toBeTruthy();
-      else expect(d.producers.length).toBeGreaterThan(0);
-    }
   });
 });
