@@ -94,3 +94,55 @@ describe('the generated scaffold conforms to the generated schema', () => {
     walk(parsed, '');
   });
 });
+
+/**
+ * The reverse direction for the remediate block (4.4.5): every KNOB the
+ * schema teaches has a row in the one metadata table, so `policy set`'s
+ * knob index and the guide cannot silently miss a knob the editor shows.
+ * The class this closes: taskBudgets / maxSpendPerRun / maxDispatchBudget /
+ * resume shipped in the schema with hand-written descriptions and no
+ * metadata row, invisible to the knob index and the guide.
+ *
+ * A leaf is a property node with no `properties` of its own; a container
+ * whose shape is free-form (`additionalProperties` as a schema, e.g. the
+ * per-task budget map) is a leaf too: the knob is the map, not its rows.
+ */
+function schemaLeafPaths(node: SchemaNode | undefined, prefix: string): string[] {
+  if (!node?.properties) return prefix ? [prefix] : [];
+  const out: string[] = [];
+  for (const [key, child] of Object.entries(node.properties)) {
+    const path = prefix ? `${prefix}.${key}` : key;
+    out.push(...schemaLeafPaths(child, path));
+  }
+  return out;
+}
+
+function remediateKnobsMissingFrom(
+  schemaRoot: SchemaNode,
+  params: readonly { readonly path: string }[],
+): string[] {
+  const known = new Set(params.map((p) => p.path));
+  return schemaLeafPaths(schemaRoot.properties?.remediate, 'remediate').filter(
+    (p) => !known.has(p),
+  );
+}
+
+describe('every remediate knob in the schema has a metadata row (knob index + guide parity)', () => {
+  it('no schema leaf under remediate is missing from POLICY_PARAMS', () => {
+    expect(remediateKnobsMissingFrom(schema, POLICY_PARAMS)).toEqual([]);
+  });
+
+  it('the parity check bites: an injected schema-only knob is reported', () => {
+    const injected: SchemaNode = {
+      properties: {
+        remediate: {
+          properties: {
+            ...schema.properties?.remediate?.properties,
+            syntheticKnob: { description: 'a knob with no metadata row' },
+          },
+        },
+      },
+    };
+    expect(remediateKnobsMissingFrom(injected, POLICY_PARAMS)).toEqual(['remediate.syntheticKnob']);
+  });
+});

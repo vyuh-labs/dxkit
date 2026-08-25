@@ -334,17 +334,17 @@ export function buildPolicySchema(version: string): Schema {
                   },
                   maxUsd: { type: 'number', description: desc('remediate.agent.budget.maxUsd') },
                 },
-                "Hard caps, all enforced by the runner (never the agent's self-report).",
+                'Caps read by the runner, never from the agent self-report. Turns and ' +
+                  'wall-clock are enforced; maxUsd is enforced only where the driver can ' +
+                  'stop mid-run on cost (the shipped driver reports spend after the run, ' +
+                  'so there it is advisory and disclosed).',
               ),
             },
             'Which agent runs, at which capability tier, under which caps.',
           ),
           taskBudgets: {
             type: 'object',
-            description:
-              'Per-task budget overrides merged over agent.budget (e.g. give fix-build ' +
-              'more headroom than fix-lint). Keys are task ids; values are partial ' +
-              '{maxTurns, maxMinutes, maxUsd}.',
+            description: desc('remediate.taskBudgets'),
             additionalProperties: {
               type: 'object',
               properties: {
@@ -354,28 +354,9 @@ export function buildPolicySchema(version: string): Schema {
               },
             },
           },
-          maxSpendPerRun: {
-            type: 'number',
-            description:
-              'Run-level USD ceiling across the per-task matrix (0/absent = none). Tasks ' +
-              'beyond it are deferred to the next firing, in order, and disclosed.',
-          },
-          maxDispatchBudget: {
-            type: 'number',
-            description:
-              'The dispatch spend authority: the most a workflow_dispatch campaign may raise ' +
-              'maxUsd to, and the same authority clamps max_turns proportionally (turns govern ' +
-              'real spend when the driver cannot enforce cost mid-run). 0/absent = dispatch ' +
-              'can lower budgets but never raise them beyond the policy caps.',
-          },
-          resume: {
-            type: 'boolean',
-            description:
-              'Opt-in: continue a prior budget-bounded or guardrail-blocked attempt from its ' +
-              'draft-PR salvage branch instead of starting over (requires the effective ' +
-              'per-task salvage to be draft-pr; capped resumes with a durable attempt ' +
-              'counter; entry floor stays anchored to the pristine base).',
-          },
+          maxSpendPerRun: { type: 'number', description: desc('remediate.maxSpendPerRun') },
+          maxDispatchBudget: { type: 'number', description: desc('remediate.maxDispatchBudget') },
+          resume: boolProp('remediate.resume'),
         },
         'Agentic remediation: a scheduled agent inside the verified frame.',
       ),
