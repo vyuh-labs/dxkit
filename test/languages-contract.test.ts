@@ -437,6 +437,26 @@ describe.each(LANGUAGES as LanguageSupport[])('language contract: $id', (lang) =
         ).toBeGreaterThan(0);
       }
     }
+    // The OPTIONAL lockfile-sync check (4.4.5): a pure command BUILDER like
+    // syntaxCheck — null (no lockfile), a well-formed command, or a disclosed
+    // skip with a reason; never a throw, never a spawn. On a nonexistent repo
+    // there is no lockfile to check, so the honest answer is null.
+    if (c.lockfileCheck) {
+      const res = c.lockfileCheck(ctx);
+      if (res !== null) {
+        expect(['command', 'skipped']).toContain(res.kind);
+        if (res.kind === 'command') {
+          expect(typeof res.command.label).toBe('string');
+          expect(typeof res.command.bin).toBe('string');
+          expect(Array.isArray(res.command.args)).toBe(true);
+        } else {
+          expect(
+            res.reason.length,
+            `${lang.id}: a lockfile-check skip must disclose its reason`,
+          ).toBeGreaterThan(0);
+        }
+      }
+    }
     // The OPTIONAL structure check (#309, 4.4.1): same pure-computation
     // contract as resolutionCheck — well-formed result, never a throw, a
     // labeled check id whenever anything ran or was claimed (`none` is the

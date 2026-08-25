@@ -9,6 +9,13 @@
 import type { CorrectnessFloorResult } from '../analyzers/correctness/run';
 import type { AttributedFloorFailure } from '../analyzers/correctness/attribution';
 
+/** One check line. A pass that carries a disclosure (a tolerated condition,
+ *  4.4.5) shows it inline: a reader must never mistake "passed under a
+ *  condition" for a plain pass. */
+function renderCheckLine(c: CorrectnessFloorResult['checks'][number]): string {
+  return `- ${c.pack}/${c.label}: ${c.status}${c.note ? ` (${c.note})` : ''}`;
+}
+
 /** The floor verification block: pass/fail led by NET-NEW attribution, with
  *  pre-existing debt and unattributed checks disclosed, never weaponized. */
 export function renderFloorVerification(
@@ -24,7 +31,7 @@ export function renderFloorVerification(
   // "passed" over a red entry floor. Pre-existing debt is disclosed as
   // exactly that — it belongs to the repo, not to this run.
   if (!attribution) {
-    const checks = floor.checks.map((c) => `- ${c.pack}/${c.label}: ${c.status}`).join('\n');
+    const checks = floor.checks.map(renderCheckLine).join('\n');
     return [
       `Correctness floor (entry snapshot — no change to attribute): ` +
         `**${floor.blocks ? 'red (pre-existing debt, not caused by this run)' : 'green'}**`,
@@ -36,7 +43,7 @@ export function renderFloorVerification(
   const netNew = attributed.filter((a) => a.attribution === 'net-new');
   const preExisting = attributed.filter((a) => a.attribution === 'pre-existing');
   const unattributed = attributed.filter((a) => a.attribution === 'unattributed');
-  const checks = floor.checks.map((c) => `- ${c.pack}/${c.label}: ${c.status}`).join('\n');
+  const checks = floor.checks.map(renderCheckLine).join('\n');
   const lines = [
     `Correctness floor (full scope, attributed vs ${entryLabel}): ` +
       `**${netNew.length > 0 ? 'FAILED — net-new failures' : 'passed'}**`,

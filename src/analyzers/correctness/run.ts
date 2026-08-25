@@ -21,11 +21,12 @@ import {
   dependencyManifestFilesIn,
 } from '../../languages';
 import type { LanguageId, LanguageSupport } from '../../languages/types';
-import type {
-  CorrectnessCommand,
-  CorrectnessContext,
-  CorrectnessProvider,
-  CorrectnessScope,
+import {
+  LOCKFILE_SYNC_LABEL,
+  type CorrectnessCommand,
+  type CorrectnessContext,
+  type CorrectnessProvider,
+  type CorrectnessScope,
 } from '../../languages/capabilities/correctness';
 import { isProjectPathIdentity } from '../../languages/capabilities/correctness';
 import {
@@ -102,6 +103,11 @@ export interface CorrectnessCheckResult {
    *  every surface prints, so a partial answer never hides behind a green
    *  check (Rule 19). */
   readonly disclosures?: readonly string[];
+  /** A disclosure attached to a PASS: the check passed under a condition the
+   *  reader must know about (today: the lockfile-sync check tolerating an
+   *  npm peer conflict because CI's install retries under
+   *  `--legacy-peer-deps`). Never present on a failure. */
+  readonly note?: string;
 }
 
 export interface CorrectnessFloorResult {
@@ -266,6 +272,71 @@ function runStructureCheck(
 }
 
 /**
+ * Execute a pack's optional lockfile-sync check (4.4.5): the ecosystem's
+ * non-installing frozen-install dry-run. A non-zero exit the pack declared
+ * `tolerated` (npm's peer conflict, which CI's install retries under
+ * `--legacy-peer-deps`) is a PASS carrying the disclosure as `note`; any
+ * other non-zero exit (an out-of-sync lockfile) is a real failure, the exact
+ * shape that killed CI's install before the gate ran. A pack skip and an
+ * unavailable binary are fail-open, disclosed. Returns null when the pack
+ * declined (no lockfile).
+ */
+function runLockfileCheck(
+  id: LanguageId,
+  provider: CorrectnessProvider,
+  ctx: CorrectnessContext,
+  exec: CommandExec,
+): CorrectnessCheckResult | null {
+  let check;
+  try {
+    check = provider.lockfileCheck!(ctx);
+  } catch (err) {
+    return {
+      pack: id,
+      label: LOCKFILE_SYNC_LABEL,
+      bin: '',
+      status: 'skipped-unavailable',
+      output: `lockfile-sync check errored: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+  if (check === null) return null;
+  if (check.kind === 'skipped') {
+    return {
+      pack: id,
+      label: LOCKFILE_SYNC_LABEL,
+      bin: '',
+      status: 'skipped-unavailable',
+      output: check.reason,
+    };
+  }
+  const cmd = check.command;
+  const base = { pack: id, label: cmd.label, bin: cmd.bin, args: cmd.args };
+  const outcome = exec(cmd, ctx.cwd);
+  if (!outcome.available) {
+    return {
+      ...base,
+      status: 'skipped-unavailable',
+      ...(outcome.output ? { output: outcome.output } : {}),
+    };
+  }
+  if (outcome.timedOut) return { ...base, status: 'skipped-timeout' };
+  if (outcome.overflowed) return { ...base, status: 'skipped-overflow' };
+  if (outcome.code === 0) return { ...base, status: 'pass' };
+  if (check.tolerated && check.tolerated.matches(outcome.output)) {
+    return { ...base, status: 'pass', note: check.tolerated.disclosure };
+  }
+  return {
+    ...base,
+    status: 'fail',
+    output:
+      tail(outcome.output) +
+      '\nThe lockfile does not satisfy the manifest: a frozen install (what CI runs before ' +
+      'any gate) fails on this tree. Re-run the package manager install so the lockfile ' +
+      'records the manifest, and commit both.',
+  };
+}
+
+/**
  * Run the correctness floor across the active packs. Never throws — an exec
  * error surfaces as a `fail` check (fail-closed), a missing binary as
  * `skipped-unavailable` (fail-open). `blocks` is true iff a check that ran
@@ -403,6 +474,15 @@ export function runCorrectnessFloor(opts: CorrectnessFloorOptions): CorrectnessF
       const structural = runStructureCheck(id, provider, ctx);
       if (structural !== null) checks.push(structural);
     }
+    // The lockfile-sync check (4.4.5): decided ONCE here, like the scope
+    // escalation above, never per pack. It runs at FULL scope only, which
+    // after escalation means "CI's scope, or a diff that touched a dependency
+    // manifest" — the only diffs that can move a lockfile out of sync. A
+    // source-only fast run never pays the dry-run.
+    if (provider.lockfileCheck && scope === 'full') {
+      const lock = runLockfileCheck(id, provider, ctx, exec);
+      if (lock !== null) checks.push(lock);
+    }
   }
 
   const ran = checks.some((c) => c.status === 'pass' || c.status === 'fail');
@@ -437,6 +517,13 @@ export function describeFloorCapturePlan(cwd: string, packs: readonly LanguageSu
       if (cmd !== null) plan.push(`${id} ${cmd.label}: ${[cmd.bin, ...cmd.args].join(' ')}`);
     }
     if (provider.resolutionCheck) plan.push(`${id} import-resolution: read-only, sub-second`);
+    if (provider.lockfileCheck) {
+      const lock = provider.lockfileCheck(ctx);
+      if (lock?.kind === 'command') {
+        const c = lock.command;
+        plan.push(`${id} ${c.label}: ${[c.bin, ...c.args].join(' ')} (dry-run, installs nothing)`);
+      }
+    }
   }
   return plan;
 }
