@@ -43,14 +43,22 @@ describe('realRecipeGit', () => {
 
     // Commit only the named path; the user's dirt stays uncommitted.
     fs.writeFileSync(path.join(dir, 'tracked.txt'), 'fixed\n');
-    const before = g.head();
     g.commitPaths(['tracked.txt'], 'fix(test): one order');
-    expect(g.head()).not.toBe(before);
     expect(g.changedPaths()).toEqual(['other.txt']);
     const log = execFileSync('git', ['log', '-1', '--format=%s %an'], {
       cwd: dir,
       encoding: 'utf8',
     });
     expect(log).toContain('fix(test): one order');
+  });
+
+  it('reports a non-ASCII path unescaped (git otherwise C-quotes it, and an escaped name matches no envelope)', () => {
+    const dir = initRepo();
+    const g = realRecipeGit(dir);
+    fs.writeFileSync(path.join(dir, 'sträy.txt'), 'x\n');
+    expect(g.changedPaths()).toEqual(['sträy.txt']);
+    g.discardPaths(['sträy.txt']);
+    expect(fs.existsSync(path.join(dir, 'sträy.txt'))).toBe(false);
+    expect(g.changedPaths()).toEqual([]);
   });
 });

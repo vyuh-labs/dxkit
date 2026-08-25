@@ -125,3 +125,97 @@ describe('recipe registry drives the tier (synthetic injection)', () => {
     }
   });
 });
+
+describe('order-intrinsic feasibility lives in matches (an executor-certain refusal tiers agent)', () => {
+  const draftBase = {
+    findings: [],
+    envelope: { paths: ['package.json', 'package-lock.json'], manifests: true },
+    constraints: { install: NPM_CI, forbidden: [] },
+    done: { absentIds: [], verifier: 'floor' as const, command: 'x' },
+    budget: { turns: 1, minutes: 1, usd: 1, derivation: 'x' },
+    provenance: { source: 'guardrail-blocking' as const },
+  };
+  const floorFinding = (pack: string, specifier?: string) => ({
+    kind: 'floor-check',
+    id: 'f',
+    attribution: 'pre-existing' as const,
+    evidence: {
+      type: 'floor' as const,
+      pack,
+      label: 'x',
+      command: '',
+      ...(specifier !== undefined ? { specifier } : {}),
+    },
+  });
+  const lintFinding = (check: string) => ({
+    kind: 'custom-check',
+    id: 'l',
+    attribution: 'pre-existing' as const,
+    evidence: { type: 'custom-check' as const, check, file: 'src/a.ts', rule: 'eqeqeq' },
+  });
+  const advisoryFinding = (fixedVersion: string) => ({
+    kind: 'dep-vuln',
+    id: 'a',
+    attribution: 'deferred' as const,
+    evidence: { type: 'dep-vuln' as const, package: 'p', advisoryId: 'GHSA-1', fixedVersion },
+  });
+  const tierOf = (partial: Partial<WorkOrder> & Pick<WorkOrder, 'id' | 'class'>) =>
+    assignTier({ ...draftBase, ...partial }).tier;
+
+  it('lockfile-sync: a pack without a lockfileCheck, or an ambiguous root, tiers agent', () => {
+    const ok = { id: 'stale-lockfile:typescript', class: 'stale-lockfile' as const };
+    expect(tierOf({ ...ok, findings: [floorFinding('typescript')] })).toBe('recipe');
+    expect(tierOf({ ...ok, findings: [floorFinding('go')] })).toBe('agent');
+    expect(
+      tierOf({
+        ...ok,
+        findings: [floorFinding('typescript')],
+        envelope: { paths: ['package.json', 'sub/package.json'], manifests: true },
+      }),
+    ).toBe('agent');
+  });
+
+  it('override-pin: a range-shaped fixed version or a two-root envelope tiers agent', () => {
+    const ok = { id: 'dep-advisory:p', class: 'dep-advisory' as const };
+    expect(tierOf({ ...ok, findings: [advisoryFinding('4.1.1')] })).toBe('recipe');
+    expect(tierOf({ ...ok, findings: [advisoryFinding('>=4.1.1')] })).toBe('agent');
+    expect(
+      tierOf({
+        ...ok,
+        findings: [advisoryFinding('4.1.1')],
+        envelope: { paths: ['package.json', 'sub/package.json'], manifests: true },
+      }),
+    ).toBe('agent');
+  });
+
+  it('declare-dependency: an unsupported pack or a flag-shaped specifier tiers agent', () => {
+    const ok = { id: 'unresolved-import:typescript:.', class: 'unresolved-import' as const };
+    expect(tierOf({ ...ok, findings: [floorFinding('typescript', 'left-pad')] })).toBe('recipe');
+    expect(tierOf({ ...ok, findings: [floorFinding('python', 'requests')] })).toBe('agent');
+    expect(tierOf({ ...ok, findings: [floorFinding('typescript', '--registry=https://x')] })).toBe(
+      'agent',
+    );
+    expect(tierOf({ ...ok, findings: [floorFinding('typescript', './src/missing')] })).toBe(
+      'agent',
+    );
+  });
+
+  it('lint-autofix: a user check, a fixCommand-less pack, or a sliced order tiers agent', () => {
+    const ok = {
+      id: 'lint-located:src/a.ts',
+      class: 'lint-located' as const,
+      envelope: { paths: ['src/a.ts'], manifests: false },
+      provenance: { source: 'debt-slice' as const, file: 'src/a.ts', slice: 1, of: 1 },
+    };
+    expect(tierOf({ ...ok, findings: [lintFinding('lint:typescript')] })).toBe('recipe');
+    expect(tierOf({ ...ok, findings: [lintFinding('arch-rules')] })).toBe('agent');
+    expect(tierOf({ ...ok, findings: [lintFinding('lint:go')] })).toBe('agent');
+    expect(
+      tierOf({
+        ...ok,
+        findings: [lintFinding('lint:typescript')],
+        provenance: { source: 'debt-slice', file: 'src/a.ts', slice: 1, of: 3 },
+      }),
+    ).toBe('agent');
+  });
+});

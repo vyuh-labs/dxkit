@@ -15,18 +15,24 @@
  * `matches` already tiers them to the agent).
  */
 import * as path from 'path';
-import { tail } from '../../analyzers/tools/bounded-exec';
 import { runSingleResolutionCheck } from '../../analyzers/correctness/single-checks';
 import { isProjectPathIdentity } from '../../languages/capabilities/correctness';
 import { isTestSourceFile } from '../../analyzers/tools/walk-source-files';
-import { classifyOsvSeverity } from '../../analyzers/tools/osv';
 import { upgradeArgv, type DependencySection } from '../../package-manager';
 import type { FloorEvidence, WorkOrder } from '../work-orders/types';
-import { nodePmAt, owningManifestRoot } from './shared';
+import {
+  execStepFailure,
+  isValidNpmPackageName,
+  nodePmAt,
+  osvBlockTier,
+  owningManifestRoot,
+} from './shared';
 import type { RecipeExecuteContext, RecipeOutcome } from './types';
 
-/** The pack whose resolution-check evidence this recipe can act on. */
-const SUPPORTED_PACK = 'typescript';
+/** The packs whose resolution-check evidence this recipe can act on. Read
+ *  by the registry's `matches` too, so an order from any other pack tiers
+ *  to the agent instead of being tiered recipe and refused at runtime. */
+export const DECLARABLE_PACKS: readonly string[] = ['typescript'];
 
 interface Candidate {
   readonly specifier: string;
@@ -52,10 +58,27 @@ export async function executeDeclareDependency(
     return { kind: 'refused', reason: 'the order carries no unresolved-specifier evidence' };
   }
   const pack = (order.findings[0].evidence as FloorEvidence).pack;
-  if (pack !== SUPPORTED_PACK) {
+  if (!DECLARABLE_PACKS.includes(pack)) {
     return {
       kind: 'refused',
-      reason: `declare-dependency is implemented for the ${SUPPORTED_PACK} pack only this round (order came from '${pack}')`,
+      reason: `declare-dependency is implemented for the ${DECLARABLE_PACKS.join('/')} pack only this round (order came from '${pack}')`,
+    };
+  }
+  // Rule 11 argument-injection rail: a specifier is attacker-influencable
+  // source text and flows into package-manager argv below. Anything outside
+  // the strict npm name shape (a leading dash, spaces, a URL) is refused
+  // BEFORE any argv exists; the registry's matches applies the same shape
+  // at planning time, so this is the defense-in-depth boundary.
+  const malformed = cands.filter((c) => !isValidNpmPackageName(c.specifier));
+  if (malformed.length > 0) {
+    return {
+      kind: 'refused',
+      reason:
+        `${malformed.map((c) => `'${c.specifier}'`).join(', ')} ` +
+        (malformed.length === 1
+          ? 'is not a valid npm package name'
+          : 'are not valid npm package names') +
+        '; refusing to hand it to the package manager',
     };
   }
   const relative = cands.filter((c) => isProjectPathIdentity(c.specifier));
@@ -119,10 +142,7 @@ export async function executeDeclareDependency(
         `OSV pre-check for ${c.specifier}@${version} could not be reached; the guardrail verifies`,
       );
     } else {
-      const blockTier = known.filter((v) => {
-        const s = classifyOsvSeverity(v);
-        return s === 'high' || s === 'critical';
-      });
+      const blockTier = osvBlockTier(known, ctx.blockSeverities);
       if (blockTier.length > 0) {
         const ids = blockTier.map((v) => v.id ?? 'unidentified advisory').join(', ');
         return {
@@ -144,21 +164,15 @@ export async function executeDeclareDependency(
   for (const r of resolved) {
     const [bin, ...args] = upgradeArgv(lock.pm, r.specifier, r.version, r.section);
     const install = ctx.exec({ bin, args }, rootAbs);
-    if (!install.available || install.timedOut || install.overflowed || install.code !== 0) {
-      return {
-        kind: 'failed',
-        step: 'install',
-        output: tail(
-          `${[bin, ...args].join(' ')}: ` +
-            (install.available ? install.output || 'non-zero exit' : 'binary not available'),
-        ),
-      };
-    }
+    const failure = execStepFailure('install', [bin, ...args].join(' '), install);
+    if (failure) return failure;
   }
 
-  // Verify with the pack's own resolution check: the ORDER's specifiers must
-  // be gone. Pre-existing unresolved debt elsewhere stays the floor's story.
-  const verify = runSingleResolutionCheck(ctx.cwd, pack);
+  // Verify with the pack's own resolution check AT THE OWNING ROOT (the
+  // tree the install provisioned; a nested workspace's importers resolve
+  // against its own installed tree): the ORDER's specifiers must be gone.
+  // Pre-existing unresolved debt elsewhere stays the floor's story.
+  const verify = runSingleResolutionCheck(rootAbs, pack);
   if (verify === null || (verify.status !== 'pass' && verify.status !== 'fail')) {
     return {
       kind: 'failed',

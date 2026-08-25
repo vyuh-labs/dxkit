@@ -24,6 +24,7 @@
  */
 import type { AnalysisTrustContext } from '../../analysis-trust';
 import type { CommandExec } from '../../analyzers/tools/bounded-exec';
+import type { FindingSeverity } from '../../baseline/types';
 import type { DepVulnFinding } from '../../languages/capabilities/types';
 import type { OsvPackageQuery } from '../../analyzers/tools/osv';
 
@@ -63,11 +64,14 @@ export interface RecipeExecuteContext {
   /** The ONE bounded spawn primitive: every install / linter / registry
    *  probe a recipe runs goes through this. */
   readonly exec: CommandExec;
-  /** Per-command wall-clock budget forwarded to verifies that spawn. */
-  readonly timeoutMs?: number;
-  /** OSV query-by-package (the $0 pre-check). Defaults to the real client;
-   *  injected in tests. `null` results are DISCLOSED, never read as clean. */
+  /** OSV query-by-package (the $0 pre-check). Defaults to the real client
+   *  wrapped in a per-run cache; injected in tests. `null` results are
+   *  DISCLOSED, never read as clean. */
   readonly queryOsv: OsvPackageQuery;
+  /** The advisory severities that REFUSE a candidate version, from the ONE
+   *  policy normalizer (`newAdvisoryBlockSeverities`) so the pre-checks and
+   *  the guardrail's new-advisory tier can never diverge (Rule 2.30). */
+  readonly blockSeverities: ReadonlySet<FindingSeverity>;
   /** Dependency re-audit over the ONE dispatch primitive
    *  (`gatherDepVulnsWithAvailability`). `null` = the audit could not run;
    *  the recipe fails its verify rather than claim an unobserved clean. */

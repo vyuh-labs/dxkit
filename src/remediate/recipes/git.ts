@@ -1,56 +1,59 @@
 /**
  * The recipe phase's git surface: the small set of operations the runner
  * needs to enforce envelopes and commit per order. Injectable (tests use a
- * fake); the real implementation shells `git` with the one BOT_IDENTITY,
- * mirroring `../git-ops.ts` (the agent sweep's sibling, separate because
- * the recipe phase works the UNCOMMITTED tree, order by order, and must
- * only ever touch the paths a recipe changed: a locally dirty tree's
- * pre-existing edits are never staged, committed, or discarded here).
+ * fake); the real implementation shells `git` with the one BOT_IDENTITY.
+ *
+ * "What did the working tree change?" is the canonical concept in
+ * `src/baseline/changed-files.ts` (Rule 2.30), so `changedPaths` IS
+ * `computeChangedPaths(cwd, 'HEAD')`: the deletions-inclusive projection,
+ * with unescaped (non-quoted) paths, diffing HEAD against the working tree
+ * (staged + unstaged + untracked), which is exactly the uncommitted set. A `null`
+ * from the canonical helper (git itself failed) THROWS here: the phase
+ * runner must never enforce an envelope against an unknown tree, and the
+ * throw surfaces as a named per-order failure, not a silent pass.
+ *
+ * This surface only ever touches the paths a recipe changed: a locally
+ * dirty tree's pre-existing edits are never staged, committed, or
+ * discarded here.
  */
 import { execFileSync } from 'child_process';
+import { computeChangedPaths } from '../../baseline/changed-files';
 import { BOT_IDENTITY } from '../../land-refresh';
 
 export interface RecipeGit {
   /** Repo-relative paths with any uncommitted change (staged, unstaged, or
-   *  untracked). */
+   *  untracked; deletions included). Throws when the tree state cannot be
+   *  determined; the caller records a named failure. */
   changedPaths(): string[];
   /** Discard the uncommitted changes to exactly these paths (restore
    *  tracked content, delete untracked files). Never wider than `paths`. */
   discardPaths(paths: readonly string[]): void;
   /** Stage exactly these paths and commit them with the bot identity. */
   commitPaths(paths: readonly string[], message: string): void;
-  head(): string;
 }
 
 export function realRecipeGit(cwd: string): RecipeGit {
   const git = (args: string[]): string =>
     execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
-  // Porcelain lines are positional (`XY <path>`): trimming the output would
-  // eat the first line's leading status space and shift its path slice.
-  const gitRaw = (args: string[]): string =>
-    execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
   return {
-    changedPaths: () =>
-      gitRaw(['status', '--porcelain'])
-        .split('\n')
-        .filter((l) => l.trim())
-        .map((l) => {
-          // Rename lines read `R  old -> new`; the NEW path is the changed one.
-          const p = l.slice(3);
-          const arrow = p.indexOf(' -> ');
-          return (arrow >= 0 ? p.slice(arrow + 4) : p).trim().replace(/^"|"$/g, '');
-        }),
+    changedPaths() {
+      const paths = computeChangedPaths(cwd, 'HEAD');
+      if (paths === null) {
+        throw new Error('could not determine the uncommitted working-tree state (git failed)');
+      }
+      return [...paths];
+    },
     discardPaths(paths) {
       if (paths.length === 0) return;
       // Tracked content back to HEAD, one path at a time: a single batched
-      // checkout aborts wholesale when ANY path is untracked ("pathspec did
+      // restore aborts wholesale when ANY path is untracked ("pathspec did
       // not match"), leaving tracked edits in place. `--` guards against a
       // path that looks like a flag; clean removes the untracked strays.
       for (const p of paths) {
         try {
           git(['checkout', 'HEAD', '--', p]);
         } catch {
-          // Untracked path: checkout has nothing to restore; clean handles it.
+          // Untracked path: nothing to restore; clean below handles it.
         }
       }
       git(['clean', '-fd', '--', ...paths]);
@@ -69,6 +72,5 @@ export function realRecipeGit(cwd: string): RecipeGit {
         message,
       ]);
     },
-    head: () => git(['rev-parse', 'HEAD']),
   };
 }

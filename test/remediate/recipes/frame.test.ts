@@ -95,6 +95,58 @@ function base(diff: boolean, summary: RecipePhaseSummary) {
   };
 }
 
+/** A git whose head advances once (the recipe commit) and whose diff answer
+ *  is per-base: the run's baseHead question and the agent's own-base
+ *  question must be distinguishable. */
+function recipeCommitGit(diffs: Record<string, boolean>): RemediateGit {
+  let calls = 0;
+  return {
+    head: () => (calls++ === 0 ? 'base0000' : 'recipe111'),
+    sweepLeftovers: () => undefined,
+    scrubRuntimeArtifacts: () => [],
+    hasDiff: (base: string) => diffs[base] ?? false,
+  };
+}
+
+describe('the agent diff is measured from the post-recipe head', () => {
+  it('an HONEST never-ran claim is not contradicted by the recipes own commits', async () => {
+    const driver = throwingDriver();
+    driver.run = async () => ({
+      completed: false,
+      timedOut: false,
+      transcriptTail: '',
+      neverRan: { reason: 'credential missing' },
+    });
+    const summary = phase({ selectedAgentTier: 1 }); // mixed plan: agent path runs
+    const r = await runRemediateTask({
+      ...base(true, summary),
+      drivers: [driver],
+      // Recipe committed (base0000 -> recipe111); the agent added NOTHING on
+      // top of recipe111.
+      git: recipeCommitGit({ base0000: true, recipe111: false }),
+    });
+    expect(r.outcome).toBe('agent-never-ran');
+    // The claim stood UNCONTRADICTED: no demotion note about tree evidence.
+    expect(r.envelope?.failure ?? '').not.toContain('contradicted');
+    expect(r.note).toContain('credential missing');
+  });
+
+  it('an agent that cleanly adds nothing on top of applied recipe commits still verifies the combined head', async () => {
+    const driver = throwingDriver();
+    driver.run = async () => ({ completed: true, timedOut: false, transcriptTail: '' });
+    const summary = phase({ selectedAgentTier: 1 });
+    const r = await runRemediateTask({
+      ...base(true, summary),
+      drivers: [driver],
+      git: recipeCommitGit({ base0000: true, recipe111: false }),
+    });
+    // Not a no-op: the recipe commits are real work and go through the one
+    // tree verification, anchored at the PRE-recipe base.
+    expect(r.outcome).toBe('verified');
+    expect(r.baseHead).toBe('base0000');
+  });
+});
+
 describe('recipe-only remediate runs', () => {
   it('completes VERIFIED with no agent spawn when every selected order was recipe-tier and applied', async () => {
     const r = await runRemediateTask(base(true, phase({})));
@@ -106,7 +158,7 @@ describe('recipe-only remediate runs', () => {
     expect(r.ledger).toContain('override-pin');
   });
 
-  it('completes NO-OP at $0 when every recipe refused (reasons in the ledger)', async () => {
+  it('every recipe refused at $0 is recipes-refused (NOT a clean no-op the lane green-loops on)', async () => {
     const summary = phase({
       records: [
         {
@@ -118,8 +170,12 @@ describe('recipe-only remediate runs', () => {
       ],
     });
     const r = await runRemediateTask(base(false, summary));
-    expect(r.outcome).toBe('no-op');
+    // A recipe-only run has no agent tier to fall back to, so all-refused
+    // must surface as a NON-CLEAN outcome; 'no-op' here would starve the
+    // orders forever while the schedule reads green.
+    expect(r.outcome).toBe('recipes-refused');
     expect(r.note).toContain('No agent was spawned');
+    expect(r.note).toContain('orders remain open');
     expect(r.ledger).toContain('pinning would introduce GHSA-x');
   });
 

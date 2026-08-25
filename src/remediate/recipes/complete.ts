@@ -81,14 +81,22 @@ export async function completeRecipeOnlyRun(
   const counts = recipeCounts(args.recipes);
   const zeroDollar = 'No agent was spawned: every selected work order was recipe-tier ($0 run).';
   if (!args.hasDiff) {
+    // NOT a clean no-op: the orders exist, every recipe refused or failed,
+    // and no agent tier exists in a recipe-only run to pick them up; a
+    // green outcome here would let the scheduled lane loop forever over
+    // debt nothing is working. `recipes-refused` is non-clean by
+    // construction (the executor's clean set never contains it), so the
+    // lane surfaces it; the agent-tier fallback within one run is the
+    // scoped-agent unit's job.
     return {
-      outcome: 'no-op',
+      outcome: 'recipes-refused',
       task: args.taskId,
       floor: args.entryFloor,
       recipes: args.recipes,
       note:
-        `${zeroDollar} No recipe applied a change (${counts.refused} refused, ` +
-        `${counts.failed} failed); per-order reasons are in the recipe section below.`,
+        `${zeroDollar} Every recipe declined: ${counts.refused} refused, ${counts.failed} ` +
+        'failed, nothing was fixed, and the orders remain open. Per-order reasons are in ' +
+        'the recipe section below; these orders need the agent tier or a human.',
     };
   }
   const { verified, guardrail } = await verifyCommittedHead(opts, {

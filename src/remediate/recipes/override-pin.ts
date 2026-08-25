@@ -19,11 +19,17 @@
  */
 import * as fs from 'fs';
 import * as path from 'path';
-import { classifyOsvSeverity } from '../../analyzers/tools/osv';
-import { maxSemver } from '../../analyzers/bom/gather';
+import { serializePreservingJson } from '../../files';
 import type { WorkOrder } from '../work-orders/types';
 import type { DepAdvisoryEvidence } from '../work-orders/types';
-import { nodePmAt, owningManifestRoot, resyncInstallFor, runResyncInstall } from './shared';
+import {
+  nodePmAt,
+  osvBlockTier,
+  owningManifestRoot,
+  pickPinVersion,
+  resyncInstallFor,
+  runResyncInstall,
+} from './shared';
 import type { RecipeExecuteContext, RecipeOutcome } from './types';
 
 function advisories(order: WorkOrder): DepAdvisoryEvidence[] {
@@ -61,9 +67,9 @@ function writeNpmOverride(rootAbs: string, pkg: string, version: string): Manife
       : {};
   overrides[pkg] = version;
   manifest.overrides = overrides;
-  const indent = /\n([ \t]+)"/.exec(text)?.[1] ?? '  ';
-  const trailing = text.endsWith('\n') ? '\n' : '';
-  fs.writeFileSync(file, JSON.stringify(manifest, null, indent) + trailing);
+  // The one style-preserving JSON writer (files.ts): indentation, compact
+  // form, and trailing newline survive, so the override is a one-key diff.
+  fs.writeFileSync(file, serializePreservingJson(text, manifest));
   return { file };
 }
 
@@ -108,8 +114,19 @@ export async function executeOverridePin(
     };
   }
 
-  // The pin: the highest known fixed version clears every advisory at once.
-  const pin = maxSemver(fixedVersions);
+  // The pin: the highest known CONCRETE fixed version clears every advisory
+  // at once. Prerelease-aware (1.2.3 outranks 1.2.3-beta.1); a range-shaped
+  // fixed string refuses rather than guesses (the registry's `matches`
+  // already tiers such orders to the agent, so this is the defensive rail).
+  const pin = pickPinVersion(fixedVersions);
+  if (pin === null) {
+    return {
+      kind: 'refused',
+      reason:
+        `the known fixed versions for '${pkg}' are not all concrete semver values ` +
+        `(${fixedVersions.join(', ')}); a range cannot be pinned verbatim`,
+    };
+  }
   const notes: string[] = [];
 
   // $0 pre-check: would the pinned version itself carry a block-tier
@@ -119,10 +136,7 @@ export async function executeOverridePin(
   if (known === null) {
     notes.push(`OSV pre-check for ${pkg}@${pin} could not be reached; the re-audit verifies`);
   } else {
-    const blockTier = known.filter((v) => {
-      const s = classifyOsvSeverity(v);
-      return s === 'high' || s === 'critical';
-    });
+    const blockTier = osvBlockTier(known, ctx.blockSeverities);
     if (blockTier.length > 0) {
       const ids = blockTier.map((v) => v.id ?? 'unidentified advisory').join(', ');
       return {

@@ -26,9 +26,12 @@
  */
 import { makeCommandExec, tail, type CommandExec } from '../../analyzers/tools/bounded-exec';
 import { gatherDepVulnsWithAvailability } from '../../analyzers/security/gather';
-import { queryOsvPackage, type OsvPackageQuery } from '../../analyzers/tools/osv';
+import { queryOsvPackage, type OsvPackageQuery, type OsvVuln } from '../../analyzers/tools/osv';
 import type { AnalysisTrustContext } from '../../analysis-trust';
 import type { CorrectnessFloorResult } from '../../analyzers/correctness/run';
+import { newAdvisoryBlockSeverities } from '../../baseline/policy-sections';
+import { readPolicySection } from '../../baseline/policy-text';
+import type { FindingSeverity } from '../../baseline/types';
 import type { DepVulnFinding } from '../../languages/capabilities/types';
 import type { RemediateConfig } from '../config';
 import { planRepoWorkOrders, type GatherWorkOrderOptions } from '../work-orders/gather';
@@ -36,7 +39,7 @@ import { classesSelectedBy } from '../work-orders/types';
 import { selectOrders } from '../work-orders/planner';
 import { RECIPE_REGISTRY, type RecipeDeclaration } from '../work-orders/recipes-registry';
 import type { WorkOrder } from '../work-orders/types';
-import { partitionByEnvelope } from './envelope';
+import { partitionByEnvelope, pathInEnvelope } from './envelope';
 import { realRecipeGit, type RecipeGit } from './git';
 import type { RecipeOutcome } from './types';
 
@@ -84,10 +87,35 @@ export interface RunRecipeOrdersDeps {
   readonly trust: AnalysisTrustContext;
   readonly git: RecipeGit;
   readonly exec: CommandExec;
-  readonly timeoutMs?: number;
   readonly registry?: readonly RecipeDeclaration[];
   readonly queryOsv?: OsvPackageQuery;
   readonly auditDepVulns?: (cwd: string) => Promise<readonly DepVulnFinding[] | null>;
+  /** The advisory block tier for the OSV pre-checks; defaults to the repo's
+   *  policy through the one normalizer (`effectiveBlockSeverities`). */
+  readonly blockSeverities?: ReadonlySet<FindingSeverity>;
+}
+
+/** The repo's effective advisory block tier, through the ONE policy
+ *  normalizer the guardrail's new-advisory classifier reads (Rule 2.30). */
+export function effectiveBlockSeverities(cwd: string): ReadonlySet<FindingSeverity> {
+  return newAdvisoryBlockSeverities({
+    newAdvisories: readPolicySection(cwd, 'newAdvisories') as never,
+  });
+}
+
+/** Wrap an OSV query in a per-run cache: one plan can ask about the same
+ *  candidate from several orders, and a network answer does not change
+ *  mid-run. */
+export function cachedOsvQuery(query: OsvPackageQuery): OsvPackageQuery {
+  const cache = new Map<string, Promise<OsvVuln[] | null>>();
+  return (pkg, version, ecosystem) => {
+    const key = `${ecosystem}\0${pkg}\0${version}`;
+    const hit = cache.get(key);
+    if (hit) return hit;
+    const pending = query(pkg, version, ecosystem);
+    cache.set(key, pending);
+    return pending;
+  };
 }
 
 /** The default re-audit: the ONE dep-audit dispatch primitive; an
@@ -104,6 +132,8 @@ export async function runRecipeOrders(
   deps: RunRecipeOrdersDeps,
 ): Promise<RecipeOrderRecord[]> {
   const registry = deps.registry ?? RECIPE_REGISTRY;
+  const queryOsv = cachedOsvQuery(deps.queryOsv ?? queryOsvPackage);
+  const blockSeverities = deps.blockSeverities ?? effectiveBlockSeverities(deps.cwd);
   const records: RecipeOrderRecord[] = [];
   for (const order of orders) {
     if (order.tier !== 'recipe' || !order.recipe) continue;
@@ -134,15 +164,47 @@ export async function runRecipeOrders(
       });
       continue;
     }
-    const pre = new Set(deps.git.changedPaths());
+    let pre: Set<string>;
+    try {
+      pre = new Set(deps.git.changedPaths());
+    } catch (err) {
+      records.push({
+        ...base,
+        outcome: {
+          kind: 'failed',
+          step: 'working-tree',
+          output: tail(err instanceof Error ? err.message : String(err)),
+        },
+      });
+      continue;
+    }
+    // A pre-existing uncommitted edit INSIDE the envelope makes the recipe's
+    // own diff unattributable: an edit to an already-dirty file would be
+    // neither committed (a partial manifest commit CI cannot install) nor
+    // discarded (leaking the recipe's change into the user's dirt). Refuse
+    // up front, dirty paths named, so both contracts hold exactly.
+    const dirtyInEnvelope = [...pre].filter((path) => pathInEnvelope(path, order.envelope));
+    if (dirtyInEnvelope.length > 0) {
+      records.push({
+        ...base,
+        outcome: {
+          kind: 'refused',
+          reason:
+            'the working tree already has uncommitted changes inside this order envelope ' +
+            `(${dirtyInEnvelope.join(', ')}); commit or stash them so the recipe's own diff ` +
+            'stays attributable',
+        },
+      });
+      continue;
+    }
     let outcome: RecipeOutcome;
     try {
       outcome = await decl.execute(order, {
         cwd: deps.cwd,
         trust: deps.trust,
         exec: deps.exec,
-        ...(deps.timeoutMs !== undefined ? { timeoutMs: deps.timeoutMs } : {}),
-        queryOsv: deps.queryOsv ?? queryOsvPackage,
+        queryOsv,
+        blockSeverities,
         auditDepVulns: deps.auditDepVulns ?? defaultAudit,
       });
     } catch (err) {
@@ -154,7 +216,22 @@ export async function runRecipeOrders(
     }
     // Only the paths THIS recipe dirtied are in play: pre-existing local
     // edits are never staged, committed, or discarded by the phase.
-    const delta = deps.git.changedPaths().filter((p) => !pre.has(p));
+    let delta: string[];
+    try {
+      delta = deps.git.changedPaths().filter((p) => !pre.has(p));
+    } catch (err) {
+      records.push({
+        ...base,
+        outcome: {
+          kind: 'failed',
+          step: 'working-tree',
+          output:
+            'could not read the working tree after the recipe ran, so its diff can be ' +
+            `neither enforced nor committed: ${tail(err instanceof Error ? err.message : String(err))}`,
+        },
+      });
+      continue;
+    }
     if (outcome.kind !== 'applied') {
       deps.git.discardPaths(delta);
       records.push({ ...base, outcome });
@@ -202,6 +279,7 @@ export interface RecipePhaseOptions {
   readonly gather?: GatherWorkOrderOptions;
   readonly queryOsv?: OsvPackageQuery;
   readonly auditDepVulns?: (cwd: string) => Promise<readonly DepVulnFinding[] | null>;
+  readonly blockSeverities?: ReadonlySet<FindingSeverity>;
 }
 
 /**
@@ -237,10 +315,10 @@ export async function runRecipePhaseForTask(opts: RecipePhaseOptions): Promise<R
     trust: opts.trust,
     git: opts.git ?? realRecipeGit(opts.cwd),
     exec: opts.exec ?? makeCommandExec(opts.timeoutMs),
-    ...(opts.timeoutMs !== undefined ? { timeoutMs: opts.timeoutMs } : {}),
     ...(opts.registry ? { registry: opts.registry } : {}),
     ...(opts.queryOsv ? { queryOsv: opts.queryOsv } : {}),
     ...(opts.auditDepVulns ? { auditDepVulns: opts.auditDepVulns } : {}),
+    ...(opts.blockSeverities ? { blockSeverities: opts.blockSeverities } : {}),
   });
   return { ran: true, records, ...summaryBase };
 }

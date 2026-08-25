@@ -108,6 +108,63 @@ describe('declare-dependency recipe', () => {
     expect(calls.every((c) => c.cmd.args[0] === 'view')).toBe(true);
   });
 
+  it('REFUSES a flag-shaped specifier before any argv exists (Rule 11 argument-injection rail)', async () => {
+    const cwd = repoImporting('left-pad');
+    const { exec, calls } = fakeExec();
+    const outcome = await executeDeclareDependency(
+      importOrder('--registry=https://evil.example', ['src/a.ts']),
+      makeCtx(cwd, { exec }),
+    );
+    expect(outcome.kind).toBe('refused');
+    if (outcome.kind === 'refused') {
+      expect(outcome.reason).toContain('--registry=https://evil.example');
+      expect(outcome.reason).toContain('not a valid npm package name');
+    }
+    // The refusal happened BEFORE any command: not even the registry probe ran.
+    expect(calls).toHaveLength(0);
+  });
+
+  it('verifies at the OWNING ROOT: a nested-workspace install resolves against its own tree', async () => {
+    const cwd = tempRepo({
+      'package.json': '{"name":"umbrella"}',
+      'packages/app/package.json': PKG,
+      'packages/app/package-lock.json': '{}',
+      'packages/app/node_modules/.keep': '',
+      'packages/app/src/a.ts': "import x from 'left-pad';\nexport default x;\n",
+    });
+    const { exec, calls } = fakeExec((cmd) => {
+      if (cmd.args[0] === 'view') return { output: '1.3.0\n' };
+      if (cmd.args[0] === 'install') {
+        fs.mkdirSync(path.join(cwd, 'packages/app/node_modules/left-pad'), { recursive: true });
+      }
+      return undefined;
+    });
+    const order = makeOrder({
+      id: 'unresolved-import:typescript:packages/app',
+      class: 'unresolved-import',
+      findings: [
+        floorFinding('typescript/import-resolution#left-pad', 'typescript', 'import-resolution', {
+          specifier: 'left-pad',
+          importingFiles: ['packages/app/src/a.ts'],
+        }),
+      ],
+      envelope: {
+        paths: [
+          'packages/app/src/a.ts',
+          'packages/app/package.json',
+          'packages/app/package-lock.json',
+        ],
+        manifests: true,
+      },
+    });
+    const outcome = await executeDeclareDependency(order, makeCtx(cwd, { exec }));
+    // The repo ROOT has no node_modules at all: only a root-anchored verify
+    // would read "dependencies are not installed" and fail a correct install.
+    expect(outcome.kind).toBe('applied');
+    // Both the registry probe and the install ran at the owning root.
+    for (const c of calls) expect(c.cwd).toBe(path.join(cwd, 'packages/app'));
+  });
+
   it('refuses a project-path identity (a missing file is not a package)', async () => {
     const cwd = repoImporting('left-pad');
     const { exec, calls } = fakeExec();

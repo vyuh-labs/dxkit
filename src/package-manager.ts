@@ -402,21 +402,30 @@ export function lockfileSyncCheck(pm: PackageManager): LockfileSyncCheck {
 // override-pin recipes), never by a verification.
 // ---------------------------------------------------------------------------
 
-/** The install that (re)writes the lockfile from the manifest, with the same
- *  declared fallback doctrine as the frozen table (`isPeerConflictOnly` is
- *  the shared gate on when the fallback may run). */
+/** The install that (re)writes the lockfile from the manifest. A fallback is
+ *  a DECLARED doctrine, never a blanket retry: `matches` names the one
+ *  primary-failure shape the fallback answers (npm's peer conflict via the
+ *  shared `isPeerConflictOnly`; yarn classic rejecting a berry-only flag). */
 export interface ResyncInstall {
   readonly pm: PackageManager;
   readonly argv: readonly string[];
-  readonly fallback?: { readonly argv: readonly string[]; readonly reason: string };
+  readonly fallback?: {
+    readonly argv: readonly string[];
+    readonly reason: string;
+    readonly matches: (output: string) => boolean;
+  };
 }
 
 /**
  * The lock-writing install per PM. npm re-resolves and writes
  * `package-lock.json` (`--no-audit --no-fund` keeps it quiet and offline-ish);
  * its peer-conflict fallback mirrors the frozen install's declared doctrine.
- * pnpm/yarn/bun re-resolve and write their lockfiles by default; pnpm gets the
- * explicit flag because a CI environment flips its default to frozen.
+ * The CI-default trap: pnpm flips to `--frozen-lockfile` and yarn berry to
+ * `--immutable` whenever CI is set, exactly where the scheduled lane runs, so
+ * both carry the explicit mutable flag. yarn classic (v1) does not know
+ * `--no-immutable`; the declared fallback drops to its plain install, which
+ * is already lock-writing. bun has no CI flip (that is what its separate
+ * `bun ci` alias is for), so its plain install stays lock-writing as is.
  */
 export function resyncInstallFor(pm: PackageManager): ResyncInstall {
   switch (pm) {
@@ -427,12 +436,23 @@ export function resyncInstallFor(pm: PackageManager): ResyncInstall {
         fallback: {
           argv: ['npm', 'install', '--legacy-peer-deps', '--no-audit', '--no-fund'],
           reason: LEGACY_PEER_DEPS_REASON,
+          matches: isPeerConflictOnly,
         },
       };
     case 'pnpm':
       return { pm, argv: ['pnpm', 'install', '--no-frozen-lockfile'] };
     case 'yarn':
-      return { pm, argv: ['yarn', 'install'] };
+      return {
+        pm,
+        argv: ['yarn', 'install', '--no-immutable'],
+        fallback: {
+          argv: ['yarn', 'install'],
+          reason:
+            'yarn classic (v1) does not know --no-immutable; its plain install already ' +
+            'writes the lockfile',
+          matches: (output) => /no-immutable|unknown (option|flag)/i.test(output),
+        },
+      };
     case 'bun':
       return { pm, argv: ['bun', 'install'] };
   }

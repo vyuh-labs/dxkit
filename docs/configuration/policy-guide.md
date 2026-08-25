@@ -660,7 +660,10 @@ attributed floor, guardrail) remains the arbiter of the combined result.
 When every selected order is recipe-tier, the run completes with no agent
 spawn at all: a $0 remediate run. A recipe that cannot act refuses with the
 reason in the ledger; a recipe whose own verify does not confirm discards
-its diff, and the order stays open for the agent tier.
+its diff. When such a recipe-only run fixes nothing (every recipe refused
+or failed), the outcome is `recipes-refused`, a non-clean result the
+scheduled lane surfaces, never a green no-op that would quietly starve the
+same orders week after week.
 
 **Default and why.** `true` when remediation is used at all: a deterministic
 fix that verifies is strictly cheaper and more reliable than an agent

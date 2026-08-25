@@ -9,6 +9,8 @@
 import { describe, it, expect } from 'vitest';
 import { partitionByEnvelope, pathInEnvelope } from '../../../src/remediate/recipes/envelope';
 import {
+  cachedOsvQuery,
+  effectiveBlockSeverities,
   recipeCounts,
   runRecipeOrders,
   runRecipePhaseForTask,
@@ -206,6 +208,55 @@ describe('runRecipeOrders', () => {
     expect(git.dirty).toEqual(['user-was-editing.md']);
   });
 
+  it('REFUSES an order whose envelope intersects PRE-DIRTY paths (named), so a recipe edit is never mixed with local dirt', async () => {
+    const git = fakeGit();
+    git.dirty.push('fixed.txt', 'unrelated.md'); // fixed.txt is IN the envelope
+    const { exec } = fakeExec();
+    let executed = false;
+    const registry = [
+      syntheticRecipe(async () => {
+        executed = true;
+        return { kind: 'applied', changedFiles: [] };
+      }),
+    ];
+    const records = await runRecipeOrders([syntheticOrder], {
+      cwd: '/x',
+      trust: trustedLocalContext(),
+      git,
+      exec,
+      registry,
+    });
+    expect(executed).toBe(false);
+    expect(records[0].outcome.kind).toBe('refused');
+    if (records[0].outcome.kind === 'refused') {
+      expect(records[0].outcome.reason).toContain('fixed.txt');
+      expect(records[0].outcome.reason).not.toContain('unrelated.md');
+    }
+    // Nothing was discarded or committed: both contracts hold exactly.
+    expect(git.discarded).toEqual([]);
+    expect(git.commits).toEqual([]);
+  });
+
+  it('an unreadable working tree is a named per-order failure, never an unenforced envelope', async () => {
+    const git = fakeGit();
+    git.changedPaths = () => {
+      throw new Error('git exploded');
+    };
+    const { exec } = fakeExec();
+    const registry = [syntheticRecipe(async () => ({ kind: 'applied', changedFiles: [] }))];
+    const records = await runRecipeOrders([syntheticOrder], {
+      cwd: '/x',
+      trust: trustedLocalContext(),
+      git,
+      exec,
+      registry,
+    });
+    expect(records[0].outcome.kind).toBe('failed');
+    if (records[0].outcome.kind === 'failed') {
+      expect(records[0].outcome.step).toBe('working-tree');
+    }
+  });
+
   it('a declared-but-unimplemented recipe id is a refusal, never a crash', async () => {
     const git = fakeGit();
     const { exec } = fakeExec();
@@ -217,6 +268,32 @@ describe('runRecipeOrders', () => {
     if (records[0].outcome.kind === 'refused') {
       expect(records[0].outcome.reason).toContain('ghost-recipe');
     }
+  });
+});
+
+describe('block-tier plumbing (Rule 2.30: the ONE policy normalizer)', () => {
+  it('effectiveBlockSeverities reads newAdvisories.blockSeverities through the canonical normalizer', () => {
+    const cwd = tempRepo({
+      '.dxkit/policy.json': JSON.stringify({
+        newAdvisories: { blockSeverities: ['critical', 'high', 'medium'] },
+      }),
+    });
+    expect([...effectiveBlockSeverities(cwd)].sort()).toEqual(['critical', 'high', 'medium']);
+    // Absent policy: the same default the guardrail classifier uses.
+    const bare = tempRepo({});
+    expect([...effectiveBlockSeverities(bare)].sort()).toEqual(['critical', 'high']);
+  });
+
+  it('cachedOsvQuery asks the network once per candidate within a run', async () => {
+    let calls = 0;
+    const cached = cachedOsvQuery(async () => {
+      calls += 1;
+      return [];
+    });
+    await cached('left-pad', '1.3.0', 'npm');
+    await cached('left-pad', '1.3.0', 'npm');
+    await cached('left-pad', '1.4.0', 'npm');
+    expect(calls).toBe(2);
   });
 });
 

@@ -20,6 +20,7 @@ import type { RecipePhaseSummary, runRecipePhaseForTask } from './recipes/run-re
 export type RemediateOutcome =
   | 'verified' // diff produced, floor net-new-clean, guardrail PASSED — ready to land
   | 'no-op' // agent ran TO COMPLETION, no diff (nothing to fix)
+  | 'recipes-refused' // recipe-only plan, every recipe refused/failed: nothing fixed, NOT clean
   | 'install-failed' // a clean checkout of the diff cannot be installed the way CI installs — never lands
   | 'floor-red' // diff breaks the net-new floor — never lands
   | 'guardrail-red' // guardrail blocked, refused, or could not run — never lands

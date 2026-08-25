@@ -7,7 +7,7 @@
  */
 
 import { LANE_TOKEN_PAT_SECRET_NAME } from '../lanes/lane-token';
-import type { AgentDriver } from './driver';
+import type { AgentDriver, AgentRunResult } from './driver';
 import type { RemediateBudget } from './config';
 
 /**
@@ -84,4 +84,27 @@ export function budgetPromptNote(budget: RemediateBudget): string {
     `in docs/DXKIT-REMEDIATION-NOTES.md, since work committed before the cap survives ` +
     `while uncommitted edits are swept into a single unlabeled-context commit.`
   );
+}
+
+/** Post-run budget-overrun facts, derived only where dxkit may claim them:
+ *  a reported cost over the advisory cap is an honest post-hoc statement
+ *  for any driver that at least REPORTS cost, while a turn cap counts as
+ *  HIT only when the driver ENFORCES turns (a report-only driver would
+ *  mislabel a natural completion as budget-exhausted while the envelope
+ *  discloses the cap as unenforceable). Lives beside the other budget
+ *  phrasing/derivations, the one home of budget reasoning. */
+export function budgetOverruns(
+  driver: Pick<AgentDriver, 'budgetSupport'>,
+  result: Pick<AgentRunResult, 'timedOut' | 'turns' | 'costUsd'>,
+  budget: RemediateBudget,
+): { overUsd: boolean; overTurns: boolean; partial: boolean } {
+  const overUsd =
+    driver.budgetSupport.cost !== 'none' &&
+    result.costUsd !== undefined &&
+    result.costUsd > budget.maxUsd;
+  const overTurns =
+    driver.budgetSupport.turns === 'enforced' &&
+    result.turns !== undefined &&
+    result.turns >= budget.maxTurns;
+  return { overUsd, overTurns, partial: result.timedOut || overUsd || overTurns };
 }
