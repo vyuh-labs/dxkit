@@ -18,6 +18,7 @@ import {
 } from '../../../src/remediate/work-orders/planner';
 import { floorFindingId } from '../../../src/remediate/work-orders/types';
 import { checkKey } from '../../../src/analyzers/correctness/attribution';
+import { LOCKFILE_SYNC_LABEL } from '../../../src/languages/capabilities/correctness';
 import type { RichBaselineEntry } from '../../../src/baseline/types';
 import { DEFAULT_REMEDIATE_BUDGET } from '../../../src/remediate/config';
 
@@ -160,6 +161,37 @@ describe('planWorkOrders: entry floor', () => {
       [`${checkKey('typescript', 'affected-tests')}#suite/a`, 'pre-existing'],
       [`${checkKey('typescript', 'affected-tests')}#suite/b`, 'net-new'],
     ]);
+  });
+
+  it('a failing lockfile-sync check mints the stale-lockfile class: root manifest envelope, floor done, the lockfile-sync recipe', () => {
+    const lockfile: FloorFailureInput = {
+      pack: 'typescript',
+      label: LOCKFILE_SYNC_LABEL,
+      command: 'npm ci --dry-run --ignore-scripts --no-audit --no-fund',
+      output: 'npm error Missing: left-pad@1.3.0 from lock file',
+      attribution: 'net-new',
+    };
+    const plan = planWorkOrders({ ...empty(), floorFailures: [lockfile] });
+    expect(plan.orders).toHaveLength(1);
+    const order = plan.orders[0];
+    expect(order.id).toBe('stale-lockfile:typescript');
+    expect(order.class).toBe('stale-lockfile');
+    expect(order.findings[0].id).toBe(checkKey('typescript', LOCKFILE_SYNC_LABEL));
+    expect(order.envelope).toEqual({
+      paths: ['package-lock.json', 'package.json'],
+      manifests: true,
+    });
+    expect(order.done.verifier).toBe('floor');
+    expect(order.outputTail).toContain('Missing: left-pad');
+    expect(order.tier).toBe('recipe');
+    expect(order.recipe).toBe('lockfile-sync');
+    // without an install command the recipe cannot run its reinstall: agent
+    const noInstall = planWorkOrders({
+      ...empty(),
+      floorFailures: [lockfile],
+      installFor: () => undefined,
+    });
+    expect(noInstall.orders[0].tier).toBe('agent');
   });
 
   it('no install command known: the order carries none (disclosed at render), never a guessed one', () => {

@@ -40,6 +40,7 @@ import * as path from 'path';
 import { runCorrectnessFloor, type CorrectnessFloorResult } from '../../analyzers/correctness/run';
 import { attributeFloorFailures } from '../../analyzers/correctness/attribution';
 import { detectActiveLanguages, matchesManifestPattern } from '../../languages';
+import { LOCKFILE_SYNC_LABEL } from '../../languages/capabilities/correctness';
 import type { LanguageSupport } from '../../languages/types';
 import {
   DEFAULT_BASELINE_NAME,
@@ -365,7 +366,7 @@ export async function gatherWorkOrderInputs(
   const needsManifests =
     deferred.some((d) => d.kind === 'dep-vuln') ||
     debt.some((e) => e.kind === 'dep-vuln') ||
-    floor.failures.some((f) => (f.unresolved?.length ?? 0) > 0);
+    floor.failures.some((f) => (f.unresolved?.length ?? 0) > 0 || f.label === LOCKFILE_SYNC_LABEL);
   const manifests: ManifestRoot[] = needsManifests
     ? manifestRoots(cwd, packs, disclosures)
     : [{ dir: '', files: [] }];

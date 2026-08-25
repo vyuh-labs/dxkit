@@ -12,6 +12,7 @@
  * order, so a grandfathered failure is never blamed on the agent.
  */
 import type { AttributedFloorFailure } from '../../analyzers/correctness/attribution';
+import { LOCKFILE_SYNC_LABEL } from '../../languages/capabilities/correctness';
 import { FLOOR_FINDING_KIND, floorFindingId, type WorkOrderFinding } from './types';
 import {
   INSTALL_FORBIDDEN,
@@ -132,12 +133,48 @@ function unresolvedImportOrders(check: FloorFailureInput, ctx: FloorOrderContext
   return out;
 }
 
+/** A failing lockfile-sync check: the `stale-lockfile` class. The envelope
+ *  is the owning dependency root's manifest + lockfile (the check runs at
+ *  the repo root today, so that root owns it); the fix is a reinstall, so
+ *  manifests may change and the lockfile-sync recipe serves it. */
+function staleLockfileOrder(check: FloorFailureInput, ctx: FloorOrderContext): Ranked {
+  const root = ctx.manifests.find((m) => m.dir === '') ?? { dir: '', files: [] };
+  const finding: WorkOrderFinding = {
+    kind: FLOOR_FINDING_KIND,
+    id: floorFindingId(check.pack, check.label),
+    attribution: check.attribution,
+    evidence: { type: 'floor', pack: check.pack, label: check.label, command: check.command },
+  };
+  const install = ctx.installFor(check.pack);
+  return {
+    rank: [
+      check.attribution === 'net-new' ? VALUE_BAND.netNewFloor : VALUE_BAND.preExistingFloor,
+      `${check.pack}/${check.label}`,
+    ],
+    draft: {
+      id: `stale-lockfile:${check.pack}`,
+      class: 'stale-lockfile',
+      findings: [finding],
+      envelope: { paths: manifestPaths(root), manifests: true },
+      constraints: { ...(install ? { install } : {}), forbidden: [INSTALL_FORBIDDEN] },
+      done: doneFor('floor', [finding]),
+      budget: deriveBudget(1, ctx.capFor('stale-lockfile')),
+      ...(check.output !== undefined ? { outputTail: check.output } : {}),
+      provenance: { source: 'entry-floor', check: floorFindingId(check.pack, check.label) },
+    },
+  };
+}
+
 export function floorOrders(
   failures: readonly FloorFailureInput[],
   ctx: FloorOrderContext,
 ): Ranked[] {
   const out: Ranked[] = [];
   for (const check of failures) {
+    if (check.label === LOCKFILE_SYNC_LABEL) {
+      out.push(staleLockfileOrder(check, ctx));
+      continue;
+    }
     if (check.unresolved && check.unresolved.length > 0) {
       out.push(...unresolvedImportOrders(check, ctx));
       continue;

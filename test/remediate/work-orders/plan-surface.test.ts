@@ -22,6 +22,7 @@ import {
 import { resolveRemediateConfig } from '../../../src/remediate/config';
 import { getLanguage } from '../../../src/languages';
 import type { CorrectnessFloorResult } from '../../../src/analyzers/correctness/run';
+import { LOCKFILE_SYNC_LABEL } from '../../../src/languages/capabilities/correctness';
 import type { DepVulnFinding } from '../../../src/languages/capabilities/types';
 
 let repo: string;
@@ -254,6 +255,36 @@ describe('remediate plan --json: work orders', () => {
     const none = await planRepoWorkOrders(repo, resolveRemediateConfig(repo), { packs: TS });
     expect(none.floorSource).toBe('none');
     expect(none.plan.orders).toEqual([]);
+  });
+
+  it('a floor envelope carrying a failing lockfile-sync check yields the stale-lockfile order; a passing one yields none', async () => {
+    writePolicy({ remediate: { enabled: true } });
+    const lockCheck = (status: string) => ({
+      capturedAtCommit: 'base',
+      capturedAt: '2026-08-01T00:00:00.000Z',
+      checks: [
+        {
+          pack: 'typescript',
+          label: LOCKFILE_SYNC_LABEL,
+          command: 'npm ci --dry-run --ignore-scripts --no-audit --no-fund',
+          status,
+          ...(status === 'fail' ? { output: 'npm error Missing: left-pad@1.3.0' } : {}),
+        },
+      ],
+    });
+    writeBaseline([], lockCheck('fail'));
+    const failing = await planRepoWorkOrders(repo, resolveRemediateConfig(repo), { packs: TS });
+    expect(failing.floorSource).toBe('baseline-envelope');
+    expect(failing.plan.orders.map((o) => [o.id, o.class, o.tier, o.recipe])).toEqual([
+      ['stale-lockfile:typescript', 'stale-lockfile', 'recipe', 'lockfile-sync'],
+    ]);
+    expect(failing.plan.orders[0].envelope).toEqual({
+      paths: ['package-lock.json', 'package.json'],
+      manifests: true,
+    });
+    writeBaseline([], lockCheck('pass'));
+    const passing = await planRepoWorkOrders(repo, resolveRemediateConfig(repo), { packs: TS });
+    expect(passing.plan.orders).toEqual([]);
   });
 
   it('a corrupt baseline is a DISCLOSURE, never a silent "backlog clear"', async () => {

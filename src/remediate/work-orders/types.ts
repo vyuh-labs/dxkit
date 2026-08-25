@@ -52,11 +52,10 @@ export const WORK_ORDER_CLASSES = {
   },
   'stale-lockfile': {
     summary: 'a dependency manifest whose lockfile no longer matches it',
-    producers: ['pending'],
-    pendingReason:
-      'the lockfile-sync floor check (a correctness check with its own label) lands with the ' +
-      'verify-tree-parity unit; until it is on the entry floor there is no structured signal ' +
-      'to mint this class from, and guessing one from prose would be a lossy second producer',
+    // The lockfile-sync floor check (pack-declared `lockfileCheck`, label
+    // `LOCKFILE_SYNC_LABEL`) is the structured signal this class minted
+    // `pending` until it landed.
+    producers: ['entry-floor'],
     recipe: 'lockfile-sync',
     task: 'fix-build',
   },

@@ -52,6 +52,7 @@ stanzas).
 | `remediate.schedule`                | [#remediate-schedule](#remediate-schedule)               |
 | `remediate.taskBudgets`             | [#remediate-task-budgets](#remediate-task-budgets)       |
 | `remediate.tasks`                   | [#remediate-tasks](#remediate-tasks)                     |
+| `remediate.workOrders.maxSliceSize` | [#remediate-work-orders](#remediate-work-orders)         |
 | `reports.onMerge`                   | [#reports-on-merge](#reports-on-merge)                   |
 | `schema.mode`                       | [#schema-mode](#schema-mode)                             |
 
