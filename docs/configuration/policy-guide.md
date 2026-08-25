@@ -52,6 +52,7 @@ stanzas).
 | `remediate.schedule`                | [#remediate-schedule](#remediate-schedule)               |
 | `remediate.taskBudgets`             | [#remediate-task-budgets](#remediate-task-budgets)       |
 | `remediate.tasks`                   | [#remediate-tasks](#remediate-tasks)                     |
+| `remediate.workOrders.maxSliceSize` | [#remediate-work-orders](#remediate-work-orders)         |
 | `reports.onMerge`                   | [#reports-on-merge](#reports-on-merge)                   |
 | `schema.mode`                       | [#schema-mode](#schema-mode)                             |
 
@@ -619,3 +620,24 @@ worth continuing.
 [salvage](#remediate-salvage) to be `draft-pr` (the default for
 open-ended tasks under `auto`); a task whose salvage is `discard` has no
 branch to resume and starts fresh.
+
+## Remediate work orders
+
+**What it does.** `vyuh-dxkit remediate plan` cuts the finding sets dxkit
+already computes (the entry floor's failures, deferred advisories inside
+their window, the grandfathered lint backlog) into finite work orders and
+lists them with their class, tier, budget, and done criterion. Today this is
+a plan surface: the tasks still run their existing prompts. Task selection
+over orders (each task working only the orders of its classes) arrives with
+the executor unit, which consumes these same orders.
+
+**Per parameter.**
+
+- `maxSliceSize`: the largest number of findings one debt work order may
+  carry. Lint debt is cut by file, then by rule, into slices of at most this
+  size, and each slice's budget derives from its size. Symptom of too high:
+  orders whose derived budget hits the task cap. Symptom of too low: many
+  tiny orders, each paying the fixed cost of an agent turn-up.
+
+**Default and why.** `25`: a slice one agent session closes with headroom
+in the derived budget.

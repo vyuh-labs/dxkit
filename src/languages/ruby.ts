@@ -1099,6 +1099,11 @@ export const ruby: LanguageSupport = {
     'verify_mode[[:space:]]*=[[:space:]]*.*VERIFY_NONE',
   ],
 
+  provision(cwd) {
+    if (fs.existsSync(path.join(cwd, 'Gemfile.lock'))) return { bin: 'bundle', args: ['install'] };
+    return null;
+  },
+
   upgradeCommand(name, version) {
     return `# Edit Gemfile: \`gem '${name}', '${version}'\`, then \`bundle install\``;
   },

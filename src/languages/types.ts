@@ -422,6 +422,16 @@ export interface LanguageSupport {
   upgradeCommand?(name: string, version: string): string | null;
 
   /**
+   * OPTIONAL: the command that (re)provisions this ecosystem's dependency
+   * tree from its manifest + lockfile in `cwd` (`npm ci`, `pnpm install`).
+   * Consumed by the remediation frame as the ONE install a work order may
+   * run (the agent never installs itself). Returns null when the pack cannot
+   * name one for this repo; a consumer then discloses "no install command"
+   * rather than guessing another ecosystem's tool.
+   */
+  provision?(cwd: string): { readonly bin: string; readonly args: readonly string[] } | null;
+
+  /**
    * Per-stack architectural vocabulary + path conventions. Drives the
    * test-gap risk taxonomy, the Maintainability prose ("controllers"
    * vs "components" vs "Forms"), and the gate on the "Add API

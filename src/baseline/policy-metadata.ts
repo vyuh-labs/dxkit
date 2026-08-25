@@ -252,6 +252,11 @@ export const POLICY_PARAMS: readonly PolicyParamMeta[] = [
       '(needs an effective draft-pr salvage; capped attempts)',
     anchor: 'remediate-resume',
   },
+  {
+    path: 'remediate.workOrders.maxSliceSize',
+    summary: 'largest number of findings one debt work order may carry (default 25)',
+    anchor: 'remediate-work-orders',
+  },
 ];
 
 const paramByPath = new Map(POLICY_PARAMS.map((p) => [p.path, p]));

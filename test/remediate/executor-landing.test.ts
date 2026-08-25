@@ -44,6 +44,7 @@ function config(salvage: RemediateConfig['salvage'] = 'discard'): RemediateConfi
     maxSpendPerRun: 0,
     maxDispatchBudget: 0,
     resume: false,
+    workOrders: { maxSliceSize: 25 },
   };
 }
 

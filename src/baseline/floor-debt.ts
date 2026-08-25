@@ -26,6 +26,7 @@
  * cannot hang on a pathological suite; a check that exceeds it records
  * honestly as `skipped-timeout`, never as pass or fail.
  */
+import type { FloorBaseCheck } from '../analyzers/correctness/attribution';
 import { execFileSync } from 'child_process';
 import { detectActiveLanguages } from '../languages';
 import type { LanguageSupport } from '../languages/types';
@@ -62,6 +63,19 @@ export interface FloorDebt {
   readonly capturedAtCommit: string | null;
   readonly capturedAt: string;
   readonly checks: ReadonlyArray<FloorDebtCheck>;
+}
+
+/** The ONE projection of a committed floor envelope onto the attribution
+ *  comparator's base-check shape. The envelope records check status only
+ *  (no finding-level identities), so the comparator works at CHECK precision
+ *  and says so. Every consumer that attributes a floor against the baseline
+ *  (the pre-push surface, the remediation planner) reads this. */
+export function floorDebtToBaseChecks(debt: FloorDebt): FloorBaseCheck[] {
+  return debt.checks.map((c) => ({
+    pack: c.pack,
+    label: c.label,
+    status: c.status === 'pass' ? 'pass' : c.status === 'fail' ? 'fail' : 'skipped',
+  }));
 }
 
 /** The failing subset — the debt itself. Generic over the check shape so

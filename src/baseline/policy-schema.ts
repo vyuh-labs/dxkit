@@ -356,6 +356,15 @@ export function buildPolicySchema(version: string): Schema {
           },
           maxSpendPerRun: { type: 'number', description: desc('remediate.maxSpendPerRun') },
           maxDispatchBudget: { type: 'number', description: desc('remediate.maxDispatchBudget') },
+          workOrders: obj(
+            {
+              maxSliceSize: {
+                type: 'number',
+                description: desc('remediate.workOrders.maxSliceSize'),
+              },
+            },
+            'Work-order planning: how the backlog is cut into finite, verifiable units.',
+          ),
           resume: boolProp('remediate.resume'),
         },
         'Agentic remediation: a scheduled agent inside the verified frame.',

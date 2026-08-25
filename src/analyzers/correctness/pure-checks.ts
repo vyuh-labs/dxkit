@@ -84,6 +84,7 @@ export function runResolutionCheck(
         status: 'fail',
         output: lines.join('\n'),
         findings: [...new Set(res.unresolved.map((u) => u.specifier))],
+        unresolved: res.unresolved.map((u) => ({ specifier: u.specifier, file: u.file })),
         ...withDisclosures,
       };
     }
