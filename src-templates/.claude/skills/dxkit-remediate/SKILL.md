@@ -68,9 +68,13 @@ default branch only, with dxkit-authored prompts only.
   run. Nothing lands (the agent lane fails CLOSED on verification: an
   agent-authored diff is never pushed unverified); the change stays local
   for inspection and the ledger says which case it was.
-- `budget-exhausted` — a cap hit (wall-clock, turns, or spend). Under the
-  default `salvage: "discard"` nothing lands; with `"draft-pr"` the
-  verified partial work lands as a DRAFT marked budget-bounded.
+- `budget-exhausted`: a cap hit (wall-clock, turns, or spend). What
+  lands follows the effective salvage for the task: `salvage` defaults to
+  `auto`, which resolves open-ended tasks (`write-docs`, `improve-tests`)
+  to `draft-pr` (verified partial work lands as a DRAFT marked
+  budget-bounded) and bounded tasks (`fix-build`, `fix-vulns`, `fix-lint`)
+  to `discard` (nothing lands; the branch stays for inspection). Pin
+  `"discard"` or `"draft-pr"` in policy to force one fate for every task.
 - `agent-never-ran` — infrastructure (auth, missing CLI); the reason is in
   the note. Fix the secret/install, re-dispatch.
 - `sweep-failed` — the agent committed work, but the leftovers it left
@@ -81,7 +85,14 @@ default branch only, with dxkit-authored prompts only.
 
 ## Tuning the budget
 
-`remediate.agent.budget`: `maxTurns` caps agent iterations, `maxMinutes` is
-the wall-clock kill (salvage applies), `maxUsd` is enforced from the spend
-envelope after the run. Start conservative (the defaults), widen only for a
-task that keeps hitting `budget-exhausted` while producing verified work.
+`remediate.agent.budget`: `maxTurns` caps agent iterations (enforced by the
+shipped driver), `maxMinutes` is the wall-clock kill (enforced by the
+runner; salvage applies), `maxUsd` is the spend cap. The shipped driver only
+REPORTS spend after the run and cannot stop mid-run on cost, so there
+`maxUsd` is advisory: an overrun is disclosed and the attempt marked
+partial, and real spend is bounded by turns and wall-clock. `remediate plan`
+lists which caps the configured driver cannot enforce. Start conservative
+(the defaults), widen only for a task that keeps hitting `budget-exhausted`
+while producing verified work; give one task headroom with
+`remediate.taskBudgets.<id>` rather than widening the shared cap, and bound
+a whole firing with `remediate.maxSpendPerRun`.

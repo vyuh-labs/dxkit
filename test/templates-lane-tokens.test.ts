@@ -25,9 +25,13 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as yaml from 'js-yaml';
 import {
+  LANE_TOKEN_APP_ID_VARIABLE_NAME,
+  LANE_TOKEN_APP_KEY_SECRET_NAME,
   LANE_TOKEN_CHAIN,
+  LANE_TOKEN_PAT_SECRET_NAME,
   LANE_TOKEN_STEPS,
   LANE_TOKEN_SUBSTITUTIONS,
+  LANE_TOKEN_TASK_STEPS,
 } from '../src/lanes/lane-token';
 
 const WORKFLOWS = path.join(__dirname, '..', 'src-templates', '.github', 'workflows');
@@ -262,8 +266,12 @@ describe('workflow-template token discipline', () => {
     // keep the single top-of-job mint.
     const content = fs.readFileSync(path.join(WORKFLOWS, 'dxkit-remediate.yml'), 'utf8');
     // A fresh mint gated on the same App variable, immediately before the
-    // task step — the hour starts at agent launch, not at job start.
-    expect(content).toContain('id: dxkit-app-token-task');
+    // task step (the hour starts at agent launch, not at job start). The
+    // step arrives via the __DXKIT_LANE_TOKEN_TASK_STEPS__ placeholder
+    // (the raw template holds no hand-copied mint), so assert on the
+    // RENDERED content.
+    expect(content).toContain('__DXKIT_LANE_TOKEN_TASK_STEPS__');
+    expect(renderForParse(content)).toContain('id: dxkit-app-token-task');
     // ONE credential writer (the live 4.4.3 class): checkout v6 persists
     // its credential where `git config --unset-all` cannot reliably reach,
     // and a second Authorization source makes GitHub 400 the landing push
@@ -296,14 +304,73 @@ describe('workflow-template token discipline', () => {
     expect(content).toContain('GH_TOKEN: __DXKIT_LANE_TOKEN_TASK__');
     expect(content).toContain('DXKIT_TOKEN_MODE: __DXKIT_LANE_TOKEN_MODE__');
     // Ordering: agent-CLI install → re-mint → credential refresh → task, so
-    // setup time cannot eat the token's hour.
-    const install = content.indexOf('Install the agent CLI');
-    const remint = content.indexOf('id: dxkit-app-token-task');
-    const refresh = content.indexOf('- name: Install the landing credential');
-    const task = content.indexOf('Run task ${{ matrix.task }}');
+    // setup time cannot eat the token's hour. The re-mint step exists only
+    // after substitution, so order over the RENDERED content.
+    const rendered = renderForParse(content);
+    const install = rendered.indexOf('Install the agent CLI');
+    const remint = rendered.indexOf('id: dxkit-app-token-task');
+    const refresh = rendered.indexOf('- name: Install the landing credential');
+    const task = rendered.indexOf('Run task ${{ matrix.task }}');
     expect(install).toBeGreaterThan(-1);
     expect(remint).toBeGreaterThan(install);
     expect(refresh).toBeGreaterThan(remint);
     expect(task).toBeGreaterThan(refresh);
+  });
+});
+
+/**
+ * ONE definition of the tier NAMES (4.4.5, dxkit #325 round 2). The three
+ * configuration names live as constants in src/lanes/lane-token.ts; every
+ * workflow reference arrives via a __DXKIT_LANE_TOKEN_*__ substitution and
+ * every src consumer (the doctor probe, install notes, disclosures)
+ * imports the constants, so a rename cannot leave a template, a probe,
+ * or a remedy on a stale name.
+ */
+describe('lane token NAME discipline (one definition)', () => {
+  const NAME_LITERALS = [
+    LANE_TOKEN_APP_ID_VARIABLE_NAME,
+    LANE_TOKEN_APP_KEY_SECRET_NAME,
+    LANE_TOKEN_PAT_SECRET_NAME,
+  ];
+
+  it('raw templates carry NO tier-name literals (names arrive only via substitution)', () => {
+    const offenders: string[] = [];
+    for (const { file, content } of templates()) {
+      for (const name of NAME_LITERALS) {
+        if (content.includes(name)) offenders.push(`${file}: literal ${name}`);
+      }
+    }
+    expect(offenders, offenders.join('\n')).toEqual([]);
+  });
+
+  it('the rendered remediate template gets the task re-mint from the one definition', () => {
+    const content = fs.readFileSync(path.join(WORKFLOWS, 'dxkit-remediate.yml'), 'utf8');
+    const rendered = renderForParse(content);
+    expect(rendered).toContain(LANE_TOKEN_TASK_STEPS);
+    expect(rendered).toContain(`vars.${LANE_TOKEN_APP_ID_VARIABLE_NAME}`);
+    expect(rendered).toContain(`secrets.${LANE_TOKEN_APP_KEY_SECRET_NAME}`);
+  });
+
+  it('within src/, the raw name literals appear ONLY in lane-token.ts', () => {
+    const SRC = path.join(__dirname, '..', 'src');
+    const offenders: string[] = [];
+    const walk = (dir: string): void => {
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const p = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          walk(p);
+          continue;
+        }
+        if (!entry.name.endsWith('.ts')) continue;
+        const rel = path.relative(SRC, p).split(path.sep).join('/');
+        if (rel === 'lanes/lane-token.ts') continue;
+        const content = fs.readFileSync(p, 'utf8');
+        for (const name of NAME_LITERALS) {
+          if (content.includes(name)) offenders.push(`src/${rel}: literal ${name}`);
+        }
+      }
+    };
+    walk(SRC);
+    expect(offenders, offenders.join('\n')).toEqual([]);
   });
 });

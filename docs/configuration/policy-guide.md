@@ -16,40 +16,44 @@ stanzas).
 
 <!-- BEGIN GENERATED: knob-index (edit the registry, then: npm run build && npm run docs:policy-guide) -->
 
-| Policy path                         | Guide section                                |
-| ----------------------------------- | -------------------------------------------- |
-| `baseline.anchor`                   | [#baseline-anchor](#baseline-anchor)         |
-| `baseline.mode`                     | [#baseline-mode](#baseline-mode)             |
-| `baseline.refreshCadence`           | [#refresh-cadence](#refresh-cadence)         |
-| `checks`                            | [#custom-checks](#custom-checks)             |
-| `depBump.allowMajor`                | [#dep-bump](#dep-bump)                       |
-| `depBump.enabled`                   | [#dep-bump](#dep-bump)                       |
-| `depBump.schedule`                  | [#dep-bump](#dep-bump)                       |
-| `duplication.mode`                  | [#duplication-mode](#duplication-mode)       |
-| `expiryNotice.enabled`              | [#expiry-notice](#expiry-notice)             |
-| `extends`                           | [#policy-base](#policy-base)                 |
-| `floor.required`                    | [#floor-required](#floor-required)           |
-| `flow.mode`                         | [#flow-mode](#flow-mode)                     |
-| `flow.sources`                      | [#flow-sources](#flow-sources)               |
-| `graph.refresh`                     | [#graph-refresh](#graph-refresh)             |
-| `licenses.prohibited`               | [#prohibited-licenses](#prohibited-licenses) |
-| `lint.blocking`                     | [#lint-gate](#lint-gate)                     |
-| `lint.enabled`                      | [#lint-gate](#lint-gate)                     |
-| `loop.preset`                       | [#loop-preset](#loop-preset)                 |
-| `newAdvisories.blockSeverities`     | [#new-advisories](#new-advisories)           |
-| `newAdvisories.commentCommands`     | [#new-advisories](#new-advisories)           |
-| `pairedChecks`                      | [#paired-change-rules](#paired-change-rules) |
-| `remediate.agent.budget.maxMinutes` | [#remediate-budget](#remediate-budget)       |
-| `remediate.agent.budget.maxTurns`   | [#remediate-budget](#remediate-budget)       |
-| `remediate.agent.budget.maxUsd`     | [#remediate-budget](#remediate-budget)       |
-| `remediate.agent.driver`            | [#remediate-driver](#remediate-driver)       |
-| `remediate.agent.model`             | [#remediate-model](#remediate-model)         |
-| `remediate.enabled`                 | [#remediate](#remediate)                     |
-| `remediate.salvage`                 | [#remediate-salvage](#remediate-salvage)     |
-| `remediate.schedule`                | [#remediate-schedule](#remediate-schedule)   |
-| `remediate.tasks`                   | [#remediate-tasks](#remediate-tasks)         |
-| `reports.onMerge`                   | [#reports-on-merge](#reports-on-merge)       |
-| `schema.mode`                       | [#schema-mode](#schema-mode)                 |
+| Policy path                         | Guide section                                            |
+| ----------------------------------- | -------------------------------------------------------- |
+| `baseline.anchor`                   | [#baseline-anchor](#baseline-anchor)                     |
+| `baseline.mode`                     | [#baseline-mode](#baseline-mode)                         |
+| `baseline.refreshCadence`           | [#refresh-cadence](#refresh-cadence)                     |
+| `checks`                            | [#custom-checks](#custom-checks)                         |
+| `depBump.allowMajor`                | [#dep-bump](#dep-bump)                                   |
+| `depBump.enabled`                   | [#dep-bump](#dep-bump)                                   |
+| `depBump.schedule`                  | [#dep-bump](#dep-bump)                                   |
+| `duplication.mode`                  | [#duplication-mode](#duplication-mode)                   |
+| `expiryNotice.enabled`              | [#expiry-notice](#expiry-notice)                         |
+| `extends`                           | [#policy-base](#policy-base)                             |
+| `floor.required`                    | [#floor-required](#floor-required)                       |
+| `flow.mode`                         | [#flow-mode](#flow-mode)                                 |
+| `flow.sources`                      | [#flow-sources](#flow-sources)                           |
+| `graph.refresh`                     | [#graph-refresh](#graph-refresh)                         |
+| `licenses.prohibited`               | [#prohibited-licenses](#prohibited-licenses)             |
+| `lint.blocking`                     | [#lint-gate](#lint-gate)                                 |
+| `lint.enabled`                      | [#lint-gate](#lint-gate)                                 |
+| `loop.preset`                       | [#loop-preset](#loop-preset)                             |
+| `newAdvisories.blockSeverities`     | [#new-advisories](#new-advisories)                       |
+| `newAdvisories.commentCommands`     | [#new-advisories](#new-advisories)                       |
+| `pairedChecks`                      | [#paired-change-rules](#paired-change-rules)             |
+| `remediate.agent.budget.maxMinutes` | [#remediate-budget](#remediate-budget)                   |
+| `remediate.agent.budget.maxTurns`   | [#remediate-budget](#remediate-budget)                   |
+| `remediate.agent.budget.maxUsd`     | [#remediate-budget](#remediate-budget)                   |
+| `remediate.agent.driver`            | [#remediate-driver](#remediate-driver)                   |
+| `remediate.agent.model`             | [#remediate-model](#remediate-model)                     |
+| `remediate.enabled`                 | [#remediate](#remediate)                                 |
+| `remediate.maxDispatchBudget`       | [#remediate-dispatch-budget](#remediate-dispatch-budget) |
+| `remediate.maxSpendPerRun`          | [#remediate-spend-per-run](#remediate-spend-per-run)     |
+| `remediate.resume`                  | [#remediate-resume](#remediate-resume)                   |
+| `remediate.salvage`                 | [#remediate-salvage](#remediate-salvage)                 |
+| `remediate.schedule`                | [#remediate-schedule](#remediate-schedule)               |
+| `remediate.taskBudgets`             | [#remediate-task-budgets](#remediate-task-budgets)       |
+| `remediate.tasks`                   | [#remediate-tasks](#remediate-tasks)                     |
+| `reports.onMerge`                   | [#reports-on-merge](#reports-on-merge)                   |
+| `schema.mode`                       | [#schema-mode](#schema-mode)                             |
 
 <!-- END GENERATED: knob-index -->
 
@@ -441,13 +445,29 @@ merging boring PRs, not by default.
 
 ## Remediate salvage
 
-**What it does.** The fate of budget-cut partial work: `"discard"` (the
-default — nothing lands; the branch is left for inspection) or
-`"draft-pr"` (the VERIFIED partial work lands as a draft marked
-budget-bounded).
+**What it does.** The fate of budget-cut or guardrail-blocked partial work.
+Three accepted values:
 
-**Default and why.** `discard`. Production experience: partial drafts were
-useful once and noise once — exactly a default-off opt-in.
+- `"auto"` (default): decided PER TASK from its declared completion shape.
+  Open-ended tasks (`write-docs`, `improve-tests`) have no completion test,
+  so every run of theirs ends on a cap; they resolve to `draft-pr` so their
+  verified work is not structurally thrown away. Bounded tasks (`fix-build`,
+  `fix-vulns`, `fix-lint`) can genuinely finish, so they resolve to
+  `discard`.
+- `"discard"`: nothing lands for any task; the branch is left for
+  inspection.
+- `"draft-pr"`: for every task, VERIFIED partial work lands as a draft
+  marked budget-bounded; a guardrail-blocked attempt lands as a red draft
+  titled "do not merge", kept unmergeable by its own guardrail check.
+
+**Default and why.** `auto`. A single default was wrong in one direction
+or the other: `discard` threw away every open-ended run's gate-passing
+work, `draft-pr` turned every bounded run's cut-off into review noise.
+Pin one value only when you want the same fate for every task.
+
+**Interactions.** `vyuh-dxkit remediate plan` prints the effective
+salvage per task. [Resume](#remediate-resume) requires the effective
+per-task salvage to be `draft-pr`.
 
 ## Remediate driver
 
@@ -488,22 +508,114 @@ used.
 
 ## Remediate budget
 
-**What it does.** Hard caps, all enforced by the runner, never the agent's
-self-report.
+**What it does.** The shared caps for every task, read by the runner,
+never from the agent's self-report. Which caps a driver can actually
+ENFORCE mid-run is a per-driver fact (the "Enforces" column of the
+[driver table](#remediate-driver)); a cap the driver cannot enforce is
+disclosed in the plan and the ledger, never silently assumed.
 
 **Per parameter.**
 
-- `maxTurns` — the agent iteration cap (passed to the driver when it
-  supports one). Symptom of too low: repeated `budget-exhausted` outcomes
-  with verified partial work. Symptom of too high: long runs that wander
-  past the task.
-- `maxMinutes` — the wall-clock kill. Work the agent already COMMITTED is
-  salvage territory (see [salvage](#remediate-salvage)); uncommitted work
-  is swept into a loudly-labeled commit for inspection.
-- `maxUsd` — the spend cap, read from the run's spend envelope. A driver
-  that cannot report spend makes this cap unenforceable — the ledger says
-  so explicitly rather than pretending.
+- `maxTurns`: the agent iteration cap, passed to the driver when it
+  supports one (the shipped driver enforces it). Symptom of too low:
+  repeated `budget-exhausted` outcomes with verified partial work. Symptom
+  of too high: long runs that wander past the task.
+- `maxMinutes`: the wall-clock kill, enforced by the runner as the process
+  timeout. Work the agent already COMMITTED is salvage territory (see
+  [salvage](#remediate-salvage)); uncommitted work is swept into a
+  loudly-labeled commit for inspection.
+- `maxUsd`: the spend cap. Enforced only where the driver can stop a run
+  on cost. The shipped driver REPORTS spend after the run and cannot stop
+  mid-run, so there `maxUsd` is advisory: an overrun is disclosed and the
+  attempt marked partial, and real spend is bounded by `maxTurns` and
+  `maxMinutes` (which is why the dispatch authority clamps turns, see
+  [dispatch budget](#remediate-dispatch-budget)). A driver that cannot
+  report spend at all makes the cap unenforceable, and the ledger says so.
 
 **Default and why.** `80 turns / 30 min / $5` — conservative on purpose.
 Widen a cap only for a task that keeps producing verified-but-cut-short
 work; the progression is conservative → confident, never the reverse.
+Per-task headroom belongs in [task budgets](#remediate-task-budgets), not
+in a wider shared cap.
+
+## Remediate task budgets
+
+**What it does.** `remediate.taskBudgets.<task-id>` is a partial
+`{ maxTurns, maxMinutes, maxUsd }` merged over the shared
+[agent budget](#remediate-budget) for that one task. Unset fields inherit;
+a non-positive value is ignored, not zeroed. Only registered task ids take
+an override; the `custom` dispatch task always runs on the shared budget.
+
+**Default and why.** Empty: every task runs on the shared caps. Use it to
+give a diagnosis-heavy task (`fix-build`) headroom without widening a
+mechanical one (`fix-lint`).
+
+**Example.**
+
+```jsonc
+"remediate": {
+  "agent": { "budget": { "maxTurns": 60, "maxMinutes": 20, "maxUsd": 3 } },
+  "taskBudgets": { "fix-build": { "maxTurns": 120, "maxUsd": 8 } }
+}
+```
+
+**Interactions.** The per-task effective budget is what
+[spend per run](#remediate-spend-per-run) sums and what
+`vyuh-dxkit remediate plan` prints.
+
+## Remediate spend per run
+
+**What it does.** `remediate.maxSpendPerRun` is a run-level USD ceiling
+over the per-task matrix: each enabled task is its own job with its own
+cap, so one scheduled firing may spend the SUM of the effective per-task
+`maxUsd` values. Tasks are admitted in declaration order while their caps
+still fit under the ceiling; the rest are deferred to the next firing and
+named in the run output, never silently dropped.
+
+**Default and why.** `0` (no ceiling). The per-task caps already bound each
+job; set a ceiling when the sum across tasks is what your budget owner
+cares about. Because the sum uses the caps (not actual spend), a ceiling
+below the first task's cap defers everything.
+
+**Interactions.** Sums the effective per-task budget after
+[task budgets](#remediate-task-budgets). The ceiling reads the `maxUsd`
+CAPS, so it holds even where the driver cannot enforce spend mid-run.
+
+## Remediate dispatch budget
+
+**What it does.** `remediate.maxDispatchBudget` is the spend authority for
+one-off `workflow_dispatch` campaigns: the most a dispatch override may
+raise `maxUsd` to. The same authority clamps a `max_turns` override
+proportionally against the policy budget, because turns are what bound
+real spend when the driver only reports cost after the run (see
+[budget](#remediate-budget)); an unclamped turn override would be a back
+door around the ceiling.
+
+**Default and why.** `0` (undeclared): a dispatch can LOWER budgets but
+never raise them beyond the committed policy caps. Spend authority grows
+only in a reviewed policy change, never in a workflow form field.
+
+**Interactions.** Clamping is disclosed in the run output and the PR body
+along with the dispatcher and the verbatim prompt.
+
+## Remediate resume
+
+**What it does.** With `remediate.resume: true` the next run of a task
+CONTINUES from its prior salvage branch (a draft PR left by a
+budget-bounded or guardrail-blocked attempt) instead of starting over. A
+resumed attempt after a guardrail block gets the prior blocking findings
+in its prompt. Attempts are capped at 2 per branch (the counter travels
+with the branch, so a no-op resume still consumes one); at the cap the
+task falls back to a fresh run. The entry floor still snapshots the
+pristine default tree first, so a broken partial reads as net-new and can
+never grandfather its own breakage.
+
+**Default and why.** `false`. Resume only helps when the prior attempt
+left verified, reviewable progress; on a run that sprawled, it re-anchors
+on the sprawl. Enable it per repo once a task is producing partial drafts
+worth continuing.
+
+**Interactions.** Requires the effective per-task
+[salvage](#remediate-salvage) to be `draft-pr` (the default for
+open-ended tasks under `auto`); a task whose salvage is `discard` has no
+branch to resume and starts fresh.
