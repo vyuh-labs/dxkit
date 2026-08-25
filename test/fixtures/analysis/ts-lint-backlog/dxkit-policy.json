@@ -1,0 +1,10 @@
+{
+  "checks": [
+    {
+      "name": "repo:no-debug-log",
+      "pattern": "debugLog\\(",
+      "globs": ["src/**"],
+      "blocking": true
+    }
+  ]
+}

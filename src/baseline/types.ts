@@ -590,7 +590,7 @@ export type BaselineEntry =
        * 4.2 (consumers fall back to the kind default and SAY so). */
       severity?: FindingSeverity;
       /** 16-char hex hash of normalized context around `line` at
-       * baseline-create time. Stamped via `computeContentHashFromCommit`;
+       * baseline-create time. Stamped via the shared `contentStamper`;
        * the matcher's third pass uses it as a fallback when git-aware
        * location matching fails (shallow clones, force-pushed base,
        * context survives but line shifts past the fuzz window). Absent
@@ -637,6 +637,11 @@ export type BaselineEntry =
       file: string;
       symbol?: string;
       lineRange?: readonly [number, number];
+      /** Content-hash of the range start's context (range-anchored gaps are
+       * line-dependent, so they carry the reformat-survival stamp like every
+       * located kind; symbol-anchored gaps are line-independent and the
+       * orchestrator leaves them bare). */
+      contentHash?: string;
     }
   | { id: FindingId; kind: 'test-gap'; file: string; risk: TestGapRisk }
   | {
@@ -647,7 +652,7 @@ export type BaselineEntry =
       marker: HygieneMarker;
       /** Same content-hash semantics as the secret/code/config variant
        * — populated when the producer can read the file at the
-       * baseline commit. */
+       * tree the findings were scanned on. */
       contentHash?: string;
     }
   | {
@@ -714,6 +719,11 @@ export type BaselineEntry =
       /** Blended structural-similarity score in [0,1] at mint time — display
        * metadata only (identity is the anchor pair). Lets renderers rank. */
       score: number;
+      /** Content-hash of the canonical first anchor's context — the located
+       * projection carries a line, so the orchestrator stamps this kind like
+       * every other located entry (the stampEntries invariant: a line locator
+       * implies a declared contentHash field). */
+      contentHash?: string;
     }
   | {
       id: FindingId;
@@ -738,6 +748,15 @@ export type BaselineEntry =
        * output tail for a binary failure). Display metadata only — NOT hashed
        * (it is tool-captured text; Rule 9 forbids it from identity). */
       message?: string;
+      /** Content-hash of the located finding's surrounding context (same
+       * scheme as secret/code/config), so the matcher's content-hash pass
+       * relocates a lint finding across a whole-file reformat that both moves
+       * it past the identity window and rewrites its line in the diff. Absent
+       * for a binary finding and on baselines written before the stamp
+       * (those degrade to the git + identity passes until the migrate lane
+       * restamps them). Stamped from the working tree the finding was
+       * scanned on, by the orchestrator. */
+      contentHash?: string;
     }
   | {
       id: FindingId;

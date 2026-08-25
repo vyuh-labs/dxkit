@@ -28,6 +28,7 @@ import type { BaselineFile } from './baseline-file';
 import { CURRENT_IDENTITY_SCHEME, type BaselineEntry, type IdentitySchemeVersion } from './types';
 import { RECALL_EPOCHS, type RecallMap } from './recall';
 import { customCheckFindingsToBaselineEntries } from './producers/custom-checks';
+import { stampEntries } from './content-stamp';
 import {
   gatherCustomCheckFindings,
   observableSpecs,
@@ -153,7 +154,9 @@ export function captureFragment(opts: CaptureFragmentOptions): BaselineFragment 
     identityScheme: CURRENT_IDENTITY_SCHEME,
     customCheckEpoch: RECALL_EPOCHS['custom-check'],
     checks: selected.map((s) => s.name),
-    findings: customCheckFindingsToBaselineEntries(findings),
+    // Stamped through the SAME one entry point the orchestrator uses, so a
+    // fragment-captured slice pairs across a reformat like any other entry.
+    findings: stampEntries(customCheckFindingsToBaselineEntries(findings), opts.cwd),
     recallInputs: recallInputsForSpecs(selected),
   };
 }

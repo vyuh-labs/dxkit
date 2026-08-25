@@ -15,6 +15,7 @@
  */
 
 import * as path from 'path';
+import { resolveInsideRepo } from '../tools/paths';
 import type { RawLocatedFinding } from '../../languages/capabilities/lint-gate';
 import type { CustomCheckFinding } from './types';
 
@@ -222,9 +223,8 @@ function parseIntSafe(s: string): number | undefined {
  */
 function toRepoRelativePosix(file: string, cwd: string): string {
   if (!path.isAbsolute(file)) return normalizeSeparators(file);
-  const rel = path.relative(cwd, file);
-  if (rel === '' || rel.startsWith('..') || path.isAbsolute(rel)) return file;
-  return normalizeSeparators(rel);
+  // ONE containment predicate (resolveInsideRepo); outside-repo stays verbatim.
+  return resolveInsideRepo(cwd, file) ?? file;
 }
 
 /** POSIX separators in the output path. Only rewrites `\` when it IS the host

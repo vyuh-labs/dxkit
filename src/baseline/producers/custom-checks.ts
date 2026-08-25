@@ -9,7 +9,21 @@
  *
  * The findings are gathered ONCE by the orchestrator (into
  * `ProducerContext.customCheckFindings`) and passed here — this producer is a
- * pure map, never a shell-out.
+ * pure map apart from the best-effort content-hash read, never a shell-out.
+ *
+ * Content-hash stamping lives in the orchestrator (`stampEntries` in
+ * content-stamp.ts): this producer emits bare entries. Within one identity
+ * bucket (the shared 3-line window) the entry records the MINIMUM reported
+ * line, so the stamped window is independent of the linter's output order
+ * (two occurrences reported in either order yield one hash).
+ *
+ * Migration: baselines written before the stamp scheme carry no
+ * `contentHash` on custom-check entries. The matcher degrades to the git
+ * and identity passes, and the update/migrate lane restamps them at the
+ * baseline's anchor commit (`restampAtCommit`).
+ *
+ * BINARY findings (no `file`) are whole-command pass/fail with no location;
+ * they carry no hash by construction.
  */
 
 import { identityFor } from '../finding-identity';
@@ -39,6 +53,16 @@ export function customCheckFindingsToBaselineEntries(
     const hit = byId.get(id);
     if (hit) {
       hit.occurrences += 1;
+      // Minimum-line rule: the bucket's recorded line (and thus the stamped
+      // window) must not depend on which occurrence the linter printed first.
+      if (
+        f.line !== undefined &&
+        'line' in hit.entry &&
+        typeof hit.entry.line === 'number' &&
+        f.line < hit.entry.line
+      ) {
+        hit.entry = { ...hit.entry, line: f.line };
+      }
       continue;
     }
     byId.set(id, {

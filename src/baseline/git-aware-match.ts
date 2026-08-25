@@ -65,7 +65,12 @@ const LINE_FUZZ_RANGE = 2;
  *  bytes alone." For low-severity findings (default threshold 0.90),
  *  a content-hash pair demotes to `'uncertain'`; for critical
  *  findings (threshold 0.75), it passes through cleanly. */
-const CONFIDENCE_CONTENT_HASH = 0.8;
+export const CONFIDENCE_CONTENT_HASH = 0.8;
+/** Confidence for a SAME-FILE (or git-rename-mapped) content-hash pair:
+ *  same rule + identical normalized window + same file. Sits at the
+ *  strictest per-severity threshold (low: 0.90) so a pure reformat reads
+ *  persisted on every severity, never demoted to `uncertain`. */
+export const CONFIDENCE_CONTENT_HASH_SAME_FILE = 0.9;
 /** Confidence assigned to a modified-hunk endpoint pair (#271): the
  *  line itself changed, so there is no line-map image and no byte
  *  identity — the evidence is the hunk STRUCTURE plus an unambiguous
@@ -448,50 +453,103 @@ export function gitAwareMatch(
 
   // Pass 1.5 — content-hash fallback. Pairs prior+current findings
   // by `(canonicalRule, contentHash)` when both sides carry a
-  // content hash (stamped by the producer). Runs regardless of git
+  // content hash (stamped by the orchestrator). Runs regardless of git
   // reachability — content hashes are file-content-derived and
-  // don't need git to compare. Confidence is below the git-line
-  // tier so the policy classifier's per-severity thresholds tune
-  // whether to trust the match.
+  // don't need git to compare.
+  //
+  // Two phases, so the outcome never depends on prior iteration order:
+  // identical boilerplate windows in different files (copied components,
+  // generated code) hash identically under one rule, and a greedy
+  // first-come take would let a prior whose own file lost its candidate
+  // steal another file's twin. Phase 1 pairs every prior that has a
+  // candidate in its OWN file (or, when the git pass saw the file renamed,
+  // in the renamed file — git evidence outranks a same-old-path twin).
+  // Phase 2 pairs the leftovers cross-file (a rename git could not see).
+  // A same-file/renamed pair carries higher confidence than a cross-file
+  // one: same rule + identical normalized window + same file is strong
+  // evidence, and it must clear the per-severity thresholds so a pure
+  // reformat reads persisted, not demoted to uncertain.
   {
-    const currentByContent = new Map<string, LocatedIdentity[]>();
+    interface ContentBucket {
+      byFile: Map<string, LocatedIdentity[]>;
+      order: LocatedIdentity[];
+    }
+    const buckets = new Map<string, ContentBucket>();
+    const taken = new Set<LocatedIdentity>();
     for (const c of current) {
       if (currentMatched.has(c)) continue;
       if (!c.contentHash || !c.rule) continue;
       const key = contentKey(c.rule, c.contentHash);
-      const bucket = currentByContent.get(key);
-      if (bucket) bucket.push(c);
-      else currentByContent.set(key, [c]);
+      let bucket = buckets.get(key);
+      if (!bucket) {
+        bucket = { byFile: new Map(), order: [] };
+        buckets.set(key, bucket);
+      }
+      bucket.order.push(c);
+      if (c.file !== undefined) {
+        const files = bucket.byFile.get(c.file);
+        if (files) files.push(c);
+        else bucket.byFile.set(c.file, [c]);
+      }
     }
-    const takeContent = (key: string): LocatedIdentity | undefined => {
-      const bucket = currentByContent.get(key);
-      if (!bucket || bucket.length === 0) return undefined;
-      const head = bucket.shift();
-      if (bucket.length === 0) currentByContent.delete(key);
-      return head;
-    };
-    for (const p of prior) {
-      if (priorMatched.has(p)) continue;
-      if (!p.contentHash || !p.rule) continue;
-      const candidate = takeContent(contentKey(p.rule, p.contentHash));
-      if (!candidate) continue;
+    const pairUp = (p: LocatedIdentity, c: LocatedIdentity, confidence: number): void => {
       priorMatched.add(p);
-      currentMatched.add(candidate);
-      const pathChanged = !!(p.file && candidate.file && p.file !== candidate.file);
+      currentMatched.add(c);
+      taken.add(c);
+      const pathChanged = !!(p.file && c.file && p.file !== c.file);
       pairs.push({
         priorId: p.id,
-        currentId: candidate.id,
+        currentId: c.id,
         status: pathChanged ? 'relocated' : 'persisted',
-        confidence: CONFIDENCE_CONTENT_HASH,
+        confidence,
         reasons: [
           {
             code: 'content-hash',
             detail: pathChanged
-              ? `content-hash match across rename: ${p.file ?? '?'} → ${candidate.file ?? '?'}`
+              ? `content-hash match across rename: ${p.file ?? '?'} → ${c.file ?? '?'}`
               : 'content-hash match (surrounding code byte-identical after whitespace normalization)',
           },
         ],
       });
+    };
+    const takeFromFile = (bucket: ContentBucket, file: string): LocatedIdentity | undefined => {
+      const files = bucket.byFile.get(file);
+      while (files && files.length > 0) {
+        const c = files.shift()!;
+        if (!taken.has(c)) return c;
+      }
+      return undefined;
+    };
+    // Phase 1: same-file (git-rename-mapped first).
+    for (const p of prior) {
+      if (priorMatched.has(p)) continue;
+      if (!p.contentHash || !p.rule || p.file === undefined) continue;
+      const bucket = buckets.get(contentKey(p.rule, p.contentHash));
+      if (!bucket) continue;
+      // A renamed-away file's OLD path now belongs to a different file (or to
+      // nothing): a window twin there is new code wearing familiar bytes, so
+      // after a detected rename only the renamed path qualifies for the
+      // same-file tier; the old path never falls back.
+      const renamedTo = renames.get(p.file);
+      const candidate =
+        renamedTo !== undefined ? takeFromFile(bucket, renamedTo) : takeFromFile(bucket, p.file);
+      if (candidate) pairUp(p, candidate, CONFIDENCE_CONTENT_HASH_SAME_FILE);
+    }
+    // Phase 2: cross-file leftovers.
+    for (const p of prior) {
+      if (priorMatched.has(p)) continue;
+      if (!p.contentHash || !p.rule) continue;
+      const bucket = buckets.get(contentKey(p.rule, p.contentHash));
+      if (!bucket) continue;
+      let candidate: LocatedIdentity | undefined;
+      while (bucket.order.length > 0) {
+        const c = bucket.order.shift()!;
+        if (!taken.has(c)) {
+          candidate = c;
+          break;
+        }
+      }
+      if (candidate) pairUp(p, candidate, CONFIDENCE_CONTENT_HASH);
     }
   }
 

@@ -12,10 +12,11 @@
  *
  * Pipeline:
  *
- *   1. The producer (Phase 3 baseline-create) reads each finding's
- *      surrounding context lines, normalizes whitespace, and
- *      computes a SHA-1[0:16] hash. The hash is stamped on the
- *      finding entry in the baseline file.
+ *   1. Every producer of a located kind stamps its entries through
+ *      the ONE `contentStamper` (`content-stamp.ts`), which reads the
+ *      finding's surrounding context lines from the working tree,
+ *      normalizes whitespace, and computes a SHA-1[0:16] hash here.
+ *      The hash is stamped on the finding entry in the baseline file.
  *   2. At guardrail-check time, the current scan computes content
  *      hashes the same way for its own findings.
  *   3. The matcher's content-hash pass pairs prior + current
@@ -42,7 +43,6 @@
  */
 
 import { createHash } from 'crypto';
-import { execFileSync } from 'child_process';
 
 /**
  * Width of the context window read on each side of the finding's
@@ -71,7 +71,18 @@ export function computeContentHash(
   line: number,
   contextLines: number = CONTENT_HASH_CONTEXT_LINES,
 ): string {
-  const lines = fileContent.split('\n');
+  return computeContentHashFromLines(fileContent.split('\n'), line, contextLines);
+}
+
+/**
+ * Same hash over pre-split lines. The stamper caches split lines per file so
+ * a file carrying thousands of findings is split once, not once per finding.
+ */
+export function computeContentHashFromLines(
+  lines: readonly string[],
+  line: number,
+  contextLines: number = CONTENT_HASH_CONTEXT_LINES,
+): string {
   const startIdx = Math.max(0, line - 1 - contextLines);
   const endIdx = Math.min(lines.length, line + contextLines);
   const window = lines.slice(startIdx, endIdx);
@@ -88,51 +99,4 @@ export function computeContentHash(
  */
 function normalizeLine(line: string): string {
   return line.replace(/\s+/g, ' ').trim();
-}
-
-/**
- * Read a file's content at a specific commit. Returns null when git
- * can't resolve the path-at-commit pair — file didn't exist at
- * `sha`, file is binary, sha is unreachable. Callers treat null
- * the same as "content-hash unavailable for this path."
- *
- * Uses `git show <sha>:<path>` which does not require checking out
- * the commit — safe to call repeatedly in a tight loop without
- * touching the working tree.
- */
-export function readFileFromCommit(cwd: string, sha: string, file: string): string | null {
-  try {
-    return execFileSync('git', ['show', `${sha}:${file}`], {
-      cwd,
-      encoding: 'utf8',
-      // Cap output size — git show on a 100MB committed binary would
-      // otherwise blow the default stdio buffer. 10MB is generous for
-      // any real source file.
-      maxBuffer: 10 * 1024 * 1024,
-      // Silence the "fatal: path X does not exist" message git emits
-      // to stderr when the file/sha pair doesn't resolve. Callers
-      // expect a null return, not a stderr message bleeding through.
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Combined helper: read the file at a commit and compute its
- * content hash at the given line. Returns null when the file
- * couldn't be read. Used by the producer (Phase 3 baseline-create)
- * to stamp content hashes on baseline entries.
- */
-export function computeContentHashFromCommit(
-  cwd: string,
-  sha: string,
-  file: string,
-  line: number,
-  contextLines: number = CONTENT_HASH_CONTEXT_LINES,
-): string | null {
-  const content = readFileFromCommit(cwd, sha, file);
-  if (content === null) return null;
-  return computeContentHash(content, line, contextLines);
 }
