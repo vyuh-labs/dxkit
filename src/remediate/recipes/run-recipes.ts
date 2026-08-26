@@ -149,6 +149,48 @@ async function defaultAudit(cwd: string): Promise<readonly DepVulnFinding[] | nu
   return result.envelope?.findings ?? [];
 }
 
+/** Orders sharing a recipe + a non-null `groupKey` collapse into ONE
+ *  execution attempt (positioned at the first member): a file's lint
+ *  slices pay one `--fix` run, not one per slice. Everything else stays a
+ *  singleton group, byte-identical to the ungrouped behavior. */
+export function groupRecipeOrders(
+  orders: readonly WorkOrder[],
+  registry: readonly RecipeDeclaration[],
+): WorkOrder[][] {
+  const groups: WorkOrder[][] = [];
+  const byKey = new Map<string, number>();
+  for (const order of orders) {
+    if (order.tier !== 'recipe' || !order.recipe) continue;
+    const key = registry.find((r) => r.id === order.recipe)?.groupKey?.(order) ?? null;
+    if (key !== null) {
+      const groupKey = `${order.recipe}\0${key}`;
+      const at = byKey.get(groupKey);
+      if (at !== undefined) {
+        groups[at].push(order);
+        continue;
+      }
+      byKey.set(groupKey, groups.length);
+    }
+    groups.push([order]);
+  }
+  return groups;
+}
+
+/** The commit-message order list, capped so a 40-slice file does not write
+ *  a paragraph-long subject. */
+function nameOrders(ids: readonly string[]): string {
+  return ids.length <= 6 ? ids.join(', ') : `${ids.slice(0, 6).join(', ')} +${ids.length - 6} more`;
+}
+
+/** The rules a lint order's findings carry. */
+function orderRules(order: WorkOrder): Set<string> {
+  return new Set(
+    order.findings.flatMap((f) =>
+      f.evidence.type === 'custom-check' && f.evidence.rule !== undefined ? [f.evidence.rule] : [],
+    ),
+  );
+}
+
 /** Execute the recipe-tier orders, in plan (value) order. */
 export async function runRecipeOrders(
   orders: readonly WorkOrder[],
@@ -158,32 +200,40 @@ export async function runRecipeOrders(
   const queryOsv = cachedOsvQuery(deps.queryOsv ?? queryOsvPackage);
   const blockSeverities = deps.blockSeverities ?? effectiveBlockSeverities(deps.cwd);
   const records: RecipeOrderRecord[] = [];
-  for (const order of orders) {
-    if (order.tier !== 'recipe' || !order.recipe) continue;
-    const base = { orderId: order.id, class: String(order.class), recipe: order.recipe };
+  const recordAll = (
+    group: readonly WorkOrder[],
+    outcome: RecipeOutcome,
+    extra?: Pick<RecipeOrderRecord, 'droppedPaths'>,
+  ) => {
+    for (const order of group) {
+      records.push({
+        orderId: order.id,
+        class: String(order.class),
+        recipe: order.recipe!,
+        outcome,
+        ...(extra ?? {}),
+      });
+    }
+  };
+  for (const group of groupRecipeOrders(orders, registry)) {
+    const first = group[0];
     // Rule 17, decided at the ONE phase entry point: recipes run installs
     // and linters, so an untrusted tree refuses every order before any
     // registry entry executes, disclosed per order, never silent.
     if (!deps.trust.repoExecutionAllowed) {
-      records.push({
-        ...base,
-        outcome: {
-          kind: 'refused',
-          reason:
-            `repo execution is not allowed under this trust context (${deps.trust.source}); ` +
-            'recipes run package-manager and linter commands, so nothing spawned',
-        },
+      recordAll(group, {
+        kind: 'refused',
+        reason:
+          `repo execution is not allowed under this trust context (${deps.trust.source}); ` +
+          'recipes run package-manager and linter commands, so nothing spawned',
       });
       continue;
     }
-    const decl = registry.find((r) => r.id === order.recipe);
+    const decl = registry.find((r) => r.id === first.recipe);
     if (!decl?.execute) {
-      records.push({
-        ...base,
-        outcome: {
-          kind: 'refused',
-          reason: `recipe '${order.recipe}' is declared but not executable in this build`,
-        },
+      recordAll(group, {
+        kind: 'refused',
+        reason: `recipe '${first.recipe}' is declared but not executable in this build`,
       });
       continue;
     }
@@ -191,13 +241,10 @@ export async function runRecipeOrders(
     try {
       pre = new Set(deps.git.changedPaths());
     } catch (err) {
-      records.push({
-        ...base,
-        outcome: {
-          kind: 'failed',
-          step: 'working-tree',
-          output: tail(err instanceof Error ? err.message : String(err)),
-        },
+      recordAll(group, {
+        kind: 'failed',
+        step: 'working-tree',
+        output: tail(err instanceof Error ? err.message : String(err)),
       });
       continue;
     }
@@ -205,24 +252,28 @@ export async function runRecipeOrders(
     // own diff unattributable: an edit to an already-dirty file would be
     // neither committed (a partial manifest commit CI cannot install) nor
     // discarded (leaking the recipe's change into the user's dirt). Refuse
-    // up front, dirty paths named, so both contracts hold exactly.
-    const dirtyInEnvelope = [...pre].filter((path) => pathInEnvelope(path, order.envelope));
+    // up front, dirty paths named, so both contracts hold exactly. Group
+    // members share one envelope (the group key IS the file), so the first
+    // member's answers for all.
+    const dirtyInEnvelope = [...pre].filter((path) => pathInEnvelope(path, first.envelope));
     if (dirtyInEnvelope.length > 0) {
-      records.push({
-        ...base,
-        outcome: {
-          kind: 'refused',
-          reason:
-            'the working tree already has uncommitted changes inside this order envelope ' +
-            `(${dirtyInEnvelope.join(', ')}); commit or stash them so the recipe's own diff ` +
-            'stays attributable',
-        },
+      recordAll(group, {
+        kind: 'refused',
+        reason:
+          'the working tree already has uncommitted changes inside this order envelope ' +
+          `(${dirtyInEnvelope.join(', ')}); commit or stash them so the recipe's own diff ` +
+          'stays attributable',
       });
       continue;
     }
+    // One attempt for the whole group: the merged findings tell the
+    // executor everything the group's orders know (its verify treats their
+    // union as the known set).
+    const merged: WorkOrder =
+      group.length === 1 ? first : { ...first, findings: group.flatMap((o) => o.findings) };
     let outcome: RecipeOutcome;
     try {
-      outcome = await decl.execute(order, {
+      outcome = await decl.execute(merged, {
         cwd: deps.cwd,
         trust: deps.trust,
         exec: deps.exec,
@@ -243,45 +294,75 @@ export async function runRecipeOrders(
     try {
       delta = deps.git.changedPaths().filter((p) => !pre.has(p));
     } catch (err) {
-      records.push({
-        ...base,
-        outcome: {
-          kind: 'failed',
-          step: 'working-tree',
-          output:
-            'could not read the working tree after the recipe ran, so its diff can be ' +
-            `neither enforced nor committed: ${tail(err instanceof Error ? err.message : String(err))}`,
-        },
+      recordAll(group, {
+        kind: 'failed',
+        step: 'working-tree',
+        output:
+          'could not read the working tree after the recipe ran, so its diff can be ' +
+          `neither enforced nor committed: ${tail(err instanceof Error ? err.message : String(err))}`,
       });
       continue;
     }
-    if (outcome.kind !== 'applied') {
+    // Per-order done inside a partly-fixed group: when the verify handed
+    // back STRUCTURED leftovers (every remaining rule known to the merged
+    // order), each member whose own rules are all gone is done; the rest
+    // stay open and fall to the agent queue. The partial fix is real work
+    // and commits; the leftover findings are the grandfathered debt of the
+    // still-open orders, and the tree verification stays the arbiter.
+    const leftoverRules =
+      outcome.kind === 'failed' && outcome.step === 'verify-lint'
+        ? outcome.leftoverRules
+        : undefined;
+    const closed =
+      leftoverRules !== undefined
+        ? group.filter((o) => [...orderRules(o)].every((r) => !leftoverRules.includes(r)))
+        : [];
+    if (outcome.kind !== 'applied' && closed.length === 0) {
       deps.git.discardPaths(delta);
-      records.push({ ...base, outcome });
+      recordAll(group, outcome);
       continue;
     }
-    const { inside, outside } = partitionByEnvelope(delta, order.envelope);
+    const applying = outcome.kind === 'applied' ? [...group] : closed;
+    const open = group.filter((o) => !applying.includes(o));
+    const { inside, outside } = partitionByEnvelope(delta, first.envelope);
     if (outside.length > 0) deps.git.discardPaths(outside);
+    const dropped = outside.length > 0 ? { droppedPaths: outside } : {};
     if (inside.length === 0) {
-      records.push({
-        ...base,
-        outcome: {
+      recordAll(
+        applying,
+        {
           kind: 'failed',
           step: 'envelope',
           output:
-            'the recipe reported applied but left no change inside the order envelope' +
+            'the recipe reported this order done but left no change inside the order envelope' +
             (outside.length > 0 ? ` (out-of-envelope paths were discarded)` : ''),
         },
-        ...(outside.length > 0 ? { droppedPaths: outside } : {}),
-      });
-      continue;
+        dropped,
+      );
+    } else {
+      deps.git.commitPaths(
+        inside,
+        `fix(${first.class}): ${nameOrders(applying.map((o) => o.id))} (${decl.id} recipe)`,
+      );
+      recordAll(applying, { kind: 'applied', changedFiles: inside }, dropped);
     }
-    deps.git.commitPaths(inside, `fix(${order.class}): ${order.id} (${decl.id} recipe)`);
-    records.push({
-      ...base,
-      outcome: { ...outcome, changedFiles: inside },
-      ...(outside.length > 0 ? { droppedPaths: outside } : {}),
-    });
+    if (open.length > 0 && outcome.kind === 'failed') {
+      for (const o of open) {
+        const remain = [...orderRules(o)].filter((r) => leftoverRules!.includes(r)).sort();
+        records.push({
+          orderId: o.id,
+          class: String(o.class),
+          recipe: o.recipe!,
+          outcome: {
+            kind: 'failed',
+            step: 'verify-lint',
+            output:
+              `rules remain after the file-level autofix (${remain.join(', ')}); ` +
+              'not auto-fixable; this order falls to the agent tier',
+          },
+        });
+      }
+    }
   }
   return records;
 }

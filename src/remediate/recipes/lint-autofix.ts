@@ -8,14 +8,14 @@
  * (`parseLocated` / `parseStructuredLocated`, Rule 17), so the recipe's
  * verify reads the leftovers of the very command that fixed.
  *
- * Verify is strict by construction: a single-slice lint order carries the
- * file's ENTIRE known finding set, so "the order's ids are absent AND no
- * net-new finding appeared in the envelope" collapses to "the file lints
- * clean". Anything remaining (an unfixable rule, a finding the fix
- * introduced) fails the recipe, the diff is discarded, and the order stays
- * open for the agent tier with the leftover rules named. A sliced order
- * (the file's findings span several orders) is refused: a file-scoped fix
- * cannot be verified per slice.
+ * Verify: the file must lint clean afterwards for a full apply. When rules
+ * remain and EVERY one of them is among the order's own rules, the failure
+ * carries them structurally (`leftoverRules`) so the grouped runner can
+ * evaluate each slice-order of the file individually: the fix runs ONCE
+ * per file, slices whose rules are all gone apply, and unfixed slices fall
+ * to the agent tier. A leftover rule OUTSIDE the order's own set (net-new,
+ * or unparsed) fails the whole attempt plain, and the runner discards the
+ * diff: a fix that mints findings never lands.
  */
 import { tail } from '../../analyzers/tools/bounded-exec';
 import { parseLocated, parseStructuredLocated } from '../../analyzers/custom-checks/parse';
@@ -49,15 +49,6 @@ export async function executeLintAutofix(
         'pack lint gates have a declared fix mode',
     };
   }
-  if (order.provenance.source === 'debt-slice' && order.provenance.of > 1) {
-    return {
-      kind: 'refused',
-      reason:
-        `the file's findings span ${order.provenance.of} sliced orders, and a file-scoped ` +
-        'autofix cannot be verified one slice at a time; raise ' +
-        'remediate.workOrders.maxSliceSize or leave this to the agent tier',
-    };
-  }
   const provider = getLanguage(pack as LanguageId)?.lintGate;
   const fix = provider?.fixCommand?.({ cwd: ctx.cwd, files: [file] }) ?? null;
   if (fix === null) {
@@ -87,14 +78,25 @@ export async function executeLintAutofix(
   const inFile = remaining.filter((f) => f.file === file || f.file === undefined);
   if (inFile.length > 0) {
     const rules = [...new Set(inFile.map((f) => f.rule ?? '(unparsed)'))].sort();
+    const known = new Set(
+      order.findings.map((f) => (f.evidence.type === 'custom-check' ? f.evidence.rule : undefined)),
+    );
+    // Structured leftovers ONLY when every remaining rule is one the order
+    // already knew about: an unknown or unparsed rule is net-new (or
+    // unattributable), and the whole attempt must fail plain so the runner
+    // discards the diff.
+    const allKnown = rules.every((r) => known.has(r));
     return {
       kind: 'failed',
       step: 'verify-lint',
       output: tail(
         `${inFile.length} finding(s) remain in ${file} after the autofix ` +
-          `(rules: ${rules.join(', ')}): not auto-fixable, or introduced by the fix; ` +
-          'leaving the order to the agent tier',
+          `(rules: ${rules.join(', ')}): ` +
+          (allKnown
+            ? 'not auto-fixable; the unfixed orders fall to the agent tier'
+            : 'not all among the order findings (net-new or unparsed); discarding the fix'),
       ),
+      ...(allKnown ? { leftoverRules: rules } : {}),
     };
   }
   return { kind: 'applied', changedFiles: [file] };

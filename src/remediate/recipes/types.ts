@@ -46,11 +46,19 @@ export type RecipeOutcome =
     }
   | {
       /** The recipe acted and a step broke (or its verify did not confirm).
-       *  The runner discards the partial diff. */
+       *  The runner discards the partial diff (unless a grouped execution
+       *  can salvage per-order slices; see `leftoverRules`). */
       readonly kind: 'failed';
       readonly step: string;
       /** Captured output tail / verify evidence (display-sized). */
       readonly output: string;
+      /** lint-autofix verify only: the rules still reported in the file
+       *  after the fix, EVERY one of them among the order's own rules (an
+       *  unknown or unparsed leftover never sets this; that is the
+       *  net-new guard, and the whole attempt fails plain). Lets the
+       *  grouped runner evaluate each slice-order's done individually:
+       *  slices whose rules are all gone applied, the rest stay open. */
+      readonly leftoverRules?: readonly string[];
     };
 
 /** What a recipe executes with. Everything spawnable or network-shaped is

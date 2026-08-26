@@ -383,11 +383,11 @@ describe('planWorkOrders: lint (one order per file, every source)', () => {
       slice: 1,
       of: 3,
     });
-    // A SLICED order cannot be file-scope autofixed and verified per slice,
-    // so it tiers to the agent by matches (4.4.5 review), not via a runtime
-    // refusal the plan surface would render as executable determinism.
-    expect(plan.orders[0].tier).toBe('agent');
-    expect(plan.orders[0].recipe).toBeUndefined();
+    // Sliced orders are recipe-eligible (4.4.5 estate fix): the runner
+    // groups a file's slices into ONE fix attempt and evaluates each
+    // slice's done individually, so big files keep deterministic economics.
+    expect(plan.orders[0].tier).toBe('recipe');
+    expect(plan.orders[0].recipe).toBe('lint-autofix');
   });
 
   it('binary custom-check debt and other kinds land in undispatchable with identity-only evidence', () => {
