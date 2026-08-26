@@ -137,16 +137,16 @@ describe('lockfile-sync floor check (typescript pack, npm)', () => {
     }
   });
 
-  // An affected run with an EMPTY changed set is an UNDETERMINABLE diff — the
-  // pack contract reads it as full, so the lockfile check must run there too
-  // (a silent skip would re-open the class on any surface that cannot compute
-  // its diff: the change that drifted the lockfile may simply be invisible).
-  it('an affected run with an EMPTY changed set (undeterminable diff) still runs the check', () => {
+  // An affected run whose diff is UNKNOWN (`changedFiles: null`: no base, or
+  // git could not diff) must still run the lockfile check: a silent skip
+  // would re-open the class on any surface that cannot compute its diff (the
+  // change that drifted the lockfile may simply be invisible).
+  it('an affected run with an UNKNOWN diff (changedFiles: null) still runs the check', () => {
     const dir = tsRepo(files);
     try {
       const r = runCorrectnessFloor({
         cwd: dir,
-        changedFiles: [],
+        changedFiles: null,
         scope: 'affected',
         packs: [TS],
         exec: (cmd) =>
@@ -157,6 +157,31 @@ describe('lockfile-sync floor check (typescript pack, npm)', () => {
       const lock = r.checks.find((c) => c.label === LOCKFILE_SYNC_LABEL)!;
       expect(lock.status).toBe('fail');
       expect(r.blocks).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // A KNOWN empty diff is a different fact from an unknown one: a pristine
+  // tree at its base changed nothing, so nothing could have moved the
+  // lockfile and the dry-run (a package-manager spawn on EVERY Stop) is
+  // skipped. The old `[]`-means-both contract spawned it on every stop.
+  it('an affected run with a KNOWN empty changed set skips the dry-run (nothing changed)', () => {
+    const dir = tsRepo(files);
+    try {
+      let spawned = 0;
+      const r = runCorrectnessFloor({
+        cwd: dir,
+        changedFiles: [],
+        scope: 'affected',
+        packs: [TS],
+        exec: (cmd) => {
+          if (cmd.bin === 'npm' && cmd.args.includes('--dry-run')) spawned++;
+          return { available: true, code: 0, output: '' };
+        },
+      });
+      expect(spawned).toBe(0);
+      expect(r.checks.find((c) => c.label === LOCKFILE_SYNC_LABEL)).toBeUndefined();
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

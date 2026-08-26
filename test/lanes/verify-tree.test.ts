@@ -216,7 +216,7 @@ describe('verifyTree', () => {
   });
 
   it('the floor runs IN THE WORKTREE with the REAL diff, diff-scoped (never cwd + [])', async () => {
-    let seen: { cwd: string; changedFiles: readonly string[] } | undefined;
+    let seen: { cwd: string; changedFiles: readonly string[] | null } | undefined;
     const r = await verifyTree(
       opts({
         seams: seams({
@@ -242,6 +242,28 @@ describe('verifyTree', () => {
     );
     expect(r.verdict).toBe('verified');
     expect(seen).toEqual({ cwd: '/tmp/wt-xyz', changedFiles: ['package.json', 'src/b.ts'] });
+  });
+
+  // An UNDETERMINABLE diff reaches the floor as null (unknown), never as an
+  // empty array (known: nothing changed): the runner keeps change-triggered
+  // checks (the lockfile dry-run) running only in the unknown case. The
+  // result still reports the empty projection for its readers.
+  it('an undeterminable diff reaches the floor as null, not as an empty (known) set', async () => {
+    let seen: { cwd: string; changedFiles: readonly string[] | null } | undefined;
+    const r = await verifyTree(
+      opts({
+        seams: seams({
+          changedFiles: () => null,
+          runFloor: (args) => {
+            seen = args;
+            return GREEN;
+          },
+        }),
+      }),
+    );
+    expect(r.verdict).toBe('verified');
+    expect(seen?.changedFiles).toBeNull();
+    expect(r.changedFiles).toEqual([]);
   });
 
   it('guardrail-red: a BLOCKED guardrail', async () => {

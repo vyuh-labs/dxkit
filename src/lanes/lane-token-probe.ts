@@ -59,6 +59,16 @@ export type LaneTokenTierProbe =
       readonly tier: LaneTokenTier;
       /** The scope the deciding name was found in (`app`: the App id variable). */
       readonly scope: LaneTokenScope;
+      /** Present when a tier ABOVE the one seen could not be ruled out: a PAT
+       *  was found but a variables scope the App id could live in was not
+       *  enumerated. The workflow picks App mode on the id alone, so the
+       *  `pat` claim is then a floor ("a working tier exists"), not the tier
+       *  the lane will actually run with. Never set on `app` (the top tier). */
+      readonly higherTierUnobserved?: {
+        readonly tier: 'app';
+        /** Which scopes could not be enumerated, so why the App tier is open. */
+        readonly unreadableScopes: string;
+      };
     }
   | {
       readonly state: 'half-configured';
@@ -195,8 +205,25 @@ export function probeLaneTokenTier(
     };
   }
 
-  // No id seen. A PAT is positive evidence of a working tier.
-  if (patScope !== null) return { state: 'configured', tier: 'pat', scope: patScope };
+  // No id seen. A PAT is positive evidence of a working tier, but only a
+  // FULLY read variables scope rules the App tier out (the id could live in
+  // an unread org scope, and it would win at runtime), so the answer says
+  // "pat, App tier unobservable" instead of asserting the tier.
+  if (patScope !== null) {
+    return {
+      state: 'configured',
+      tier: 'pat',
+      scope: patScope,
+      ...(varsFullyRead
+        ? {}
+        : {
+            higherTierUnobserved: {
+              tier: 'app' as const,
+              unreadableScopes: unreadableScopes(repoVars, repoSecrets, orgVars, orgSecrets),
+            },
+          }),
+    };
+  }
 
   // The other half-configured direction: the key exists but the id is
   // definitively absent, so the workflow never picks App mode.

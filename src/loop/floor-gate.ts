@@ -158,9 +158,10 @@ export function buildFloorGate(repoDir: string): FloorGateOutcome {
       return { kind: 'unavailable', reason: 'no active language pack provides a floor' };
     }
     const base = resolveFloorBase(repoDir);
-    // Empty changedFiles (no base, or diff undeterminable) → the packs treat
-    // the scope as full, per the CorrectnessContext contract.
-    const changed = base ? (computeChangedFiles(repoDir, base) ?? []) : [];
+    // `null` (no base, or the diff undeterminable) tells the runner the diff
+    // is UNKNOWN: packs treat it as full, and change-triggered checks (the
+    // lockfile dry-run) still run. A known empty set is "nothing changed".
+    const changed = base ? computeChangedFiles(repoDir, base) : null;
     const result = runCorrectnessFloor({
       cwd: repoDir,
       changedFiles: changed,

@@ -64,6 +64,41 @@ describe('probeLaneTokenTier: the states', () => {
     expect(r).toMatchObject({ state: 'configured', tier: 'app', scope: 'org' });
   });
 
+  // A PAT is positive evidence of SOME tier, but the App id decides the
+  // mode at runtime and may live in an org variables scope the token cannot
+  // list; asserting "pat" there overclaims. The typed caveat names the open
+  // tier and the unread scopes; a fully read variables scope has no caveat.
+  it('a PAT with an UNREAD org variables scope is configured, with the App tier marked unobservable', () => {
+    const r = probeLaneTokenTier(
+      fakeProbe({
+        [P.repoVars]: vars(),
+        [P.repoSecrets]: secrets(LANE_TOKEN_PAT_SECRET_NAME),
+        [P.orgSecrets]: secrets(),
+      }),
+      SLUG,
+      true,
+    );
+    expect(r).toEqual({
+      state: 'configured',
+      tier: 'pat',
+      scope: 'repo',
+      higherTierUnobserved: { tier: 'app', unreadableScopes: 'org variables' },
+    });
+  });
+
+  it('a PAT with every variables scope fully read carries no caveat', () => {
+    const r = probeLaneTokenTier(
+      fakeProbe({
+        [P.repoVars]: vars(),
+        [P.repoSecrets]: secrets(LANE_TOKEN_PAT_SECRET_NAME),
+        [P.orgVars]: vars(),
+      }),
+      SLUG,
+      true,
+    );
+    expect(r).toEqual({ state: 'configured', tier: 'pat', scope: 'repo' });
+  });
+
   it('repo-level PAT tier reads as configured', () => {
     const r = probeLaneTokenTier(
       fakeProbe({
@@ -309,6 +344,21 @@ describe('one name set: probe, workflow chain, and remedies read the same names'
 describe('doctor rendering (laneTokenTierCheck), every state', () => {
   it('configured: no finding', () => {
     expect(laneTokenTierCheck({ state: 'configured', tier: 'app', scope: 'org' })).toBeNull();
+  });
+
+  it('configured PAT with the App tier unobservable: a green advisory, never a red finding', () => {
+    const c = laneTokenTierCheck({
+      state: 'configured',
+      tier: 'pat',
+      scope: 'org',
+      higherTierUnobserved: { tier: 'app', unreadableScopes: 'org variables' },
+    });
+    expect(c).not.toBeNull();
+    expect(c!.advisory).toBe(true);
+    expect(c!.label).toContain('PAT tier');
+    expect(c!.label).toContain('App tier could not be verified');
+    expect(c!.fix?.hint).toContain('org variables');
+    expect(c!.fix?.command).toBeUndefined();
   });
 
   it('not-configured: the red finding with the remedy command', () => {

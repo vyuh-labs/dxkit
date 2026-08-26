@@ -15,6 +15,7 @@ import { mkdirSync, mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import * as path from 'path';
 import { RefBaselineError } from './ref-baseline';
+import { noPromptGitEnv } from '../git-no-prompt';
 
 export interface RemoteRefOptions {
   /** Clone URL: `https://…`, `git@host:owner/repo.git`, `ssh://…`, or `file://`. */
@@ -71,11 +72,7 @@ export function remoteTipSha(opts: {
     const ref = opts.ref && opts.ref.trim() ? opts.ref.trim() : 'HEAD';
     if (ref !== 'HEAD') assertSafeGitArg('ref', ref);
     const out = execFileSync('git', ['ls-remote', opts.repo, ref], {
-      env: {
-        ...process.env,
-        GIT_TERMINAL_PROMPT: '0',
-        GIT_SSH_COMMAND: process.env.GIT_SSH_COMMAND ?? 'ssh -o BatchMode=yes',
-      },
+      env: { ...process.env, ...noPromptGitEnv() },
       timeout: opts.timeoutMs ?? 15_000,
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
@@ -126,13 +123,9 @@ export async function withRemoteRefWorktree<T>(
 
   const tempBase = mkdtempSync(path.join(tmpdir(), 'dxkit-remote-'));
   const checkout = path.join(tempBase, 'repo');
-  const env = {
-    ...process.env,
-    GIT_TERMINAL_PROMPT: '0', // never prompt for HTTPS credentials — fail fast
-    // Never prompt for an SSH passphrase / host-key. Respect a user-set
-    // GIT_SSH_COMMAND, else force batch mode.
-    GIT_SSH_COMMAND: process.env.GIT_SSH_COMMAND ?? 'ssh -o BatchMode=yes',
-  };
+  // Never prompt for HTTPS credentials or an SSH passphrase / host-key: the
+  // one no-prompt helper keeps the user's SSH command and appends batch mode.
+  const env = { ...process.env, ...noPromptGitEnv() };
   const timeout = opts.timeoutMs ?? 60_000;
   const git = (args: readonly string[]): void => {
     execFileSync('git', args as string[], {

@@ -139,7 +139,15 @@ export interface CorrectnessFloorResult {
 
 export interface CorrectnessFloorOptions {
   readonly cwd: string;
-  readonly changedFiles: readonly string[];
+  /** Repo-relative changed files, or `null` when the caller could NOT
+   *  determine the diff (no base ref, git failed). The two are different
+   *  facts: a KNOWN empty set (a pristine tree at its base) is "nothing
+   *  changed", so a change-triggered check like the lockfile dry-run has
+   *  nothing to verify and is skipped; `null` is "unknown", where every
+   *  change-triggered check runs, because the change that drifted the
+   *  lockfile may simply be invisible. Packs still receive the empty array
+   *  for both (the `CorrectnessContext` contract: empty reads as full). */
+  readonly changedFiles: readonly string[] | null;
   readonly scope: CorrectnessScope;
   /** Active language packs (from `activeLanguagesFromStack` / `-Flags`). */
   readonly packs: readonly LanguageSupport[];
@@ -170,18 +178,20 @@ export function runCorrectnessFloor(opts: CorrectnessFloorOptions): CorrectnessF
   // fast surfaces. The predicate is the SAME pack-declared manifest union the
   // dep-audit skip consults (`manifestPatterns`, Rule 6). An empty changed set
   // (undeterminable diff) is not escalation — packs already treat it as full.
+  const diffKnown = opts.changedFiles !== null;
+  const changedFiles: readonly string[] = opts.changedFiles ?? [];
   const escalate =
     opts.scope === 'affected' &&
-    opts.changedFiles.length > 0 &&
-    changedFilesTouchDependencyManifest(opts.changedFiles, opts.packs);
+    changedFiles.length > 0 &&
+    changedFilesTouchDependencyManifest(changedFiles, opts.packs);
   const scope: CorrectnessScope = escalate ? 'full' : opts.scope;
   const scopeEscalated = escalate
     ? ({
         reason: 'dependency-manifest-changed',
-        files: dependencyManifestFilesIn(opts.changedFiles, opts.packs),
+        files: dependencyManifestFilesIn(changedFiles, opts.packs),
       } as const)
     : undefined;
-  const ctx = { cwd: opts.cwd, changedFiles: opts.changedFiles, scope };
+  const ctx = { cwd: opts.cwd, changedFiles, scope };
   const checks: CorrectnessCheckResult[] = [];
 
   for (const { id, provider } of activeCorrectnessProviders(opts.packs)) {
@@ -295,12 +305,14 @@ export function runCorrectnessFloor(opts: CorrectnessFloorOptions): CorrectnessF
     // escalation above, never per pack. It runs at FULL scope (after
     // escalation that means "CI's scope, or a diff that touched a dependency
     // manifest" — the only diffs that can move a lockfile out of sync), and
-    // ALSO on an affected run whose changed set is EMPTY: an undeterminable
-    // diff reads as full for every pack's own builders (the documented
-    // contract), so this check must not silently thin out there — the diff
-    // that drifted the lockfile may simply be invisible. Only a determinate
-    // source-only fast run skips the dry-run.
-    const lockfileDue = scope === 'full' || ctx.changedFiles.length === 0;
+    // ALSO on an affected run whose diff is UNKNOWN (`changedFiles: null`):
+    // the diff that drifted the lockfile may simply be invisible, so the
+    // check must not silently thin out there. A KNOWN changed set that
+    // touched no manifest (including the known-EMPTY set of a pristine tree
+    // at its base, the every-Stop case) skips the dry-run: nothing that
+    // could move the lockfile changed, so spawning the package manager would
+    // verify nothing.
+    const lockfileDue = scope === 'full' || !diffKnown;
     if (provider.lockfileCheck && lockfileDue) {
       // Every dependency root the audit reads (repo root + nested lockfile
       // roots), one decomposed check per pack.

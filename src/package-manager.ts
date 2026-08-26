@@ -385,8 +385,14 @@ export type LockfileSyncCheck =
  *     peer conflict is tolerated with a disclosure: CI's install retries with
  *     `--legacy-peer-deps`. npm 7+ semantics (Node 18+, dxkit's floor, ships
  *     npm 9).
- *   - pnpm: `--frozen-lockfile --lockfile-only` fails with
- *     ERR_PNPM_OUTDATED_LOCKFILE on drift and never touches node_modules.
+ *   - pnpm: a DISCLOSED skip. `--frozen-lockfile` is documented only as "does
+ *     not generate a lockfile and fails if an update is needed", not as a
+ *     read-only check: paired with `--lockfile-only` (documented as "only
+ *     updates pnpm-lock.yaml") it has rewritten an in-sync lockfile on a
+ *     format upgrade, and `install --dry-run` (pnpm 11.8+) exits 0 even when
+ *     it reports the lockfile would change, so neither can back a verdict
+ *     without touching the tree. CI's `pnpm install --frozen-lockfile` stays
+ *     the backstop.
  *   - bun: `--frozen-lockfile --dry-run` refuses a lockfile that would change.
  *   - yarn: no non-installing frozen check holds across classic and berry
  *     (classic's `--frozen-lockfile` installs for real; berry's
@@ -408,8 +414,11 @@ export function lockfileSyncCheck(pm: PackageManager): LockfileSyncCheck {
       };
     case 'pnpm':
       return {
-        kind: 'command',
-        argv: ['pnpm', 'install', '--frozen-lockfile', '--lockfile-only', '--ignore-scripts'],
+        kind: 'skipped',
+        reason:
+          'pnpm has no documented read-only frozen-lockfile check (`--frozen-lockfile ' +
+          '--lockfile-only` can rewrite the lockfile, `--dry-run` exits 0 on drift); ' +
+          "CI's `pnpm install --frozen-lockfile` is the backstop",
       };
     case 'bun':
       return {

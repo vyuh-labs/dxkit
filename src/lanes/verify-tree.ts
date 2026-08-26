@@ -123,7 +123,8 @@ export interface VerifyTreeSeams {
   readonly changedFiles?: (worktreePath: string, baseHead: string) => readonly string[] | null;
   readonly runFloor?: (args: {
     readonly cwd: string;
-    readonly changedFiles: readonly string[];
+    /** `null`: the diff was undeterminable (the runner treats it as unknown). */
+    readonly changedFiles: readonly string[] | null;
   }) => CorrectnessFloorResult;
   readonly runGuardrail?: (worktreePath: string) => Promise<GuardrailGateResult>;
 }
@@ -251,7 +252,7 @@ export async function verifyTree(opts: VerifyTreeOptions): Promise<VerifyTreeRes
   const changed = seams.changedFiles ?? computeChangedFiles;
   const runFloor =
     seams.runFloor ??
-    ((args: { cwd: string; changedFiles: readonly string[] }) =>
+    ((args: { cwd: string; changedFiles: readonly string[] | null }) =>
       runCorrectnessFloor({
         cwd: args.cwd,
         changedFiles: args.changedFiles,
@@ -276,7 +277,11 @@ export async function verifyTree(opts: VerifyTreeOptions): Promise<VerifyTreeRes
       // artifacts must never read as the agent's changed files (they would
       // force a manifest escalation and misattribute the diff).
       enter('changed-files');
-      const changedFiles = changed(wt, opts.baseHead) ?? [];
+      // Kept nullable for the floor: a null diff is UNKNOWN to the runner
+      // (change-triggered checks still run), a known empty set is "nothing
+      // changed". The result reports the empty projection either way.
+      const changedDiff = changed(wt, opts.baseHead);
+      const changedFiles = changedDiff ?? [];
 
       enter('install');
       let installed = install(wt);
@@ -297,7 +302,7 @@ export async function verifyTree(opts: VerifyTreeOptions): Promise<VerifyTreeRes
       }
 
       enter('floor');
-      const floor = runFloor({ cwd: wt, changedFiles });
+      const floor = runFloor({ cwd: wt, changedFiles: changedDiff });
       enter('attribution');
       const floorAttribution = attributeFloorFailures(floor, baseChecks, {
         absentMeans: opts.absentMeans,
