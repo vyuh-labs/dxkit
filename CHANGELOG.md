@@ -5,6 +5,154 @@ All notable changes to `@vyuhlabs/dxkit` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.4.5] - 2026-08-26
+
+The remediation rethink. Twenty-seven live agent-lane runs on a real
+estate landed nothing: open-ended goals ("fix lint" against a
+ten-thousand-finding backlog) gave the agent no finite set to close, no
+evidence dxkit already held, no checkable "done", and a scheduler that
+re-bought the same failure every week. This release replaces the goal
+with a work order, puts a deterministic tier in front of the agent, and
+gives the scheduler a memory. The verified frame (entry-attributed
+floor, guardrail as arbiter, disclosed envelopes) is unchanged; the
+work-order layer sits between the plan and the driver.
+
+### Added
+
+- **Work orders: the finite unit of remediation.** One planner builds
+  orders from the finding sets dxkit already computes (the entry
+  floor's failures, deferred advisories inside their window, debt
+  slices by file). Each order carries the finding ids it must close
+  with the evidence in hand (failing command and output, advisory and
+  fixed version, unresolved specifier and its importers), an envelope
+  derived from the findings (the only paths the fix may touch), the
+  repo's constraints (its real install command, forbidden actions), a
+  done criterion the agent can run and the frame re-runs, a budget
+  derived from the finding count (not a flat 80-turn cap), and a tier:
+  `recipe` (deterministic) or `agent`. Existing tasks become selectors
+  over order classes; open-ended tasks (`improve-tests`, `write-docs`)
+  select nothing and say so. `remediate plan --json` shows the orders,
+  tiers, budgets, and anything undispatchable, at zero cost.
+- **The recipe tier: deterministic fixes at $0.** Recipe-tier orders
+  execute inside the frame before any agent spawns: `lockfile-sync`
+  (the owning root's lock-writing install, verified by the pack's own
+  frozen dry-run), `override-pin` (a pm-aware override at the highest
+  known fixed version, OSV pre-checked so the pin never trades one red
+  gate for another, then a re-audit), `declare-dependency` (declare a
+  net-new unresolved bare import, refusing with the advisory named
+  when the candidate would introduce a block-tier vulnerability), and
+  `lint-autofix` (the pack's fixer restricted to the order's files and
+  rules). A recipe that cannot act refuses with the reason named, at
+  zero cost, and a refused or failed recipe order falls through to the
+  agent tier in the same run. A recipe-only plan completes with no
+  agent spawn, the one tree verification still arbitrating: a $0 run
+  is never a self-certified run.
+- **The scoped agent: order-driven dispatch.** Remaining orders go to
+  the agent one order per run (up to `remediate.maxOrdersPerRun`,
+  default 3; 0 keeps the previous single task-prompt run). The prompt
+  is the rendered order: the findings and their evidence, the
+  attribution split (these are yours; everything else is grandfathered,
+  do not touch), the envelope, the constraints, and the done command.
+  The envelope is enforced at the sweep, not just stated: committed
+  changes outside it are dropped with disclosure, so sprawl becomes
+  unlandable instead of a red PR. "Done" is verified in-session: the
+  Stop hook reads the dispatched order's done criterion and hands the
+  still-open finding ids back into the session. Tools are narrowed
+  through the driver's declared mechanism where it supports one
+  (package installs are the frame's job, never the agent's), disclosed
+  either way.
+- **Scheduler memory: the order ledger and the circuit breaker.**
+  Every order outcome (including the ones that never land) is recorded
+  in a per-task ledger (`.dxkit/lanes/<lane>-<task>.orders.jsonl`),
+  committed with landings and pushed to the standing branch otherwise.
+  The circuit breaker (`remediate.pauseAfterFailures`, default 2; 0
+  off) pauses a class whose recent firings are an unbroken failure
+  streak: paused orders stay planned and disclosed, but no tier spends
+  on them. A pause lifts, disclosed, on a remediate policy change, a
+  dxkit upgrade, an explicit dispatch of the owning task
+  (`--dispatch-override` locally, or the workflow's Run-workflow form),
+  or when the failures age out of the bounded history window. The
+  scheduled matrix now derives from the open orders in value order: a
+  task with no open orders spawns no job, so a healthy repo's weekly
+  firing costs nothing.
+- **One tree verification, shared with CI.** The lane previously
+  verified the agent's dirty workspace with whatever `node_modules`
+  the agent last installed; CI verifies a clean checkout after a
+  frozen install, and one draft shipped "verified" with a lockfile CI
+  could not load. `verifyTree` now checks the committed head in a
+  clean worktree after the repo's own frozen install (with its
+  declared fallback), the floor diff-scoped and attributed against
+  entry, then the guardrail. An install CI would refuse is now its own
+  `install-failed` outcome that never lands, attributed against the
+  base so a pre-existing break is disclosed, not blamed. The
+  dependency-install chain itself now has one definition, rendered
+  into every workflow template and executed by the lanes, so a
+  workflow can never install a tree differently from the way the lane
+  verified it. A lockfile out of sync with its manifest is now a floor
+  item in its own right for TS/JS repos (full scope, so CI and
+  manifest-touching diffs see it).
+- **Finding identity survives a reformat.** Every located finding
+  (lint and custom checks included, previously security only) now
+  carries a content hash, stamped once in the baseline orchestrator so
+  no producer can ship unstamped. A whole-file reindent pairs the
+  grandfathered backlog with its moved self instead of reporting it
+  resolved-plus-net-new; this fixes human reformat PRs as much as
+  agent runs. `vyuh-dxkit update` restamps an existing baseline by
+  reading files at its anchor commit (disclosed when it cannot), so no
+  re-baseline or rescan is needed.
+- **Relative imports join the import-resolution floor.** The TS/JS
+  resolution check now resolves `./` and `../` specifiers against the
+  repo tree (extension appending, index barrels, the ESM `.js`-to-`.ts`
+  fold), so a change that imports a file nobody committed is a floor
+  failure with a per-specifier identity, not a silent pass. Biased
+  hard toward false negatives: asset extensions, directories,
+  generated-output paths, template fragments, and anything ambiguous
+  are never judged, and only a net-new miss blocks.
+
+### Fixed
+
+- **`doctor`'s lane-token check is tri-state (#325).** The probe reads
+  both the repo and org Actions scopes and answers configured /
+  not configured / could-not-verify: the negative is asserted only
+  when every applicable scope was actually enumerated (pagination
+  included), an unreadable scope renders as advice with the reason,
+  and a half-configured App tier (id without key, or key without id)
+  is a finding naming the missing half.
+- **Remediate docs tell the truth about salvage and spend.** The
+  policy guide and skill described a `discard` salvage default (the
+  code defaults to `auto`) and an enforced `maxUsd` (the shipped
+  driver reports spend after the run, so the dollar cap is advisory
+  and turns plus wall-clock bound real spend). Both now read as the
+  code behaves, and the four undocumented budget knobs
+  (`taskBudgets`, `maxSpendPerRun`, `maxDispatchBudget`, `resume`)
+  are in the knob index and guide.
+
+### Upgrade notes
+
+Run `vyuh-dxkit update` after upgrading. For an existing repo:
+
+- **Managed workflows are refreshed**: every lane workflow gets the
+  one rendered install chain, and the remediate workflow gains the
+  plan-job notices (paused classes, matrix decisions) and the
+  dispatch-override wiring. Without the refresh, a workflow dispatch
+  cannot lift a circuit-breaker pause (the CLI tells you so).
+- **The baseline is restamped** with content hashes during update (no
+  re-baseline, no rescan; a baseline that update cannot restamp keeps
+  working through the git and identity passes, disclosed).
+- **Scheduled remediate behavior changes**: recipes now run before any
+  agent (set `remediate.recipes.enabled: false` to route every order
+  to the agent), the matrix skips tasks with no open orders, and a
+  repeatedly failing class pauses instead of re-spending (default 2
+  failures; set `remediate.pauseAfterFailures: 0` to disable). The
+  default task list is unchanged (`fix-vulns`), and open-ended tasks
+  still run only when policy lists them explicitly.
+- **Verification is stricter, honestly**: a remediation attempt whose
+  committed tree CI could not install now fails as `install-failed`
+  instead of landing as verified, and a net-new missing relative
+  import now blocks the floor (pre-existing misses never do).
+
+SDK unchanged at 0.3.0; no baseline, policy, or wire-format migrations.
+
 ## [4.4.4] - 2026-08-14
 
 One structural fix, proven necessary by 4.4.3's own $0 credential check
