@@ -438,6 +438,19 @@ describe('remediate plan --json: work orders', () => {
     expect(out.matrixTasks).toEqual(['fix-vulns']);
   });
 
+  it('degraded evidence (no floor source anywhere) falls the matrix back to the static task list, disclosed', async () => {
+    writePolicy({ remediate: { enabled: true, tasks: ['fix-vulns', 'fix-lint'] } });
+    writeBaseline([lintEntry('l1', 'src/a.ts', 1, 'eqeqeq')]); // no floorDebt envelope
+    const out = await captureJson(() =>
+      runRemediatePlan(repo, { json: true, gather: { packs: TS } }),
+    );
+    expect(out.matrixEvidenceDegraded).toContain('no floor evidence');
+    expect(out.matrixSource).toBe('static-fallback');
+    expect(out.matrixTasks).toEqual(['fix-vulns', 'fix-lint']);
+    const disclosures = out.matrixDisclosures as string[];
+    expect(disclosures.some((d) => d.includes('degraded'))).toBe(true);
+  });
+
   it('the matrix derives from OPEN orders (value order, no-order tasks spawn no job, legacy open-ended disclosed) and pauses are first-class', async () => {
     writePolicy({
       remediate: {

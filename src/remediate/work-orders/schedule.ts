@@ -48,6 +48,13 @@ export interface ScheduledMatrixInput {
    *  planning failed / was unavailable. */
   readonly plan: WorkOrderPlan | null;
   readonly planError?: string | null;
+  /** Structural evidence degradation from the gather (an unreadable
+   *  baseline, no floor evidence): a plan built on degraded evidence
+   *  cannot prove "nothing to do", so the matrix falls back to the static
+   *  task list, disclosed — a fail-open zero must never silently turn the
+   *  schedule off. Healthy evidence with zero orders stays a legitimate
+   *  no-job firing. */
+  readonly evidenceDegraded?: string | null;
 }
 
 /** Derive the scheduled matrix. Pure — every read is from the arguments. */
@@ -55,13 +62,16 @@ export function deriveScheduledMatrix(input: ScheduledMatrixInput): ScheduledMat
   const { config, plan } = input;
   const disclosures: string[] = [];
 
-  if (!plan) {
+  const degraded = !plan
+    ? 'no work-order plan was available' + (input.planError ? ` (${input.planError})` : '')
+    : input.evidenceDegraded
+      ? `the plan's evidence is degraded (${input.evidenceDegraded})`
+      : null;
+  if (degraded || !plan) {
     const ceiling = tasksWithinSpendCeiling(config);
     disclosures.push(
-      'matrix: no work-order plan was available' +
-        (input.planError ? ` (${input.planError})` : '') +
-        '; fell back to the static policy task list (a broken planner must not turn the ' +
-        'schedule off silently)',
+      `matrix: ${degraded}; fell back to the static policy task list (a degraded or broken ` +
+        'planner must not turn the schedule off silently)',
     );
     return {
       run: ceiling.run,

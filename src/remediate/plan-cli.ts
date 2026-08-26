@@ -116,6 +116,7 @@ export async function runRemediatePlan(
   let depScanSource: DepScanSource | null = null;
   let disclosures: readonly string[] = [];
   let pauses: readonly ClassPause[] = [];
+  let evidenceDegraded: string | null = null;
   let planError: string | null = null;
   try {
     const gathered = await planRepoWorkOrders(cwd, config, {
@@ -127,6 +128,7 @@ export async function runRemediatePlan(
     depScanSource = gathered.depScanSource;
     disclosures = gathered.disclosures;
     pauses = gathered.pauses;
+    evidenceDegraded = gathered.evidenceDegraded;
   } catch (err) {
     planError = err instanceof Error ? err.message : String(err);
   }
@@ -135,7 +137,7 @@ export async function runRemediatePlan(
   // with no open (unpaused) orders spawns no job; the value order comes from
   // the plan; the spend ceiling trims lowest-value first. Falls back to the
   // static policy task list when no plan exists, disclosed.
-  const matrix = deriveScheduledMatrix({ config, plan, planError });
+  const matrix = deriveScheduledMatrix({ config, plan, planError, evidenceDegraded });
   // The disclosed per-RUN spend projection (the undisclosed-4x class): each
   // matrix task is its own invocation with its own maxUsd, so one firing may
   // spend the SUM — a ceiling multiplication the serial shape's coupling
@@ -167,6 +169,7 @@ export async function runRemediatePlan(
           matrixTasks: matrix.run,
           deferredBySpendCeiling: matrix.deferred,
           matrixSource: matrix.source,
+          matrixEvidenceDegraded: evidenceDegraded,
           matrixNoOpenOrders: matrix.noOpenOrders,
           matrixLegacyOpenEnded: matrix.legacyOpenEnded,
           matrixDisclosures: matrix.disclosures,

@@ -120,6 +120,28 @@ describe('deriveScheduledMatrix', () => {
     expect(m.noOpenOrders).toEqual(['fix-vulns']);
   });
 
+  it('DEGRADED evidence falls back to the static policy list, disclosed; healthy zero orders stays a legitimate no-job firing', () => {
+    // A fail-open gather (unreadable baseline, no floor evidence) yields
+    // zero orders that prove nothing: spawning nothing weekly on that
+    // basis would be a silent off-switch.
+    const degraded = deriveScheduledMatrix({
+      config: config({ tasks: ['fix-vulns'] }),
+      plan: plan([]),
+      evidenceDegraded: 'the baseline exists but could not be read',
+    });
+    expect(degraded.source).toBe('static-fallback');
+    expect(degraded.run).toEqual(['fix-vulns']);
+    expect(degraded.disclosures.some((d) => d.includes('could not be read'))).toBe(true);
+    // Healthy evidence with zero orders remains the $0 win.
+    const healthy = deriveScheduledMatrix({
+      config: config({ tasks: ['fix-vulns'] }),
+      plan: plan([]),
+      evidenceDegraded: null,
+    });
+    expect(healthy.source).toBe('orders');
+    expect(healthy.run).toEqual([]);
+  });
+
   it('no plan (planning failed) falls back to the static policy list, disclosed, never a silent off-switch', () => {
     const m = deriveScheduledMatrix({
       config: config({ maxSpendPerRun: 10 }),
