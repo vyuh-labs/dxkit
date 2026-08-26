@@ -1,0 +1,220 @@
+# TEMPORARY live-fire validation for the 4.4.5 rendered workflow surfaces:
+# the one dependency-install chain definition, the lane-token task steps, and
+# the remediate plan job (order-derived matrix + scheduler-memory notices).
+# Renders the templates through the real generator path on the runner, then
+# EXECUTES the rendered step bodies: the install chain and the guardrail
+# install/scan steps against this repo, the plan job's matrix step against a
+# staged consumer repo. Removed in a follow-up commit before the release PR
+# merges (the c8ef847/32db408 pattern).
+name: livefire 445
+on:
+  push:
+    branches: ['445/release-prep']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  rendered-surfaces:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      # ---- The lane-token steps, byte-for-byte as the one definition
+      # (src/lanes/lane-token.ts) renders them, exercised in a real Actions
+      # context. Expected on a repo without the App tier: mint steps skipped,
+      # the disclose step prints the missing-secret notice. The render step
+      # below additionally asserts the rendered remediate workflow carries
+      # exactly these steps.
+      - name: Mint the lane token (GitHub App, when configured)
+        id: dxkit-app-token
+        if: ${{ vars.DXKIT_APP_ID != '' }}
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.DXKIT_APP_ID }}
+          private-key: ${{ secrets.DXKIT_APP_PRIVATE_KEY }}
+
+      - name: Disclose token mode
+        env:
+          DXKIT_APP_SET: ${{ vars.DXKIT_APP_ID != '' }}
+          DXKIT_BOT_TOKEN_SET: ${{ secrets.DXKIT_BOT_TOKEN != '' }}
+        run: |
+          if [ "${DXKIT_APP_SET}" = "true" ]; then
+            echo "token tier: GitHub App (short-lived, minted this run)"
+          elif [ "${DXKIT_BOT_TOKEN_SET}" = "true" ]; then
+            echo "token tier: DXKIT_BOT_TOKEN (PAT)"
+          else
+            echo "::notice title=lane PRs run no checks::This lane pushes with the default GITHUB_TOKEN, and GitHub never triggers workflows for such pushes - the PR it opens will show no checks. Preferred fix: a GitHub App (set the DXKIT_APP_ID variable + the DXKIT_APP_PRIVATE_KEY secret - no billed seat, short-lived per-run tokens). A DXKIT_BOT_TOKEN PAT secret with repo scope also works."
+          fi
+
+      - name: Re-mint the lane token before the task (App tier)
+        id: dxkit-app-token-task
+        if: ${{ vars.DXKIT_APP_ID != '' }}
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.DXKIT_APP_ID }}
+          private-key: ${{ secrets.DXKIT_APP_PRIVATE_KEY }}
+
+      - name: Build dxkit
+        run: |
+          npm ci
+          npm run build
+
+      - name: Render the workflows through the generator path
+        run: |
+          export DXKIT_ROOT="$GITHUB_WORKSPACE"
+          export LIVEFIRE_OUT="$RUNNER_TEMP/livefire-out"
+          node - <<'EOF'
+          const fs = require('fs');
+          const os = require('os');
+          const path = require('path');
+          const { execFileSync } = require('child_process');
+          const dxkitRoot = process.env.DXKIT_ROOT;
+          const outDir = process.env.LIVEFIRE_OUT;
+          const { createRequire } = require('module');
+          const yaml = createRequire(path.join(dxkitRoot, 'package.json'))('js-yaml');
+          const ship = require(path.join(dxkitRoot, 'dist', 'ship-installers.js'));
+
+          // Stage the scratch consumer repo the generator renders for.
+          const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-livefire-'));
+          const write = (rel, content) => {
+            const abs = path.join(scratch, rel);
+            fs.mkdirSync(path.dirname(abs), { recursive: true });
+            fs.writeFileSync(abs, content);
+          };
+          write('package.json', JSON.stringify({ name: 'livefire-consumer', version: '1.0.0' }) + '\n');
+          write('package-lock.json', '{"lockfileVersion":3}\n');
+          write('src/index.ts', 'export const a = 1;\n');
+          write('.dxkit/policy.json', JSON.stringify({ remediate: { enabled: true, tasks: ['fix-build', 'fix-vulns'] } }) + '\n');
+          write('.dxkit/baselines/main.json', JSON.stringify({
+            schemaVersion: 'dxkit-baseline/v1', name: 'main', createdAt: '2026-08-01T00:00:00.000Z',
+            repo: { commitSha: 'base', branch: 'main', dirty: false },
+            analysis: { dxkitVersion: 'test', toolchainHash: 'x' }, tools: {}, saltMode: 'none',
+            findings: [],
+            floorDebt: { capturedAtCommit: 'base', capturedAt: '2026-08-01T00:00:00.000Z', checks: [
+              { pack: 'typescript', label: 'typecheck', command: 'npx tsc --noEmit', status: 'fail', output: 'stored tail' },
+            ] },
+          }) + '\n');
+          const git = (args) => execFileSync('git', args, { cwd: scratch, encoding: 'utf8' });
+          git(['init', '-q', '-b', 'main']);
+          git(['-c', 'user.name=t', '-c', 'user.email=t@t', 'add', '-A']);
+          git(['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'base']);
+
+          // Render through the ONE workflow writer.
+          const r1 = ship.installCiRemediate(scratch, {});
+          const r2 = ship.installCiGuardrails(scratch, {});
+          const fail = (msg) => { console.error('LIVEFIRE FAIL: ' + msg); process.exit(1); };
+          if (r1.installed.length !== 1 || r2.installed.length !== 1)
+            fail('render did not install both workflows: ' + JSON.stringify({ r1, r2 }));
+          const remediateText = fs.readFileSync(path.join(scratch, '.github', 'workflows', 'dxkit-remediate.yml'), 'utf8');
+          const guardrailText = fs.readFileSync(path.join(scratch, '.github', 'workflows', 'dxkit-guardrails.yml'), 'utf8');
+
+          // The rendered YAML parses, carries no leftover placeholder, and
+          // has the 4.4.5 surfaces.
+          for (const [name, text] of [['dxkit-remediate.yml', remediateText], ['dxkit-guardrails.yml', guardrailText]]) {
+            if (/__DXKIT_[A-Z_]+__/.test(text)) fail(name + ' still carries a placeholder');
+            yaml.load(text);
+          }
+          const remediate = yaml.load(remediateText);
+          const guardrail = yaml.load(guardrailText);
+          if (!remediate.jobs.plan || !remediate.jobs.remediate) fail('remediate is missing plan/remediate jobs');
+          const stepBy = (steps, name) => steps.find((s) => s.name === name);
+          const planSteps = remediate.jobs.plan.steps;
+          const installStep = stepBy(planSteps, 'Install dependencies + dxkit');
+          if (!installStep || !installStep.run.includes('corepack enable'))
+            fail('plan job install chain is not the rendered one-definition chain');
+          const planStep = stepBy(planSteps, 'Compute the task matrix');
+          if (!planStep) fail('plan job has no matrix step');
+          if (!planStep.run.includes('pausedClasses') || !planStep.run.includes('matrixDisclosures'))
+            fail('plan step lacks the scheduler-memory disclosures');
+          const taskSteps = remediate.jobs.remediate.steps;
+          if (!stepBy(taskSteps, 'Re-mint the lane token before the task (App tier)'))
+            fail('task job lacks the rendered lane-token re-mint step');
+          if (!stepBy(taskSteps, 'Disclose token mode')) fail('task job lacks the token-mode disclosure');
+          const runTask = taskSteps.find((s) => s.run && s.run.includes('remediate --task'));
+          if (!runTask || !runTask.run.includes('--dispatch-override') || !runTask.env.DXKIT_DISPATCH_TASK)
+            fail('task run step lacks the dispatch-override wiring');
+          const gSteps = guardrail.jobs.guardrail.steps;
+          const gInstall = stepBy(gSteps, 'Install dependencies + dxkit');
+          if (!gInstall || !gInstall.run.includes('corepack enable'))
+            fail('guardrail install chain is not the rendered one-definition chain');
+          const stripComments = (s) => s.replace(/^\s*#.*$/gm, '').trim();
+          if (stripComments(gInstall.run) !== stripComments(installStep.run))
+            fail('guardrail and remediate install chains differ (must be the one definition)');
+
+          // Extract the executable step bodies for the later steps.
+          fs.mkdirSync(outDir, { recursive: true });
+          fs.writeFileSync(path.join(outDir, 'install-deps.sh'), gInstall.run);
+          fs.writeFileSync(path.join(outDir, 'plan-step.sh'), planStep.run);
+          fs.writeFileSync(path.join(outDir, 'tools-step.sh'), stepBy(gSteps, 'Install scanner tools').run);
+          fs.writeFileSync(path.join(outDir, 'anchor-step.sh'), stepBy(gSteps, 'Detect baseline anchor transport').run);
+          // The scan body reads two step outputs via expressions; resolve them
+          // the way a same-repo push-shaped run would (trusted tree, the
+          // transport from the anchor step executed just before it).
+          // (the expression markers are assembled so this workflow file
+          // itself never contains them for steps that do not exist here)
+          const expr = (inner) => '$' + '{{ ' + inner + ' }}';
+          let scan = stepBy(gSteps, 'Run guardrail check').run;
+          scan = scan
+            .split(expr('steps.trust.outputs.flag')).join('')
+            .split(expr('steps.anchor.outputs.transport')).join('$LIVEFIRE_ANCHOR_TRANSPORT');
+          fs.writeFileSync(path.join(outDir, 'scan-step.sh'), scan);
+          fs.writeFileSync(path.join(outDir, 'scratch-path'), scratch);
+          console.log('LIVEFIRE RENDER OK');
+          EOF
+
+      - name: Execute the rendered install chain against this repo
+        run: bash "$RUNNER_TEMP/livefire-out/install-deps.sh"
+
+      # This repo IS @vyuhlabs/dxkit, so `vyuh-dxkit` cannot resolve from its
+      # own node_modules; the shim points the rendered step bodies at the
+      # local build, mirroring how dxkit-self-guardrail.yml invokes it.
+      - name: Shim vyuh-dxkit onto the local build
+        run: |
+          mkdir -p node_modules/.bin
+          printf '#!/usr/bin/env bash\nexec node "%s/dist/index.js" "$@"\n' "$GITHUB_WORKSPACE" > node_modules/.bin/vyuh-dxkit
+          chmod +x node_modules/.bin/vyuh-dxkit
+
+      - name: Execute the rendered plan job step against the consumer repo
+        run: |
+          OUT="$RUNNER_TEMP/livefire-out"
+          SC=$(cat "$OUT/scratch-path")
+          mkdir -p "$SC/node_modules/.bin"
+          cp node_modules/.bin/vyuh-dxkit "$SC/node_modules/.bin/vyuh-dxkit"
+          cd "$SC"
+          export DISPATCH_TASK=""
+          PLAN_OUTPUT="$OUT/plan-outputs.txt"
+          : > "$PLAN_OUTPUT"
+          GITHUB_OUTPUT="$PLAN_OUTPUT" bash "$OUT/plan-step.sh"
+          echo "--- plan job outputs ---"
+          cat "$PLAN_OUTPUT"
+          grep -q '^tasks=\[' "$PLAN_OUTPUT" || { echo "::error::plan step emitted no tasks output"; exit 1; }
+          grep -q '^any=true' "$PLAN_OUTPUT" || { echo "::error::expected a non-empty matrix (the staged floor debt mints a fix-build order)"; exit 1; }
+          echo "PLAN STEP OK"
+
+      - name: Execute the rendered scanner-tools step against this repo
+        run: bash "$RUNNER_TEMP/livefire-out/tools-step.sh"
+
+      - name: Execute the rendered anchor + guardrail scan steps against this repo
+        env:
+          # The branch's actual base, as the PR against release/4.4.5 will
+          # exercise it: not the default branch, so the rendered body takes
+          # the ref-based arm.
+          DXKIT_PR_BASE: release/4.4.5
+        run: |
+          OUT="$RUNNER_TEMP/livefire-out"
+          STEP_OUTPUT="$OUT/guardrail-outputs.txt"
+          : > "$STEP_OUTPUT"
+          GITHUB_OUTPUT="$STEP_OUTPUT" bash "$OUT/anchor-step.sh"
+          export LIVEFIRE_ANCHOR_TRANSPORT=$(grep '^transport=' "$STEP_OUTPUT" | cut -d= -f2)
+          echo "anchor transport: $LIVEFIRE_ANCHOR_TRANSPORT"
+          GITHUB_OUTPUT="$STEP_OUTPUT" bash "$OUT/scan-step.sh"
+          echo "--- guardrail step outputs ---"
+          cat "$STEP_OUTPUT"
+          echo "--- guardrail report (tail) ---"
+          tail -40 guardrail-report.md || true
