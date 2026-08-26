@@ -99,6 +99,20 @@ describe('extractTsImportsRaw', () => {
   it('does not misfire on import.meta', () => {
     expect(run(`const u = import.meta.url;`)).toEqual([]);
   });
+
+  // One quote-aware scan, no blind comment pass behind it: a `/*` or `//`
+  // INSIDE a string literal is string payload, and the imports after it
+  // must survive (the blind regex stripper deleted from that `/*` to the
+  // next `*` `/` in the file, eating real imports with it).
+  it('a comment opener inside a string literal never swallows later imports', () => {
+    const src = `
+      const open = '/*';
+      import real from './real';
+      const close = '*/';
+      const slashes = 'x // y'; import other from './other';
+    `;
+    expect(run(src)).toEqual(['./real', './other']);
+  });
 });
 
 describe('resolveTsImportRaw', () => {
@@ -456,6 +470,19 @@ describe('typescript.correctness', () => {
   });
 
   it('syntaxCheck skips (fail-open) when tsc is not installed', () => {
+    fs.writeFileSync(path.join(tmp, 'tsconfig.json'), '{}');
+    expect(typescript.correctness!.syntaxCheck(ctx())).toBeNull();
+  });
+
+  // The unprovisioned-worktree class (4.4.5): a repo WITH a typecheck script
+  // but no node_modules ran `npm run typecheck`, which exits 127 ("tsc: not
+  // found") and read as a net-new floor failure. The script path gates on
+  // the local compiler exactly like the bare-tsc path and the lint gate.
+  it('syntaxCheck skips the project typecheck script too when tsc is not installed', () => {
+    fs.writeFileSync(
+      path.join(tmp, 'package.json'),
+      JSON.stringify({ scripts: { typecheck: 'tsc -b' } }),
+    );
     fs.writeFileSync(path.join(tmp, 'tsconfig.json'), '{}');
     expect(typescript.correctness!.syntaxCheck(ctx())).toBeNull();
   });

@@ -163,7 +163,10 @@ export function installResolver(cwd: string, packs: readonly LanguageSupport[]):
   const byPack = new Map<string, { bin: string; args: readonly string[] }>();
   for (const pack of packs) {
     const cmd = pack.provision?.(cwd);
-    if (cmd) byPack.set(pack.id, cmd);
+    // The order carries the PRIMARY only: the pack's fallback (`a || b`) is
+    // the verification's disclosed retry, not a second command an agent may
+    // reach for.
+    if (cmd) byPack.set(pack.id, { bin: cmd.bin, args: cmd.args });
   }
   const single = byPack.size === 1 ? [...byPack.values()][0] : undefined;
   return (pack) => (pack !== undefined ? byPack.get(pack) : single);

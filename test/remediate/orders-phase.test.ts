@@ -156,7 +156,7 @@ function base(
     runGuardrail: async () => ({ verdict: 'PASSED', ran: true, passesGate: true }),
     verifySeams: {
       worktree: async <T>(_o: unknown, fn: (p: string) => Promise<T>) => fn('/tmp/fake-wt'),
-      install: () => ({ status: 'nothing-to-install' }) as const,
+      install: () => ({ status: 'no-provision-declared', packs: [] }) as const,
       changedFiles: () => ['src/a.ts'],
     },
     armInLoopGate: () => ({ mode: 'backstop-only' as const, reason: 'test' }),

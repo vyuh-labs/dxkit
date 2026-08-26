@@ -8,6 +8,7 @@
  */
 import type { CorrectnessFloorResult } from '../analyzers/correctness/run';
 import type { AttributedFloorFailure } from '../analyzers/correctness/attribution';
+import { describeFloorSkip, type FloorSkip } from './verify-tree';
 
 /** One check line. A pass that carries a disclosure (a tolerated condition,
  *  4.4.5) shows it inline: a reader must never mistake "passed under a
@@ -22,7 +23,12 @@ export function renderFloorVerification(
   floor: CorrectnessFloorResult | undefined,
   attribution: readonly AttributedFloorFailure[] | undefined,
   entryLabel: string,
+  skipped?: FloorSkip,
 ): string[] {
+  // A deliberately skipped floor (an unprovisioned worktree) says WHY it did
+  // not run; only a floor that never had a reason to run is a dry run.
+  const skip = describeFloorSkip(skipped);
+  if (skip) return [skip, ''];
   if (!floor) return ['Correctness floor: not run (dry run).', ''];
   // A floor WITHOUT an attribution pass is the ENTRY snapshot (the run
   // exited before any change existed to attribute — a no-op, a failed

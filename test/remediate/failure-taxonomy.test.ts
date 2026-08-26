@@ -232,7 +232,10 @@ function base(driver: AgentDriver, extra: Partial<Parameters<typeof runRemediate
     runGuardrail: async () => ({ verdict: 'PASSED', ran: true, passesGate: true }),
     verifySeams: {
       worktree: async <T>(_o: unknown, fn: (wt: string) => Promise<T>) => fn('/tmp/fake-worktree'),
-      install: () => ({ status: 'installed' as const, argv: ['npm', 'ci'] }),
+      install: () => ({
+        status: 'installed' as const,
+        steps: [{ pack: 'typescript', argv: ['npm', 'ci'] }],
+      }),
       changedFiles: () => ['src/a.ts'],
     },
     ...extra,

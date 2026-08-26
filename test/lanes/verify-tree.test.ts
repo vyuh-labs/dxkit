@@ -4,7 +4,7 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import {
   describeInstall,
-  runFrozenInstall,
+  runDeclaredInstall,
   verifyTree,
   type InstallOutcome,
   type VerifyTreeOptions,
@@ -12,6 +12,10 @@ import {
 } from '../../src/lanes/verify-tree';
 import type { CorrectnessFloorResult } from '../../src/analyzers/correctness/run';
 import type { AnalysisTrustContext } from '../../src/analysis-trust';
+import { renderFloorVerification } from '../../src/lanes/verification-render';
+import { getLanguage } from '../../src/languages';
+import type { LanguageSupport, ProvisionCommand } from '../../src/languages/types';
+import { frozenInstallFor } from '../../src/package-manager';
 
 /**
  * The ONE tree verification (4.4.5): a clean worktree of the candidate, the
@@ -30,7 +34,10 @@ const RED: CorrectnessFloorResult = {
   checks: [{ pack: 'typescript', label: 'typecheck', bin: 'npx', status: 'fail' }],
   blocks: true,
 };
-const INSTALLED: InstallOutcome = { status: 'installed', argv: ['npm', 'ci'] };
+const INSTALLED: InstallOutcome = {
+  status: 'installed',
+  steps: [{ pack: 'typescript', argv: ['npm', 'ci'] }],
+};
 
 function seams(over: Partial<VerifyTreeSeams> = {}): VerifyTreeSeams {
   return {
@@ -50,7 +57,7 @@ function seams(over: Partial<VerifyTreeSeams> = {}): VerifyTreeSeams {
 function failsOnCandidate(output: string): (wt: string) => InstallOutcome {
   return (wt) =>
     wt.endsWith('head1111')
-      ? { status: 'failed', argv: ['npm', 'ci', '--legacy-peer-deps'], output }
+      ? { status: 'failed', pack: 'typescript', argv: ['npm', 'ci', '--legacy-peer-deps'], output }
       : INSTALLED;
 }
 
@@ -115,7 +122,12 @@ describe('verifyTree', () => {
         seams: seams({
           install: (wt) => {
             probed.push(wt);
-            return { status: 'failed', argv: ['npm', 'ci'], output: 'npm ERR! code EUSAGE' };
+            return {
+              status: 'failed',
+              pack: 'typescript',
+              argv: ['npm', 'ci'],
+              output: 'npm ERR! code EUSAGE',
+            };
           },
         }),
       }),
@@ -128,6 +140,82 @@ describe('verifyTree', () => {
     expect(line).toContain('not caused by this change');
   });
 
+  // The unprovisioned-worktree class (4.4.5): with the install broken at the
+  // base too, the worktree has no node_modules, so a floor run reports "tsc:
+  // not found" (exit 127) as a failure the entry floor never saw, and the
+  // comparator attributes it NET-NEW. Nothing about the change is observable
+  // there: the floor is skipped with the reason named, the guardrail (which
+  // needs no dependency tree) still decides.
+  it('a PRE-EXISTING broken install skips the floor as a DISCLOSED unprovisioned outcome, never floor-red', async () => {
+    let floorRan = false;
+    let guardrailRan = false;
+    const r = await verifyTree(
+      opts({
+        seams: seams({
+          install: () => ({
+            status: 'failed',
+            pack: 'typescript',
+            argv: ['npm', 'ci'],
+            output: 'npm ERR! code EUSAGE',
+          }),
+          runFloor: () => {
+            floorRan = true;
+            return {
+              ran: true,
+              blocks: true,
+              checks: [
+                {
+                  pack: 'typescript',
+                  label: 'typecheck',
+                  bin: 'npm',
+                  status: 'fail',
+                  output: 'sh: 1: tsc: not found',
+                },
+              ],
+            };
+          },
+          runGuardrail: async () => {
+            guardrailRan = true;
+            return { verdict: 'PASSED', ran: true, passesGate: true };
+          },
+        }),
+      }),
+    );
+    expect(floorRan).toBe(false);
+    expect(guardrailRan).toBe(true);
+    expect(r.verdict).toBe('verified');
+    expect(r.floor).toBeUndefined();
+    expect(r.floorAttribution).toBeUndefined();
+    expect(r.floorSkipped?.reason).toBe('unprovisioned');
+    expect(r.floorSkipped?.detail).toContain('npm ci');
+    expect(r.floorSkipped?.detail).toContain('cannot be attributed');
+    // The ledger renders the skip as a reason, never as "dry run" and never
+    // as a pass.
+    const lines = renderFloorVerification(r.floor, r.floorAttribution, 'entry', r.floorSkipped);
+    expect(lines[0]).toContain('not run');
+    expect(lines[0]).toContain('unprovisioned');
+    expect(lines.join('\n')).not.toContain('dry run');
+    expect(lines.join('\n')).not.toContain('passed');
+  });
+
+  it('a pre-existing broken install still lets a RED guardrail block', async () => {
+    const r = await verifyTree(
+      opts({
+        seams: seams({
+          install: () => ({
+            status: 'failed',
+            pack: 'typescript',
+            argv: ['npm', 'ci'],
+            output: 'x',
+          }),
+          runGuardrail: async () => ({ verdict: 'BLOCKED', ran: true, passesGate: false }),
+        }),
+      }),
+    );
+    expect(r.verdict).toBe('guardrail-red');
+    expect(r.floorSkipped?.reason).toBe('unprovisioned');
+  });
+
   it('a base probe that cannot run is a disclosed error at step base-install, never a blame', async () => {
     const r = await verifyTree(
       opts({
@@ -136,7 +224,12 @@ describe('verifyTree', () => {
             if (o.ref === 'base0000') throw new Error('base ref unreachable');
             return fn(`/wt/${o.ref}`);
           },
-          install: () => ({ status: 'failed', argv: ['npm', 'ci'], output: 'EUSAGE' }),
+          install: () => ({
+            status: 'failed',
+            pack: 'typescript',
+            argv: ['npm', 'ci'],
+            output: 'EUSAGE',
+          }),
         }),
       }),
     );
@@ -180,8 +273,13 @@ describe('verifyTree', () => {
         seams: seams({
           install: () => ({
             status: 'installed',
-            argv: ['npm', 'ci'],
-            fallback: { argv: ['npm', 'ci', '--legacy-peer-deps'], reason: 'peer conflict' },
+            steps: [
+              {
+                pack: 'typescript',
+                argv: ['npm', 'ci'],
+                fallback: { argv: ['npm', 'ci', '--legacy-peer-deps'], reason: 'peer conflict' },
+              },
+            ],
           }),
         }),
       }),
@@ -362,112 +460,152 @@ describe('verifyTree', () => {
   });
 });
 
-describe('runFrozenInstall', () => {
-  function repo(files: string[]): string {
-    const dir = mkdtempSync(join(tmpdir(), 'dxkit-vt-'));
-    for (const f of files) writeFileSync(join(dir, f), '{}');
-    return dir;
-  }
+/** A pack stub declaring (or not) a provision command; only the fields the
+ *  install runner reads. */
+function pack(id: string, provision: ProvisionCommand | null): LanguageSupport {
+  return { id, provision: () => provision } as unknown as LanguageSupport;
+}
 
-  it('primary succeeds → installed with the primary argv', () => {
-    const dir = repo(['package.json', 'package-lock.json']);
-    try {
-      const argvs: string[] = [];
-      const r = runFrozenInstall(dir, (cmd) => {
+const NPM: ProvisionCommand = {
+  bin: 'npm',
+  args: ['ci'],
+  fallback: { bin: 'npm', args: ['ci', '--legacy-peer-deps'], reason: 'peer conflict' },
+};
+
+describe('runDeclaredInstall', () => {
+  it('primary succeeds: installed with the pack + primary argv', () => {
+    const argvs: string[] = [];
+    const r = runDeclaredInstall(
+      '/wt',
+      (cmd) => {
         argvs.push([cmd.bin, ...cmd.args].join(' '));
         return { available: true, code: 0, output: '' };
-      });
-      expect(r).toEqual({ status: 'installed', argv: ['npm', 'ci'] });
-      expect(argvs).toEqual(['npm ci']);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
+      },
+      [pack('typescript', NPM)],
+    );
+    expect(r).toEqual({
+      status: 'installed',
+      steps: [{ pack: 'typescript', argv: ['npm', 'ci'] }],
+    });
+    expect(argvs).toEqual(['npm ci']);
   });
 
-  it('primary fails, fallback succeeds → installed with the fallback disclosed (the CI `a || b`)', () => {
-    const dir = repo(['package.json', 'package-lock.json']);
-    try {
-      const r = runFrozenInstall(dir, (cmd) =>
+  it('primary fails, fallback succeeds: installed with the fallback disclosed (the CI `a || b`)', () => {
+    const r = runDeclaredInstall(
+      '/wt',
+      (cmd) =>
         cmd.args.includes('--legacy-peer-deps')
           ? { available: true, code: 0, output: '' }
           : { available: true, code: 1, output: 'npm ERR! code ERESOLVE' },
-      );
-      expect(r.status).toBe('installed');
-      if (r.status === 'installed')
-        expect(r.fallback?.argv).toEqual(['npm', 'ci', '--legacy-peer-deps']);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
+      [pack('typescript', NPM)],
+    );
+    expect(r.status).toBe('installed');
+    if (r.status === 'installed') {
+      expect(r.steps[0].fallback?.argv).toEqual(['npm', 'ci', '--legacy-peer-deps']);
+      expect(r.steps[0].fallback?.reason).toBe('peer conflict');
     }
   });
 
-  it('both fail → failed, both outputs kept (the stale-lockfile class)', () => {
-    const dir = repo(['package.json', 'package-lock.json']);
-    try {
-      const r = runFrozenInstall(dir, () => ({
+  it('both fail: failed, both outputs kept, the pack named (the stale-lockfile class)', () => {
+    const r = runDeclaredInstall(
+      '/wt',
+      () => ({
         available: true,
         code: 1,
         output: 'npm ERR! code EUSAGE\nnpm ERR! package.json and package-lock.json are not in sync',
-      }));
-      expect(r.status).toBe('failed');
-      if (r.status === 'failed') {
-        expect(r.argv).toEqual(['npm', 'ci', '--legacy-peer-deps']);
-        expect(r.output).toContain('EUSAGE');
-        expect(r.output).toContain('--- fallback');
-      }
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
+      }),
+      [pack('typescript', NPM)],
+    );
+    expect(r.status).toBe('failed');
+    if (r.status === 'failed') {
+      expect(r.pack).toBe('typescript');
+      expect(r.argv).toEqual(['npm', 'ci', '--legacy-peer-deps']);
+      expect(r.output).toContain('EUSAGE');
+      expect(r.output).toContain('--- fallback');
     }
+  });
+
+  it('a pack without a fallback fails on its primary alone', () => {
+    const r = runDeclaredInstall('/wt', () => ({ available: true, code: 1, output: 'boom' }), [
+      pack('ruby', { bin: 'bundle', args: ['install'] }),
+    ]);
+    expect(r).toEqual({
+      status: 'failed',
+      pack: 'ruby',
+      argv: ['bundle', 'install'],
+      output: 'boom',
+    });
+  });
+
+  // Item 19 (4.4.5): the install is PACK-DECLARED, so a polyglot tree runs
+  // every declared install (a Python service beside a Node client), in
+  // registry order, and the first failure is the outcome.
+  it('every declaring pack installs, in order; a pack declaring null is skipped', () => {
+    const argvs: string[] = [];
+    const r = runDeclaredInstall(
+      '/wt',
+      (cmd) => {
+        argvs.push([cmd.bin, ...cmd.args].join(' '));
+        return { available: true, code: 0, output: '' };
+      },
+      [
+        pack('python', { bin: 'pip', args: ['install', '-r', 'requirements.txt'] }),
+        pack('go', null),
+        pack('typescript', NPM),
+      ],
+    );
+    expect(argvs).toEqual(['pip install -r requirements.txt', 'npm ci']);
+    expect(r).toEqual({
+      status: 'installed',
+      steps: [
+        { pack: 'python', argv: ['pip', 'install', '-r', 'requirements.txt'] },
+        { pack: 'typescript', argv: ['npm', 'ci'] },
+      ],
+    });
+    expect(describeInstall(r)).toContain('`pip install -r requirements.txt` succeeded');
+    expect(describeInstall(r)).toContain('`npm ci` succeeded');
   });
 
   it('a package manager not on PATH throws (infrastructure, the caller discloses the step)', () => {
-    const dir = repo(['package.json', 'pnpm-lock.yaml']);
-    try {
-      expect(() =>
-        runFrozenInstall(dir, () => ({ available: false, code: -1, output: 'pnpm: not found' })),
-      ).toThrow(/pnpm is not available/);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
+    expect(() =>
+      runDeclaredInstall('/wt', () => ({ available: false, code: -1, output: 'pnpm: not found' }), [
+        pack('typescript', { bin: 'pnpm', args: ['install', '--frozen-lockfile'] }),
+      ]),
+    ).toThrow(/pnpm is not available/);
   });
 
   // Finding-3 class (#272 shape): a run that did not finish says nothing
-  // about the tree. A timed-out or overflowed install THROWS (→ a disclosed
+  // about the tree. A timed-out or overflowed install THROWS (a disclosed
   // error step in verifyTree), never "CI cannot install this tree".
   it('a timed-out primary install throws as infrastructure, never install-failed', () => {
-    const dir = repo(['package.json', 'package-lock.json']);
-    try {
-      expect(() =>
-        runFrozenInstall(dir, () => ({ available: true, timedOut: true, code: -1, output: '' })),
-      ).toThrow(/timed out — infrastructure, not a verdict on the tree/);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
+    expect(() =>
+      runDeclaredInstall('/wt', () => ({ available: true, timedOut: true, code: -1, output: '' }), [
+        pack('typescript', NPM),
+      ]),
+    ).toThrow(/timed out: infrastructure, not a verdict on the tree/);
   });
 
   it('a timed-out FALLBACK install throws too (the marker survives the fallback path)', () => {
-    const dir = repo(['package.json', 'package-lock.json']);
-    try {
-      expect(() =>
-        runFrozenInstall(dir, (cmd) =>
+    expect(() =>
+      runDeclaredInstall(
+        '/wt',
+        (cmd) =>
           cmd.args.includes('--legacy-peer-deps')
             ? { available: true, timedOut: true, code: -1, output: '' }
             : { available: true, code: 1, output: 'npm ERR! code ERESOLVE' },
-        ),
-      ).toThrow(/fallback \(`npm ci --legacy-peer-deps`\) timed out/);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
+        [pack('typescript', NPM)],
+      ),
+    ).toThrow(/fallback \(`npm ci --legacy-peer-deps`\) timed out/);
   });
 
   it('an overflowed capture is the same infrastructure shape', () => {
-    const dir = repo(['package.json', 'package-lock.json']);
-    try {
-      expect(() =>
-        runFrozenInstall(dir, () => ({ available: true, overflowed: true, code: 1, output: 'x' })),
-      ).toThrow(/overflowed the capture buffer/);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
+    expect(() =>
+      runDeclaredInstall(
+        '/wt',
+        () => ({ available: true, overflowed: true, code: 1, output: 'x' }),
+        [pack('typescript', NPM)],
+      ),
+    ).toThrow(/overflowed the capture buffer/);
   });
 
   it('verifyTree surfaces an install timeout as a disclosed error at step install', async () => {
@@ -476,7 +614,7 @@ describe('runFrozenInstall', () => {
         seams: seams({
           install: () => {
             throw new Error(
-              'frozen install (`npm ci`) timed out — infrastructure, not a verdict on the tree',
+              'install (`npm ci`) timed out: infrastructure, not a verdict on the tree',
             );
           },
         }),
@@ -487,16 +625,80 @@ describe('runFrozenInstall', () => {
     expect(r.failure?.message).toContain('timed out');
   });
 
-  it('no package.json → nothing to install, no command runs', () => {
-    const dir = repo([]);
-    try {
-      let ran = false;
-      const r = runFrozenInstall(dir, () => {
+  // A pack with no `provision` (4.4.6 fills the remaining packs) is a
+  // DISCLOSED skip: nothing runs, nothing is claimed, the packs are named.
+  it('no declaring pack: a disclosed no-provision-declared outcome, no command runs', () => {
+    let ran = false;
+    const r = runDeclaredInstall(
+      '/wt',
+      () => {
         ran = true;
         return { available: true, code: 0, output: '' };
-      });
-      expect(r).toEqual({ status: 'nothing-to-install' });
-      expect(ran).toBe(false);
+      },
+      [{ id: 'go' } as unknown as LanguageSupport, pack('rust', null)],
+    );
+    expect(r).toEqual({ status: 'no-provision-declared', packs: ['go', 'rust'] });
+    expect(ran).toBe(false);
+    expect(describeInstall(r)).toContain('no active pack declares an install');
+    expect(describeInstall(r)).toContain('go, rust');
+    expect(describeInstall(r)).toContain('unprovisioned');
+  });
+});
+
+/**
+ * Parity (Rule 2.30): the install the lane VERIFIES with and the install a
+ * work order is HANDED are one declaration. The node pack's provision is the
+ * CI template's frozen install table, fallback included, on every lockfile
+ * shape; a lockfile-less package.json gets CI's own `npm install`, and no
+ * package.json means the pack declares nothing.
+ */
+describe('the pack provision IS the frozen install (parity)', () => {
+  function repo(files: string[]): string {
+    const dir = mkdtempSync(join(tmpdir(), 'dxkit-vt-'));
+    for (const f of files) writeFileSync(join(dir, f), '{}');
+    return dir;
+  }
+  const ts = getLanguage('typescript')!;
+
+  for (const lock of ['package-lock.json', 'pnpm-lock.yaml', 'yarn.lock', 'bun.lock', null]) {
+    it(`typescript.provision == frozenInstallFor (${lock ?? 'no lockfile'})`, () => {
+      const dir = repo(['package.json', ...(lock ? [lock] : [])]);
+      try {
+        const frozen = frozenInstallFor(dir)!;
+        const declared = ts.provision!(dir)!;
+        expect([declared.bin, ...declared.args]).toEqual(frozen.argv);
+        if (frozen.fallback) {
+          expect([declared.fallback!.bin, ...declared.fallback!.args]).toEqual(
+            frozen.fallback.argv,
+          );
+          expect(declared.fallback!.reason).toBe(frozen.fallback.reason);
+        } else {
+          expect(declared.fallback).toBeUndefined();
+        }
+        // and the runner executes exactly that argv on the worktree
+        const argvs: string[] = [];
+        runDeclaredInstall(
+          dir,
+          (cmd) => {
+            argvs.push([cmd.bin, ...cmd.args].join(' '));
+            return { available: true, code: 0, output: '' };
+          },
+          [ts],
+        );
+        expect(argvs).toEqual([frozen.argv.join(' ')]);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+  }
+
+  it('no package.json: the pack declares nothing and the runner discloses it', () => {
+    const dir = repo([]);
+    try {
+      expect(frozenInstallFor(dir)).toBeNull();
+      expect(ts.provision!(dir)).toBeNull();
+      const r = runDeclaredInstall(dir, () => ({ available: true, code: 0, output: '' }), [ts]);
+      expect(r).toEqual({ status: 'no-provision-declared', packs: ['typescript'] });
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

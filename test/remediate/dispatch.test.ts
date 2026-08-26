@@ -196,7 +196,10 @@ describe('runRemediateTask — the custom dispatch task', () => {
       verifySeams: {
         worktree: async <T>(_o: unknown, fn: (wt: string) => Promise<T>) =>
           fn('/tmp/fake-worktree'),
-        install: () => ({ status: 'installed' as const, argv: ['npm', 'ci'] }),
+        install: () => ({
+          status: 'installed' as const,
+          steps: [{ pack: 'typescript', argv: ['npm', 'ci'] }],
+        }),
         changedFiles: () => ['src/a.ts'],
       },
     });
@@ -219,7 +222,10 @@ describe('runRemediateTask — the custom dispatch task', () => {
       verifySeams: {
         worktree: async <T>(_o: unknown, fn: (wt: string) => Promise<T>) =>
           fn('/tmp/fake-worktree'),
-        install: () => ({ status: 'installed' as const, argv: ['npm', 'ci'] }),
+        install: () => ({
+          status: 'installed' as const,
+          steps: [{ pack: 'typescript', argv: ['npm', 'ci'] }],
+        }),
         changedFiles: () => ['src/a.ts'],
       },
       dispatch: {

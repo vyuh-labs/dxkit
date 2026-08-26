@@ -334,7 +334,10 @@ describe('runRemediateTask — resumed attempts', () => {
       verifySeams: {
         worktree: async <T>(_o: unknown, fn: (wt: string) => Promise<T>) =>
           fn('/tmp/fake-worktree'),
-        install: () => ({ status: 'installed' as const, argv: ['npm', 'ci'] }),
+        install: () => ({
+          status: 'installed' as const,
+          steps: [{ pack: 'typescript', argv: ['npm', 'ci'] }],
+        }),
         changedFiles: () => ['src/a.ts'],
       },
     });
@@ -358,7 +361,10 @@ describe('runRemediateTask — resumed attempts', () => {
       verifySeams: {
         worktree: async <T>(_o: unknown, fn: (wt: string) => Promise<T>) =>
           fn('/tmp/fake-worktree'),
-        install: () => ({ status: 'installed' as const, argv: ['npm', 'ci'] }),
+        install: () => ({
+          status: 'installed' as const,
+          steps: [{ pack: 'typescript', argv: ['npm', 'ci'] }],
+        }),
         changedFiles: () => ['src/a.ts'],
       },
     });
