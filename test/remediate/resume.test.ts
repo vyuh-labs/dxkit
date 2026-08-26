@@ -33,7 +33,11 @@ function fakeExec(opts: {
     calls.push([bin, ...args]);
     if (bin === 'gh') {
       if (!opts.openPr) return '[]';
-      return JSON.stringify([{ url: 'https://x/pr/1', body: opts.prBody ?? '' }]);
+      // Default body: a budget-exhausted verified partial — the ONE outcome
+      // that is a resume anchor (design F).
+      return JSON.stringify([
+        { url: 'https://x/pr/1', body: opts.prBody ?? 'outcome: **budget-exhausted**' },
+      ]);
     }
     if (bin === 'git' && args[0] === 'fetch') {
       if (opts.failFetch) throw new Error('fetch failed');
@@ -113,7 +117,7 @@ describe('prepareResume — the eligibility ladder', () => {
 
   it('carries the prior attempt blocking findings from the draft-PR ledger into the decision', () => {
     const body =
-      'ledger...\n\nBlocking findings:\n- [dep-vuln] form-data GHSA-1\n- [test-gap] src/x.js\n\nrest';
+      'outcome: **budget-exhausted**\n\nBlocking findings:\n- [dep-vuln] form-data GHSA-1\n- [test-gap] src/x.js\n\nrest';
     const { exec } = fakeExec({ openPr: true, markers: 0, prBody: body });
     const d = prepareResume('/repo', 'fix-build', ON, exec);
     expect(d.resumed).toBe(true);
@@ -121,6 +125,30 @@ describe('prepareResume — the eligibility ladder', () => {
     expect(d.blockingContext).toContain('src/x.js');
     // and it reaches the resumed prompt
     expect(resumePromptNote(d.attempt!, d.blockingContext)).toContain('BLOCKED by the guardrail');
+  });
+
+  it('a guardrail-red draft is NOT a resume anchor: fresh run, blocking set carried as a negative constraint', () => {
+    const body =
+      'Task: **fix-vulns** — outcome: **guardrail-red**\n\nBlocking findings:\n- [secret] src/config.ts\n';
+    const { exec, calls } = fakeExec({ openPr: true, markers: 0, prBody: body });
+    const d = prepareResume('/repo', 'fix-vulns', ON, exec);
+    expect(d.resumed).toBe(false);
+    expect(d.note).toContain('guardrail-red');
+    expect(d.note).toContain('budget-exhausted');
+    expect(d.blockingContext).toContain('src/config.ts');
+    // No checkout, no marker: the tree is untouched on a refused resume.
+    expect(calls.some((c) => c[0] === 'git' && c.includes('--detach'))).toBe(false);
+  });
+
+  it('an open PR whose ledger outcome is verified (or unreadable) starts fresh, disclosed', () => {
+    const { exec } = fakeExec({ openPr: true, markers: 0, prBody: 'outcome: **verified**' });
+    const d = prepareResume('/repo', 'fix-vulns', ON, exec);
+    expect(d.resumed).toBe(false);
+    expect(d.note).toContain("'verified'");
+    const unreadable = fakeExec({ openPr: true, markers: 0, prBody: 'no ledger here' });
+    const d2 = prepareResume('/repo', 'fix-vulns', ON, unreadable.exec);
+    expect(d2.resumed).toBe(false);
+    expect(d2.note).toContain('unknown');
   });
 
   it('any git/gh failure → fresh run, never a throw', () => {
@@ -147,6 +175,7 @@ function fakeGit(): RemediateGit {
     head: () => head,
     sweepLeftovers: () => undefined,
     scrubRuntimeArtifacts: () => [],
+    enforceEnvelope: () => ({ dropped: [] }),
     hasDiff: () => {
       head = 'salvage01';
       return true;
@@ -181,6 +210,7 @@ function config(): RemediateConfig {
     taskBudgets: {},
     maxSpendPerRun: 0,
     maxDispatchBudget: 0,
+    maxOrdersPerRun: 0,
     resume: true,
     workOrders: { maxSliceSize: 25 },
     recipes: { enabled: true },
