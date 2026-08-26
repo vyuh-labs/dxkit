@@ -45,8 +45,10 @@ the remediation workflow, press _Run workflow_, and the typed form offers:
 A custom prompt carries no score hinge, and the PR says so explicitly:
 verification is the floor + the guardrail + your review. Dispatching is
 write-access-gated by GitHub itself. Dispatching a task also overrides a
-circuit-breaker pause on that task's order classes for that one run (see
-below), which is the designed way to say "try again now".
+circuit-breaker pause on that task's order classes for that one run (the
+current workflow template passes the explicit override flag through; run
+`vyuh-dxkit update` if a dispatch does not lift a pause), which is the
+designed way to say "try again now".
 
 ## Orders, recipes, and the circuit breaker
 
@@ -68,15 +70,19 @@ diff, and a run that lands nothing pushes its rows as a metadata commit on
 the task's standing branch, so the memory survives the ephemeral runner.
 
 **The circuit breaker** (`remediate.pauseAfterFailures`, default 2) reads
-that ledger: a class whose last N counted outcomes are failures
-(guardrail-red, floor-red, install-failed, a failed recipe; refusals and
-infrastructure never count) is PAUSED. Paused orders are still planned and
-shown, but nothing dispatches them, and the plan output, the run ledger,
-and the workflow notices all carry the reason plus the unpause conditions.
-A pause lifts when the remediate policy changes, when dxkit is upgraded,
-when you dispatch the owning task explicitly, or when the failures age out
-of the 60-day history window. The weekly lane stops re-buying the same
-failure; you decide when it retries.
+that ledger: a class whose last N counted FIRINGS are failures
+(guardrail-red, floor-red, install-failed, a failed recipe; one red run
+counts once however many orders it carried; refusals and infrastructure
+never count) is PAUSED. Paused orders are still planned and shown, but
+nothing dispatches them, and the plan output, the run ledger, and the
+workflow notices all carry the reason plus the unpause conditions. A
+pause lifts when the remediate policy changes, when dxkit is upgraded,
+when you dispatch an explicit override (the workflow's Run-workflow form
+naming the task, or locally
+`vyuh-dxkit remediate --task <t> --dispatch-override`), or when the
+failures age out of the 60-day history window (disclosed as the retry
+horizon engaging). The weekly lane stops re-buying the same failure; you
+decide when it retries.
 
 ## Budgets, in one place
 

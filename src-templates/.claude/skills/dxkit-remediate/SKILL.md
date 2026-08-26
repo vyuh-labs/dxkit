@@ -77,11 +77,13 @@ is `recipes-refused`, never a green no-op.
 Every order's outcome is recorded in the lane order ledger
 (`.dxkit/lanes/<lane>-<task>.orders.jsonl`). The circuit breaker
 (`remediate.pauseAfterFailures`, default 2) pauses a class whose recent
-counted outcomes are all failures: paused orders stay planned and
+counted firings are all failures (one red run counts once for a class,
+however many of its orders it carried): paused orders stay planned and
 disclosed but are not dispatched, so the scheduled lane stops re-spending
 on the same failure. The pause lifts on a remediate policy change, a dxkit
-upgrade, an explicit dispatch of the owning task, or when the failures age
-out of the 60-day history window.
+upgrade, an explicit dispatch override (the workflow form naming the task,
+or locally `vyuh-dxkit remediate --task <t> --dispatch-override`), or when
+the failures age out of the 60-day history window.
 
 ## Reading an outcome
 

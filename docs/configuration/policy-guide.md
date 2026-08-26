@@ -712,11 +712,15 @@ disclosed in the envelope.
 ## Remediate pause
 
 **What it does.** `remediate.pauseAfterFailures` is the remediate lane's
-circuit breaker. Every remediate run records a per-order outcome row in the
-lane ledger (`.dxkit/lanes/<lane>-<task>.orders.jsonl`): order id, class,
-tier, outcome, spend, and a timestamp written by the runner. When a
-work-order CLASS accumulates this many consecutive failed outcomes
-(guardrail-red, floor-red, install-failed, or a failed recipe; refusals and
+circuit breaker. Every remediate run records one outcome row per order in
+the lane ledger (`.dxkit/lanes/<lane>-<task>.orders.jsonl`): order id,
+class, tier, the terminal outcome (an agent attempt supersedes the recipe
+record it fell through from), spend, and a timestamp written by the
+runner. The breaker counts FIRINGS, not rows: one red run is one failure
+event for a class however many of its orders that run carried, because
+the shared tree verification stamps the same verdict on all of them. When
+a class accumulates this many consecutive failed firings (guardrail-red,
+floor-red, install-failed, or a failed recipe; refusals and
 infrastructure failures never count, and a verified outcome, including a
 budget-cut verified partial, resets the streak), the class is PAUSED: the
 planner still plans its orders, but they are marked paused with the reason
@@ -726,11 +730,15 @@ the scheduled lane from re-buying the same failure every firing.
 
 **Unpausing.** A pause lifts on any signal that the next attempt would not
 be a rerun of the same failure: the `remediate` policy section changes,
-dxkit is upgraded, a human dispatches the owning task explicitly (the
-workflow's task input, or a local `vyuh-dxkit remediate --task <t>`), or
-the failures age out of the bounded history window (60 days), which makes
-every pause a retry horizon rather than a permanent off switch. Each lift
-is disclosed in the plan output.
+dxkit is upgraded, a human dispatches an explicit override, or the
+failures age out of the bounded history window (60 days), which makes
+every pause a retry horizon rather than a permanent off switch (the lift
+is disclosed in the plan output, never silent). The override is an
+EXPLICIT signal, never inferred from the environment: locally,
+`vyuh-dxkit remediate --task <t> --dispatch-override`; from the managed
+workflow, the Run-workflow form naming the task (the current template
+passes the flag through; if a dispatch does not lift a pause, the
+workflow predates the flag, and `vyuh-dxkit update` refreshes it).
 
 **Default and why.** `2`: one failure can be bad luck; two consecutive
 failures on the same class under the same policy and the same dxkit build
