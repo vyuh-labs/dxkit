@@ -10,6 +10,7 @@ import { describe, it, expect } from 'vitest';
 import {
   BUDGET_DERIVATION,
   deriveBudget,
+  mergeCollidingDraft,
   planWorkOrders,
   selectOrders,
   type AdvisoryInput,
@@ -505,6 +506,34 @@ describe('planWorkOrders: value ordering + budget', () => {
     expect(tiny.derivation).toContain('= 4;');
     expect(tiny.derivation).toContain('= 1');
     expect(deriveBudget(0, DEFAULT_REMEDIATE_BUDGET).usd).toBeGreaterThan(0);
+  });
+
+  it('a duplicate-id merge RECOMPUTES done ids, budget, and envelope from the merged findings (never the first draft alone)', () => {
+    // The defensive merge appended findings but kept the earlier draft's
+    // done.absentIds / budget / envelope, so the merged findings could not
+    // close (absent from the done ids) and their files sat outside the
+    // envelope. Every derived field now goes back through the builders'
+    // own formulas.
+    const base = planWorkOrders({
+      ...empty(),
+      debt: [lint('l1', 'src/a.ts', 'eqeqeq', 1)],
+    }).orders[0];
+    const twin = planWorkOrders({
+      ...empty(),
+      debt: [lint('l2', 'src/b.ts', 'no-var', 3), lint('l3', 'src/b.ts', 'no-var', 9)],
+    }).orders[0];
+    const merged = mergeCollidingDraft(
+      base,
+      { ...twin, envelope: { ...twin.envelope, manifests: true } },
+      () => DEFAULT_REMEDIATE_BUDGET,
+    );
+    expect(merged.findings.map((f) => f.id)).toEqual(['l1', 'l2', 'l3']);
+    expect(merged.done.absentIds).toEqual(['l1', 'l2', 'l3']);
+    expect(merged.done.verifier).toBe(base.done.verifier);
+    expect(merged.envelope).toEqual({ paths: ['src/a.ts', 'src/b.ts'], manifests: true });
+    expect(merged.budget).toEqual(deriveBudget(3, DEFAULT_REMEDIATE_BUDGET));
+    // Idempotent: merging the same draft again changes nothing.
+    expect(mergeCollidingDraft(merged, twin, () => DEFAULT_REMEDIATE_BUDGET)).toEqual(merged);
   });
 
   it('each class is capped by ITS selecting task budget (budgetFor is consulted per class)', () => {

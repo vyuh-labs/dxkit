@@ -154,6 +154,47 @@ describe('evaluateClassPauses', () => {
     expect(disclosures.some((d) => d.includes('policy changed'))).toBe(true);
   });
 
+  it('a lift RESETS the counted streak: one new failure after a dxkit change does not re-pause (threshold stays N, never 1)', () => {
+    // Two failures under 4.4.5 paused the class; dxkit moved to 4.4.6 and
+    // the pause lifted. The next firing fails once. The shipped shape
+    // compared only the newest failure's stamp while counting all three,
+    // so this single failure re-paused the class at an effective threshold
+    // of 1. Only failures under the CURRENT stamp count.
+    const rows = [
+      row('guardrail-red'),
+      row('guardrail-red'),
+      row('paused'),
+      row('guardrail-red', { dxkitVersion: '4.4.6' }),
+    ];
+    const { pauses, disclosures } = evaluate(rows, {
+      current: { ...STAMP, dxkitVersion: '4.4.6' },
+    });
+    expect(pauses.size).toBe(0);
+    // Not an age-out: the older evidence is in view, it is stale-stamped.
+    expect(disclosures.some((d) => d.includes('aged out'))).toBe(false);
+    expect(disclosures.some((d) => d.includes('dxkit changed'))).toBe(true);
+    // A SECOND current-stamp failure reaches the threshold again: the
+    // breaker is reset, not disabled.
+    const again = evaluate([...rows, row('guardrail-red', { dxkitVersion: '4.4.6' })], {
+      current: { ...STAMP, dxkitVersion: '4.4.6' },
+    });
+    expect(again.pauses.get('dep-advisory')?.failures).toBe(2);
+  });
+
+  it('the same reset holds for a policy change, and the lift is disclosed without a paused marker when the stale streak alone met the threshold', () => {
+    const rows = [
+      row('failed-recipe', { policyHash: 'hash-old' }),
+      row('failed-recipe', { policyHash: 'hash-old' }),
+      row('failed-recipe'),
+    ];
+    const { pauses, disclosures } = evaluate(rows);
+    expect(pauses.size).toBe(0);
+    expect(disclosures.some((d) => d.includes('policy changed'))).toBe(true);
+    // A lone stale failure that never would have paused says nothing.
+    const quiet = evaluate([row('failed-recipe', { policyHash: 'hash-old' })]);
+    expect(quiet.disclosures).toEqual([]);
+  });
+
   it('an explicit dispatch of the owning task overrides the pause for its classes only, disclosed', () => {
     const rows = [
       row('guardrail-red'),

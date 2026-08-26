@@ -263,9 +263,14 @@ export function writeLocalOrderLedger(
   newRows: readonly OrderOutcomeRow[],
   exec?: OrderLedgerGitExec,
 ): string | null {
-  if (newRows.length === 0) return null;
   const rel = orderLedgerPath('remediate', task);
+  // Even a run with NO rows of its own composes the standing branch's rows
+  // into the landing: the lander force-pushes from the default head, so a
+  // ledger left only on the branch (a resume-attempt row, a prior red run's
+  // failures) would be erased by the very landing that should carry it.
   const branch = branchState(task, exec ?? realOrderLedgerGitExec(cwd));
+  const carried = (branch?.rows.length ?? 0) + (branch?.foreign.length ?? 0);
+  if (newRows.length === 0 && carried === 0) return null;
   const content = composeLedger(cwd, task, newRows, branch);
   const abs = path.join(cwd, rel);
   fs.mkdirSync(path.dirname(abs), { recursive: true });
