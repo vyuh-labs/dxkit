@@ -118,6 +118,15 @@ jobs:
           if (deferred.length > 0) {
             console.log(`::notice title=remediate spend ceiling::deferred to the next firing: ${deferred.join(', ')}`);
           }
+          // Scheduler-memory disclosures (never silent): classes the circuit
+          // breaker paused, tasks with no open orders (no job, $0), and the
+          // matrix derivation notes from the plan.
+          for (const pause of p.pausedClasses ?? []) {
+            console.log(`::notice title=remediate circuit breaker::class '${pause.class}' is PAUSED: ${pause.reason}. Unpause: ${pause.unpause}`);
+          }
+          for (const note of p.matrixDisclosures ?? []) {
+            console.log(`::notice title=remediate matrix::${note}`);
+          }
           console.log('matrix:', JSON.stringify(tasks));
           EOF
 
@@ -260,6 +269,10 @@ __DXKIT_LANE_TOKEN_TASK_STEPS__
           # comment-defer pattern — free text never touches a shell line).
           # Blank on scheduled runs; the CLI clamps budget overrides to the
           # committed remediate.maxDispatchBudget and discloses every clamp.
+          # A dispatch that names a task overrides the circuit breaker for
+          # that task's classes (the pause's documented unpause path); blank
+          # on scheduled runs, so the breaker stands there.
+          DXKIT_DISPATCH_TASK: ${{ github.event.inputs.task || '' }}
           DXKIT_CUSTOM_PROMPT: ${{ github.event.inputs.prompt || '' }}
           DXKIT_DISPATCH_MAX_USD: ${{ github.event.inputs.max_usd || '' }}
           DXKIT_DISPATCH_MAX_TURNS: ${{ github.event.inputs.max_turns || '' }}
