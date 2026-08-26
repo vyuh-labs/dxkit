@@ -8,8 +8,9 @@
  * The evidence is the order-outcome ledger (`src/lanes/order-ledger.ts`),
  * read through its ONE reader. The counting rules live beside the row
  * vocabulary there (`ORDER_FAILURE_OUTCOMES` / `ORDER_SUCCESS_OUTCOMES`):
- * walking a class's rows newest-first, a success ends the streak, a failure
- * extends it, and everything else (a refusal, an infra never-ran, a paused
+ * walking a class's FIRINGS newest-first (rows grouped by run timestamp;
+ * one red run is one failure event however many orders it carried), a
+ * success ends the streak, a failure extends it, and everything else (a refusal, an infra never-ran, a paused
  * row this breaker itself wrote) is neutral — it neither counts nor resets,
  * because nothing was actually tried.
  *
@@ -90,9 +91,11 @@ function unpauseConditions(cls: string): string {
   return (
     'the pause lifts when the remediate policy changes, when dxkit is upgraded, ' +
     (task
-      ? `when the '${task}' task is dispatched explicitly (workflow dispatch, or a local ` +
-        `\`vyuh-dxkit remediate --task ${task}\`), `
-      : 'when the owning task is dispatched explicitly, ') +
+      ? `on an explicit dispatch override (locally: \`vyuh-dxkit remediate --task ${task} ` +
+        `--dispatch-override\`; or the managed workflow's Run-workflow form with task ` +
+        `'${task}', which needs the current workflow template, so run \`vyuh-dxkit update\` ` +
+        `first if a dispatch does not lift the pause), `
+      : 'on an explicit dispatch override of the owning task, ') +
     'or when the failures age out of the history window'
   );
 }
@@ -126,22 +129,56 @@ export function evaluateClassPauses(
   }
 
   for (const [cls, list] of byClass) {
-    const newestFirst = [...list].sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+    // The unit of counting is a FIRING, not a row: one run stamps every
+    // row with one timestamp, and the shared tree verification smears the
+    // run verdict onto every committed order — so a single red firing that
+    // carried two orders of a class is ONE failure event, never two (a
+    // per-row count would let one firing hit the threshold by itself).
+    const firings = new Map<string, OrderOutcomeRow[]>();
+    for (const row of list) {
+      const key = `${row.task}\0${row.timestamp}`;
+      const rowsOf = firings.get(key) ?? [];
+      rowsOf.push(row);
+      firings.set(key, rowsOf);
+    }
+    const newestFirst = [...firings.values()].sort((a, b) =>
+      b[0].timestamp.localeCompare(a[0].timestamp),
+    );
     let failures = 0;
     let latest: OrderOutcomeRow | undefined;
-    for (const row of newestFirst) {
-      const outcome = row.outcome;
-      if (ORDER_SUCCESS_OUTCOMES.has(outcome)) break;
-      if (ORDER_FAILURE_OUTCOMES.has(outcome)) {
-        failures += 1;
-        latest = latest ?? row;
+    let sawSuccess = false;
+    for (const firing of newestFirst) {
+      // A firing with any success row RESETS (the class produced verified
+      // work, whatever else happened alongside); else any failure row
+      // makes it one failure event; else it is neutral (nothing tried).
+      if (firing.some((r) => ORDER_SUCCESS_OUTCOMES.has(r.outcome))) {
+        sawSuccess = true;
+        break;
       }
-      // neutral rows (refused, never-ran, paused, ...) neither count nor reset
+      const failureRow = firing.find((r) => ORDER_FAILURE_OUTCOMES.has(r.outcome));
+      if (failureRow) {
+        failures += 1;
+        latest = latest ?? failureRow;
+      }
+      // neutral firings (refused, never-ran, paused markers) neither count nor reset
     }
-    if (failures < opts.threshold || !latest) continue;
+    if (failures < opts.threshold || !latest) {
+      // The documented age-out lift, DISCLOSED: a paused marker in the
+      // window with the failure streak no longer meeting the threshold
+      // (and no success explaining the reset) means the evidence aged out
+      // of the bounded window — the retry horizon engaging, never silent.
+      if (!sawSuccess && list.some((r) => r.outcome === 'paused')) {
+        disclosures.push(
+          `circuit breaker: class '${cls}' was paused previously and its failure evidence ` +
+            'aged out of the bounded history window, so the pause lifted (the documented ' +
+            'retry horizon): retrying',
+        );
+      }
+      continue;
+    }
 
     const streak =
-      `the last ${failures} counted outcome(s) for this class were failures ` +
+      `the last ${failures} counted firing(s) for this class were failures ` +
       `(latest: ${latest.outcome} at ${latest.timestamp})`;
     if (latest.dxkitVersion !== opts.current.dxkitVersion) {
       disclosures.push(

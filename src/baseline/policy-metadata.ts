@@ -263,8 +263,8 @@ export const POLICY_PARAMS: readonly PolicyParamMeta[] = [
     path: 'remediate.pauseAfterFailures',
     summary:
       'circuit breaker: pause a work-order class after this many consecutive failed ' +
-      'outcomes (default 2; 0 disables; unpaused by a policy change, a dxkit upgrade, ' +
-      'or an explicit dispatch)',
+      'firings (default 2; 0 disables; unpaused by a policy change, a dxkit upgrade, ' +
+      'or an explicit dispatch override)',
     anchor: 'remediate-pause',
   },
   {

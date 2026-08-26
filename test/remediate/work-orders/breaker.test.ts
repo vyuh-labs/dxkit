@@ -54,14 +54,61 @@ function evaluate(
 }
 
 describe('evaluateClassPauses', () => {
-  it('pauses a class after N consecutive counted failures, with reason + unpause conditions', () => {
+  it('pauses a class after N consecutive counted failures, with reason + the exact override commands', () => {
     const { pauses } = evaluate([row('guardrail-red'), row('failed-recipe')]);
     const pause = pauses.get('dep-advisory');
     expect(pause).toBeDefined();
     expect(pause!.failures).toBe(2);
     expect(pause!.reason).toContain('paused to stop re-spending');
-    expect(pause!.unpause).toContain('fix-vulns');
+    // The remedy is a WORKING command on both paths: the explicit CLI flag
+    // and the workflow dispatch, plus the stale-template advice.
+    expect(pause!.unpause).toContain('vyuh-dxkit remediate --task fix-vulns --dispatch-override');
+    expect(pause!.unpause).toContain('vyuh-dxkit update');
     expect(pause!.unpause).toContain('policy');
+  });
+
+  it('one red FIRING is one failure event, however many orders of the class it carried', () => {
+    // The shared tree verification smears the run verdict onto every
+    // committed order: two orders in one red firing must not hit the
+    // 2-failure threshold by themselves.
+    const ts = '2026-08-20T00:00:00.000Z';
+    const one = evaluate([
+      row('guardrail-red', { timestamp: ts, orderId: 'dep-advisory:a' }),
+      row('guardrail-red', { timestamp: ts, orderId: 'dep-advisory:b' }),
+    ]);
+    expect(one.pauses.size).toBe(0);
+    // A SECOND red firing makes it two events: now the class pauses.
+    const two = evaluate([
+      row('guardrail-red', { timestamp: ts, orderId: 'dep-advisory:a' }),
+      row('guardrail-red', { timestamp: ts, orderId: 'dep-advisory:b' }),
+      row('guardrail-red', { timestamp: '2026-08-21T00:00:00.000Z', orderId: 'dep-advisory:a' }),
+    ]);
+    expect(two.pauses.get('dep-advisory')?.failures).toBe(2);
+  });
+
+  it('a firing with a success row alongside a failure row RESETS (the class produced verified work)', () => {
+    const ts = '2026-08-20T00:00:00.000Z';
+    const { pauses } = evaluate([
+      row('guardrail-red'),
+      row('guardrail-red'),
+      row('failed-recipe', { timestamp: ts, orderId: 'dep-advisory:a' }),
+      row('verified', { timestamp: ts, orderId: 'dep-advisory:b' }),
+    ]);
+    expect(pauses.size).toBe(0);
+  });
+
+  it('an aged-out pause is DISCLOSED as the retry-horizon lift, never silent', () => {
+    // A paused marker is in the window but the failure evidence is not
+    // (it aged past the window boundary): the pause lifts, and the lift
+    // is named — an evidence-free silent unpause must not exist.
+    const { pauses, disclosures } = evaluate([row('paused')]);
+    expect(pauses.size).toBe(0);
+    expect(disclosures.some((d) => d.includes('aged out') && d.includes('retry horizon'))).toBe(
+      true,
+    );
+    // With a success in view, the reset explains itself: no age-out note.
+    const reset = evaluate([row('paused'), row('verified')]);
+    expect(reset.disclosures).toEqual([]);
   });
 
   it('one failure under the default threshold does not pause', () => {

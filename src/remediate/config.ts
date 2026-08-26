@@ -88,10 +88,10 @@ export interface RemediateConfig {
   readonly maxOrdersPerRun: number;
   /** The circuit breaker (`remediate.pauseAfterFailures`, default 2;
    *  0 disables): a work-order class whose last N consecutive counted
-   *  outcomes are failures is PAUSED — planned but not dispatched, with
+   *  FIRINGS are failures is PAUSED — planned but not dispatched, with
    *  the reason and the unpause conditions disclosed — until the policy
-   *  changes, dxkit changes, an explicit dispatch names its task, or the
-   *  failures age out of the history window. */
+   *  changes, dxkit changes, an explicit dispatch override names its
+   *  task, or the failures age out of the history window. */
   readonly pauseAfterFailures: number;
   /** Work-order planning knobs (`remediate.workOrders`). */
   readonly workOrders: {
