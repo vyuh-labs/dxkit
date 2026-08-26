@@ -11,7 +11,8 @@ import * as path from 'path';
 import { tail, type CommandExec, type CommandOutcome } from '../../analyzers/tools/bounded-exec';
 import { classifyOsvSeverity, type OsvVuln } from '../../analyzers/tools/osv';
 import type { FindingSeverity } from '../../baseline/types';
-import { detectLockfile, resyncInstallFor, type ResyncInstall } from '../../package-manager';
+import { detectLockfile } from '../../package-manager';
+import { resyncInstallFor, type ResyncInstall } from '../../package-manager-lockfile';
 import type { WorkOrder } from '../work-orders/types';
 import type { RecipeOutcome } from './types';
 

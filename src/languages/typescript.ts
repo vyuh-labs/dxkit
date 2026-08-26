@@ -24,7 +24,8 @@ import {
   gatherOsvScannerDepVulnsResult,
   mergeMaliciousOsvFindings,
 } from '../analyzers/tools/osv-scanner-deps';
-import { detectLockfile, frozenInstallFor, lockfileSyncCheck } from '../package-manager';
+import { detectLockfile, frozenInstallFor } from '../package-manager';
+import { lockfileSyncCheck } from '../package-manager-lockfile';
 import { fileExists, run, runJSON } from '../analyzers/tools/runner';
 import { walkPaths } from '../analyzers/tools/walk-paths';
 import { installedNodeMajor, readRepoFile, repoFileExists } from './version-detect';

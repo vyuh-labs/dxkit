@@ -6,12 +6,11 @@ import {
   detectLockfile,
   frozenInstallFor,
   isPeerConflictOnly,
-  lockfileSyncCheck,
   renderInstallDependenciesShell,
-  resyncInstallFor,
   LOCKFILES,
   type PackageManager,
 } from '../src/package-manager';
+import { lockfileSyncCheck, resyncInstallFor } from '../src/package-manager-lockfile';
 
 /**
  * The ONE frozen-install definition (4.4.5): what the CI templates render and
