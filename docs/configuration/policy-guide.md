@@ -48,6 +48,7 @@ stanzas).
 | `remediate.maxDispatchBudget`       | [#remediate-dispatch-budget](#remediate-dispatch-budget) |
 | `remediate.maxOrdersPerRun`         | [#remediate-orders-per-run](#remediate-orders-per-run)   |
 | `remediate.maxSpendPerRun`          | [#remediate-spend-per-run](#remediate-spend-per-run)     |
+| `remediate.pauseAfterFailures`      | [#remediate-pause](#remediate-pause)                     |
 | `remediate.recipes.enabled`         | [#remediate-recipes](#remediate-recipes)                 |
 | `remediate.resume`                  | [#remediate-resume](#remediate-resume)                   |
 | `remediate.salvage`                 | [#remediate-salvage](#remediate-salvage)                 |
@@ -707,3 +708,39 @@ prompt (the pre-4.4.5 shape).
 the driver can narrow tools, package-manager install commands are denied
 for order runs (installs are a frame/recipe step) and the applied policy is
 disclosed in the envelope.
+
+## Remediate pause
+
+**What it does.** `remediate.pauseAfterFailures` is the remediate lane's
+circuit breaker. Every remediate run records a per-order outcome row in the
+lane ledger (`.dxkit/lanes/<lane>-<task>.orders.jsonl`): order id, class,
+tier, outcome, spend, and a timestamp written by the runner. When a
+work-order CLASS accumulates this many consecutive failed outcomes
+(guardrail-red, floor-red, install-failed, or a failed recipe; refusals and
+infrastructure failures never count, and a verified outcome, including a
+budget-cut verified partial, resets the streak), the class is PAUSED: the
+planner still plans its orders, but they are marked paused with the reason
+and the unpause conditions, no tier dispatches them, and the plan output,
+the run ledger, and the workflow notices all say so. A paused class stops
+the scheduled lane from re-buying the same failure every firing.
+
+**Unpausing.** A pause lifts on any signal that the next attempt would not
+be a rerun of the same failure: the `remediate` policy section changes,
+dxkit is upgraded, a human dispatches the owning task explicitly (the
+workflow's task input, or a local `vyuh-dxkit remediate --task <t>`), or
+the failures age out of the bounded history window (60 days), which makes
+every pause a retry horizon rather than a permanent off switch. Each lift
+is disclosed in the plan output.
+
+**Default and why.** `2`: one failure can be bad luck; two consecutive
+failures on the same class under the same policy and the same dxkit build
+are evidence the next attempt buys the same result. `0` disables the
+breaker.
+
+**Interactions.** The scheduled matrix derives from OPEN orders, so a task
+whose only orders are paused spawns no job (disclosed in the plan job's
+notices). The [resume](#remediate-resume) attempt cap escalates a single
+salvage branch to a human; the breaker complements it one level up, across
+runs that leave no branch at all (a discarded guardrail-red attempt still
+writes its outcome rows through a metadata commit on the task's standing
+branch, so the memory survives the ephemeral runner).

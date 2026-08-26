@@ -22,9 +22,16 @@ from the same registry the lane executes.
 
 ## Scheduled runs vs one-off campaigns
 
-**Scheduled** is the recurring posture: the tasks enabled in
-`.dxkit/policy.json` run on the workflow's cron, under the policy's
-per-task budgets.
+**Scheduled** is the recurring posture, and it is order-driven: each firing
+plans the repo's open WORK ORDERS (finite, verifiable units cut from the
+entry floor's failures, deferred advisories inside their window, and the
+lint backlog), then spawns one job per enabled task that has open orders,
+highest value first, under the policy's budgets. A task with no open orders
+spawns no job at all (a healthy repo's firing costs nothing), and the plan
+job's notices say why each absent task is absent. Open-ended tasks
+(`improve-tests`, `write-docs`) have no orders by nature: they run only
+when policy lists them explicitly, and the plan discloses them as the
+legacy open-ended shape.
 
 **Dispatch campaigns** are one-time runs from the GitHub Actions UI: open
 the remediation workflow, press _Run workflow_, and the typed form offers:
@@ -37,7 +44,39 @@ the remediation workflow, press _Run workflow_, and the typed form offers:
 
 A custom prompt carries no score hinge, and the PR says so explicitly:
 verification is the floor + the guardrail + your review. Dispatching is
-write-access-gated by GitHub itself.
+write-access-gated by GitHub itself. Dispatching a task also overrides a
+circuit-breaker pause on that task's order classes for that one run (see
+below), which is the designed way to say "try again now".
+
+## Orders, recipes, and the circuit breaker
+
+Inside each task run, the frame works the plan in two tiers:
+
+- **Recipes** (deterministic, $0): a registered recipe executes an order
+  inside its envelope with no agent at all (lockfile re-sync, an override
+  pin with an OSV pre-check, declaring a missing dependency, lint autofix).
+  A recipe that cannot act refuses with the reason named; a refused or
+  failed recipe order falls through to the agent tier in the same run.
+- **The scoped agent**: each remaining order is one agent run with the
+  rendered order as its prompt (findings, evidence, envelope, constraints,
+  the done command), a budget derived from the order, and envelope
+  enforcement at the sweep, up to `remediate.maxOrdersPerRun` per firing.
+
+Every order's outcome is recorded in the lane's order ledger
+(`.dxkit/lanes/<lane>-<task>.orders.jsonl`): rows ride a landed PR's own
+diff, and a run that lands nothing pushes its rows as a metadata commit on
+the task's standing branch, so the memory survives the ephemeral runner.
+
+**The circuit breaker** (`remediate.pauseAfterFailures`, default 2) reads
+that ledger: a class whose last N counted outcomes are failures
+(guardrail-red, floor-red, install-failed, a failed recipe; refusals and
+infrastructure never count) is PAUSED. Paused orders are still planned and
+shown, but nothing dispatches them, and the plan output, the run ledger,
+and the workflow notices all carry the reason plus the unpause conditions.
+A pause lifts when the remediate policy changes, when dxkit is upgraded,
+when you dispatch the owning task explicitly, or when the failures age out
+of the 60-day history window. The weekly lane stops re-buying the same
+failure; you decide when it retries.
 
 ## Budgets, in one place
 
@@ -48,7 +87,10 @@ write-access-gated by GitHub itself.
 - A task that hits its cap is "budget-bounded, not finished": nothing lands
   unless the frame verifies, and the attempt is disclosed in the run.
 - With `remediate.resume` enabled, a salvaged attempt can continue in a
-  later run (draft-PR salvage only, attempt-counted, capped).
+  later run. Resume only anchors on a budget-exhausted VERIFIED partial
+  (draft-PR salvage, attempt-counted, capped at 2 per branch); a
+  guardrail-blocked draft is never resumed, and its blocking findings ride
+  the next run's order prompts as a negative constraint instead.
 
 ## Estimating spend
 
@@ -88,9 +130,16 @@ Read the task's job summary first — it names the outcome. The shapes:
   run as an artifact (Actions run page, Artifacts section). Under
   `draft-pr` salvage a guardrail-blocked attempt is additionally pushed as
   a red draft PR titled "do not merge" (its own guardrail check keeps it
-  unmergeable), so the work and the blocking findings survive the runner
-  and a resumed attempt can continue from them. Otherwise no action is
-  required; the next scheduled run retries from a clean tree.
+  unmergeable), so the work and the blocking findings survive the runner;
+  the next run starts fresh with those findings as a negative constraint
+  (a blocked diff is never a resume anchor). Otherwise no action is
+  required; the next scheduled run retries from a clean tree, and after
+  `remediate.pauseAfterFailures` consecutive failures the class is paused
+  instead of retried (see the circuit breaker above).
+- **`recipes-refused`**: every order the task selected was recipe-tier,
+  every recipe refused or failed, and the agent tier landed nothing for
+  them. The orders remain open and the per-order reasons are in the job
+  summary; these orders need a policy change, the agent tier, or a human.
 - **Budget-bounded, not finished** — the task hit its spend / turn / time
   cap mid-work. Also lands nothing. If it happens repeatedly on the same
   task, raise that task's budget (`remediate.taskBudgets`) or enable

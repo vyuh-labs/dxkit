@@ -21,7 +21,12 @@ vyuh-dxkit remediate plan
 
 Shows, per configured task, the full model resolution chain (task → tier →
 driver-native model), the budget caps and which ones the driver can enforce,
-and whether the agent CLI resolves here. No key needed, no network, no spend.
+and whether the agent CLI resolves here. It also lists the planned WORK
+ORDERS: the finite units the run would actually work (class, tier, derived
+budget, done criterion), the scheduled matrix derived from them (a task
+with no open orders spawns no scheduled job), any classes the circuit
+breaker has paused (with the reason and the unpause conditions), and the
+spend-ceiling trim. No key needed, no spend.
 
 Model settings (`remediate.agent.model`):
 - `auto` (default) — each task uses its registry tier: light for mechanical
@@ -56,12 +61,39 @@ your `claude` subscription login.
 The workflow triggers on schedule + manual dispatch ONLY, runs against the
 default branch only, with dxkit-authored prompts only.
 
+## How a run works (orders, recipes, the scoped agent)
+
+Each task run plans the repo's open work orders and works them in two
+tiers. Recipe-tier orders execute deterministically inside the frame first
+(lockfile re-sync, an OSV-pre-checked override pin or dependency
+declaration, lint autofix): $0, no agent. Remaining orders are dispatched
+one order per agent run (up to `remediate.maxOrdersPerRun`), each with the
+rendered order as its prompt, a budget derived from the order's findings,
+and envelope enforcement at the sweep (out-of-envelope changes are dropped
+with disclosure). A refused or failed recipe order falls through to the
+agent tier in the same run; when nothing lands for such orders the outcome
+is `recipes-refused`, never a green no-op.
+
+Every order's outcome is recorded in the lane order ledger
+(`.dxkit/lanes/<lane>-<task>.orders.jsonl`). The circuit breaker
+(`remediate.pauseAfterFailures`, default 2) pauses a class whose recent
+counted outcomes are all failures: paused orders stay planned and
+disclosed but are not dispatched, so the scheduled lane stops re-spending
+on the same failure. The pause lifts on a remediate policy change, a dxkit
+upgrade, an explicit dispatch of the owning task, or when the failures age
+out of the 60-day history window.
+
 ## Reading an outcome
 
 - `verified` / a green PR — the diff passed the entry-attributed floor and
   the guardrail. Pre-existing debt listed in the ledger was already failing
   before the agent ran; it is disclosed, not the agent's doing.
 - `no-op` — the agent ran and committed nothing; the job summary says so.
+  A no-op can also mean every selected order is paused by the circuit
+  breaker (the note names the classes and the unpause conditions; $0).
+- `recipes-refused`: a recipe-only plan where every recipe refused or
+  failed and nothing was fixed. Non-clean by design: the orders remain
+  open, and the per-order reasons are in the ledger.
 - `install-failed` — a clean checkout of the agent's commits cannot be
   installed the way CI installs it (the frozen-lockfile install failed, most
   often a manifest edited without re-running the install so the lockfile
@@ -87,6 +119,13 @@ default branch only, with dxkit-authored prompts only.
   hook, a signing requirement). Nothing lands: those files are staged, and
   landing would push them unreviewed. The note names the git error.
 - `refused` — a trust or configuration refusal, with the remedy named.
+
+Resume (`remediate.resume: true`, opt-in) continues a prior salvage branch
+in the next run, but only when that attempt was a budget-exhausted VERIFIED
+partial; a guardrail-blocked draft is never a resume anchor, and its
+blocking findings ride the next run's order prompts as a negative
+constraint instead. Attempts are capped at 2 per branch before the task
+falls back to a fresh run and a human is expected to look at the draft.
 
 ## Tuning the budget
 
