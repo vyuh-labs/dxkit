@@ -95,6 +95,13 @@ export interface CurrentScan {
    *  property, never persisted (capture-side unobservation is carried by
    *  absent recall + `deferred`). */
   readonly customChecksUnobserved: CustomChecksUnobserved;
+  /** The changed-file set the code-pattern scan was RESTRICTED to when the
+   *  caller asked for incremental scanning (the loop Stop-gate's committed
+   *  mode); absent on a full scan. A run property, never persisted: the
+   *  removed-direction attribution reads it so a baseline code finding in a
+   *  file the scan never visited classifies `not_observed`, not "resolved"
+   *  (Rule 19 cause #2 in its incremental variant). */
+  readonly incrementalScope?: ReadonlyArray<string>;
   /** Envelope metadata for the run. `toolchainHash` is already
    *  resolved from `tools`. */
   readonly analysisMeta: BaselineAnalysisMeta;
@@ -328,6 +335,9 @@ export async function gatherCurrentScan(options: {
     coverage,
     deferred,
     customChecksUnobserved,
+    ...(options.incrementalFiles !== undefined
+      ? { incrementalScope: options.incrementalFiles }
+      : {}),
     analysisMeta,
     producerCtx,
   };

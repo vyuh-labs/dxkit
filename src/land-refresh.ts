@@ -21,6 +21,7 @@
  */
 import { execFileSync } from 'child_process';
 import { internalGitPushArgs } from './git-internal-push';
+import { noPromptGitEnv } from './git-no-prompt';
 
 export type LandMode = 'pr' | 'push';
 
@@ -47,11 +48,11 @@ export function makeExec(cwd: string): Exec {
         encoding: 'utf8',
         // Never hang a machine spawn on an interactive credential prompt; a
         // bad remote fails fast and the caller surfaces it. Both prompt
-        // paths are disabled (HTTPS and SSH), the remote-ref discipline.
+        // paths are disabled (HTTPS and SSH) by the one no-prompt helper,
+        // which keeps the user's own SSH command and appends batch mode.
         env: {
           ...process.env,
-          GIT_TERMINAL_PROMPT: '0',
-          GIT_SSH_COMMAND: process.env.GIT_SSH_COMMAND ?? 'ssh -o BatchMode=yes',
+          ...noPromptGitEnv({ cwd }),
           ...(opts.env ?? {}),
         },
         timeout: 60_000,

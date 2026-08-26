@@ -184,6 +184,10 @@ export function classifyPairs(input: ClassifyPairsInput): ClassifyPairsOutput {
   const unobservedByCheck = ccUnobserved.gathered
     ? new Map(ccUnobserved.checks.map((c) => [c.name, describeCheckSkip(c)]))
     : undefined;
+  // The incremental scope: when the code-pattern scan was restricted to the
+  // changed files, a code finding outside that set was never looked at.
+  const incrementalScope =
+    current.incrementalScope !== undefined ? new Set(current.incrementalScope) : undefined;
   const notObservedReasonFor = (entry: BaselineEntry): string | undefined => {
     if (entry.kind === 'custom-check') {
       // The seam records its own observation (scope-skip AND per-check
@@ -201,6 +205,10 @@ export function classifyPairs(input: ClassifyPairsInput): ClassifyPairsOutput {
       mode: mode.mode,
       scope,
       provenance: current.aggregate.provenance,
+      incrementalScope,
+      ...('file' in entry && 'tool' in entry
+        ? { locus: { file: entry.file, tool: entry.tool } }
+        : {}),
     });
   };
 

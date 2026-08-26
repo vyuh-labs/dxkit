@@ -346,8 +346,29 @@ describe('writeLocalOrderLedger (landing channel)', () => {
     expect(text.trim().split('\n')).toHaveLength(1);
   });
 
-  it('no rows means no write', () => {
-    expect(writeLocalOrderLedger(tempCwd(), 'fix-vulns', [])).toBeNull();
+  it('no rows of its own and nothing on the branch means no write', () => {
+    const offline: OrderLedgerGitExec = () => {
+      throw new Error('offline');
+    };
+    expect(writeLocalOrderLedger(tempCwd(), 'fix-vulns', [], offline)).toBeNull();
+  });
+
+  it('no rows of its own still carries the standing branch rows into the landing (a force-push must not erase them)', () => {
+    // A resume-attempt count or a prior red run lives only on the branch
+    // until a landing composes it in; a landing that skipped the write
+    // because it minted no rows erased that memory with its force-push.
+    const cwd = tempCwd();
+    const exec: OrderLedgerGitExec = (bin, args) => {
+      if (args[0] === 'fetch') return '';
+      if (args[0] === 'rev-parse') return 'head\n';
+      if (args[0] === 'show') return serializeOrderRows([BRANCH_ROW]);
+      throw new Error(`unexpected ${args.join(' ')}`);
+    };
+    const rel = writeLocalOrderLedger(cwd, 'fix-vulns', [], exec);
+    expect(rel).toBe(orderLedgerPath('remediate', 'fix-vulns'));
+    const text = fs.readFileSync(path.join(cwd, rel!), 'utf8');
+    expect(text.trim().split('\n')).toHaveLength(1);
+    expect(text).toContain('floor-red');
   });
 });
 

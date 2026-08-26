@@ -5,6 +5,7 @@ import {
   extractOsvFixVersion,
   parseCvssV3BaseScore,
   resolveCvssScores,
+  fixResolutionKey,
   resolveFixVersions,
   selectFixVersion,
   scoreToTier,
@@ -386,11 +387,9 @@ describe('resolveFixVersions — the resolveCvssScores sibling', () => {
   it('resolves via the primary id and selects for the installed version', async () => {
     const fetcher = async (id: string): Promise<OsvVuln | null> =>
       id === 'GHSA-fix-1' ? RECORD : null;
-    const out = await resolveFixVersions(
-      [{ primaryId: 'GHSA-fix-1', aliases: [], installedVersion: '1.7.0' }],
-      fetcher,
-    );
-    expect(out.get('GHSA-fix-1')).toBe('1.8.2');
+    const input = { primaryId: 'GHSA-fix-1', aliases: [], installedVersion: '1.7.0' };
+    const out = await resolveFixVersions([input], fetcher);
+    expect(out.get(fixResolutionKey(input))).toBe('1.8.2');
   });
 
   it('falls back through aliases when the primary record has no fixed events', async () => {
@@ -399,18 +398,29 @@ describe('resolveFixVersions — the resolveCvssScores sibling', () => {
       if (id === 'GO-2026-1234') return { id }; // record exists, no events
       return null;
     };
-    const out = await resolveFixVersions(
-      [{ primaryId: 'GO-2026-1234', aliases: ['CVE-2026-0001'], installedVersion: '2.1.0' }],
-      fetcher,
-    );
-    expect(out.get('GO-2026-1234')).toBe('2.3.1');
+    const input = {
+      primaryId: 'GO-2026-1234',
+      aliases: ['CVE-2026-0001'],
+      installedVersion: '2.1.0',
+    };
+    const out = await resolveFixVersions([input], fetcher);
+    expect(out.get(fixResolutionKey(input))).toBe('2.3.1');
   });
 
   it('no resolvable target stays undefined — the caller never guesses', async () => {
-    const out = await resolveFixVersions(
-      [{ primaryId: 'GHSA-none', aliases: [], installedVersion: '1.0.0' }],
-      async () => null,
-    );
-    expect(out.get('GHSA-none')).toBeUndefined();
+    const input = { primaryId: 'GHSA-none', aliases: [], installedVersion: '1.0.0' };
+    const out = await resolveFixVersions([input], async () => null);
+    expect(out.get(fixResolutionKey(input))).toBeUndefined();
+  });
+
+  it('two installations of one advisory each get their own minimal safe move (keyed per installation)', async () => {
+    const fetcher = async (id: string): Promise<OsvVuln | null> =>
+      id === 'GHSA-fix-1' ? RECORD : null;
+    const older = { primaryId: 'GHSA-fix-1', aliases: [], package: 'a', installedVersion: '1.7.0' };
+    const newer = { primaryId: 'GHSA-fix-1', aliases: [], package: 'b', installedVersion: '2.1.0' };
+    const out = await resolveFixVersions([older, newer], fetcher);
+    expect(out.get(fixResolutionKey(older))).toBe('1.8.2');
+    expect(out.get(fixResolutionKey(newer))).toBe('2.3.1');
+    expect(fixResolutionKey(older)).not.toBe(fixResolutionKey(newer));
   });
 });

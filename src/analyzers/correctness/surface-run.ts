@@ -179,15 +179,16 @@ export function runFloorForSurface(opts: RunFloorForSurfaceOptions): SurfaceFloo
   }
 
   let scope: 'affected' | 'full' = 'full';
-  let changedFiles: readonly string[] = [];
+  let changedFiles: readonly string[] | null = [];
   let timeoutMs: number | undefined;
   let prePushBase = '';
   if (surface === 'pre-push') {
     scope = 'affected';
     prePushBase = resolvePrePushBase(cwd, opts.base);
-    // Empty changedFiles (base unresolved / diff undeterminable) → the packs
-    // treat the scope as full, per the CorrectnessContext contract.
-    changedFiles = prePushBase ? (computeChangedFiles(cwd, prePushBase) ?? []) : [];
+    // `null` (base unresolved / diff undeterminable) tells the runner the
+    // diff is UNKNOWN: packs treat it as full and change-triggered checks
+    // still run. A known empty set is "nothing changed".
+    changedFiles = prePushBase ? computeChangedFiles(cwd, prePushBase) : null;
     timeoutMs = prePushTimeoutMs();
   }
   // ci: full scope, no timeout — the full suite runs to completion.

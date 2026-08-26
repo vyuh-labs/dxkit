@@ -31,6 +31,7 @@ import { tmpdir } from 'os';
 import * as path from 'path';
 import * as logger from '../logger';
 import { internalGitPushArgs } from '../git-internal-push';
+import { noPromptGitEnv } from '../git-no-prompt';
 
 export interface AnchorFile {
   /** Repo-relative path on the side ref (POSIX separators). */
@@ -243,8 +244,7 @@ export function publishFilesToAnchorRef(opts: PublishToAnchorOptions): PublishRe
     // (`BatchMode=yes`, mirroring remote-ref.ts). Without the SSH guard an
     // unauthenticated push over an `ssh://` remote hangs — the "mystery hang"
     // gh #156 reported in Actions.
-    GIT_TERMINAL_PROMPT: '0',
-    GIT_SSH_COMMAND: process.env.GIT_SSH_COMMAND ?? 'ssh -o BatchMode=yes',
+    ...noPromptGitEnv({ cwd }),
     GIT_AUTHOR_NAME: identity.name,
     GIT_AUTHOR_EMAIL: identity.email,
     GIT_COMMITTER_NAME: identity.name,

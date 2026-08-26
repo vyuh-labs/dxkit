@@ -402,13 +402,35 @@ function restampIfBare(cwd: string): void {
   try {
     const summary = restampContentHashes(cwd);
     if (!summary) return;
-    if (summary.restamped === 0) {
-      logger.warn(
-        `Content-hash restamp could not run: the baseline's anchor commit is not readable here ` +
-          `(shallow clone or rewritten history). Reformat-tolerant matching stays off for the ` +
-          `existing entries until the next baseline refresh.`,
-      );
-      return;
+    if (summary.skipped !== null) {
+      const tail =
+        ` Reformat-tolerant matching stays off for ${summary.bare} existing finding(s) until ` +
+        `the next baseline refresh stamps them.`;
+      switch (summary.skipped) {
+        case 'tree-unproven':
+          logger.warn(
+            `Content-hash restamp skipped: the baseline does not prove it was captured on a ` +
+              `clean tree at its anchor commit (a dirty capture, or a baseline written before ` +
+              `the tree state was recorded), so the commit's content at its line numbers may ` +
+              `not be the findings' content.` +
+              tail,
+          );
+          return;
+        case 'anchor-unreadable':
+          logger.warn(
+            `Content-hash restamp skipped: the baseline's anchor commit is not readable here ` +
+              `(shallow clone or rewritten history).` +
+              tail,
+          );
+          return;
+        case 'files-unreadable':
+          logger.warn(
+            `Content-hash restamp skipped: none of the ${summary.unreadable} bare finding(s) ` +
+              `reference a file readable at the baseline's anchor commit.` +
+              tail,
+          );
+          return;
+      }
     }
     logger.success(
       `Content hashes stamped onto ${summary.restamped} baseline finding(s) ` +

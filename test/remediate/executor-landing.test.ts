@@ -421,9 +421,13 @@ describe('order-outcome ledger wiring (scheduler memory, 3F)', () => {
     expect(touched).toBe(false);
   });
 
-  it('a run with no order records writes nothing (legacy path)', async () => {
+  it('a landing run with no order records still carries the standing branch rows (the writer is asked with an empty row set); the publish channel stays untouched', async () => {
+    // The force-push from the default head would erase a ledger that lives
+    // only on the branch (a resume-attempt count, a prior red run), so the
+    // landing composes the branch rows even when this run minted none.
     const cwd = tempRepo();
-    let touched = false;
+    let written: unknown[] | undefined;
+    let published = false;
     await executeTask(
       cwd,
       config(),
@@ -431,16 +435,18 @@ describe('order-outcome ledger wiring (scheduler memory, 3F)', () => {
       'pr',
       seams({
         runTask: async () => ({ ...verifiedResult() }),
-        writeOrderLedger: () => {
-          touched = true;
+        landHead: () => ({ outcome: 'pr-opened', mode: 'pr', prUrl: 'https://example.test/pr/4' }),
+        writeOrderLedger: (_cwd, _task, rows) => {
+          written = [...rows];
           return null;
         },
         publishOrderRows: () => {
-          touched = true;
+          published = true;
           return { published: true };
         },
       }),
     );
-    expect(touched).toBe(false);
+    expect(written).toEqual([]);
+    expect(published).toBe(false);
   });
 });

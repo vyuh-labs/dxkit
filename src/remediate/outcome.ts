@@ -8,7 +8,7 @@ import type { AnalysisTrustContext } from '../analysis-trust';
 import type { CorrectnessFloorResult } from '../analyzers/correctness/run';
 import type { AttributedFloorFailure } from '../analyzers/correctness/attribution';
 import type { GuardrailGateResult } from '../lanes/verify';
-import type { InstallOutcome, VerifyTreeSeams } from '../lanes/verify-tree';
+import type { FloorSkip, InstallOutcome, VerifyTreeSeams } from '../lanes/verify-tree';
 import type { AgentDriver } from './driver';
 import type { RemediateTask } from './tasks';
 import type { DispatchOverrides } from './dispatch';
@@ -146,7 +146,10 @@ export interface RemediateResult {
   readonly partial?: boolean;
   readonly floor?: CorrectnessFloorResult;
   readonly floorAttribution?: readonly AttributedFloorFailure[];
-  /** How the frozen install of the candidate went on a CLEAN checkout
+  /** The floor was deliberately not run (an unprovisioned worktree); the
+   *  ledger says why instead of "not run (dry run)". */
+  readonly floorSkipped?: FloorSkip;
+  /** How the declared install of the candidate went on a CLEAN checkout
    *  (4.4.5): the ledger says what CI's install step will do. */
   readonly install?: InstallOutcome;
   /** Which files the candidate changed vs the base (the floor's diff scope). */

@@ -55,7 +55,45 @@ export type OrderRowOutcome =
   | 'not-dispatched'
   | 'sweep-failed'
   | 'no-op'
-  | 'paused';
+  | 'paused'
+  | 'resumed';
+
+/**
+ * The resume ATTEMPT row (bookkeeping, never evidence): one row per
+ * budget-bounded attempt the resume policy counted against a task's
+ * standing branch. It lives in this ledger, not in the branch's commit
+ * history, because a landing force-pushes the branch from the default
+ * head and erases any marker commit, while both ledger channels compose
+ * the branch's rows before writing (a landing carries them forward). So
+ * the attempt cap is countable from the same durable memory the breaker
+ * reads. Class + order id are the constant below; the outcome word is
+ * `resumed`, neutral to the breaker.
+ */
+export const RESUME_ATTEMPT_ORDER = 'resume-attempt';
+
+export function resumeAttemptRow(
+  task: string,
+  meta: { readonly timestamp: string; readonly dxkitVersion: string; readonly policyHash: string },
+): OrderOutcomeRow {
+  return {
+    schema_version: ORDER_LEDGER_SCHEMA_VERSION,
+    timestamp: meta.timestamp,
+    lane: 'remediate',
+    task,
+    orderId: RESUME_ATTEMPT_ORDER,
+    class: RESUME_ATTEMPT_ORDER,
+    tier: 'agent',
+    outcome: 'resumed',
+    dxkitVersion: meta.dxkitVersion,
+    policyHash: meta.policyHash,
+  };
+}
+
+/** The ONE definition of "attempts already counted against this task's
+ *  standing branch": the resume rows in view for the task. */
+export function countResumeAttempts(rows: readonly OrderOutcomeRow[], task: string): number {
+  return rows.filter((r) => r.task === task && r.outcome === 'resumed').length;
+}
 
 /**
  * The breaker's failure set: outcomes where work was ATTEMPTED and the

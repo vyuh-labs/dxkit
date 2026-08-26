@@ -63,15 +63,25 @@ describe('provisionArgv is the one provision command', () => {
     });
   }
 
-  it('the typescript pack declares provision from the repo lockfile, null without one (npm ci would always fail)', () => {
+  // The provision IS the frozen install CI renders (one definition, 4.4.5):
+  // lockfile-exact where a lockfile exists, CI's own `npm install` (with its
+  // legacy-peer-deps fallback) where none does, null only without a
+  // package.json. Full parity with `frozenInstallFor` is pinned in
+  // test/lanes/verify-tree.test.ts.
+  it('the typescript pack declares the frozen install from the repo lockfile, null without a package.json', () => {
     const dir = mkdtempSync(join(tmpdir(), 'dxkit-provision-'));
     try {
-      writeFileSync(join(dir, 'package.json'), '{}');
       expect(getLanguage('typescript')!.provision!(dir)).toBeNull();
+      writeFileSync(join(dir, 'package.json'), '{}');
+      expect(getLanguage('typescript')!.provision!(dir)).toMatchObject({
+        bin: 'npm',
+        args: ['install'],
+        fallback: { bin: 'npm', args: ['install', '--legacy-peer-deps'] },
+      });
       writeFileSync(join(dir, 'pnpm-lock.yaml'), '');
       expect(getLanguage('typescript')!.provision!(dir)).toEqual({
         bin: 'pnpm',
-        args: ['install'],
+        args: ['install', '--frozen-lockfile'],
       });
     } finally {
       rmSync(dir, { recursive: true, force: true });

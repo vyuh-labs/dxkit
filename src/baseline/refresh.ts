@@ -72,6 +72,7 @@ import {
 import { loadAllowlist } from '../allowlist/file';
 import { makeExec, openOrUpdateStandingPr, type LandRefreshResult } from '../land-refresh';
 import { internalGitPushArgs } from '../git-internal-push';
+import { noPromptGitEnv } from '../git-no-prompt';
 import { detectDefaultBranch, expiryNoticeEnabled } from '../ship-installers';
 import { syncExpiryNotice, type ExpiryNoticeResult } from './expiry-notice';
 
@@ -217,8 +218,7 @@ function commitFileToDecisionBranch(
     GIT_AUTHOR_EMAIL: 'dxkit-bot@users.noreply.github.com',
     GIT_COMMITTER_NAME: 'dxkit-bot',
     GIT_COMMITTER_EMAIL: 'dxkit-bot@users.noreply.github.com',
-    GIT_TERMINAL_PROMPT: '0',
-    GIT_SSH_COMMAND: process.env.GIT_SSH_COMMAND ?? 'ssh -o BatchMode=yes',
+    ...noPromptGitEnv({ cwd }),
   };
   const git = (args: string[], input?: string): string =>
     execFileSync('git', args, {

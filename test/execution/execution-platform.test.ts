@@ -338,6 +338,36 @@ describe('classifyEnvironmentFailure (the F-14 post-failure tier)', () => {
     expect(classifyEnvironmentFailure(['dotnet-sdk'], '')).toBeNull();
   });
 
+  // The unprovisioned-worktree class (4.4.5): a floor command on a tree whose
+  // install failed exits 127 with the shell's "not found". That is the
+  // environment, never a syntax verdict; but a compiler diagnostic that
+  // merely SAYS "not found" / "cannot find" stays a real failure.
+  it('node: a shell "command not found" (exit 127) is environment, not a finding', () => {
+    const SH_NOT_FOUND =
+      '> x@1.0.0 typecheck\n> tsc -b\n\nsh: 1: tsc: not found\nnpm ERR! code 127';
+    const hit = classifyEnvironmentFailure(['node'], SH_NOT_FOUND);
+    expect(hit?.toolchain).toBe('node');
+    expect(hit?.problem).toContain('not installed');
+    expect(hit?.remedy).toContain('frozen install');
+    expect(
+      classifyEnvironmentFailure(['node'], 'bash: line 1: vitest: command not found'),
+    ).toBeTruthy();
+    expect(
+      classifyEnvironmentFailure(['node'], 'npm ERR! could not determine executable to run'),
+    ).toBeTruthy();
+    // real compiler / test diagnostics are never reclassified
+    expect(
+      classifyEnvironmentFailure(
+        ['node'],
+        "src/a.ts(1,20): error TS2307: Cannot find module './missing' or its corresponding type declarations.",
+      ),
+    ).toBeNull();
+    expect(
+      classifyEnvironmentFailure(['node'], "Error: ENOENT: no such file or directory, open 'x'"),
+    ).toBeNull();
+    expect(classifyEnvironmentFailure(['node'], 'FAIL test/a.test.ts: user not found')).toBeNull();
+  });
+
   it('rust: a missing platform linker is environment, not a finding (VERIFY-40 F-10)', () => {
     // The exact output cargo emitted on the axum eval repo: rustc present,
     // no C toolchain — every build script fails before the user's code is

@@ -12,6 +12,7 @@
  * order, so a grandfathered failure is never blamed on the agent.
  */
 import type { AttributedFloorFailure } from '../../analyzers/correctness/attribution';
+import { depRootDirOf } from '../../analyzers/correctness/lockfile-check';
 import { LOCKFILE_SYNC_LABEL } from '../../languages/capabilities/correctness';
 import {
   FLOOR_FINDING_KIND,
@@ -138,36 +139,45 @@ function unresolvedImportOrders(check: FloorFailureInput, ctx: FloorOrderContext
   return out;
 }
 
-/** A failing lockfile-sync check: the `stale-lockfile` class. The envelope
- *  is the owning dependency root's manifest + lockfile (the check runs at
- *  the repo root today, so that root owns it); the fix is a reinstall, so
- *  manifests may change and the lockfile-sync recipe serves it. */
-function staleLockfileOrder(check: FloorFailureInput, ctx: FloorOrderContext): Ranked {
-  const root = ctx.manifests.find((m) => m.dir === '') ?? { dir: '', files: [] };
-  const finding: WorkOrderFinding = {
-    kind: FLOOR_FINDING_KIND,
-    id: floorFindingId(check.pack, check.label),
-    attribution: check.attribution,
-    evidence: { type: 'floor', pack: check.pack, label: check.label, command: check.command },
-  };
+/** A failing lockfile-sync check: the `stale-lockfile` class, ONE order per
+ *  failing dependency root. The runner checks every root the dep audit
+ *  reads and names the failing ones as `findings` (`.` = repo root), so a
+ *  nested sub-project's stale lockfile gets an order whose envelope is THAT
+ *  root's manifest + lockfile (the recipe resyncs at the owning root). A
+ *  check without the decomposition (a stored baseline envelope predating
+ *  it) is the repo root's, as before. The fix is a reinstall, so manifests
+ *  may change and the lockfile-sync recipe serves it. */
+function staleLockfileOrders(check: FloorFailureInput, ctx: FloorOrderContext): Ranked[] {
+  const decomposed = check.findings !== undefined && check.findings.length > 0;
+  const roots = decomposed ? check.findings!.map(depRootDirOf) : [''];
   const install = ctx.installFor(check.pack);
-  return {
-    rank: [
-      check.attribution === 'net-new' ? VALUE_BAND.netNewFloor : VALUE_BAND.preExistingFloor,
-      `${check.pack}/${check.label}`,
-    ],
-    draft: {
-      id: `stale-lockfile:${check.pack}`,
-      class: 'stale-lockfile',
-      findings: [finding],
-      envelope: { paths: manifestPaths(root), manifests: true },
-      constraints: { ...(install ? { install } : {}), forbidden: [INSTALL_FORBIDDEN] },
-      done: doneFor('floor', [finding]),
-      budget: deriveBudget(1, ctx.capFor('stale-lockfile')),
-      ...(check.output !== undefined ? { outputTail: check.output } : {}),
-      provenance: { source: 'entry-floor', check: floorFindingId(check.pack, check.label) },
-    },
-  };
+  return roots.map((dir) => {
+    const root = ctx.manifests.find((m) => m.dir === dir) ?? { dir, files: [] };
+    const findingKey = decomposed ? (dir === '' ? '.' : dir) : undefined;
+    const finding: WorkOrderFinding = {
+      kind: FLOOR_FINDING_KIND,
+      id: floorFindingId(check.pack, check.label, findingKey),
+      attribution: decomposed ? findingAttribution(check, findingKey!) : check.attribution,
+      evidence: { type: 'floor', pack: check.pack, label: check.label, command: check.command },
+    };
+    return {
+      rank: [
+        finding.attribution === 'net-new' ? VALUE_BAND.netNewFloor : VALUE_BAND.preExistingFloor,
+        `${check.pack}/${check.label}/${dir}`,
+      ],
+      draft: {
+        id: dir === '' ? `stale-lockfile:${check.pack}` : `stale-lockfile:${check.pack}:${dir}`,
+        class: 'stale-lockfile',
+        findings: [finding],
+        envelope: { paths: manifestPaths(root), manifests: true },
+        constraints: { ...(install ? { install } : {}), forbidden: [INSTALL_FORBIDDEN] },
+        done: doneFor('floor', [finding]),
+        budget: deriveBudget(1, ctx.capFor('stale-lockfile')),
+        ...(check.output !== undefined ? { outputTail: check.output } : {}),
+        provenance: { source: 'entry-floor', check: floorFindingId(check.pack, check.label) },
+      },
+    };
+  });
 }
 
 export function floorOrders(
@@ -177,7 +187,7 @@ export function floorOrders(
   const out: Ranked[] = [];
   for (const check of failures) {
     if (check.label === LOCKFILE_SYNC_LABEL) {
-      out.push(staleLockfileOrder(check, ctx));
+      out.push(...staleLockfileOrders(check, ctx));
       continue;
     }
     if (check.unresolved && check.unresolved.length > 0) {

@@ -136,6 +136,25 @@ export interface DoctorReport {
 export function laneTokenTierCheck(result: LaneTokenTierProbe): CheckResult | null {
   switch (result.state) {
     case 'configured':
+      // A PAT under an unread App-tier scope: a working tier exists (no red
+      // finding), but the tier is a floor, not a fact, so say so once.
+      if (result.higherTierUnobserved) {
+        return {
+          label: `lane token: ${LANE_TOKEN_PAT_SECRET_NAME} (PAT tier) is configured; the App tier could not be verified`,
+          ok: false,
+          tier: 'operational',
+          advisory: true,
+          fix: {
+            hint:
+              `A PAT is set (${result.scope}-level), so lane PRs will run checks. Whether the lanes ` +
+              `actually run in App mode is unobservable from here: ${result.higherTierUnobserved.unreadableScopes} ` +
+              `could not be enumerated with this token, and an org-level ${LANE_TOKEN_APP_ID_VARIABLE_NAME} ` +
+              'would take precedence at runtime. To verify, read the "Disclose token mode" step of a ' +
+              'recent dep-bump / remediate run.',
+            skill: 'dxkit-fix',
+          },
+        };
+      }
       return null;
     case 'half-configured':
       return result.missing === 'app-private-key-secret'

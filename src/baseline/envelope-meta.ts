@@ -15,7 +15,7 @@ import { createHash } from 'crypto';
 import { execFileSync } from 'child_process';
 import { VERSION as DXKIT_VERSION } from '../constants';
 import { DEFAULT_BROWNFIELD_POLICY } from './policy';
-import type { BaselineAnalysisMeta } from './baseline-file';
+import type { BaselineAnalysisMeta, BaselineTreeState } from './baseline-file';
 
 /** Hash used for baseline-envelope metadata fields (policy, ignore,
  *  toolchain, config). */
@@ -41,8 +41,12 @@ function readOptionalFile(filePath: string): string {
  *  Empty strings when the directory isn't a git repo — the rest of
  *  the orchestrator works fine, only the git-aware matcher loses its
  *  diff anchor on a future check. */
-export function readRepoState(cwd: string): { commitSha: string; branch: string } {
-  const run = (...args: string[]): string => {
+export function readRepoState(cwd: string): {
+  commitSha: string;
+  branch: string;
+  treeState: BaselineTreeState;
+} {
+  const run = (...args: string[]): string | null => {
     try {
       return execFileSync('git', args, {
         cwd,
@@ -50,12 +54,19 @@ export function readRepoState(cwd: string): { commitSha: string; branch: string 
         stdio: ['ignore', 'pipe', 'pipe'],
       }).trim();
     } catch {
-      return '';
+      return null;
     }
   };
+  // Tracked files only: an untracked file has no content at the commit, so
+  // a commit-anchored read of it fails outright (disclosed as unreadable)
+  // rather than hashing the wrong lines. What makes a capture unusable for
+  // that read is a TRACKED file whose working copy differs from the commit.
+  const status = run('status', '--porcelain', '--untracked-files=no');
   return {
-    commitSha: run('rev-parse', 'HEAD'),
-    branch: run('rev-parse', '--abbrev-ref', 'HEAD'),
+    commitSha: run('rev-parse', 'HEAD') ?? '',
+    branch: run('rev-parse', '--abbrev-ref', 'HEAD') ?? '',
+    // Not a repo, or git unreadable: the tree cannot be proven clean.
+    treeState: status === '' ? 'clean' : 'dirty',
   };
 }
 

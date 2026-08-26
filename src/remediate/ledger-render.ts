@@ -271,7 +271,14 @@ export function renderRemediateLedger(r: Omit<RemediateResult, 'ledger'>): strin
   // with this tree, verified on a clean checkout (4.4.5).
   const install = describeInstall(r.install);
   if (install) lines.push(install, '');
-  lines.push(...renderFloorVerification(r.floor, r.floorAttribution, 'the pre-agent entry run'));
+  lines.push(
+    ...renderFloorVerification(
+      r.floor,
+      r.floorAttribution,
+      'the pre-agent entry run',
+      r.floorSkipped,
+    ),
+  );
   lines.push(...renderGuardrailVerdict(r.guardrailVerdict));
   if (r.scoreHinge) lines.push(renderScoreHinge(r.scoreHinge));
   lines.push(

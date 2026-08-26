@@ -702,9 +702,15 @@ ALLOW_FILTER_CS=""
 for f in $CONTENT_STAMP_ALLOWLIST; do
   ALLOW_FILTER_CS="$ALLOW_FILTER_CS -e ^${f}:"
 done
-ROGUE_STAMP=$(grep -rnE "(^|[^A-Za-z_])computeContentHash" ${CONTENT_STAMP_SCAN_ROOT:-src}/ 2>/dev/null \
+# Prose is not a call site: a line that is a comment, or the trailing
+# `// ...` comment on a code line, is stripped before the pattern is applied
+# (the trailing strip requires whitespace before the `//` so a URL inside a
+# string survives).
+ROGUE_STAMP=$(grep -rnE "computeContentHash" ${CONTENT_STAMP_SCAN_ROOT:-src}/ 2>/dev/null \
   | grep -v "// content-stamp-ok" \
   | grep -v -E '^[^:]*:[0-9]+:[[:space:]]*(//|\*|/\*)' \
+  | sed -E 's#[[:space:]]//.*$##' \
+  | grep -E "(^|[^A-Za-z_])computeContentHash" \
   | { [ -n "$ALLOW_FILTER_CS" ] && grep -v $ALLOW_FILTER_CS || cat; })
 if [ -n "$ROGUE_STAMP" ]; then
   echo "❌ Content-stamp violation: computeContentHash referenced outside src/baseline/content-stamp.ts:"

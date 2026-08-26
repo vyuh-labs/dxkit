@@ -9,7 +9,12 @@ import { walkSourceFiles } from '../analyzers/tools/walk-source-files';
 import { matchesAnyBasenameGlob, matchesTestPatterns } from '../analyzers/tools/walk-globs';
 import { execFileSync } from 'child_process';
 import { enrichReleaseDates } from '../analyzers/tools/npm-registry';
-import { resolveCvssScores, resolveFixVersions } from '../analyzers/tools/osv';
+import {
+  fixResolutionKey,
+  resolveCvssScores,
+  resolveFixVersions,
+  type FixResolutionInput,
+} from '../analyzers/tools/osv';
 import { isMajorBump } from '../analyzers/tools/semver-bump';
 import {
   enrichWithUpgradePlans,
@@ -19,7 +24,8 @@ import {
   gatherOsvScannerDepVulnsResult,
   mergeMaliciousOsvFindings,
 } from '../analyzers/tools/osv-scanner-deps';
-import { detectLockfile, lockfileSyncCheck, provisionArgv } from '../package-manager';
+import { detectLockfile, frozenInstallFor } from '../package-manager';
+import { lockfileSyncCheck } from '../package-manager-lockfile';
 import { fileExists, run, runJSON } from '../analyzers/tools/runner';
 import { walkPaths } from '../analyzers/tools/walk-paths';
 import { installedNodeMajor, readRepoFile, repoFileExists } from './version-detect';
@@ -571,15 +577,15 @@ async function gatherTsDepVulnsViaNpmAudit(
           f.topLevelDep.includes(f.package),
       );
       if (fixTargets.length > 0) {
-        const resolvedFixes = await resolveFixVersions(
-          fixTargets.map((f) => ({
-            primaryId: f.id,
-            aliases: f.aliases ?? [],
-            ...(f.installedVersion !== undefined ? { installedVersion: f.installedVersion } : {}),
-          })),
-        );
+        const fixInput = (f: DepVulnFinding): FixResolutionInput => ({
+          primaryId: f.id,
+          aliases: f.aliases ?? [],
+          package: f.package,
+          ...(f.installedVersion !== undefined ? { installedVersion: f.installedVersion } : {}),
+        });
+        const resolvedFixes = await resolveFixVersions(fixTargets.map(fixInput));
         for (const f of fixTargets) {
-          const v = resolvedFixes.get(f.id);
+          const v = resolvedFixes.get(fixResolutionKey(fixInput(f)));
           if (v === undefined) continue;
           f.fixedVersion = v;
           if (f.breakingUpgrade === undefined && f.installedVersion) {
@@ -635,12 +641,6 @@ const tsDepVulnsProvider: DepVulnsProvider = {
   },
 };
 
-function stripTsJsComments(src: string): string {
-  let out = src.replace(/\/\*[\s\S]*?\*\//g, '');
-  out = out.replace(/(^|[^:"'/])\/\/[^\n]*/g, '$1');
-  return out;
-}
-
 function isFile(p: string): boolean {
   try {
     return fs.statSync(p).isFile();
@@ -657,10 +657,16 @@ function toRel(abs: string, cwd: string): string {
  * Capture raw TS/JS module specifiers from source text. The imports
  * capability batch-calls this while walking the pack's source extensions;
  * unit tests exercise it directly for parse-correctness cases.
+ *
+ * Comments and template bodies are removed by the ONE quote-aware pass
+ * (`blankTemplateLiterals`) before the regexes run. A second, blind comment
+ * stripper used to run here as well; it could not see strings, so a `/*`
+ * inside a string literal deleted code up to the next `*` `/` and dropped
+ * real imports (Rule 2: one scan, one definition of "what is code").
  */
 export function extractTsImportsRaw(content: string): string[] {
   const out: string[] = [];
-  const stripped = stripTsJsComments(content);
+  const stripped = blankTemplateLiterals(content);
   const importRe = /\bimport\s+(?:[^'";]*?from\s+)?['"]([^'"]+)['"]/g;
   const reexportRe = /\bexport\s+(?:[^'";]*?from\s+)['"]([^'"]+)['"]/g;
   const dynRe = /\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)/g;
@@ -1253,6 +1259,12 @@ const tsCoverageProvider: CapabilityProvider<CoverageResult> = {
  * are installed, is the backstop for that case. The `.cmd` variant is npm's
  * Windows shim.
  */
+/** The dependency tree is installed at all (any `node_modules`), the gate
+ *  for a repo-declared script whose binary dxkit cannot name. */
+function hasDependencyTree(cwd: string): boolean {
+  return fileExists(cwd, 'node_modules');
+}
+
 function hasLocalBin(cwd: string, bin: string): boolean {
   return (
     fileExists(cwd, path.join('node_modules', '.bin', bin)) ||
@@ -1833,7 +1845,7 @@ export function blankTemplateLiterals(content: string): string {
  * second parser).
  */
 export function extractTsImportsForResolution(content: string): string[] {
-  return extractTsImportsRaw(blankTemplateLiterals(content));
+  return extractTsImportsRaw(content);
 }
 
 /** The npm package name a bare specifier resolves through (`@scope/pkg/sub`
@@ -2229,10 +2241,19 @@ const tsCorrectnessProvider: CorrectnessProvider = {
   syntaxCheck(ctx: CorrectnessContext): CorrectnessCommand | null {
     // Prefer the project's own typecheck script — it carries their exact
     // compiler flags and project-references, the same command their CI runs.
+    // Either path needs the project provisioned (the lint gate's
+    // `hasLocalBin` discipline): on an unprovisioned tree `npm run typecheck`
+    // exits 127 ("tsc: not found"), an environment fact, not a syntax verdict,
+    // so the builder declines and the runner discloses the skip instead of
+    // the floor reading a missing toolchain as a failure. The script may run
+    // a compiler other than tsc (vue-tsc, svelte-check), so its gate is the
+    // dependency tree itself; the bare-tsc path gates on tsc.
     const script = tsTypecheckScript(ctx.cwd);
     if (script !== null) {
+      if (!hasDependencyTree(ctx.cwd)) return null;
       return { label: 'typecheck', bin: 'npm', args: ['run', script] };
     }
+    if (!hasLocalBin(ctx.cwd, 'tsc')) return null;
     // Otherwise, only a project that opts into TypeScript (has a tsconfig) with
     // the compiler installed gets a typecheck floor. A pure-JS repo has no tsc
     // stage — its syntax errors surface when the test runner loads the file.
@@ -2242,7 +2263,6 @@ const tsCorrectnessProvider: CorrectnessProvider = {
     // developer's own source. A liveness floor asks "does my code compile",
     // not "is every dependency's type declaration internally consistent".
     if (!fileExists(ctx.cwd, 'tsconfig.json')) return null;
-    if (!hasLocalBin(ctx.cwd, 'tsc')) return null;
     return {
       label: 'typecheck',
       bin: 'npx',
@@ -2878,12 +2898,17 @@ export const typescript: LanguageSupport = {
   },
 
   provision(cwd) {
-    // A lockfile-less repo has nothing `npm ci` (or a frozen install) can
-    // provision from: return null per the contract, disclosed downstream.
-    const lock = detectLockfile(cwd);
-    if (!lock) return null;
-    const [bin, ...args] = provisionArgv(lock.pm);
-    return { bin, args };
+    // The frozen install CI renders for this tree (`frozenInstallFor`, the
+    // ONE install table): the lockfile-appropriate manager with the fallback
+    // CI mirrors. Null only when there is no package.json at all. A
+    // lockfile-less repo gets CI's own `npm install` rather than nothing, so
+    // the verification and the order agree with the workflow.
+    const plan = frozenInstallFor(cwd);
+    if (plan === null) return null;
+    const [bin, ...args] = plan.argv;
+    if (!plan.fallback) return { bin, args };
+    const [fbin, ...fargs] = plan.fallback.argv;
+    return { bin, args, fallback: { bin: fbin, args: fargs, reason: plan.fallback.reason } };
   },
 
   // Path conventions span both backend Node frameworks (Express,

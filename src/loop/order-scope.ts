@@ -28,7 +28,9 @@
  *     stamps a per-run TOKEN (the lane also injects it into the agent's
  *     env as DXKIT_ORDER_TOKEN, which the Stop hook inherits) plus a
  *     timestamp; the reader treats a token mismatch, a missing session
- *     token, or an over-age file as absent-with-disclosure.
+ *     token, or an over-age file as absent-with-disclosure, and REMOVES
+ *     such a leftover (nothing else ever will), so the disclosure fires
+ *     once and only a live, matching scope bypasses the verdict cache.
  */
 import * as crypto from 'crypto';
 import * as fs from 'fs';
@@ -110,7 +112,14 @@ export interface OrderScopeReadOptions {
 
 /** Validating reader. `scope: null` = no order scope (absent file, or a
  *  malformed / foreign / stale one — `problem` then says why, so the skip
- *  is disclosed). */
+ *  is disclosed).
+ *
+ *  A file that cannot scope THIS session is a LEFTOVER (a killed lane's,
+ *  a clobbered concurrent lane's, a corrupt write): nothing will ever
+ *  clear it (the lane's try/finally already ran or never will), so the
+ *  reader removes it and says so ONCE. Leaving it in place made every
+ *  later stop in the repo re-disclose the same foreign file and bypass the
+ *  verdict cache for good. Only a LIVE, matching scope survives a read. */
 export function readOrderScope(
   repoDir: string,
   opts: OrderScopeReadOptions = {},
@@ -122,6 +131,19 @@ export function readOrderScope(
   } catch {
     return { scope: null }; // absent — the ordinary, non-order-scoped gate run
   }
+  const read = validateOrderScope(file, raw, opts);
+  if (read.scope === null) {
+    clearOrderScope(repoDir);
+    return { scope: null, problem: `${read.problem}; removed it` };
+  }
+  return read;
+}
+
+function validateOrderScope(
+  file: string,
+  raw: string,
+  opts: OrderScopeReadOptions,
+): { readonly scope: OrderScope; readonly problem?: undefined } | { scope: null; problem: string } {
   let scope: OrderScope;
   try {
     const doc = JSON.parse(raw) as Record<string, unknown>;
@@ -141,7 +163,7 @@ export function readOrderScope(
       !strings(envelope.paths) ||
       typeof envelope.manifests !== 'boolean'
     ) {
-      return { scope: null, problem: `order scope at ${file} is malformed — ignoring it` };
+      return { scope: null, problem: `order scope at ${file} is malformed` };
     }
     scope = {
       orderId: doc.orderId,
@@ -156,7 +178,7 @@ export function readOrderScope(
   } catch (err) {
     return {
       scope: null,
-      problem: `order scope at ${file} is unreadable (${err instanceof Error ? err.message : String(err)}) — ignoring it`,
+      problem: `order scope at ${file} is unreadable (${err instanceof Error ? err.message : String(err)})`,
     };
   }
   // Session binding: the file is repo-global, so a killed lane's leftover
@@ -167,7 +189,7 @@ export function readOrderScope(
       scope: null,
       problem:
         `order scope at ${file} belongs to a different lane session ` +
-        `(${expected ? 'token mismatch' : 'no order token in this session'}) — ignoring it`,
+        `(${expected ? 'token mismatch' : 'no order token in this session'})`,
     };
   }
   const writtenAt = Date.parse(scope.writtenAt);
@@ -175,22 +197,10 @@ export function readOrderScope(
   if (!Number.isFinite(writtenAt) || now - writtenAt > ORDER_SCOPE_MAX_AGE_MS) {
     return {
       scope: null,
-      problem: `order scope at ${file} is stale (written ${scope.writtenAt}) — ignoring it`,
+      problem: `order scope at ${file} is stale (written ${scope.writtenAt})`,
     };
   }
   return { scope };
-}
-
-/** Is any order scope PRESENT on disk (bound to this session or not)? The
- *  verdict-cache bypass reads this: a cached ALLOW must not replay over a
- *  pending order, and a malformed/foreign file still means "something is
- *  scoping stops here" — re-derive rather than replay. */
-export function orderScopePresent(repoDir: string): boolean {
-  try {
-    return fs.existsSync(scopePath(repoDir));
-  } catch {
-    return false;
-  }
 }
 
 /** Per-id floor done-ness, judged at FINDING level where the check carries
@@ -244,6 +254,11 @@ export function floorOrderDone(
   return { open, undecided, siblingOnly };
 }
 
+/** Pair statuses under which a target finding is GONE from the current side
+ *  (the matcher's removed direction, in either spelling). Every other status
+ *  carries the id on the current side or leaves it unobserved. */
+const CLOSED_STATUSES: ReadonlySet<string> = new Set(['removed', 'fixed']);
+
 /** The gate's answer for one scope, judged only from what the gate already
  *  computed — no re-gather, no execution. */
 export interface OrderScopeVerdict {
@@ -280,10 +295,31 @@ export function unresolvedOrderIds(
           `findings cannot be read as closed`,
       };
     }
-    const present = new Set(
-      json.pairs.map((p) => p.currentId).filter((id): id is string => id !== undefined),
-    );
-    return { unresolved: scope.absentIds.filter((id) => present.has(id)) };
+    // Per-target verdict from the pair that carries the id on EITHER side.
+    // A relocated target (priorId X paired with currentId Y) is still
+    // present: the finding moved, it did not close. A pair the run marked
+    // `not_observed` (the incremental scan never visited the file, the
+    // producing check skipped) cannot answer the question at all.
+    const unresolved: string[] = [];
+    const unobservedIds: string[] = [];
+    for (const id of scope.absentIds) {
+      const pairs = json.pairs.filter((p) => p.priorId === id || p.currentId === id);
+      if (pairs.length === 0) continue; // no pair on an observed kind: closed
+      if (pairs.some((p) => p.status === 'not_observed')) unobservedIds.push(id);
+      else if (pairs.some((p) => !CLOSED_STATUSES.has(p.status))) unresolved.push(id);
+    }
+    if (unresolved.length > 0) return { unresolved };
+    if (unobservedIds.length > 0) {
+      return {
+        unresolved: [],
+        undecidable:
+          `the gate run did not observe ${unobservedIds.length} of the order's target ` +
+          `finding(s) (${unobservedIds.join(', ')}): their file or check was outside what ` +
+          `this run scanned (an incremental scan covers changed files only), so they ` +
+          `cannot be read as closed`,
+      };
+    }
+    return { unresolved: [] };
   }
   if (floor.kind !== 'ran') {
     return {

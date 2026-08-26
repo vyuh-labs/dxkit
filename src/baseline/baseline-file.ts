@@ -47,7 +47,15 @@ export interface BaselineRepoState {
   readonly commitSha: string;
   readonly branch: string;
   readonly root: string;
+  /** Whether the tracked tree matched `commitSha` at capture (`'clean'`) or
+   *  carried uncommitted changes (`'dirty'`). A dirty capture's line numbers
+   *  describe the WORKING tree, not the commit, so nothing may read the
+   *  commit at those lines and call it the finding's content. Absent on
+   *  files written before this field existed: they cannot prove either. */
+  readonly treeState?: BaselineTreeState;
 }
+
+export type BaselineTreeState = 'clean' | 'dirty';
 
 /**
  * Analysis-environment metadata. Hashes are 16-char hex (SHA-1[0:16])
