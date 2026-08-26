@@ -6,8 +6,9 @@ One page. If you read nothing else, read this.
 
 dxkit proves that a **change** introduced no new problems, without requiring
 the repository to be clean first. And it **acts** on the problems it knows
-about: remediation agents and scheduled lanes do real maintenance work, and
-their output lands only through that same proof.
+about: scheduled lanes and remediation runs (deterministic recipes first,
+bounded agents for what remains) do real maintenance work, and their output
+lands only through that same proof.
 
 Those two sentences drive everything else. dxkit is not a linter that shouts
 about everything wrong in your repo, and its agents are not unsupervised
@@ -84,10 +85,13 @@ Lanes are scheduled GitHub Actions workflows dxkit can install:
   merging it defers the advisory for a time-boxed window; fixing means
   upgrading the dependency instead.
 - **Dependency bump** proposes dependency upgrades as a PR.
-- **Remediation** runs budget-bounded agent tasks (fix the build, improve
-  tests, write docs). Anything an agent produces lands **only via a PR that
-  passes the same gate as a human change**. The PR discloses who dispatched
-  it, the exact prompt, the model, and the spend.
+- **Remediation** plans the repo's debt as finite work orders and works
+  them in two tiers: deterministic recipes at $0 first, then budget-bounded
+  agents for the remaining orders (open-ended tasks like improve-tests stay
+  opt-in). Anything the lane produces lands **only via a PR that passes the
+  same gate as a human change**. The PR discloses the per-order outcomes,
+  budgets, and spend, and for a custom dispatch, who dispatched it and the
+  exact prompt.
 
 No lane bypasses the gate. That is the point of the design: one gate, every
 producer of change goes through it, human or machine.
