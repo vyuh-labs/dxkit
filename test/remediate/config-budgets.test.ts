@@ -44,6 +44,7 @@ function cfg(partial: Partial<RemediateConfig>): RemediateConfig {
     taskBudgets: {},
     maxSpendPerRun: 0,
     maxDispatchBudget: 0,
+    maxOrdersPerRun: 0,
     resume: false,
     workOrders: { maxSliceSize: 25 },
     recipes: { enabled: true },
@@ -122,6 +123,22 @@ describe('resolveRemediateConfig parsing', () => {
     const config = resolveRemediateConfig(dir);
     expect(config.maxSpendPerRun).toBe(0);
     expect(config.taskBudgets).toEqual({});
+  });
+
+  it('maxOrdersPerRun defaults to 3, accepts 0 (dispatch off), rejects junk', () => {
+    expect(resolveRemediateConfig(repoWithPolicy({ enabled: true })).maxOrdersPerRun).toBe(3);
+    expect(
+      resolveRemediateConfig(repoWithPolicy({ enabled: true, maxOrdersPerRun: 0 })).maxOrdersPerRun,
+    ).toBe(0);
+    expect(
+      resolveRemediateConfig(repoWithPolicy({ enabled: true, maxOrdersPerRun: 5 })).maxOrdersPerRun,
+    ).toBe(5);
+    for (const junk of [-1, 1.5, 'many', null]) {
+      expect(
+        resolveRemediateConfig(repoWithPolicy({ enabled: true, maxOrdersPerRun: junk }))
+          .maxOrdersPerRun,
+      ).toBe(3);
+    }
   });
 });
 

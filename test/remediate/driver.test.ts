@@ -180,6 +180,41 @@ describe('claude-code driver (exec injected)', () => {
     ]);
   });
 
+  it('renders tool narrowing as variadic --disallowedTools / --allowedTools argv entries', async () => {
+    const capture: { args?: readonly string[] } = {};
+    const d = runWith({ stdout: '{"num_turns": 2}' }, capture);
+    await d.run({
+      cwd: '/tmp',
+      prompt: 'p',
+      budget,
+      model: 'sonnet',
+      env: {},
+      tools: { disallowed: ['Bash(npm install:*)', 'Bash(pnpm add:*)'], allowed: ['Bash'] },
+    });
+    const args = [...(capture.args ?? [])];
+    const denyIdx = args.indexOf('--disallowedTools');
+    expect(denyIdx).toBeGreaterThan(-1);
+    expect(args.slice(denyIdx + 1, denyIdx + 3)).toEqual([
+      'Bash(npm install:*)',
+      'Bash(pnpm add:*)',
+    ]);
+    const allowIdx = args.indexOf('--allowedTools');
+    expect(args[allowIdx + 1]).toBe('Bash');
+    // Deny rules coexist with the skip-permissions flag (documented against
+    // the pinned CLI on the driver's toolPolicy declaration).
+    expect(args).toContain('--dangerously-skip-permissions');
+    expect(d.toolPolicy?.mechanism).toBe('disallowed-tools');
+    expect(d.toolPolicy?.cliRequirement).toContain('2.1.222');
+  });
+
+  it('omits the tool flags entirely when no tools option is given (legacy path unchanged)', async () => {
+    const capture: { args?: readonly string[] } = {};
+    const d = runWith({ stdout: '{"num_turns": 2}' }, capture);
+    await d.run({ cwd: '/tmp', prompt: 'p', budget, model: 'sonnet', env: {} });
+    expect(capture.args).not.toContain('--disallowedTools');
+    expect(capture.args).not.toContain('--allowedTools');
+  });
+
   it('strips ambient credentials unless explicitly injected, and arms the Stop-gate', async () => {
     const capture: { env?: Record<string, string | undefined> } = {};
     // Bracketed placeholder form: the fixture value carries no semantic weight

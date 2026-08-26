@@ -132,6 +132,7 @@ function fakeGit(): RemediateGit {
     head: () => head,
     sweepLeftovers: () => undefined,
     scrubRuntimeArtifacts: () => [],
+    enforceEnvelope: () => ({ dropped: [] }),
     hasDiff: () => {
       head = 'head1111';
       return true;
@@ -166,6 +167,7 @@ function config(): RemediateConfig {
     taskBudgets: {},
     maxSpendPerRun: 0,
     maxDispatchBudget: 0,
+    maxOrdersPerRun: 0,
     resume: false,
     workOrders: { maxSliceSize: 25 },
     recipes: { enabled: true },

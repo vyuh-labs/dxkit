@@ -194,6 +194,19 @@ export function makeClaudeCodeDriver(exec: AgentExec = realAgentExec): AgentDriv
     // The pinned executor the managed workflow installs. Bump deliberately
     // (one line, one place) — never float `latest` under an unattended lane.
     cli: { package: '@anthropic-ai/claude-code', version: '2.1.222' },
+    // Tool narrowing: `--disallowedTools` deny rules, which the pinned CLI
+    // honors even under `--dangerously-skip-permissions` (deny rules take
+    // precedence over the permission mode). `--permission-mode` plus an
+    // explicit allowlist is deliberately NOT used for headless runs: a tool
+    // outside the allowlist prompts, and a non-interactive prompt is a
+    // denial that dead-ends the run mid-task — so the deny-list is the
+    // mechanism, and the caller discloses it as such.
+    toolPolicy: {
+      mechanism: 'disallowed-tools',
+      cliRequirement:
+        '--disallowedTools / --allowedTools require @anthropic-ai/claude-code >= 1.0 ' +
+        '(pinned: 2.1.222); deny rules apply even under --dangerously-skip-permissions',
+    },
 
     resolveModel(tier: ModelTier): string {
       return TIER_ALIAS[tier];
@@ -242,12 +255,21 @@ export function makeClaudeCodeDriver(exec: AgentExec = realAgentExec): AgentDriv
       });
       const cliVersion = versionProbe.stdout.match(/(\d+\.\d+\.\d+)/)?.[1];
 
+      // Tool narrowing (order-driven runs): each pattern is its own argv
+      // entry after the variadic flag — never a shell-joined string. The
+      // deny rules hold under --dangerously-skip-permissions (see the
+      // toolPolicy declaration above for the pinned-CLI requirement).
+      const toolArgs = [
+        ...(opts.tools?.disallowed?.length ? ['--disallowedTools', ...opts.tools.disallowed] : []),
+        ...(opts.tools?.allowed?.length ? ['--allowedTools', ...opts.tools.allowed] : []),
+      ];
       const outcome = exec(
         'claude',
         [
           '-p',
           opts.prompt,
           '--dangerously-skip-permissions',
+          ...toolArgs,
           '--max-turns',
           String(opts.budget.maxTurns),
           '--output-format',

@@ -9,6 +9,11 @@ import {
   addDevCommand,
   provisionCommand,
   pmAwareDevInstall,
+  installCommandPrefixes,
+  provisionArgv,
+  upgradeArgv,
+  LOCKFILES,
+  type PackageManager,
 } from '../src/package-manager';
 
 describe('detectPackageManager', () => {
@@ -118,5 +123,41 @@ describe('command builders', () => {
   it('addDevPrefix is the substring pmAwareDevInstall rewrites from', () => {
     expect(addDevPrefix('npm')).toBe('npm install --save-dev');
     expect(addDevPrefix('pnpm')).toBe('pnpm add -D');
+  });
+
+  it('installCommandPrefixes covers every PM, derived from the canonical builders', () => {
+    const prefixes = installCommandPrefixes();
+    // Every PM the lockfile registry knows contributes its provision,
+    // add-dev, and upgrade command prefixes (one source of truth: this is
+    // what the remediate order runs deny, so a builder change flows here
+    // with no consumer edit).
+    for (const pm of Object.keys(LOCKFILES) as PackageManager[]) {
+      const [pBin, pVerb] = provisionArgv(pm);
+      expect(prefixes).toContain(`${pBin} ${pVerb}`);
+      const [aBin, aVerb] = addDevPrefix(pm).split(' ');
+      expect(prefixes).toContain(`${aBin} ${aVerb}`);
+      const [uBin, uVerb] = upgradeArgv(pm, 'x', '1.0.0', 'dependencies');
+      expect(prefixes).toContain(`${uBin} ${uVerb}`);
+    }
+    // The documented short install aliases and the other dependency-mutating
+    // verb families (update / remove) are included where they exist.
+    for (const alias of [
+      'npm i',
+      'pnpm i',
+      'bun i',
+      'npm update',
+      'pnpm update',
+      'yarn upgrade',
+      'bun update',
+      'npm uninstall',
+      'npm remove',
+      'pnpm remove',
+      'yarn remove',
+      'bun remove',
+    ]) {
+      expect(prefixes).toContain(alias);
+    }
+    // Deterministic (sorted, deduplicated).
+    expect([...prefixes]).toEqual([...new Set(prefixes)].sort());
   });
 });

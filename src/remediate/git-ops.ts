@@ -85,5 +85,52 @@ export function realGit(cwd: string): RemediateGit {
     // changes nothing — reporting it as a diff would verify and land
     // nothing-shaped work.
     hasDiff: (baseHead: string) => git(['diff', '--name-only', baseHead, 'HEAD']) !== '',
+    enforceEnvelope(baseHead, isAllowed) {
+      // The envelope's enforcement half (the order prompt is advisory):
+      // every committed change outside the allowed set is reverted to its
+      // base state — a base-tracked file back to base content, a new file
+      // removed — in ONE disclosure commit, same doctrine as the
+      // runtime-artifact scrub. Runs after the leftover sweep, so the tree
+      // is clean and only commits are in play. Fail-CLOSED: an enforcement
+      // error is returned and the caller must not land the unenforced diff.
+      try {
+        // --no-renames: a rename must surface BOTH sides (the old path as a
+        // deletion, the new as an addition). Under rename detection the diff
+        // lists only the post-image, so enforcing an out-of-envelope
+        // `git mv` would DELETE the base file (the restore below never saw
+        // its old path) and land that destructive change undisclosed.
+        const changed = git(['diff', '--no-renames', '--name-only', baseHead, 'HEAD'])
+          .split('\n')
+          .filter(Boolean);
+        const outside = changed.filter((f) => !isAllowed(f));
+        if (outside.length === 0) return { dropped: [] };
+        const baseTracked = new Set(
+          git(['ls-tree', '-r', '--name-only', baseHead]).split('\n').filter(Boolean),
+        );
+        for (const f of outside) {
+          if (baseTracked.has(f)) {
+            git(['checkout', baseHead, '--', f]);
+          } else {
+            git(['rm', '-f', '-q', '--ignore-unmatch', '--', f]);
+          }
+        }
+        git([
+          '-c',
+          `user.name=${BOT_IDENTITY.name}`,
+          '-c',
+          `user.email=${BOT_IDENTITY.email}`,
+          'commit',
+          '-q',
+          '--allow-empty',
+          '-m',
+          'chore: drop out-of-envelope changes (enforced by the runner, disclosed in the ledger)',
+        ]);
+        return { dropped: outside };
+      } catch (e) {
+        const lines =
+          e instanceof Error ? e.message.split('\n').filter((l) => l.trim()) : [String(e)];
+        return { dropped: [], error: lines[lines.length - 1] ?? String(e) };
+      }
+    },
   };
 }

@@ -33,7 +33,11 @@ function fakeExec(opts: {
     calls.push([bin, ...args]);
     if (bin === 'gh') {
       if (!opts.openPr) return '[]';
-      return JSON.stringify([{ url: 'https://x/pr/1', body: opts.prBody ?? '' }]);
+      // Default body: a budget-exhausted verified partial — the ONE outcome
+      // that is a resume anchor (design F).
+      return JSON.stringify([
+        { url: 'https://x/pr/1', body: opts.prBody ?? 'outcome: **budget-exhausted**' },
+      ]);
     }
     if (bin === 'git' && args[0] === 'fetch') {
       if (opts.failFetch) throw new Error('fetch failed');
@@ -44,6 +48,8 @@ function fakeExec(opts: {
       return '';
     }
     if (bin === 'git' && args[0] === 'rev-list') return String(opts.markers ?? 0);
+    if (bin === 'git' && args.includes('rev-parse')) return 'tree1234';
+    if (bin === 'git' && args.includes('commit-tree')) return 'marker5678';
     return '';
   };
   return { exec, calls };
@@ -113,7 +119,7 @@ describe('prepareResume — the eligibility ladder', () => {
 
   it('carries the prior attempt blocking findings from the draft-PR ledger into the decision', () => {
     const body =
-      'ledger...\n\nBlocking findings:\n- [dep-vuln] form-data GHSA-1\n- [test-gap] src/x.js\n\nrest';
+      'outcome: **budget-exhausted**\n\nBlocking findings:\n- [dep-vuln] form-data GHSA-1\n- [test-gap] src/x.js\n\nrest';
     const { exec } = fakeExec({ openPr: true, markers: 0, prBody: body });
     const d = prepareResume('/repo', 'fix-build', ON, exec);
     expect(d.resumed).toBe(true);
@@ -121,6 +127,64 @@ describe('prepareResume — the eligibility ladder', () => {
     expect(d.blockingContext).toContain('src/x.js');
     // and it reaches the resumed prompt
     expect(resumePromptNote(d.attempt!, d.blockingContext)).toContain('BLOCKED by the guardrail');
+  });
+
+  it('a guardrail-red draft is NOT a resume anchor: fresh run, blocking set carried as a negative constraint, counter ADVANCED', () => {
+    const body =
+      'Task: **fix-vulns** — outcome: **guardrail-red**\n\nBlocking findings:\n- [secret] src/config.ts\n';
+    const { exec, calls } = fakeExec({ openPr: true, markers: 0, prBody: body });
+    const d = prepareResume('/repo', 'fix-vulns', ON, exec);
+    expect(d.resumed).toBe(false);
+    expect(d.note).toContain('guardrail-red');
+    expect(d.note).toContain('budget-exhausted');
+    expect(d.note).toContain('attempt 1 of');
+    expect(d.attempt).toBe(1);
+    expect(d.blockingContext).toContain('src/config.ts');
+    // No checkout: the tree is untouched on a refused resume — but the
+    // attempt counter STILL advances (a content-free commit-tree marker,
+    // pushed), or a guardrail-red chain never reaches the escalation cap
+    // and re-spends a full budget on the same unfixable finding forever.
+    expect(calls.some((c) => c[0] === 'git' && c.includes('--detach'))).toBe(false);
+    expect(calls.some((c) => c[0] === 'git' && c.includes('commit-tree'))).toBe(true);
+    const push = calls.find((c) => c[0] === 'git' && c[1] === 'push');
+    expect(push).toBeDefined();
+    expect(push!.join(' ')).toContain('marker5678:refs/heads/');
+  });
+
+  it('a guardrail-red chain reaches the attempt cap: human escalation, no more marker spend', () => {
+    const body = 'Task: **fix-vulns** — outcome: **guardrail-red**\n';
+    const { exec, calls } = fakeExec({
+      openPr: true,
+      markers: MAX_RESUME_ATTEMPTS,
+      prBody: body,
+    });
+    const d = prepareResume('/repo', 'fix-vulns', ON, exec);
+    expect(d.resumed).toBe(false);
+    expect(d.note).toContain('review or close the draft PR');
+    expect(d.note).toContain(`cap ${MAX_RESUME_ATTEMPTS}`);
+    expect(calls.some((c) => c[0] === 'git' && c.includes('commit-tree'))).toBe(false);
+  });
+
+  it('an open PR whose ledger outcome is verified (or unreadable) starts fresh, disclosed', () => {
+    const { exec } = fakeExec({ openPr: true, markers: 0, prBody: 'outcome: **verified**' });
+    const d = prepareResume('/repo', 'fix-vulns', ON, exec);
+    expect(d.resumed).toBe(false);
+    expect(d.note).toContain("'verified'");
+    const unreadable = fakeExec({ openPr: true, markers: 0, prBody: 'no ledger here' });
+    const d2 = prepareResume('/repo', 'fix-vulns', ON, unreadable.exec);
+    expect(d2.resumed).toBe(false);
+    expect(d2.note).toContain('unknown');
+  });
+
+  it('extractLedgerOutcome is anchored to the ledger line, never a prose mention of an outcome word', () => {
+    const prose =
+      '- earlier attempt discussion mentions outcome: **verified** in passing\n' +
+      'Task: **fix-vulns** — outcome: **budget-exhausted**\n';
+    const { exec } = fakeExec({ openPr: true, markers: 0, prBody: prose });
+    // The mid-line prose mention must not win: the real ledger line says
+    // budget-exhausted, so this RESUMES.
+    const d = prepareResume('/repo', 'fix-vulns', ON, exec);
+    expect(d.resumed).toBe(true);
   });
 
   it('any git/gh failure → fresh run, never a throw', () => {
@@ -147,6 +211,7 @@ function fakeGit(): RemediateGit {
     head: () => head,
     sweepLeftovers: () => undefined,
     scrubRuntimeArtifacts: () => [],
+    enforceEnvelope: () => ({ dropped: [] }),
     hasDiff: () => {
       head = 'salvage01';
       return true;
@@ -181,6 +246,7 @@ function config(): RemediateConfig {
     taskBudgets: {},
     maxSpendPerRun: 0,
     maxDispatchBudget: 0,
+    maxOrdersPerRun: 0,
     resume: true,
     workOrders: { maxSliceSize: 25 },
     recipes: { enabled: true },

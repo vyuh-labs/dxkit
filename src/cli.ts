@@ -3610,7 +3610,7 @@ export async function run(argv: string[]): Promise<void> {
       // positionals[1] = hook name (stop-gate | ...).
       const hookName = positionals[1];
       if (hookName === 'stop-gate') {
-        const { runStopGate } = await import('./loop/stop-gate');
+        const { runStopGate } = await import('./loop/stop-gate-cli');
         await runStopGate(cwd);
         break;
       }

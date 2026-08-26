@@ -30,6 +30,9 @@ export const DEFAULT_REMEDIATE_BUDGET: RemediateBudget = {
   maxUsd: 5,
 };
 
+/** Default `remediate.maxOrdersPerRun`. */
+export const DEFAULT_MAX_ORDERS_PER_RUN = 3;
+
 export interface RemediateConfig {
   readonly enabled: boolean;
   readonly tasks: readonly RemediateTaskId[];
@@ -74,6 +77,12 @@ export interface RemediateConfig {
    *  partial can never grandfather its own breakage. Hard cap of
    *  MAX_RESUME_ATTEMPTS per branch (resume.ts). */
   readonly resume: boolean;
+  /** Most agent-tier work orders one run dispatches, ONE ORDER PER AGENT
+   *  RUN, highest value first (`remediate.maxOrdersPerRun`, default 3;
+   *  0 turns order-driven dispatch off and restores the single open-ended
+   *  task prompt). Orders beyond the cap are disclosed, never silently
+   *  dropped. */
+  readonly maxOrdersPerRun: number;
   /** Work-order planning knobs (`remediate.workOrders`). */
   readonly workOrders: {
     /** Largest number of findings one debt slice may carry
@@ -218,6 +227,15 @@ export function resolveRemediateConfig(cwd: string): RemediateConfig {
         ? raw.maxDispatchBudget
         : 0,
     resume: raw.resume === true,
+    // 0 is a meaningful value (order dispatch off), so this is NOT
+    // positiveNumber: any non-negative integer stands, anything else
+    // falls back to the default.
+    maxOrdersPerRun:
+      typeof raw.maxOrdersPerRun === 'number' &&
+      Number.isInteger(raw.maxOrdersPerRun) &&
+      raw.maxOrdersPerRun >= 0
+        ? raw.maxOrdersPerRun
+        : DEFAULT_MAX_ORDERS_PER_RUN,
     workOrders: {
       maxSliceSize: positiveNumber(
         ((raw.workOrders ?? {}) as Record<string, unknown>).maxSliceSize,

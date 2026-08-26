@@ -114,3 +114,68 @@ describe('hasDiff is a CONTENT question', () => {
     expect(ops.hasDiff(base)).toBe(true);
   });
 });
+
+describe('enforceEnvelope (the envelope enforcement half — real git)', () => {
+  it('reverts out-of-envelope commits (edits AND new files) in one disclosure commit, keeps in-envelope work', () => {
+    const base = git('rev-parse', 'HEAD');
+    // The "agent" edits an in-envelope file, an out-of-envelope tracked
+    // file, and adds a new out-of-envelope file.
+    mkdirSync(join(repo, 'src'), { recursive: true });
+    writeFileSync(join(repo, 'src', 'inside.js'), 'ok\n');
+    writeFileSync(join(repo, 'src.js'), 'module.exports = 99;\n');
+    writeFileSync(join(repo, 'stray.md'), 'sprawl\n');
+    commitAll('agent work');
+
+    const ops = realGit(repo);
+    const allowed = (p: string) => p.startsWith('src/');
+    const result = ops.enforceEnvelope(base, allowed);
+    expect(result.error).toBeUndefined();
+    expect([...result.dropped].sort()).toEqual(['src.js', 'stray.md']);
+    // The tree after enforcement: in-envelope work kept, sprawl reverted.
+    expect(git('show', 'HEAD:src/inside.js')).toBe('ok');
+    expect(git('show', 'HEAD:src.js')).toBe('module.exports = 1;');
+    expect(() => git('show', 'HEAD:stray.md')).toThrow();
+    // Disclosed as its own commit; the working tree is clean.
+    expect(git('log', '-1', '--format=%s')).toContain('out-of-envelope');
+    expect(git('status', '--porcelain')).toBe('');
+  });
+
+  it('an out-of-envelope RENAME restores the base file AND removes the new path (rename-aware)', () => {
+    // The destructive class: with rename detection, the diff lists only the
+    // rename's post-image, so enforcement deleted the base file and landed
+    // that change undisclosed. Both sides must be reverted.
+    const base = git('rev-parse', 'HEAD');
+    mkdirSync(join(repo, 'src'), { recursive: true });
+    writeFileSync(join(repo, 'src', 'inside.js'), 'ok\n');
+    git('mv', 'src.js', 'moved.js');
+    commitAll('agent renamed a file out of envelope + real work');
+
+    const ops = realGit(repo);
+    const result = ops.enforceEnvelope(base, (p) => p.startsWith('src/'));
+    expect(result.error).toBeUndefined();
+    expect([...result.dropped].sort()).toEqual(['moved.js', 'src.js']);
+    // The base file is BACK, the rename target is gone, in-envelope work kept.
+    expect(git('show', 'HEAD:src.js')).toBe('module.exports = 1;');
+    expect(() => git('show', 'HEAD:moved.js')).toThrow();
+    expect(git('show', 'HEAD:src/inside.js')).toBe('ok');
+    expect(git('status', '--porcelain')).toBe('');
+  });
+
+  it('is a no-op (no commit) when everything is inside the envelope', () => {
+    const base = git('rev-parse', 'HEAD');
+    writeFileSync(join(repo, 'src.js'), 'module.exports = 2;\n');
+    commitAll('agent work');
+    const head = git('rev-parse', 'HEAD');
+    const ops = realGit(repo);
+    const result = ops.enforceEnvelope(base, () => true);
+    expect(result).toEqual({ dropped: [] });
+    expect(git('rev-parse', 'HEAD')).toBe(head);
+  });
+
+  it('returns a named error instead of throwing when git cannot answer (fail-closed at the caller)', () => {
+    const ops = realGit(repo);
+    const result = ops.enforceEnvelope('not-a-ref', () => true);
+    expect(result.dropped).toEqual([]);
+    expect(result.error).toBeTruthy();
+  });
+});

@@ -11,6 +11,7 @@ import { describeEntryLocation } from '../../gate/context';
 import { SHARED_RULES } from '../tasks';
 import { RECIPE_REGISTRY } from './recipes-registry';
 import type { WorkOrder, WorkOrderFinding } from './types';
+import { REPO_WIDE_ENVELOPE } from './types';
 import { WORK_ORDER_CLASSES, isBuiltinWorkOrderClass } from './types';
 
 function describeFinding(f: WorkOrderFinding): string {
@@ -99,7 +100,8 @@ export function renderWorkOrderPrompt(order: WorkOrder): string {
   }
   lines.push('');
   lines.push('Envelope (the only paths you may change):');
-  for (const p of order.envelope.paths) lines.push(`- ${p === '' ? '(repo root)' : p}`);
+  for (const p of order.envelope.paths)
+    lines.push(`- ${p === REPO_WIDE_ENVELOPE ? '(the entire repository)' : p}`);
   lines.push(
     order.envelope.manifests
       ? '- dependency manifests and lockfiles inside the envelope may change'
