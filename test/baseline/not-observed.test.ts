@@ -32,6 +32,7 @@ import { createBaseline } from '../../src/baseline/create';
 import {
   runGuardrailCheck,
   collectNotObservedDisclosures,
+  kindNotObservedReason,
   type ClassifiedPair,
   type GuardrailCheckResult,
 } from '../../src/baseline/check';
@@ -43,6 +44,7 @@ import {
 } from '../../src/baseline/check-renderers';
 import { classify } from '../../src/baseline/classify';
 import { DEFAULT_BROWNFIELD_POLICY } from '../../src/baseline/policy';
+import { FULL_SCOPE } from '../../src/baseline/gather-scope';
 import type { BaselineEntry, FindingStatus, MatchPair } from '../../src/baseline/types';
 import { trustedLocalContext, untrustedContentContext } from '../../src/analysis-trust';
 
@@ -142,6 +144,63 @@ describe('collectNotObservedDisclosures', () => {
 
   it('is empty when nothing was unobserved', () => {
     expect(collectNotObservedDisclosures([], new Map(), () => undefined)).toEqual([]);
+  });
+});
+
+// ─── the incremental cause (Rule 19 cause #2, in the Stop-gate's variant) ──
+
+describe('kindNotObservedReason: an incremental code-pattern scan observes only the changed files', () => {
+  const provenance = {
+    secrets: { tool: 'gitleaks', ran: true },
+    codePatterns: { tool: 'semgrep', ran: true },
+    tlsBypass: { ran: true, patternCount: 0 },
+    fileFindings: { ran: true },
+    depVulns: { tool: 'osv-scanner', ran: true, available: true },
+  } as unknown as Parameters<typeof kindNotObservedReason>[1]['provenance'];
+  const base = { mode: 'committed-full' as const, scope: FULL_SCOPE, provenance };
+  const incrementalScope = new Set(['src/changed.ts']);
+
+  it('a semgrep finding in a file OUTSIDE the scanned set is not observed (never "resolved")', () => {
+    const reason = kindNotObservedReason('code', {
+      ...base,
+      incrementalScope,
+      locus: { file: 'src/untouched.ts', tool: 'semgrep' },
+    });
+    expect(reason).toContain('incremental');
+    expect(reason).toContain('did not include this file');
+  });
+
+  it('a semgrep finding in a scanned file, a full scan, and a whole-tree source all stay observed', () => {
+    expect(
+      kindNotObservedReason('code', {
+        ...base,
+        incrementalScope,
+        locus: { file: 'src/changed.ts', tool: 'semgrep' },
+      }),
+    ).toBeUndefined();
+    expect(
+      kindNotObservedReason('code', {
+        ...base,
+        locus: { file: 'src/untouched.ts', tool: 'semgrep' },
+      }),
+    ).toBeUndefined();
+    // The intrinsic scans (tls-bypass, file findings) always cover the whole
+    // tree, so their findings are observed regardless of the scope.
+    expect(
+      kindNotObservedReason('code', {
+        ...base,
+        incrementalScope,
+        locus: { file: 'src/untouched.ts', tool: 'tls-bypass' },
+      }),
+    ).toBeUndefined();
+    // Other kinds never read the incremental scope.
+    expect(
+      kindNotObservedReason('secret', {
+        ...base,
+        incrementalScope,
+        locus: { file: 'src/untouched.ts', tool: 'gitleaks' },
+      }),
+    ).toBeUndefined();
   });
 });
 

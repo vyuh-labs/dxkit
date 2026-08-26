@@ -10,7 +10,9 @@
  * killed or concurrent lane's leftover) is neutralized by the session
  * token binding, and a done question the gate's data cannot answer — an
  * unobserved kind, a skipped floor check — is UNDECIDABLE with disclosure,
- * never a silent done.
+ * never a silent done. A leftover the reader cannot honor (foreign, stale,
+ * malformed) is REMOVED on read, so the disclosure fires once and only a
+ * live, matching scope bypasses the verdict cache.
  */
 import { describe, it, expect } from 'vitest';
 import * as fs from 'fs';
@@ -23,7 +25,6 @@ import {
   ORDER_SCOPE_MAX_AGE_MS,
   clearOrderScope,
   floorOrderDone,
-  orderScopePresent,
   readOrderScope,
   unresolvedOrderIds,
   writeOrderScope,
@@ -78,6 +79,8 @@ function scope(over: Partial<OrderScope> = {}): OrderScope {
   };
 }
 
+const scopeFile = (cwd: string): string => path.join(cwd, '.dxkit', 'loop', 'order.json');
+
 const NO_FLOOR: FloorGateOutcome = { kind: 'unavailable', reason: 'not wired' };
 const ranFloor = (
   checks: Array<{ pack: string; label: string; status?: string; findings?: string[] }>,
@@ -95,36 +98,45 @@ describe('the order-scope module (write / read / clear, validating + session-bou
   it('round-trips a scope under its own token and clears it', () => {
     const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-scope-'));
     writeOrderScope(cwd, scope());
-    expect(orderScopePresent(cwd)).toBe(true);
+    expect(fs.existsSync(scopeFile(cwd))).toBe(true);
     expect(readOrderScope(cwd, { expectedToken: '<lane-session-token>' }).scope).toEqual(scope());
+    // A live, matching read leaves the file in place (the lane clears it).
+    expect(fs.existsSync(scopeFile(cwd))).toBe(true);
     clearOrderScope(cwd);
-    expect(orderScopePresent(cwd)).toBe(false);
+    expect(fs.existsSync(scopeFile(cwd))).toBe(false);
     expect(readOrderScope(cwd, { expectedToken: '<lane-session-token>' })).toEqual({ scope: null });
   });
 
-  it('a foreign token, a session with no token, and an over-age file all read absent WITH disclosure (killed/concurrent lane)', () => {
+  it('a foreign token, a session with no token, and an over-age file all read absent WITH disclosure and are REMOVED (killed/concurrent lane leftover)', () => {
     const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-scope-'));
-    writeOrderScope(cwd, scope());
-    const foreign = readOrderScope(cwd, { expectedToken: '<another-lane-token>' });
-    expect(foreign.scope).toBeNull();
-    expect(foreign.problem).toContain('different lane session');
-    const tokenless = readOrderScope(cwd, { expectedToken: undefined });
-    expect(tokenless.scope).toBeNull();
-    expect(tokenless.problem).toContain('no order token');
-    const stale = readOrderScope(cwd, {
-      expectedToken: '<lane-session-token>',
-      now: () => Date.parse(scope().writtenAt) + ORDER_SCOPE_MAX_AGE_MS + 60_000,
-    });
-    expect(stale.scope).toBeNull();
-    expect(stale.problem).toContain('stale');
-    // The file itself still exists (the cache-bypass question), so a cached
-    // ALLOW is never replayed over it.
-    expect(orderScopePresent(cwd)).toBe(true);
+    const cases: Array<[string, Parameters<typeof readOrderScope>[1], string]> = [
+      ['foreign', { expectedToken: '<another-lane-token>' }, 'different lane session'],
+      ['tokenless', { expectedToken: undefined }, 'no order token'],
+      [
+        'stale',
+        {
+          expectedToken: '<lane-session-token>',
+          now: () => Date.parse(scope().writtenAt) + ORDER_SCOPE_MAX_AGE_MS + 60_000,
+        },
+        'stale',
+      ],
+    ];
+    for (const [, opts, phrase] of cases) {
+      writeOrderScope(cwd, scope());
+      const read = readOrderScope(cwd, opts);
+      expect(read.scope).toBeNull();
+      expect(read.problem).toContain(phrase);
+      expect(read.problem).toContain('removed it');
+      // The leftover is gone: the next stop neither re-discloses it nor
+      // bypasses the verdict cache over it.
+      expect(fs.existsSync(scopeFile(cwd))).toBe(false);
+      expect(readOrderScope(cwd, opts)).toEqual({ scope: null });
+    }
   });
 
-  it('a malformed file is a DISCLOSED null, never a throw (injection guard)', () => {
+  it('a malformed file is a DISCLOSED null, never a throw, and is removed (injection guard)', () => {
     const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-scope-'));
-    const file = path.join(cwd, '.dxkit', 'loop', 'order.json');
+    const file = scopeFile(cwd);
     fs.mkdirSync(path.dirname(file), { recursive: true });
     for (const hostile of [
       'not json at all',
@@ -137,8 +149,8 @@ describe('the order-scope module (write / read / clear, validating + session-bou
       fs.writeFileSync(file, hostile);
       const read = readOrderScope(cwd, { expectedToken: '<any-token>' });
       expect(read.scope).toBeNull();
-      expect(read.problem).toBeTruthy();
-      expect(orderScopePresent(cwd)).toBe(true);
+      expect(read.problem).toContain('removed it');
+      expect(fs.existsSync(file)).toBe(false);
     }
   });
 });
@@ -157,6 +169,54 @@ describe('unresolvedOrderIds (judged from computed state only — nothing execut
       NO_FLOOR,
     );
     expect(v.unresolved).toEqual(['fp-one', 'fp-waived']);
+  });
+
+  it('guardrail verifier: a RELOCATED target (priorId X paired with currentId Y) is still present, never done', () => {
+    // The finding moved (a reindent, an insertion above it); the matcher
+    // paired the baseline id with a new current id. Reading only currentId
+    // certified the order done with the finding still in the tree.
+    const json = payload([
+      presentPair('fp-moved-now', { status: 'relocated', priorId: 'fp-one' } as Partial<Pair>),
+    ]);
+    const v = unresolvedOrderIds(scope({ absentIds: ['fp-one'] }), json, NO_FLOOR);
+    expect(v.unresolved).toEqual(['fp-one']);
+    // A genuinely removed target is done.
+    const gone = payload([
+      { ...presentPair('x'), currentId: undefined, priorId: 'fp-one', status: 'removed' } as Pair,
+    ]);
+    expect(unresolvedOrderIds(scope({ absentIds: ['fp-one'] }), gone, NO_FLOOR)).toEqual({
+      unresolved: [],
+    });
+  });
+
+  it('guardrail verifier: a target the run did NOT OBSERVE (incremental scan skipped its file) is undecidable, never done', () => {
+    // The Stop-gate scans incrementally: a code finding in an untouched file
+    // has a `not_observed` pair, not a `removed` one. That is absence of
+    // observation, and the order stays undecided with the reason named.
+    const json = payload([
+      {
+        ...presentPair('x'),
+        currentId: undefined,
+        priorId: 'fp-one',
+        kind: 'code',
+        status: 'not_observed',
+      } as Pair,
+    ]);
+    const v = unresolvedOrderIds(scope({ absentIds: ['fp-one'], kinds: ['code'] }), json, NO_FLOOR);
+    expect(v.unresolved).toEqual([]);
+    expect(v.undecidable).toContain('fp-one');
+    expect(v.undecidable).toContain('incremental');
+    // A still-present sibling target wins over the undecidable one (block).
+    const mixed = payload([
+      ...json.pairs,
+      presentPair('fp-two', { kind: 'code' } as Partial<Pair>),
+    ]);
+    const w = unresolvedOrderIds(
+      scope({ absentIds: ['fp-one', 'fp-two'], kinds: ['code'] }),
+      mixed,
+      NO_FLOOR,
+    );
+    expect(w.unresolved).toEqual(['fp-two']);
   });
 
   it('guardrail verifier: an UNOBSERVED target kind is undecidable, never silently done (Rule 19)', () => {
