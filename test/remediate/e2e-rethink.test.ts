@@ -1,5 +1,5 @@
 /**
- * END-TO-END PROOF of the remediate rethink (4.4.5) — the permanent "prove
+ * END-TO-END PROOF of the remediate rethink (4.4.5): the permanent "prove
  * the value" gate, not a one-off. Each scenario stages a small fixture repo
  * (a real git repo with a committed baseline, allowlist, and policy) and
  * drives the ONE public entry point `runRemediateTask` through the REAL
@@ -10,7 +10,7 @@
  * The three claims this pins, per the release's own acceptance list:
  *   a. a recipe-only plan (stale lockfile; deferred advisory with a fixed
  *      version) lands VERIFIED with ZERO driver invocations, the ledger
- *      carrying per-order applied outcomes ($0 by construction — the driver
+ *      carrying per-order applied outcomes ($0 by construction: the driver
  *      here throws on contact);
  *   b. an agent-tier order reaches the driver as the RENDERED ORDER (the
  *      attribution split, the envelope, the done command are in the prompt)
@@ -179,7 +179,7 @@ function recipesExec(cwd: string): {
 }
 
 /** A driver that records every run and, unless given work to do, throws on
- *  contact — the $0 proof for recipe-only and paused plans. */
+ *  contact, the $0 proof for recipe-only and paused plans. */
 function driverStub(work?: (opts: Parameters<AgentDriver['run']>[0]) => Partial<AgentRunResult>): {
   driver: AgentDriver;
   runs: Parameters<AgentDriver['run']>[0][];
