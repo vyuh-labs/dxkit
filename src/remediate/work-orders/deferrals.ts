@@ -77,7 +77,14 @@ export async function joinDeferrals(
   byId: ReadonlyMap<string, RichBaselineEntry>,
   opts: GatherWorkOrderOptions,
   disclosures: string[],
-): Promise<{ deferred: DeferredInput[]; depScanSource: DepScanSource }> {
+): Promise<{
+  deferred: DeferredInput[];
+  depScanSource: DepScanSource;
+  /** The scan findings the join read, by fingerprint, handed onward so the
+   *  advisory-detail join can enrich baseline DEBT from the same paid scan
+   *  (one scan, every consumer). */
+  scanned: ReadonlyMap<string, DepVulnFinding>;
+}> {
   const now = opts.now ?? new Date();
   const deferred = activeDeferredEntries(allowlist, now);
   const needsScan = deferred.some((d) => d.kind === 'dep-vuln');
@@ -121,5 +128,5 @@ export async function joinDeferrals(
     if (entry.kind === 'custom-check') return { ...base, kind: 'custom-check', entry };
     return { ...base, kind: 'other', entry };
   });
-  return { deferred: joined, depScanSource };
+  return { deferred: joined, depScanSource, scanned };
 }

@@ -75,11 +75,30 @@ export type DeferredInput =
       readonly entry: RichBaselineEntry;
     };
 
+/**
+ * Per-finding advisory facts dxkit knows from OUTSIDE the finding's own
+ * source, keyed by finding id: the live scan's copy for a baseline entry,
+ * or an OSV-resolved fix version for a finding whose scanner never carried
+ * one. Filled into `AdvisoryInput`s at the ONE application point in
+ * `planWorkOrders`, missing fields only: a value the finding's own source
+ * stated always wins. This is what lets a deferral or a debt advisory tier
+ * `recipe` (the override-pin matches needs a concrete `fixedVersion`)
+ * wherever dxkit can actually know the fix.
+ */
+export interface AdvisoryDetail {
+  readonly fixedVersion?: string;
+  readonly reachable?: boolean;
+  readonly installedVersion?: string;
+  readonly pack?: string;
+}
+
 export interface PlannerInput {
   /** Failing entry-floor checks, attributed (empty when no floor source). */
   readonly floorFailures: readonly FloorFailureInput[];
   readonly blocking: readonly BlockingInput[];
   readonly deferred: readonly DeferredInput[];
+  /** Advisory facts joined from richer sources (see `AdvisoryDetail`). */
+  readonly advisoryDetails?: ReadonlyMap<string, AdvisoryDetail>;
   /** Grandfathered entries NOT under any active allowlist entry, every kind
    *  (the planner classifies and discloses; callers never pre-filter). */
   readonly debt: readonly RichBaselineEntry[];
@@ -116,6 +135,27 @@ function advisoryFromDebt(e: Extract<RichBaselineEntry, { kind: 'dep-vuln' }>): 
     ...(e.installedVersion !== undefined ? { installedVersion: e.installedVersion } : {}),
     advisoryId: e.advisoryId,
     ...(e.severity !== undefined ? { severity: e.severity } : {}),
+  };
+}
+
+/** Fill an advisory's MISSING fields from the detail join (never
+ *  overwrite: the finding's own source is the closer witness). */
+function withAdvisoryDetail(
+  a: AdvisoryInput,
+  details: ReadonlyMap<string, AdvisoryDetail> | undefined,
+): AdvisoryInput {
+  const d = details?.get(a.id);
+  if (!d) return a;
+  return {
+    ...a,
+    ...(a.fixedVersion === undefined && d.fixedVersion !== undefined
+      ? { fixedVersion: d.fixedVersion }
+      : {}),
+    ...(a.reachable === undefined && d.reachable !== undefined ? { reachable: d.reachable } : {}),
+    ...(a.installedVersion === undefined && d.installedVersion !== undefined
+      ? { installedVersion: d.installedVersion }
+      : {}),
+    ...(a.pack === undefined && d.pack !== undefined ? { pack: d.pack } : {}),
   };
 }
 
@@ -181,9 +221,18 @@ export function planWorkOrders(input: PlannerInput, opts: PlannerOptions = {}): 
     debtNoClass,
   );
 
+  // The ONE detail-application point: every advisory bucket passes through
+  // the same fill before the builder, so a deferral, a blocking pair, and a
+  // debt entry all see the identical join (Rule 2.30).
+  const detail = (a: AdvisoryInput) => withAdvisoryDetail(a, input.advisoryDetails);
   const ranked: Ranked[] = [
     ...floorOrders(input.floorFailures, ctx),
-    ...advisoryOrders(blockingAdvisories, deferredAdvisories, debtAdvisories, ctx),
+    ...advisoryOrders(
+      blockingAdvisories.map(detail),
+      deferredAdvisories.map((d) => ({ ...d, advisory: detail(d.advisory) })),
+      debtAdvisories.map(detail),
+      ctx,
+    ),
     ...lintOrders(lintSources, ctx, undispatchable),
   ].sort(compareRank);
 

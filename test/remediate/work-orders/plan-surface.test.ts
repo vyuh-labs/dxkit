@@ -333,6 +333,30 @@ describe('remediate plan --json: work orders', () => {
     expect(stale.plan.undispatchable[0].findings[0].id).toBe('dead000011112222');
   });
 
+  it('the estate shape end to end: a fix-less scan join is OSV-resolved and the deferral order tiers recipe', async () => {
+    writePolicy({ remediate: { enabled: true } });
+    writeBaseline([]);
+    writeAllowlist([DEFER_ENTRY]);
+    const fixless = { ...SCAN_FINDING };
+    delete (fixless as { fixedVersion?: string }).fixedVersion;
+    const { plan, disclosures } = await planRepoWorkOrders(repo, resolveRemediateConfig(repo), {
+      packs: TS,
+      now: NOW,
+      runFloor: () => NO_FLOOR,
+      scanDepVulns: async () => [fixless],
+      osvFetcher: async (id) =>
+        id === 'GHSA-1'
+          ? { affected: [{ ranges: [{ type: 'SEMVER', events: [{ fixed: '4.1.0' }] }] }] }
+          : null,
+    });
+    const order = plan.orders.find((o) => o.id === 'dep-advisory:js-yaml')!;
+    expect(order.tier).toBe('recipe');
+    expect(order.recipe).toBe('override-pin');
+    const evidence = order.findings[0].evidence;
+    expect(evidence.type === 'dep-vuln' && evidence.fixedVersion).toBe('4.1.0');
+    expect(disclosures.join(' ')).toContain('1 of 1 advisories resolved via OSV');
+  });
+
   it('the scan runs only when a dep-vuln deferral exists', async () => {
     writePolicy({ remediate: { enabled: true } });
     writeBaseline([]);

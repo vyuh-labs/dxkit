@@ -89,6 +89,8 @@ export type FloorSource = 'live' | 'baseline-envelope' | 'loop-snapshot' | 'none
 // re-exported here so consumers keep one import surface.
 export { BOM_FRESHNESS_DAYS, type DepScanSource } from './deferrals';
 import { joinDeferrals, type DepScanSource } from './deferrals';
+import { advisoryDetailMap } from './fix-versions';
+import type { OsvFetcher } from '../../analyzers/tools/osv';
 
 export interface GatherWorkOrderOptions {
   /** Run the live floor (default: read a stored envelope). */
@@ -104,6 +106,8 @@ export interface GatherWorkOrderOptions {
   readonly baselineName?: string;
   /** Injected active packs (tests). */
   readonly packs?: readonly LanguageSupport[];
+  /** Injected OSV fetch for the advisory fix-version join (tests). */
+  readonly osvFetcher?: OsvFetcher;
   /** Injected order-outcome history rows for the circuit breaker (tests /
    *  a caller that already read them). Default: the ONE ledger reader over
    *  the local checkout plus the standing branches. */
@@ -302,8 +306,25 @@ export async function gatherWorkOrderInputs(
   const byId = new Map(rich.map((e) => [e.id, e]));
   const allowlist = tryLoadAllowlist(cwd);
   const now = opts.now ?? new Date();
-  const { deferred, depScanSource } = await joinDeferrals(cwd, allowlist, byId, opts, disclosures);
+  const { deferred, depScanSource, scanned } = await joinDeferrals(
+    cwd,
+    allowlist,
+    byId,
+    opts,
+    disclosures,
+  );
   const debt = partitionByActiveAllowlist(rich, allowlist, now).live;
+  // The advisory-detail join (fix-versions.ts): thread the paid scan's
+  // fixed versions into baseline debt, and resolve the still-missing ones
+  // through the ONE OSV client; an advisory without a knowable fix
+  // honestly stays agent-tier, disclosed.
+  const advisoryDetails = await advisoryDetailMap({
+    deferred,
+    debt,
+    scanned,
+    ...(opts.osvFetcher ? { osvFetcher: opts.osvFetcher } : {}),
+    disclosures,
+  });
 
   // Manifest roots are consulted only by dependency-shaped orders; skip the
   // walk entirely when nothing will read them.
@@ -324,6 +345,7 @@ export async function gatherWorkOrderInputs(
       floorFailures: floor.failures,
       blocking: [],
       deferred,
+      advisoryDetails,
       debt,
       manifests,
       installFor: installResolver(cwd, packs),
