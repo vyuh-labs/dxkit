@@ -86,6 +86,15 @@ export interface BreakerOptions {
   readonly dispatchedTask?: string;
 }
 
+/** Which stamp on a failure row differs from the current environment, if
+ *  any: the ONE stamp comparison the streak walk reads (a stale stamp is
+ *  where the counted streak stops). */
+function staleStampOf(row: OrderOutcomeRow, current: RemediateStamp): 'dxkit' | 'policy' | null {
+  if (row.dxkitVersion !== current.dxkitVersion) return 'dxkit';
+  if (row.policyHash !== current.policyHash) return 'policy';
+  return null;
+}
+
 function unpauseConditions(cls: string): string {
   const task = isBuiltinWorkOrderClass(cls) ? WORK_ORDER_CLASSES[cls].task : undefined;
   return (
@@ -147,6 +156,14 @@ export function evaluateClassPauses(
     let failures = 0;
     let latest: OrderOutcomeRow | undefined;
     let sawSuccess = false;
+    // A failure stamped by an OLDER dxkit / remediate policy is a lift
+    // point: the walk stops there, so only failures under the CURRENT
+    // stamps count. A lift therefore RESETS the streak. The shipped shape
+    // compared only the newest failure's stamp while the streak still
+    // counted the older ones, so one new failure after a lift re-paused
+    // the class at an effective threshold of 1.
+    let lift: { readonly by: 'dxkit' | 'policy'; readonly row: OrderOutcomeRow } | undefined;
+    let staleFailures = 0;
     for (const firing of newestFirst) {
       // A firing with any success row RESETS (the class produced verified
       // work, whatever else happened alongside); else any failure row
@@ -157,17 +174,43 @@ export function evaluateClassPauses(
       }
       const failureRow = firing.find((r) => ORDER_FAILURE_OUTCOMES.has(r.outcome));
       if (failureRow) {
+        const by = staleStampOf(failureRow, opts.current);
+        if (by) {
+          lift = lift ?? { by, row: failureRow };
+          staleFailures += 1;
+          continue;
+        }
+        if (lift) continue; // past the lift point: nothing older counts
         failures += 1;
         latest = latest ?? failureRow;
       }
       // neutral firings (refused, never-ran, paused markers) neither count nor reset
     }
     if (failures < opts.threshold || !latest) {
+      const wasPaused = list.some((r) => r.outcome === 'paused');
+      // A lift is disclosed when it is what keeps the class running: the
+      // class was paused on the stale evidence, or the stale streak alone
+      // would have paused it.
+      if (lift && (wasPaused || failures + staleFailures >= opts.threshold)) {
+        // The stamp lift, DISCLOSED: the evidence the pause stood on was
+        // recorded under a different dxkit / policy, so it says nothing
+        // about the next attempt; the streak restarts from the lift.
+        disclosures.push(
+          lift.by === 'dxkit'
+            ? `circuit breaker: class '${cls}' would be paused on failures recorded before ` +
+                `dxkit changed (${lift.row.dxkitVersion} -> ${opts.current.dxkitVersion}); ` +
+                'those no longer count and the failure streak restarts from zero: retrying'
+            : `circuit breaker: class '${cls}' would be paused on failures recorded before ` +
+                'the remediate policy changed; those no longer count and the failure streak ' +
+                'restarts from zero: retrying',
+        );
+        continue;
+      }
       // The documented age-out lift, DISCLOSED: a paused marker in the
       // window with the failure streak no longer meeting the threshold
       // (and no success explaining the reset) means the evidence aged out
       // of the bounded window — the retry horizon engaging, never silent.
-      if (!sawSuccess && list.some((r) => r.outcome === 'paused')) {
+      if (!sawSuccess && !lift && wasPaused) {
         disclosures.push(
           `circuit breaker: class '${cls}' was paused previously and its failure evidence ` +
             'aged out of the bounded history window, so the pause lifted (the documented ' +
@@ -177,23 +220,12 @@ export function evaluateClassPauses(
       continue;
     }
 
+    // Every counted failure carries the current stamps by construction
+    // (the walk stopped at the first stale one), so a pause here is never
+    // evidence from another dxkit or another policy.
     const streak =
       `the last ${failures} counted firing(s) for this class were failures ` +
       `(latest: ${latest.outcome} at ${latest.timestamp})`;
-    if (latest.dxkitVersion !== opts.current.dxkitVersion) {
-      disclosures.push(
-        `circuit breaker: class '${cls}' would be paused (${streak}), but dxkit changed ` +
-          `since (${latest.dxkitVersion} -> ${opts.current.dxkitVersion}): retrying`,
-      );
-      continue;
-    }
-    if (latest.policyHash !== opts.current.policyHash) {
-      disclosures.push(
-        `circuit breaker: class '${cls}' would be paused (${streak}), but the remediate ` +
-          'policy changed since the failures: retrying',
-      );
-      continue;
-    }
     if (dispatchedClasses.has(cls)) {
       disclosures.push(
         `circuit breaker: class '${cls}' is paused (${streak}), but this run was ` +

@@ -218,6 +218,20 @@ import type { FileRouteSupport, HttpFlowSupport, ModelSchemaSupport } from '@vyu
 
 export type { FileRouteSupport, HttpFlowSupport, ModelSchemaSupport };
 
+/** A pack's declared install of its dependency tree (see
+ *  `LanguageSupport.provision`): the primary argv as `bin` + `args`, and the
+ *  fallback CI runs when the primary fails (`a || b`), with the reason the
+ *  fallback exists so a verification that took it can say why. */
+export interface ProvisionCommand {
+  readonly bin: string;
+  readonly args: readonly string[];
+  readonly fallback?: {
+    readonly bin: string;
+    readonly args: readonly string[];
+    readonly reason: string;
+  };
+}
+
 /**
  * Everything dxkit needs to know about a language lives in one implementation
  * of this interface. See `src/languages/index.ts` for the registry.
@@ -423,13 +437,17 @@ export interface LanguageSupport {
 
   /**
    * OPTIONAL: the command that (re)provisions this ecosystem's dependency
-   * tree from its manifest + lockfile in `cwd` (`npm ci`, `pnpm install`).
-   * Consumed by the remediation frame as the ONE install a work order may
-   * run (the agent never installs itself). Returns null when the pack cannot
-   * name one for this repo; a consumer then discloses "no install command"
-   * rather than guessing another ecosystem's tool.
+   * tree from its manifest + lockfile in `cwd` (`npm ci`, `pnpm install
+   * --frozen-lockfile`), with the fallback CI runs when the primary fails.
+   * The ONE definition of "install this repo": the remediation frame hands
+   * it to a work order (the agent never installs itself) AND the tree
+   * verification (`lanes/verify-tree.ts`) runs it on the clean worktree, so
+   * the install a PR is verified with is the install its order was given.
+   * Returns null when the pack cannot name one for this repo; a consumer
+   * then discloses "no install command" rather than guessing another
+   * ecosystem's tool.
    */
-  provision?(cwd: string): { readonly bin: string; readonly args: readonly string[] } | null;
+  provision?(cwd: string): ProvisionCommand | null;
 
   /**
    * Per-stack architectural vocabulary + path conventions. Drives the

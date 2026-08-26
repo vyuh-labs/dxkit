@@ -315,11 +315,10 @@ export async function executeTask(
   });
   // The order-outcome rows ride the SAME landing commit (composed with any
   // unmerged standing-branch rows first, so a force-push never erases the
-  // failure history a prior non-landing run recorded).
-  const orderLedgerRel =
-    orderRows.length > 0
-      ? (seams.writeOrderLedger ?? writeLocalOrderLedger)(cwd, taskId, orderRows)
-      : null;
+  // failure history a prior non-landing run recorded). Called even with no
+  // rows of this run's own: the branch's rows (a resume-attempt count) must
+  // still be carried across the force-push.
+  const orderLedgerRel = (seams.writeOrderLedger ?? writeLocalOrderLedger)(cwd, taskId, orderRows);
   // Evidence BEFORE delivery (#273): the attempt record — with the commit
   // range the workflow's patch-artifact fallback needs — is written before
   // the push, landed:false, and flipped by the finalize below on success. A

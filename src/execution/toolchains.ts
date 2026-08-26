@@ -101,6 +101,25 @@ export const TOOLCHAIN_DEFS = {
       windows: 'winget install OpenJS.NodeJS.LTS',
       fallback: 'https://nodejs.org/en/download',
     },
+    environmentFailurePatterns: [
+      {
+        // The unprovisioned-tree shape: `npm run typecheck` on a checkout
+        // without node_modules exits 127 with the shell's "tsc: not found"
+        // (sh) / "command not found" (bash) / npm's own "could not determine
+        // executable to run" (npx --no-install). Strictly the shell / npm
+        // phrasing, anchored to the line start, so a compile error whose
+        // message happens to say "not found" (TS2307 "Cannot find module",
+        // an ENOENT from the code under test) is never reclassified.
+        id: 'node-bin-not-found',
+        pattern:
+          '(^|\\n)(sh|bash|/bin/sh|/bin/bash): (line \\d+: )?[^\\n]+: (command )?not found' +
+          '|npm ERR! could not determine executable to run|npm error could not determine executable to run',
+        problem:
+          "a project-local binary the floor runs is not installed (the tree's node_modules is missing or incomplete)",
+        remedy:
+          'run the frozen install (`npm ci` / `pnpm install --frozen-lockfile`) on this tree first',
+      },
+    ],
   },
   python: {
     id: 'python',

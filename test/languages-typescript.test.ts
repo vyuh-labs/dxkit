@@ -99,6 +99,20 @@ describe('extractTsImportsRaw', () => {
   it('does not misfire on import.meta', () => {
     expect(run(`const u = import.meta.url;`)).toEqual([]);
   });
+
+  // One quote-aware scan, no blind comment pass behind it: a `/*` or `//`
+  // INSIDE a string literal is string payload, and the imports after it
+  // must survive (the blind regex stripper deleted from that `/*` to the
+  // next `*` `/` in the file, eating real imports with it).
+  it('a comment opener inside a string literal never swallows later imports', () => {
+    const src = `
+      const open = '/*';
+      import real from './real';
+      const close = '*/';
+      const slashes = 'x // y'; import other from './other';
+    `;
+    expect(run(src)).toEqual(['./real', './other']);
+  });
 });
 
 describe('resolveTsImportRaw', () => {
@@ -458,6 +472,33 @@ describe('typescript.correctness', () => {
   it('syntaxCheck skips (fail-open) when tsc is not installed', () => {
     fs.writeFileSync(path.join(tmp, 'tsconfig.json'), '{}');
     expect(typescript.correctness!.syntaxCheck(ctx())).toBeNull();
+  });
+
+  // The unprovisioned-worktree class (4.4.5): a repo WITH a typecheck script
+  // but no node_modules ran `npm run typecheck`, which exits 127 ("tsc: not
+  // found") and read as a net-new floor failure. The script path gates on
+  // the dependency tree (the script may run vue-tsc or svelte-check, so the
+  // tsc binary is not its evidence); the bare-tsc path gates on tsc.
+  it('syntaxCheck skips the project typecheck script when nothing is installed', () => {
+    fs.writeFileSync(
+      path.join(tmp, 'package.json'),
+      JSON.stringify({ scripts: { typecheck: 'tsc -b' } }),
+    );
+    fs.writeFileSync(path.join(tmp, 'tsconfig.json'), '{}');
+    expect(typescript.correctness!.syntaxCheck(ctx())).toBeNull();
+  });
+
+  it('syntaxCheck runs a non-tsc typecheck script once the dependency tree exists', () => {
+    fs.writeFileSync(
+      path.join(tmp, 'package.json'),
+      JSON.stringify({ scripts: { typecheck: 'vue-tsc --noEmit' } }),
+    );
+    installBin('vue-tsc');
+    expect(typescript.correctness!.syntaxCheck(ctx())).toEqual({
+      label: 'typecheck',
+      bin: 'npm',
+      args: ['run', 'typecheck'],
+    });
   });
 
   it('affectedTests: vitest related on the affected surface', () => {

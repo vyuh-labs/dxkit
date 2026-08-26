@@ -1,10 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { mkdtempSync, writeFileSync, rmSync } from 'fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { runCorrectnessFloor, describeFloorCapturePlan } from '../src/analyzers/correctness/run';
 import { LOCKFILE_SYNC_LABEL } from '../src/languages/capabilities/correctness';
 import { getLanguage } from '../src/languages';
+import { clearWalkPathsCache } from '../src/analyzers/tools/walk-paths';
 
 const TS = getLanguage('typescript')!;
 
@@ -61,6 +62,45 @@ describe('lockfile-sync floor check (typescript pack, npm)', () => {
     }
   });
 
+  it('runs at every nested dependency root the audit reads and names the stale ones as findings', () => {
+    const dir = tsRepo(files);
+    mkdirSync(join(dir, 'server'));
+    writeFileSync(join(dir, 'server', 'package.json'), '{"name":"server"}');
+    writeFileSync(join(dir, 'server', 'package-lock.json'), '{}');
+    clearWalkPathsCache();
+    try {
+      const seen: string[] = [];
+      // root in sync, the nested sub-project stale: root-only checking
+      // read this tree as in sync
+      const r = runCorrectnessFloor({
+        cwd: dir,
+        changedFiles: [],
+        scope: 'full',
+        packs: [TS],
+        exec: (cmd, cwd) => {
+          if (!(cmd.bin === 'npm' && cmd.args.includes('--dry-run'))) {
+            return { available: true, code: 0, output: '' };
+          }
+          seen.push(cwd);
+          return cwd === join(dir, 'server')
+            ? { available: true, code: 1, output: EUSAGE }
+            : { available: true, code: 0, output: '' };
+        },
+      });
+      expect(seen.sort()).toEqual([dir, join(dir, 'server')].sort());
+      const lock = r.checks.filter((c) => c.label === LOCKFILE_SYNC_LABEL);
+      expect(lock).toHaveLength(1);
+      expect(lock[0].status).toBe('fail');
+      expect(lock[0].findings).toEqual(['server']);
+      expect(lock[0].output).toContain('[server]');
+      expect(lock[0].output).toContain('EUSAGE');
+      expect(r.blocks).toBe(true);
+    } finally {
+      clearWalkPathsCache();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('a peer-conflict-only failure PASSES with the --legacy-peer-deps disclosure', () => {
     const dir = tsRepo(files);
     try {
@@ -97,16 +137,16 @@ describe('lockfile-sync floor check (typescript pack, npm)', () => {
     }
   });
 
-  // An affected run with an EMPTY changed set is an UNDETERMINABLE diff — the
-  // pack contract reads it as full, so the lockfile check must run there too
-  // (a silent skip would re-open the class on any surface that cannot compute
-  // its diff: the change that drifted the lockfile may simply be invisible).
-  it('an affected run with an EMPTY changed set (undeterminable diff) still runs the check', () => {
+  // An affected run whose diff is UNKNOWN (`changedFiles: null`: no base, or
+  // git could not diff) must still run the lockfile check: a silent skip
+  // would re-open the class on any surface that cannot compute its diff (the
+  // change that drifted the lockfile may simply be invisible).
+  it('an affected run with an UNKNOWN diff (changedFiles: null) still runs the check', () => {
     const dir = tsRepo(files);
     try {
       const r = runCorrectnessFloor({
         cwd: dir,
-        changedFiles: [],
+        changedFiles: null,
         scope: 'affected',
         packs: [TS],
         exec: (cmd) =>
@@ -117,6 +157,31 @@ describe('lockfile-sync floor check (typescript pack, npm)', () => {
       const lock = r.checks.find((c) => c.label === LOCKFILE_SYNC_LABEL)!;
       expect(lock.status).toBe('fail');
       expect(r.blocks).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // A KNOWN empty diff is a different fact from an unknown one: a pristine
+  // tree at its base changed nothing, so nothing could have moved the
+  // lockfile and the dry-run (a package-manager spawn on EVERY Stop) is
+  // skipped. The old `[]`-means-both contract spawned it on every stop.
+  it('an affected run with a KNOWN empty changed set skips the dry-run (nothing changed)', () => {
+    const dir = tsRepo(files);
+    try {
+      let spawned = 0;
+      const r = runCorrectnessFloor({
+        cwd: dir,
+        changedFiles: [],
+        scope: 'affected',
+        packs: [TS],
+        exec: (cmd) => {
+          if (cmd.bin === 'npm' && cmd.args.includes('--dry-run')) spawned++;
+          return { available: true, code: 0, output: '' };
+        },
+      });
+      expect(spawned).toBe(0);
+      expect(r.checks.find((c) => c.label === LOCKFILE_SYNC_LABEL)).toBeUndefined();
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

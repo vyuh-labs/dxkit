@@ -15,39 +15,58 @@
  *     for the task's standing branch (checked via gh, fail-open to "no");
  *   - the branch head is checked out DETACHED (the landing guard's CI shape;
  *     the lander force-pushes cumulative HEAD back to the branch);
- *   - an empty MARKER commit stamps the attempt, so attempts are countable
- *     from git history alone; at MAX_RESUME_ATTEMPTS the task falls back to
- *     a fresh run (a doomed branch must not burn budget forever — the cap
- *     and the fallback are both disclosed).
+ *   - a resume-attempt ROW in the order ledger (`src/lanes/order-ledger.ts`)
+ *     stamps the attempt, so attempts are countable from the scheduler's
+ *     one durable memory; at MAX_RESUME_ATTEMPTS the task falls back to a
+ *     fresh run (a doomed branch must not burn budget forever; the cap
+ *     and the fallback are both disclosed). A marker COMMIT on the branch
+ *     was the previous counter; every landing force-pushes the branch from
+ *     the default head and erased it, so a guardrail-red chain (fresh run,
+ *     red draft landed, repeat) never reached the cap. Both ledger channels
+ *     compose the branch's existing rows before writing, so a landing
+ *     carries the count forward.
  */
-import { execFileSync } from 'child_process';
-import { BOT_IDENTITY } from '../land-refresh';
-import { internalGitPushArgs } from '../git-internal-push';
+import { makeExec, type Exec } from '../land-refresh';
+import {
+  countResumeAttempts,
+  orderHistory,
+  orderLedgerPath,
+  resumeAttemptRow,
+} from '../lanes/order-ledger';
+import { remediateStamp } from './work-orders/breaker';
+import { publishOrderRows } from './order-outcomes';
 import { remediateBranchFor } from './land';
 import type { RemediateConfig } from './config';
 
 /** Resumes allowed per salvage branch before falling back to a fresh run. */
 export const MAX_RESUME_ATTEMPTS = 2;
 
-/** Marker-commit subject (greppable; the attempt counter). */
-export const RESUME_MARKER = 'chore(dxkit): resume budget-bounded attempt';
-
-export type ResumeExec = (bin: string, args: readonly string[]) => string;
+/** The ONE machine git-exec shape (`land-refresh.ts:makeExec`), shared with
+ *  the order ledger so the count and the record use one plumbing seam. */
+export type ResumeExec = Exec;
 
 function realExec(cwd: string): ResumeExec {
-  return (bin, args) =>
-    execFileSync(bin, [...args], {
-      cwd,
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-      timeout: 60_000,
-    }).toString();
+  return makeExec(cwd);
+}
+
+/** Record one attempt against the task's standing branch through the
+ *  ledger's non-landing channel. Returns a `; ...` note when the record
+ *  could not be published (the cap may not engage), else ''. */
+function recordAttempt(cwd: string, taskId: string, exec: ResumeExec): string {
+  const stamp = remediateStamp(cwd);
+  const row = resumeAttemptRow(taskId, { timestamp: new Date().toISOString(), ...stamp });
+  const pub = publishOrderRows(cwd, taskId, [row], exec);
+  if (pub.published) return '';
+  return (
+    `; the attempt counter could not advance (${pub.note ?? 'ledger row not published'}), so ` +
+    `the ${MAX_RESUME_ATTEMPTS}-attempt escalation may not engage`
+  );
 }
 
 export interface ResumeDecision {
   /** True when the working tree now sits on the salvage head (detached). */
   readonly resumed: boolean;
-  /** 1-based resume attempt number (marker commits + 1). */
+  /** 1-based resume attempt number (recorded attempt rows + 1). */
   readonly attempt?: number;
   /** The prior attempt's blocking findings (extracted from the open draft
    *  PR's ledger body, bounded). On a resume: carried into the resumed
@@ -92,7 +111,7 @@ export function extractBlockingContext(body: string | undefined): string | undef
 
 /**
  * Decide + prepare a resume for one task. On success the working tree is
- * left DETACHED on the salvage head with a fresh marker commit; on any
+ * left DETACHED on the salvage head with the attempt recorded; on any
  * failure or ineligibility the tree is untouched. Fail-open by design: a
  * broken gh, a missing branch, a fetch error all mean "fresh run".
  */
@@ -137,14 +156,15 @@ export function prepareResume(
     // the cap is the human-escalation tripwire, and a guardrail-red chain
     // that never counted its attempts would re-spend a full budget on the
     // same unfixable finding forever (the cap unreachable by construction).
-    run('git', ['fetch', 'origin', branch]);
-    const markers = run('git', [
-      'rev-list',
-      '--count',
-      `--grep=${RESUME_MARKER}`,
-      'HEAD..FETCH_HEAD',
-    ]).trim();
-    const prior = Number(markers) || 0;
+    // The count comes from the order ledger (the ONE reader, both channels):
+    // a marker commit on the branch was erased by every landing force-push
+    // from the default head, so a guardrail-red chain never reached the cap.
+    const history = orderHistory(cwd, {
+      branches: [{ branch, file: orderLedgerPath('remediate', taskId) }],
+      exec: run,
+    });
+    const prior = countResumeAttempts(history.rows, taskId);
+    const historyNote = history.disclosures.length > 0 ? `; ${history.disclosures[0]}` : '';
     const redContext =
       priorOutcome === 'guardrail-red' && blockingContext ? { blockingContext } : {};
     if (prior >= MAX_RESUME_ATTEMPTS) {
@@ -164,32 +184,11 @@ export function prepareResume(
     // becomes a NEGATIVE constraint the next run's order prompts carry
     // ("do not reintroduce these"). Any other (or unreadable) outcome
     // conservatively starts fresh, disclosed. The attempt counter STILL
-    // advances (an empty commit built with commit-tree and pushed — the
-    // working tree is never touched, and the push carries zero content),
-    // so a repeating non-resumable chain reaches the cap above.
+    // advances (a ledger row on the non-landing channel: the working tree
+    // is never touched, and the push carries zero agent content), so a
+    // repeating non-resumable chain reaches the cap above.
     if (priorOutcome !== 'budget-exhausted') {
-      let counterNote = '';
-      try {
-        const tree = run('git', ['rev-parse', 'FETCH_HEAD^{tree}']).trim();
-        const marker = run('git', [
-          '-c',
-          `user.name=${BOT_IDENTITY.name}`,
-          '-c',
-          `user.email=${BOT_IDENTITY.email}`,
-          'commit-tree',
-          tree,
-          '-p',
-          'FETCH_HEAD',
-          '-m',
-          `${RESUME_MARKER} [skip ci]`,
-        ]).trim();
-        run('git', internalGitPushArgs(`${marker}:refs/heads/${branch}`));
-      } catch (e) {
-        counterNote =
-          `; the attempt counter could not advance ` +
-          `(${e instanceof Error ? e.message.split('\n')[0] : String(e)}) — the ` +
-          `${MAX_RESUME_ATTEMPTS}-attempt escalation may not engage`;
-      }
+      const counterNote = recordAttempt(cwd, taskId, run);
       return {
         resumed: false,
         attempt: prior + 1,
@@ -200,38 +199,19 @@ export function prepareResume(
           (priorOutcome === 'guardrail-red' && blockingContext
             ? ', carrying its blocking findings as a negative constraint'
             : '') +
+          historyNote +
           counterNote,
         ...redContext,
       };
     }
+    // Record the attempt BEFORE the checkout: the counter must advance even
+    // when this attempt lands nothing (a doomed branch whose resumes kept
+    // no-oping counted "attempt #1" forever, observed live across three
+    // runs), and the ledger channel touches neither tree nor index.
+    const counterNote = recordAttempt(cwd, taskId, run);
+    run('git', ['fetch', 'origin', branch]);
     run('git', ['checkout', '--detach', 'FETCH_HEAD']);
-    run('git', [
-      '-c',
-      `user.name=${BOT_IDENTITY.name}`,
-      '-c',
-      `user.email=${BOT_IDENTITY.email}`,
-      'commit',
-      '--allow-empty',
-      '-q',
-      '-m',
-      `${RESUME_MARKER} [skip ci]`,
-    ]);
-    // Push the marker IMMEDIATELY — the attempt counter must advance even
-    // when this attempt lands nothing. The counter previously lived only in
-    // commits the lander force-pushed on success, so a doomed branch whose
-    // resumes kept no-oping counted "attempt #1" forever and re-spent its
-    // budget every scheduled firing (MAX_RESUME_ATTEMPTS was unreachable —
-    // observed live across three runs). At this point HEAD is provably
-    // FETCH_HEAD + one empty marker commit, so the push carries ZERO agent
-    // content — the never-push-unverified law is untouched.
-    let note: string | undefined;
-    try {
-      run('git', internalGitPushArgs(`HEAD:refs/heads/${branch}`));
-    } catch (e) {
-      note =
-        `attempt marker could not be pushed (${e instanceof Error ? e.message.split('\n')[0] : String(e)}) — ` +
-        `the ${MAX_RESUME_ATTEMPTS}-attempt cap may not engage across runs until a landing pushes`;
-    }
+    const note = `${historyNote}${counterNote}`.replace(/^; /, '');
     return {
       resumed: true,
       attempt: prior + 1,

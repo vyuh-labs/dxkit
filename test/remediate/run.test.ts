@@ -124,7 +124,7 @@ const FAKE_TREE: NonNullable<Parameters<typeof runRemediateTask>[0]['verifySeams
   // Ref-addressed paths so an install seam can fail the CANDIDATE while the
   // base-attribution probe (a second worktree at baseHead) installs clean.
   worktree: async (o, fn) => fn(`/wt/${o.ref}`),
-  install: () => ({ status: 'installed', argv: ['npm', 'ci'] }),
+  install: () => ({ status: 'installed', steps: [{ pack: 'typescript', argv: ['npm', 'ci'] }] }),
   changedFiles: () => ['src/a.ts'],
 };
 
@@ -297,11 +297,12 @@ describe('the verified frame (the agent is never trusted)', () => {
             wt.endsWith('head1111')
               ? {
                   status: 'failed',
+                  pack: 'typescript',
                   argv: ['npm', 'ci', '--legacy-peer-deps'],
                   output:
                     'npm ERR! code EUSAGE\nnpm ERR! package.json and package-lock.json are not in sync',
                 }
-              : { status: 'installed', argv: ['npm', 'ci'] },
+              : { status: 'installed', steps: [{ pack: 'typescript', argv: ['npm', 'ci'] }] },
         },
       }),
     );
@@ -321,6 +322,7 @@ describe('the verified frame (the agent is never trusted)', () => {
           ...FAKE_TREE,
           install: () => ({
             status: 'failed',
+            pack: 'typescript',
             argv: ['npm', 'ci'],
             output: 'npm ERR! code EUSAGE',
           }),

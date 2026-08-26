@@ -6,12 +6,11 @@ import {
   detectLockfile,
   frozenInstallFor,
   isPeerConflictOnly,
-  lockfileSyncCheck,
   renderInstallDependenciesShell,
-  resyncInstallFor,
   LOCKFILES,
   type PackageManager,
 } from '../src/package-manager';
+import { lockfileSyncCheck, resyncInstallFor } from '../src/package-manager-lockfile';
 
 /**
  * The ONE frozen-install definition (4.4.5): what the CI templates render and
@@ -179,14 +178,27 @@ describe('lockfileSyncCheck', () => {
     expect(c.tolerated?.matches('npm ERR! code EUSAGE not in sync')).toBe(false);
     expect(c.tolerated?.disclosure).toContain('--legacy-peer-deps');
   });
-  it('pnpm and bun: frozen dry-runs with no tolerated failure', () => {
-    for (const pm of ['pnpm', 'bun'] as const) {
-      const c = lockfileSyncCheck(pm);
-      expect(c.kind).toBe('command');
-      if (c.kind !== 'command') return;
-      expect(c.argv[0]).toBe(pm);
-      expect(c.argv).toContain('--frozen-lockfile');
-      expect(c.tolerated).toBeUndefined();
+  it('bun: a frozen dry-run with no tolerated failure', () => {
+    const c = lockfileSyncCheck('bun');
+    expect(c.kind).toBe('command');
+    if (c.kind !== 'command') return;
+    expect(c.argv[0]).toBe('bun');
+    expect(c.argv).toContain('--frozen-lockfile');
+    expect(c.argv).toContain('--dry-run');
+    expect(c.tolerated).toBeUndefined();
+  });
+  // pnpm documents `--frozen-lockfile` as "does not generate a lockfile", not
+  // as a read-only check, and `--lockfile-only` as a lockfile WRITER; the pair
+  // has rewritten an in-sync lockfile on a format upgrade. A floor check that
+  // can edit the tree it verifies is not a check, so pnpm is a disclosed skip
+  // (the yarn discipline) until pnpm ships a non-writing sync check that
+  // fails on drift (`--dry-run` exits 0 there).
+  it('pnpm: a DISCLOSED skip, never a lockfile-writing command', () => {
+    const c = lockfileSyncCheck('pnpm');
+    expect(c.kind).toBe('skipped');
+    if (c.kind === 'skipped') {
+      expect(c.reason).toContain('--frozen-lockfile');
+      expect(c.reason).toContain('backstop');
     }
   });
   it('yarn: a DISCLOSED skip, never a silent one', () => {

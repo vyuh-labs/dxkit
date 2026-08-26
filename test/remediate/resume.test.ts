@@ -6,11 +6,15 @@
 import { describe, it, expect } from 'vitest';
 import {
   MAX_RESUME_ATTEMPTS,
-  RESUME_MARKER,
   prepareResume,
   resumePromptNote,
   type ResumeExec,
 } from '../../src/remediate/resume';
+import {
+  RESUME_ATTEMPT_ORDER,
+  resumeAttemptRow,
+  serializeOrderRows,
+} from '../../src/lanes/order-ledger';
 import { runRemediateTask, type RemediateGit } from '../../src/remediate/run';
 import type { AgentDriver, AgentRunResult } from '../../src/remediate/driver';
 import type { RemediateConfig } from '../../src/remediate/config';
@@ -18,18 +22,34 @@ import { DEFAULT_REMEDIATE_BUDGET } from '../../src/remediate/config';
 import type { AnalysisTrustContext } from '../../src/analysis-trust';
 import type { CorrectnessFloorResult } from '../../src/analyzers/correctness/run';
 
+const STAMP = { dxkitVersion: '4.4.5', policyHash: 'hash-a' };
+
+/** Scripted plumbing exec: the gh probe, the order ledger's branch read
+ *  (`markers` = resume-attempt rows already on the standing branch), and the
+ *  ledger's non-landing publish channel. `published` captures every ledger
+ *  file content the publish channel hashed. */
 function fakeExec(opts: {
   openPr?: boolean;
   markers?: number;
   failFetch?: boolean;
   failPush?: boolean;
   prBody?: string;
+  /** Serve the branch rows under this task instead of the ledger path's. */
+  rowsTask?: string;
 }): {
   exec: ResumeExec;
   calls: string[][];
+  published: string[];
 } {
   const calls: string[][] = [];
-  const exec: ResumeExec = (bin, args) => {
+  const published: string[] = [];
+  const branchRows = Array.from({ length: opts.markers ?? 0 }, (_, i) =>
+    resumeAttemptRow('fix-build', {
+      timestamp: `2026-08-1${i}T00:00:00.000Z`,
+      ...STAMP,
+    }),
+  );
+  const exec: ResumeExec = (bin, args, execOpts) => {
     calls.push([bin, ...args]);
     if (bin === 'gh') {
       if (!opts.openPr) return '[]';
@@ -39,20 +59,42 @@ function fakeExec(opts: {
         { url: 'https://x/pr/1', body: opts.prBody ?? 'outcome: **budget-exhausted**' },
       ]);
     }
-    if (bin === 'git' && args[0] === 'fetch') {
-      if (opts.failFetch) throw new Error('fetch failed');
-      return '';
+    if (bin !== 'git') return '';
+    switch (args[0]) {
+      case 'ls-remote':
+        return args
+          .slice(3)
+          .map((b) => `deadbeef\trefs/heads/${b}`)
+          .join('\n');
+      case 'fetch':
+        if (opts.failFetch) throw new Error('fetch failed');
+        return '';
+      case 'rev-parse':
+        return 'branchhead\n';
+      case 'show':
+        // The task under test is always the row's task: a foreign task's
+        // rows must never count, so serve them under whatever task the
+        // ledger path names.
+        return serializeOrderRows(
+          branchRows.map((r) => ({
+            ...r,
+            task: opts.rowsTask ?? String(args[1]).split('remediate-')[1]!.split('.')[0]!,
+          })),
+        );
+      case 'hash-object':
+        published.push(execOpts?.input ?? '');
+        return 'blobsha\n';
+      case 'write-tree':
+        return 'treesha\n';
+      case 'push':
+        if (opts.failPush) throw new Error('push rejected');
+        return '';
+      default:
+        if (args.includes('commit-tree')) return 'marker5678';
+        return '';
     }
-    if (bin === 'git' && args[0] === 'push') {
-      if (opts.failPush) throw new Error('push rejected');
-      return '';
-    }
-    if (bin === 'git' && args[0] === 'rev-list') return String(opts.markers ?? 0);
-    if (bin === 'git' && args.includes('rev-parse')) return 'tree1234';
-    if (bin === 'git' && args.includes('commit-tree')) return 'marker5678';
-    return '';
   };
-  return { exec, calls };
+  return { exec, calls, published };
 }
 
 const ON = { resume: true, salvage: 'draft-pr' } as Pick<RemediateConfig, 'resume' | 'salvage'>;
@@ -83,38 +125,57 @@ describe('prepareResume — the eligibility ladder', () => {
     expect(d.note).toContain('cap');
   });
 
-  it('eligible → detached checkout + a marker commit, attempt = priors + 1', () => {
-    const { exec, calls } = fakeExec({ openPr: true, markers: 1 });
+  it('eligible → detached checkout + a resume-attempt ledger row, attempt = prior rows + 1', () => {
+    const { exec, calls, published } = fakeExec({ openPr: true, markers: 1 });
     const d = prepareResume('/repo', 'fix-build', ON, exec);
     expect(d).toEqual({ resumed: true, attempt: 2 });
     expect(calls.some((c) => c[0] === 'git' && c.includes('--detach'))).toBe(true);
-    const commit = calls.find((c) => c[0] === 'git' && c.includes('commit'));
-    expect(commit).toBeDefined();
-    expect(commit!.join(' ')).toContain(RESUME_MARKER);
-    expect(commit!.join(' ')).toContain('--allow-empty');
+    // No marker commit anywhere: the counter is a ledger row, not history.
+    expect(calls.some((c) => c[0] === 'git' && c[1] === 'commit')).toBe(false);
+    // The published ledger carries the branch's prior row AND this attempt.
+    expect(published).toHaveLength(1);
+    const rows = published[0]!
+      .trim()
+      .split('\n')
+      .map((l) => JSON.parse(l) as { outcome: string; orderId: string });
+    expect(rows.filter((r) => r.outcome === 'resumed')).toHaveLength(2);
+    expect(rows.every((r) => r.orderId === RESUME_ATTEMPT_ORDER)).toBe(true);
   });
 
-  it('the attempt marker is PUSHED immediately — a no-op resume still consumes an attempt', () => {
-    // Observed live: the marker only reached the remote when a landing
-    // force-pushed, so runs 2 and 3 both announced attempt #1 and the
-    // MAX_RESUME_ATTEMPTS cap was unreachable — a doomed branch resumed
-    // (and spent) forever.
+  it('the attempt row is PUBLISHED before the checkout, parented on the REMOTE branch head; a no-op resume still consumes an attempt', () => {
+    // Observed live (twice): a marker commit only reached the remote when a
+    // landing force-pushed, then the next landing's force-push from the
+    // default head ERASED it, so the MAX_RESUME_ATTEMPTS cap was
+    // unreachable on a guardrail-red chain. The ledger channel composes
+    // the branch's rows before every write, so a landing carries the
+    // count forward instead of erasing it.
     const { exec, calls } = fakeExec({ openPr: true, markers: 0 });
     const d = prepareResume('/repo', 'fix-build', ON, exec);
     expect(d.resumed).toBe(true);
     const push = calls.find((c) => c[0] === 'git' && c[1] === 'push');
     expect(push).toBeDefined();
-    expect(push!.join(' ')).toContain('HEAD:refs/heads/');
-    // The push happens AFTER the marker commit — it carries the counter.
-    const commitIdx = calls.findIndex((c) => c[0] === 'git' && c.includes('commit'));
-    expect(calls.indexOf(push!)).toBeGreaterThan(commitIdx);
+    expect(push!.join(' ')).toContain('marker5678:refs/heads/dxkit/remediate-fix-build');
+    const commitTree = calls.find((c) => c[0] === 'git' && c.includes('commit-tree'))!;
+    expect(commitTree).toContain('branchhead'); // never the local HEAD
+    const checkoutIdx = calls.findIndex((c) => c[0] === 'git' && c.includes('--detach'));
+    expect(calls.indexOf(push!)).toBeLessThan(checkoutIdx);
   });
 
-  it('a failed marker push still resumes, with the cap risk disclosed', () => {
+  it('a failed attempt-row publish still resumes, with the cap risk disclosed', () => {
     const { exec } = fakeExec({ openPr: true, markers: 0, failPush: true });
     const d = prepareResume('/repo', 'fix-build', ON, exec);
     expect(d.resumed).toBe(true);
-    expect(d.note).toContain('attempt marker could not be pushed');
+    expect(d.note).toContain('attempt counter could not advance');
+  });
+
+  it('rows of ANOTHER task on the ledger never count toward this task', () => {
+    const { exec } = fakeExec({
+      openPr: true,
+      markers: MAX_RESUME_ATTEMPTS,
+      rowsTask: 'fix-vulns',
+    });
+    const d = prepareResume('/repo', 'fix-build', ON, exec);
+    expect(d).toEqual({ resumed: true, attempt: 1 });
   });
 
   it('carries the prior attempt blocking findings from the draft-PR ledger into the decision', () => {
@@ -141,7 +202,7 @@ describe('prepareResume — the eligibility ladder', () => {
     expect(d.attempt).toBe(1);
     expect(d.blockingContext).toContain('src/config.ts');
     // No checkout: the tree is untouched on a refused resume — but the
-    // attempt counter STILL advances (a content-free commit-tree marker,
+    // attempt counter STILL advances (a ledger row on the non-landing channel,
     // pushed), or a guardrail-red chain never reaches the escalation cap
     // and re-spends a full budget on the same unfixable finding forever.
     expect(calls.some((c) => c[0] === 'git' && c.includes('--detach'))).toBe(false);
@@ -151,7 +212,7 @@ describe('prepareResume — the eligibility ladder', () => {
     expect(push!.join(' ')).toContain('marker5678:refs/heads/');
   });
 
-  it('a guardrail-red chain reaches the attempt cap: human escalation, no more marker spend', () => {
+  it('a guardrail-red chain reaches the attempt cap: human escalation, no more attempt spend', () => {
     const body = 'Task: **fix-vulns** — outcome: **guardrail-red**\n';
     const { exec, calls } = fakeExec({
       openPr: true,
@@ -273,7 +334,10 @@ describe('runRemediateTask — resumed attempts', () => {
       verifySeams: {
         worktree: async <T>(_o: unknown, fn: (wt: string) => Promise<T>) =>
           fn('/tmp/fake-worktree'),
-        install: () => ({ status: 'installed' as const, argv: ['npm', 'ci'] }),
+        install: () => ({
+          status: 'installed' as const,
+          steps: [{ pack: 'typescript', argv: ['npm', 'ci'] }],
+        }),
         changedFiles: () => ['src/a.ts'],
       },
     });
@@ -297,7 +361,10 @@ describe('runRemediateTask — resumed attempts', () => {
       verifySeams: {
         worktree: async <T>(_o: unknown, fn: (wt: string) => Promise<T>) =>
           fn('/tmp/fake-worktree'),
-        install: () => ({ status: 'installed' as const, argv: ['npm', 'ci'] }),
+        install: () => ({
+          status: 'installed' as const,
+          steps: [{ pack: 'typescript', argv: ['npm', 'ci'] }],
+        }),
         changedFiles: () => ['src/a.ts'],
       },
     });

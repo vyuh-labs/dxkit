@@ -131,9 +131,23 @@ export function extensionToPackMap(): ReadonlyMap<string, LanguageId> {
  * Dependency-manifest / lockfile patterns declared by the given packs'
  * `depVulns` capability, deduplicated. Pack-driven (Rule 6): each pack owns its
  * patterns next to the audit they gate; this union grows as packs land.
+ *
+ * ONE union of BOTH declarations, `manifestPatterns` AND `lockfilePatterns`:
+ * a lockfile a pack lists only as an independent-resolution root marker
+ * (bun.lock) is still a dependency file every consumer of this union must
+ * see. When it was manifests-only, a dependency order's envelope excluded
+ * bun.lock, so the recipe runner discarded the lockfile change and
+ * committed package.json alone (a lockfile the frozen install then rejects).
  */
 export function allDependencyManifestPatterns(packs: readonly LanguageSupport[]): string[] {
-  return [...new Set(packs.flatMap((l) => l.capabilities?.depVulns?.manifestPatterns ?? []))];
+  return [
+    ...new Set(
+      packs.flatMap((l) => [
+        ...(l.capabilities?.depVulns?.manifestPatterns ?? []),
+        ...(l.capabilities?.depVulns?.lockfilePatterns ?? []),
+      ]),
+    ),
+  ];
 }
 
 /**

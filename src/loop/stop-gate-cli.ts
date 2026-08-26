@@ -18,7 +18,7 @@ import {
 } from './gate-cache';
 import { buildFloorGate } from './floor-gate';
 import { readStdinPayload } from './stop-gate-io';
-import { orderScopePresent } from './order-scope';
+import { readOrderScope } from './order-scope';
 import { trustedLocalContext } from '../analysis-trust';
 import { computeStopGate } from './stop-gate';
 
@@ -53,15 +53,19 @@ export async function runStopGate(cwd: string): Promise<void> {
   // signature captures every file the gather would see, so a cache hit is
   // only ever a genuinely-identical tree and the cache can never skip a
   // real net-new finding. Bypass with DXKIT_LOOP_NO_CACHE=1.
-  // ANY order-scope file on disk bypasses the verdict cache entirely: the
-  // tree signature deliberately excludes dxkit's own runtime state, so it
-  // cannot see `.dxkit/loop/order.json` appear, change, or clear — a cached
-  // ALLOW from an unscoped stop must never replay over a pending order, and
-  // a malformed or foreign file still means "something is scoping stops
-  // here": re-derive (which discloses the problem) rather than replay.
-  const orderScoped = orderScopePresent(repoDir);
+  // A LIVE order scope bypasses the verdict cache: the tree signature
+  // deliberately excludes dxkit's own runtime state, so it cannot see
+  // `.dxkit/loop/order.json` appear, change, or clear, and a cached ALLOW
+  // from an unscoped stop must never replay over a pending order. The ONE
+  // reader decides liveness (and removes a stale / foreign / malformed
+  // leftover, disclosing it once); the gate below consumes this same read,
+  // so the file is read exactly once per stop and the removal's disclosure
+  // is never lost to a second, now-empty read.
+  const orderRead = readOrderScope(repoDir);
   const signature =
-    process.env.DXKIT_LOOP_NO_CACHE === '1' || orderScoped ? null : workingTreeSignature(repoDir);
+    process.env.DXKIT_LOOP_NO_CACHE === '1' || orderRead.scope !== null
+      ? null
+      : workingTreeSignature(repoDir);
   // The environment half of the cache key (T1.3): same tree + DIFFERENT
   // observer (dxkit / policy / test command / scanner binaries) must MISS,
   // or a scanner upgrade between sessions replays a stale ALLOW.
@@ -96,6 +100,9 @@ export async function runStopGate(cwd: string): Promise<void> {
         cached: true,
       });
       appendLedgerEvent(repoDir, { ...event, preset });
+      // The reader's one-time disclosure (a leftover order file it removed)
+      // must not vanish because the verdict replayed from cache.
+      if (orderRead.problem) process.stderr.write(`dxkit Stop-gate: ${orderRead.problem}\n`);
       if (cached.outcome === 'block-model') {
         process.stdout.write(JSON.stringify({ decision: 'block', reason: cached.message }) + '\n');
         process.exit(0);
@@ -146,7 +153,7 @@ export async function runStopGate(cwd: string): Promise<void> {
     return json;
   };
 
-  const decision = await computeStopGate(cwd, payload, runCheck, buildFloorGate);
+  const decision = await computeStopGate(cwd, payload, runCheck, buildFloorGate, () => orderRead);
   // Stamp the active preset onto the ledger line so the audit trail shows
   // which posture was in force when the gate allowed/blocked.
   appendLedgerEvent(repoDir, { ...decision.event, preset });

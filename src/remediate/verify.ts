@@ -88,6 +88,7 @@ export function verificationDisclosures(
 ): {
   floor?: VerifyTreeResult['floor'];
   floorAttribution?: VerifyTreeResult['floorAttribution'];
+  floorSkipped?: VerifyTreeResult['floorSkipped'];
   install?: VerifyTreeResult['install'];
   changedFiles?: VerifyTreeResult['changedFiles'];
   guardrailVerdict: string;
@@ -95,6 +96,7 @@ export function verificationDisclosures(
   return {
     ...(verified.floor ? { floor: verified.floor } : {}),
     ...(verified.floorAttribution ? { floorAttribution: verified.floorAttribution } : {}),
+    ...(verified.floorSkipped ? { floorSkipped: verified.floorSkipped } : {}),
     ...(verified.install ? { install: verified.install } : {}),
     ...(verified.changedFiles ? { changedFiles: verified.changedFiles } : {}),
     guardrailVerdict: guardrail.verdict,

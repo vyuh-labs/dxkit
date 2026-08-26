@@ -17,7 +17,10 @@ import { floorOrders, type FloorFailureInput } from './floor-orders';
 import { advisoryOrders, type AdvisoryInput } from './advisory-orders';
 import { lintOrders, type CustomCheckEntry, type LintSource } from './lint-orders';
 import {
+  byteOrder,
   compareRank,
+  deriveBudget,
+  doneFor,
   identityOnly,
   kindsOf,
   undispatch,
@@ -159,6 +162,30 @@ function withAdvisoryDetail(
   };
 }
 
+/**
+ * Merge a colliding draft into the earlier (higher-value) order. Every
+ * finding-derived field is RECOMPUTED through the builders' own formulas
+ * (`doneFor`, `deriveBudget`, the envelope union), never patched: a merge
+ * that appended findings but kept the first draft's done ids, budget, and
+ * envelope left the order unable to close the merged findings (their ids
+ * were absent from `done.absentIds`, their files outside the envelope).
+ */
+export function mergeCollidingDraft(existing: Draft, draft: Draft, capFor: BudgetCapFor): Draft {
+  const known = new Set(existing.findings.map((f) => f.id));
+  const extra = draft.findings.filter((f) => !known.has(f.id));
+  const findings = [...existing.findings, ...extra];
+  return {
+    ...existing,
+    findings,
+    envelope: {
+      paths: [...new Set([...existing.envelope.paths, ...draft.envelope.paths])].sort(byteOrder),
+      manifests: existing.envelope.manifests || draft.envelope.manifests,
+    },
+    done: doneFor(existing.done.verifier, findings),
+    budget: deriveBudget(findings.length, capFor(existing.class)),
+  };
+}
+
 export function planWorkOrders(input: PlannerInput, opts: PlannerOptions = {}): WorkOrderPlan {
   const registry = opts.registry ?? RECIPE_REGISTRY;
   const undispatchable: UndispatchableGroup[] = [];
@@ -246,12 +273,7 @@ export function planWorkOrders(input: PlannerInput, opts: PlannerOptions = {}): 
   for (const { draft } of ranked) {
     const existing = byId.get(draft.id);
     if (existing) {
-      const known = new Set(existing.order.findings.map((f) => f.id));
-      const extra = draft.findings.filter((f) => !known.has(f.id));
-      const merged = assignTier(
-        { ...existing.order, findings: [...existing.order.findings, ...extra] },
-        registry,
-      );
+      const merged = assignTier(mergeCollidingDraft(existing.order, draft, ctx.capFor), registry);
       orders[existing.index] = merged;
       byId.set(draft.id, { order: merged, index: existing.index });
       collisions.push(...draft.findings);

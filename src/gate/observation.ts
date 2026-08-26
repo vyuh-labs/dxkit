@@ -14,6 +14,13 @@ import type { GatherScope } from '../baseline/gather-scope';
 import { KIND_OBSERVATION_SCOPE } from '../baseline/gather-scope';
 import type { SecurityAggregate } from '../analyzers/security/aggregator';
 import type { ClassifiedPair, GuardrailCheckResult, NotObservedDisclosure } from './result';
+import { incrementalSemgrepProvider } from '../analyzers/tools/semgrep';
+
+/** The ONE provider identity an incremental run swaps in (health.ts binds it
+ *  to the changed-file set). Read from the provider itself, never a second
+ *  literal: every other code-pattern source still scans the whole tree, so
+ *  only findings this source produced can go unobserved by scope. */
+const INCREMENTAL_CODE_SOURCE: string = incrementalSemgrepProvider([]).source;
 
 /**
  * Was a NON-custom-check kind observed by this run? Pure — the ONE answer the
@@ -27,11 +34,17 @@ import type { ClassifiedPair, GuardrailCheckResult, NotObservedDisclosure } from
  * `refExcludedKinds` disclosure); an empty prior has no removed direction
  * at all.
  *
- * Two causes, in order:
+ * Three causes, in order:
  *   1. the kind's gather was scoped out (`KIND_OBSERVATION_SCOPE`);
  *   2. the gather was requested but its scanner did not run — read from the
  *      aggregate's per-source provenance, the same signal `depVulnsUnmeasured`
- *      trusts (never a kind↔tool table; provenance says what actually ran).
+ *      trusts (never a kind↔tool table; provenance says what actually ran);
+ *   3. the scanner ran INCREMENTALLY (the loop Stop-gate restricts the
+ *      code-pattern scan to the changed files) and this finding's file was
+ *      outside that set, so the scan never looked where the finding lives.
+ *      Decided from the finding's own locus against the run's recorded
+ *      scope, so a work order targeting a code finding in an untouched file
+ *      reads "not observed", never "fixed".
  */
 export function kindNotObservedReason(
   kind: BaselineEntry['kind'],
@@ -39,6 +52,11 @@ export function kindNotObservedReason(
     readonly mode: ResolvedMode['mode'];
     readonly scope: GatherScope;
     readonly provenance: SecurityAggregate['provenance'];
+    /** The changed-file set the code-pattern scan was restricted to when the
+     *  run was incremental (`CurrentScan.incrementalScope`); absent = full. */
+    readonly incrementalScope?: ReadonlySet<string> | undefined;
+    /** The prior entry's own locus (located kinds only), for cause 3. */
+    readonly locus?: { readonly file: string; readonly tool: string } | undefined;
   },
 ): string | undefined {
   if (priorClassOf(ctx.mode) !== 'committed') return undefined;
@@ -54,6 +72,15 @@ export function kindNotObservedReason(
   }
   if (kind === 'dep-vuln' && !ctx.provenance.depVulns.available) {
     return 'not observed this run (the dependency scanner could not run)';
+  }
+  if (
+    kind === 'code' &&
+    ctx.incrementalScope !== undefined &&
+    ctx.locus !== undefined &&
+    ctx.locus.tool === INCREMENTAL_CODE_SOURCE &&
+    !ctx.incrementalScope.has(ctx.locus.file)
+  ) {
+    return 'not observed this run (the code-pattern scan was incremental and did not include this file)';
   }
   return undefined;
 }

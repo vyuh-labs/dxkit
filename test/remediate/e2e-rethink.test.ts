@@ -230,7 +230,7 @@ async function runOnEstate(o: EstateRun): Promise<RemediateResult> {
     runGuardrail: async () => ({ verdict: 'PASSED', ran: true, passesGate: true }),
     verifySeams: {
       worktree: async (_o, fn) => fn(o.repo),
-      install: () => ({ status: 'nothing-to-install' }) as const,
+      install: () => ({ status: 'no-provision-declared', packs: [] }) as const,
       changedFiles: () => ['package.json'],
     },
     armInLoopGate: () => ({ mode: 'backstop-only' as const, reason: 'test' }),

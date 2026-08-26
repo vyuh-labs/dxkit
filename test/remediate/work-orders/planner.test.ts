@@ -10,6 +10,7 @@ import { describe, it, expect } from 'vitest';
 import {
   BUDGET_DERIVATION,
   deriveBudget,
+  mergeCollidingDraft,
   planWorkOrders,
   selectOrders,
   type AdvisoryInput,
@@ -192,6 +193,40 @@ describe('planWorkOrders: entry floor', () => {
       installFor: () => undefined,
     });
     expect(noInstall.orders[0].tier).toBe('agent');
+  });
+
+  it('a lockfile-sync check that decomposes by dependency root mints one stale-lockfile order per failing root', () => {
+    const lockfile: FloorFailureInput = {
+      pack: 'typescript',
+      label: LOCKFILE_SYNC_LABEL,
+      command: 'npm ci --dry-run --ignore-scripts --no-audit --no-fund',
+      output:
+        '[repo root]\nnpm error Missing: a@1 from lock file\n[packages/api]\nnpm error Missing: b@2',
+      attribution: 'net-new',
+      precision: 'finding',
+      findings: ['.', 'packages/api'],
+      netNewFindings: ['packages/api'],
+    };
+    const plan = planWorkOrders({ ...empty(), floorFailures: [lockfile] });
+    const ids = plan.orders.map((o) => o.id).sort();
+    expect(ids).toEqual(['stale-lockfile:typescript', 'stale-lockfile:typescript:packages/api']);
+    const rootOrder = plan.orders.find((o) => o.id === 'stale-lockfile:typescript')!;
+    const nested = plan.orders.find((o) => o.id === 'stale-lockfile:typescript:packages/api')!;
+    // the nested order's envelope is ITS root's manifests, so the recipe
+    // resyncs there (owningManifestRoot), never at the repo root
+    expect(nested.envelope).toEqual({ paths: ['packages/api/package.json'], manifests: true });
+    expect(rootOrder.envelope).toEqual({
+      paths: ['package-lock.json', 'package.json'],
+      manifests: true,
+    });
+    // per-root attribution from the comparator's finding-level answer
+    expect(rootOrder.findings[0].attribution).toBe('pre-existing');
+    expect(nested.findings[0].attribution).toBe('net-new');
+    expect(rootOrder.findings[0].id).toBe(`${checkKey('typescript', LOCKFILE_SYNC_LABEL)}#.`);
+    expect(nested.findings[0].id).toBe(
+      `${checkKey('typescript', LOCKFILE_SYNC_LABEL)}#packages/api`,
+    );
+    expect(plan.orders.every((o) => o.class === 'stale-lockfile')).toBe(true);
   });
 
   it('no install command known: the order carries none (disclosed at render), never a guessed one', () => {
@@ -471,6 +506,34 @@ describe('planWorkOrders: value ordering + budget', () => {
     expect(tiny.derivation).toContain('= 4;');
     expect(tiny.derivation).toContain('= 1');
     expect(deriveBudget(0, DEFAULT_REMEDIATE_BUDGET).usd).toBeGreaterThan(0);
+  });
+
+  it('a duplicate-id merge RECOMPUTES done ids, budget, and envelope from the merged findings (never the first draft alone)', () => {
+    // The defensive merge appended findings but kept the earlier draft's
+    // done.absentIds / budget / envelope, so the merged findings could not
+    // close (absent from the done ids) and their files sat outside the
+    // envelope. Every derived field now goes back through the builders'
+    // own formulas.
+    const base = planWorkOrders({
+      ...empty(),
+      debt: [lint('l1', 'src/a.ts', 'eqeqeq', 1)],
+    }).orders[0];
+    const twin = planWorkOrders({
+      ...empty(),
+      debt: [lint('l2', 'src/b.ts', 'no-var', 3), lint('l3', 'src/b.ts', 'no-var', 9)],
+    }).orders[0];
+    const merged = mergeCollidingDraft(
+      base,
+      { ...twin, envelope: { ...twin.envelope, manifests: true } },
+      () => DEFAULT_REMEDIATE_BUDGET,
+    );
+    expect(merged.findings.map((f) => f.id)).toEqual(['l1', 'l2', 'l3']);
+    expect(merged.done.absentIds).toEqual(['l1', 'l2', 'l3']);
+    expect(merged.done.verifier).toBe(base.done.verifier);
+    expect(merged.envelope).toEqual({ paths: ['src/a.ts', 'src/b.ts'], manifests: true });
+    expect(merged.budget).toEqual(deriveBudget(3, DEFAULT_REMEDIATE_BUDGET));
+    // Idempotent: merging the same draft again changes nothing.
+    expect(mergeCollidingDraft(merged, twin, () => DEFAULT_REMEDIATE_BUDGET)).toEqual(merged);
   });
 
   it('each class is capped by ITS selecting task budget (budgetFor is consulted per class)', () => {
