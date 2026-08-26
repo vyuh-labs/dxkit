@@ -322,6 +322,69 @@ describe('the content pass across a reformat', () => {
     expect(result.added).toEqual([newId]);
   });
 
+  it('a deleted finding whose window was pasted far away in the SAME file is not persisted at the same-file tier', () => {
+    // A long tail after the finding, so git's diff keeps the tail as common
+    // context and sees the window as deleted-then-inserted (a short tail
+    // lets git read the paste as the window staying put and the tail moving,
+    // which Pass 1 then pairs on git's own evidence).
+    const before =
+      fourSpaceSource() +
+      Array.from({ length: 30 }, (_, i) => `export const tail${i} = ${i};`).join('\n') +
+      '\n';
+    writeFileSync(join(dir, FILE), before);
+    const base = commit(dir, 'backlog at 4 spaces');
+    const prior = stampedEntries([lintFinding(46)], dir);
+    // Delete the finding's window and paste an identical copy well beyond
+    // the relocation window, at the end of the file. Bytes alone read this
+    // as "the same finding moved"; the diff says nothing above the old line
+    // moved, so the twin is 80+ lines from where the prior is expected.
+    const lines = before.split('\n');
+    const window = lines.slice(42, 49);
+    const without = [...lines.slice(0, 42), ...lines.slice(49)];
+    const pasted = [...without, ...Array.from({ length: 60 }, (_, i) => `const pad${i} = ${i};`)];
+    const pastedAt = pasted.length + 1;
+    pasted.push(...window);
+    writeFileSync(join(dir, FILE), pasted.join('\n') + '\n');
+    const head = commit(dir, 'delete + paste far away');
+    const twinLine = pastedAt + 3;
+    expect(pasted[twinLine - 1]).toBe('    console.log(id);'); // slop-ok
+    const current = stampedEntries([lintFinding(twinLine)], dir);
+    const hash = (e: RichBaselineEntry) => ('contentHash' in e ? e.contentHash : undefined);
+    expect(hash(current[0])).toBe(hash(prior[0]));
+    const result = gitAwareMatch(entriesToLocated(prior), entriesToLocated(current), {
+      cwd: dir,
+      baseSha: base,
+      headSha: head,
+    });
+    const paired = result.pairs.find((p) => p.priorId === prior[0].id);
+    expect(paired?.currentId).toBe(current[0].id);
+    expect(paired?.confidence).toBe(CONFIDENCE_CONTENT_HASH);
+    expect(paired?.reasons[0].detail).toContain('beyond the');
+  });
+
+  it('a reformat that shifts a finding past the window still earns the same-file tier through the diff', () => {
+    const before = fourSpaceSource();
+    writeFileSync(join(dir, FILE), before);
+    const base = commit(dir, 'backlog at 4 spaces');
+    const prior = stampedEntries([lintFinding(46)], dir);
+    // A 40-line header inserted above the finding: farther than the window
+    // from the bare prior line, but exactly where the diff's net insertion
+    // above it predicts.
+    const header = Array.from({ length: 40 }, (_, i) => `// header ${i}`);
+    const after = [...header, ...reformat(before).split('\n')].join('\n');
+    writeFileSync(join(dir, FILE), after);
+    const head = commit(dir, 'header + reformat');
+    const current = stampedEntries([lintFinding(81)], dir);
+    const result = gitAwareMatch(entriesToLocated(prior), entriesToLocated(current), {
+      cwd: dir,
+      baseSha: base,
+      headSha: head,
+    });
+    expect(result.pairs).toHaveLength(1);
+    expect(result.pairs[0].confidence).toBe(CONFIDENCE_CONTENT_HASH_SAME_FILE);
+    expect(result.pairs[0].reasons[0].detail).toContain('shifted by the file diff');
+  });
+
   it('phase 1 reserves same-file pairs: a deleted twin cannot steal one, in any prior order', () => {
     const before = fourSpaceSource();
     writeFileSync(join(dir, FILE), before);
@@ -509,32 +572,126 @@ describe('restampAtCommit (the migrate lane, pre-scheme baselines)', () => {
 });
 
 describe('restampContentHashes (the update-lane wrapper)', () => {
-  it('an unreachable anchor returns the disclosure summary and writes nothing', async () => {
+  type BaselineFileT = import('../../src/baseline/baseline-file').BaselineFile;
+  async function writeBare(
+    dir: string,
+    repo: Record<string, unknown>,
+    findings = customCheckFindingsToBaselineEntries([lintFinding(46)]),
+  ): Promise<string> {
+    const { BASELINE_SCHEMA_VERSION, pathForBaseline, writeBaselineFile } =
+      await import('../../src/baseline/baseline-file');
+    const blPath = pathForBaseline(dir, 'main');
+    mkdirSync(join(dir, '.dxkit', 'baselines'), { recursive: true });
+    writeBaselineFile(blPath, {
+      schemaVersion: BASELINE_SCHEMA_VERSION,
+      name: 'main',
+      createdAt: new Date().toISOString(),
+      repo,
+      findings,
+    } as unknown as BaselineFileT);
+    return blPath;
+  }
+  const hashOfFirst = async (blPath: string): Promise<string | undefined> => {
+    const { readBaselineFile } = await import('../../src/baseline/baseline-file');
+    const after = readBaselineFile(blPath);
+    return 'contentHash' in after.findings[0] ? after.findings[0].contentHash : undefined;
+  };
+
+  it('an unreachable anchor is disclosed by cause, without a per-file sweep, and writes nothing', async () => {
     const dir = makeRepo();
     try {
       mkdirSync(join(dir, 'src'), { recursive: true });
       writeFileSync(join(dir, FILE), fourSpaceSource());
       commit(dir, 'anchor');
       const { restampContentHashes } = await import('../../src/baseline/migrate');
-      const { BASELINE_SCHEMA_VERSION, pathForBaseline, writeBaselineFile, readBaselineFile } =
-        await import('../../src/baseline/baseline-file');
-      const blPath = pathForBaseline(dir, 'main');
-      mkdirSync(join(dir, '.dxkit', 'baselines'), { recursive: true });
-      const bare = customCheckFindingsToBaselineEntries([lintFinding(46)]);
-      const base = {
-        schemaVersion: BASELINE_SCHEMA_VERSION,
-        name: 'main',
-        createdAt: new Date().toISOString(),
-        repo: { commitSha: '0'.repeat(40) },
-        findings: bare,
-      } as unknown as import('../../src/baseline/baseline-file').BaselineFile;
-      writeBaselineFile(blPath, base);
+      const blPath = await writeBare(dir, { commitSha: '0'.repeat(40), treeState: 'clean' });
       const summary = restampContentHashes(dir);
-      expect(summary).toEqual({ restamped: 0, unreadable: 1 });
-      const after = readBaselineFile(blPath);
-      expect(
-        'contentHash' in after.findings[0] ? after.findings[0].contentHash : undefined,
-      ).toBeUndefined();
+      expect(summary).toEqual({
+        restamped: 0,
+        unreadable: 0,
+        bare: 1,
+        skipped: 'anchor-unreadable',
+      });
+      expect(await hashOfFirst(blPath)).toBeUndefined();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('a baseline that cannot prove a clean capture is left bare and disclosed (dirty, or pre-tree-state)', async () => {
+    const dir = makeRepo();
+    try {
+      mkdirSync(join(dir, 'src'), { recursive: true });
+      const src = fourSpaceSource();
+      writeFileSync(join(dir, FILE), src);
+      const sha = commit(dir, 'anchor');
+      // The scan ran on a dirty tree: a header pushed the finding to line 86,
+      // so the commit's line 86 is NOT the finding. Restamping there would
+      // be a wrong hash that every later stamper preserves.
+      writeFileSync(join(dir, FILE), Array(40).fill('// header').join('\n') + '\n' + src);
+      const { restampContentHashes } = await import('../../src/baseline/migrate');
+      for (const repo of [
+        { commitSha: sha, treeState: 'dirty' },
+        { commitSha: sha }, // written before the tree state was recorded
+      ]) {
+        const blPath = await writeBare(
+          dir,
+          repo,
+          customCheckFindingsToBaselineEntries([lintFinding(86)]),
+        );
+        const summary = restampContentHashes(dir);
+        expect(summary).toEqual({ restamped: 0, unreadable: 0, bare: 1, skipped: 'tree-unproven' });
+        expect(await hashOfFirst(blPath)).toBeUndefined();
+      }
+      // A proven-clean capture at the same anchor stamps from the commit.
+      const blPath = await writeBare(dir, { commitSha: sha, treeState: 'clean' });
+      const summary = restampContentHashes(dir);
+      expect(summary).toEqual({ restamped: 1, unreadable: 0, bare: 1, skipped: null });
+      expect(await hashOfFirst(blPath)).toBe(computeContentHash(src, 46));
+      // Once stamped, nothing is eligible: null, no git at all.
+      expect(restampContentHashes(dir)).toBeNull();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('a readable anchor with no readable file is its own cause', async () => {
+    const dir = makeRepo();
+    try {
+      mkdirSync(join(dir, 'src'), { recursive: true });
+      writeFileSync(join(dir, FILE), fourSpaceSource());
+      const sha = commit(dir, 'anchor');
+      const { restampContentHashes } = await import('../../src/baseline/migrate');
+      await writeBare(
+        dir,
+        { commitSha: sha, treeState: 'clean' },
+        customCheckFindingsToBaselineEntries([lintFinding(3, { file: 'src/never.ts' })]),
+      );
+      expect(restampContentHashes(dir)).toEqual({
+        restamped: 0,
+        unreadable: 1,
+        bare: 1,
+        skipped: 'files-unreadable',
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('readRepoState records whether the capture tree was clean', () => {
+  it('clean at the commit, dirty once a tracked file changes; untracked files do not count', async () => {
+    const dir = makeRepo();
+    try {
+      mkdirSync(join(dir, 'src'), { recursive: true });
+      writeFileSync(join(dir, FILE), fourSpaceSource());
+      const sha = commit(dir, 'anchor');
+      const { readRepoState } = await import('../../src/baseline/envelope-meta');
+      expect(readRepoState(dir)).toMatchObject({ commitSha: sha, treeState: 'clean' });
+      writeFileSync(join(dir, 'src/untracked.ts'), 'export const u = 1;\n');
+      expect(readRepoState(dir).treeState).toBe('clean');
+      writeFileSync(join(dir, FILE), reformat(fourSpaceSource()));
+      expect(readRepoState(dir).treeState).toBe('dirty');
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -579,14 +736,15 @@ describe('arch-check: a second stamping call site is rejected', () => {
     }
   });
 
-  it('does not flag a mention in a comment, even one carrying a URL', () => {
+  it('does not flag a mention in a comment, even one carrying a URL, nor a trailing comment on code', () => {
     const repoRoot = resolve(__dirname, '..', '..');
     const cleanRoot = mkdtempSync(join(tmpdir(), 'dxkit-clean-stamp-'));
     try {
       writeFileSync(
         join(cleanRoot, 'notes.ts'),
         '// computeContentHash(content, line) is the primitive; see https://example.com/why\n' +
-          'export const ok = 1;\n',
+          'export const ok = 1;\n' +
+          'const stamper = contentStamper(source); // wraps computeContentHash, see https://example.com\n',
       );
       const run = spawnSync('bash', ['scripts/check-architecture.sh'], {
         cwd: repoRoot,

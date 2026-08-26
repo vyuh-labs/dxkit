@@ -30,9 +30,11 @@
  */
 
 import * as fs from 'fs';
+import { execFileSync } from 'child_process';
 import { createBaseline, gatherCurrentScan } from './create';
 import { pathForBaseline, readBaselineFile, writeBaselineFile } from './baseline-file';
 import { restampAtCommit } from './content-stamp';
+import { entryToLocated } from './entry-to-located';
 import type { BaselineFile } from './baseline-file';
 import { identityFor } from './finding-identity';
 import { RECALL_EPOCHS } from './recall';
@@ -230,10 +232,50 @@ export type StaleRecall =
    *  captured (an epoch bump), so that kind degrades to warn. */
   | 'epoch-gap';
 
+/** Why a content-hash restamp stamped nothing, when it did not. Every
+ *  cause is disclosed by name; `null` when entries were stamped. */
+export type RestampSkipCause =
+  /** The baseline records a dirty capture (or predates the tree-state
+   *  record): its line numbers describe a working tree, so the commit's
+   *  content at those lines is not the finding's content. */
+  | 'tree-unproven'
+  /** The anchor commit is not in this clone (shallow, rewritten history). */
+  | 'anchor-unreadable'
+  /** The anchor is readable but every bare entry's file is not, at it. */
+  | 'files-unreadable';
+
 /** What a content-hash restamp did (see `restampContentHashes`). */
 export interface RestampSummary {
   readonly restamped: number;
   readonly unreadable: number;
+  /** Bare located entries the restamp was asked about. */
+  readonly bare: number;
+  readonly skipped: RestampSkipCause | null;
+}
+
+/** Bare located entries: the only ones a restamp could touch. Cheap (no
+ *  git), so the update lane can tell "nothing eligible" apart from "could
+ *  not run" without a per-file sweep. */
+function countBareLocated(entries: readonly BaselineEntry[]): number {
+  let n = 0;
+  for (const entry of entries) {
+    if ('contentHash' in entry && entry.contentHash !== undefined) continue;
+    const loc = entryToLocated(entry);
+    if (loc.file !== undefined && loc.line !== undefined && loc.line > 0) n += 1;
+  }
+  return n;
+}
+
+function commitReadable(cwd: string, sha: string): boolean {
+  try {
+    execFileSync('git', ['cat-file', '-e', `${sha}^{commit}`], {
+      cwd,
+      stdio: ['ignore', 'ignore', 'ignore'],
+    });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -246,9 +288,15 @@ export interface RestampSummary {
  * anchor commit, so the files can be read AT THAT COMMIT and hashed
  * (`restampAtCommit` — the migrate lane is the one commit-read call site).
  * Rides `vyuh-dxkit update` beside the scheme/recall probes; returns null
- * when there is nothing to do (no baseline, nothing bare, no resolvable
- * anchor). Files unreadable at the anchor leave their entries bare,
- * disclosed via the summary, never a throw.
+ * when there is nothing to do (no baseline, nothing bare, no recorded
+ * anchor). The commit read is only sound when the baseline PROVES it was
+ * captured on a clean tree at that commit (`repo.treeState === 'clean'`):
+ * a dirty capture's line numbers describe the working tree, and hashing
+ * the commit at those lines would stamp a wrong hash that every later
+ * stamper preserves. Cleanliness unproven, anchor unreadable: nothing is
+ * written and the cause is named, without the per-file sweep. Files
+ * unreadable at the anchor leave their entries bare, disclosed via the
+ * summary, never a throw.
  */
 export function restampContentHashes(cwd: string, baselineName = 'main'): RestampSummary | null {
   const blPath = pathForBaseline(cwd, baselineName);
@@ -261,15 +309,22 @@ export function restampContentHashes(cwd: string, baselineName = 'main'): Restam
   }
   const sha = file.repo?.commitSha;
   if (!sha) return null;
+  const bare = countBareLocated(file.findings);
+  if (bare === 0) return null;
+  if (file.repo?.treeState !== 'clean') {
+    return { restamped: 0, unreadable: 0, bare, skipped: 'tree-unproven' };
+  }
+  if (!commitReadable(cwd, sha)) {
+    return { restamped: 0, unreadable: 0, bare, skipped: 'anchor-unreadable' };
+  }
   const result = restampAtCommit(file.findings, cwd, sha);
-  if (result.restamped === 0 && result.unreadable === 0) return null;
   if (result.restamped > 0) {
     writeBaselineFile(blPath, { ...file, findings: result.entries });
+    return { restamped: result.restamped, unreadable: result.unreadable, bare, skipped: null };
   }
-  // restamped 0 + unreadable > 0 (an unreachable anchor: shallow clone,
-  // force-pushed history): nothing to write, but the caller must SAY so.
-  // Silence here would read as "reformat-tolerant matching is active".
-  return { restamped: result.restamped, unreadable: result.unreadable };
+  // Nothing written, but the caller must SAY why. Silence here would read
+  // as "reformat-tolerant matching is active".
+  return { restamped: 0, unreadable: result.unreadable, bare, skipped: 'files-unreadable' };
 }
 
 /**

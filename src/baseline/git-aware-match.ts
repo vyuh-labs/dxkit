@@ -71,6 +71,20 @@ export const CONFIDENCE_CONTENT_HASH = 0.8;
  *  strictest per-severity threshold (low: 0.90) so a pure reformat reads
  *  persisted on every severity, never demoted to `uncertain`. */
 export const CONFIDENCE_CONTENT_HASH_SAME_FILE = 0.9;
+/** How far (in lines) a same-file content-hash candidate may sit from where
+ *  the prior finding is EXPECTED after the diff and still earn the same-file
+ *  tier. The expected line is the prior line shifted by the net insertions
+ *  the file diff made above it (exact when git can produce the diff; the
+ *  bare prior line otherwise, which is disclosed in the pair's reason). Bytes
+ *  alone cannot tell a reformat-shifted finding from a deleted one whose
+ *  window was pasted somewhere else in the same file, so distance is the
+ *  tiebreaker: within the window it is the same finding moved by the edit;
+ *  beyond it the pair takes the cross-file tier, where low and medium
+ *  severities demote to `uncertain` as they do for any relocation the diff
+ *  does not vouch for. Bounded rather than exact because scanners shift a
+ *  reported line a little across re-runs and a dirty-tree gate diffs
+ *  against the committed head, not the tree it scanned. */
+export const SAME_FILE_RELOCATION_WINDOW = 20;
 /** Confidence assigned to a modified-hunk endpoint pair (#271): the
  *  line itself changed, so there is no line-map image and no byte
  *  identity — the evidence is the hunk STRUCTURE plus an unambiguous
@@ -248,6 +262,22 @@ function walkHunks(diff: string, baseLine: number): number | null {
     cumulativeShift += newCount - oldCount;
   }
   return baseLine + cumulativeShift;
+}
+
+/** Where a base line lands after the diff, counting only the NET line shift
+ *  of hunks above it. Unlike `walkHunks` this never answers null: a line
+ *  inside a replaced span is placed at the span's new start, so a finding
+ *  the diff rewrote still has an expected neighbourhood to be measured
+ *  against. Pure function over the diff text. */
+function expectedLineAfterDiff(diff: string, baseLine: number): number {
+  let shift = 0;
+  for (const h of parseHunkSpans(diff)) {
+    if (baseLine < h.oldStart) break;
+    const oldEnd = h.oldStart + h.oldCount - 1;
+    if (h.oldCount > 0 && baseLine <= oldEnd) return h.newStart;
+    shift += h.newCount - h.oldCount;
+  }
+  return baseLine + shift;
 }
 
 /**
@@ -468,7 +498,12 @@ export function gitAwareMatch(
   // A same-file/renamed pair carries higher confidence than a cross-file
   // one: same rule + identical normalized window + same file is strong
   // evidence, and it must clear the per-severity thresholds so a pure
-  // reformat reads persisted, not demoted to uncertain.
+  // reformat reads persisted, not demoted to uncertain. Same file is not
+  // enough on its own, though: a deleted finding whose window was pasted
+  // elsewhere in the file has the same bytes, so the same-file tier also
+  // requires the candidate to sit within `SAME_FILE_RELOCATION_WINDOW` of
+  // where the diff says the prior line moved to; a farther twin falls to
+  // phase 2 and the cross-file tier.
   {
     interface ContentBucket {
       byFile: Map<string, LocatedIdentity[]>;
@@ -492,7 +527,12 @@ export function gitAwareMatch(
         else bucket.byFile.set(c.file, [c]);
       }
     }
-    const pairUp = (p: LocatedIdentity, c: LocatedIdentity, confidence: number): void => {
+    const pairUp = (
+      p: LocatedIdentity,
+      c: LocatedIdentity,
+      confidence: number,
+      detail?: string,
+    ): void => {
       priorMatched.add(p);
       currentMatched.add(c);
       taken.add(c);
@@ -505,20 +545,44 @@ export function gitAwareMatch(
         reasons: [
           {
             code: 'content-hash',
-            detail: pathChanged
-              ? `content-hash match across rename: ${p.file ?? '?'} → ${c.file ?? '?'}`
-              : 'content-hash match (surrounding code byte-identical after whitespace normalization)',
+            detail:
+              detail ??
+              (pathChanged
+                ? `content-hash match across rename: ${p.file ?? '?'} → ${c.file ?? '?'}`
+                : 'content-hash match (surrounding code byte-identical after whitespace normalization)'),
           },
         ],
       });
     };
-    const takeFromFile = (bucket: ContentBucket, file: string): LocatedIdentity | undefined => {
+    // The same-file tier's plausibility check: where the prior line is
+    // expected after this file's diff, and whether a candidate sits within
+    // the relocation window of it. Without git the expectation is the bare
+    // prior line (the disclosure names which).
+    const expectedLine = (
+      p: LocatedIdentity,
+      currentFile: string,
+    ): { line: number; viaDiff: boolean } => {
+      const base = p.line!;
+      if (!reachability.ok) return { line: base, viaDiff: false };
+      const diff = fetchFileDiff(opts.cwd, opts.baseSha, headSha, p.file!, currentFile);
+      if (diff === null) return { line: base, viaDiff: false };
+      if (!diff.trim()) return { line: base, viaDiff: true };
+      return { line: expectedLineAfterDiff(diff, base), viaDiff: true };
+    };
+    // Candidates a same-file lookup skipped stay in `byFile` order for a
+    // later prior of the same file and in `order` for phase 2, so a distant
+    // twin is never lost, only demoted.
+    const takeFromFile = (
+      bucket: ContentBucket,
+      file: string,
+      near: (c: LocatedIdentity) => boolean,
+    ): LocatedIdentity | undefined => {
       const files = bucket.byFile.get(file);
-      while (files && files.length > 0) {
-        const c = files.shift()!;
-        if (!taken.has(c)) return c;
-      }
-      return undefined;
+      if (!files) return undefined;
+      const idx = files.findIndex((c) => !taken.has(c) && near(c));
+      if (idx === -1) return undefined;
+      const [c] = files.splice(idx, 1);
+      return c;
     };
     // Phase 1: same-file (git-rename-mapped first).
     for (const p of prior) {
@@ -531,9 +595,31 @@ export function gitAwareMatch(
       // after a detected rename only the renamed path qualifies for the
       // same-file tier; the old path never falls back.
       const renamedTo = renames.get(p.file);
-      const candidate =
-        renamedTo !== undefined ? takeFromFile(bucket, renamedTo) : takeFromFile(bucket, p.file);
-      if (candidate) pairUp(p, candidate, CONFIDENCE_CONTENT_HASH_SAME_FILE);
+      const targetFile = renamedTo ?? p.file;
+      // A prior without a line has no expected neighbourhood, so the
+      // distance check cannot vouch for it: it falls to the cross-file tier.
+      if (p.line === undefined) continue;
+      const expected = expectedLine(p, targetFile);
+      const candidate = takeFromFile(
+        bucket,
+        targetFile,
+        (c) =>
+          c.line !== undefined && Math.abs(c.line - expected.line) <= SAME_FILE_RELOCATION_WINDOW,
+      );
+      if (candidate) {
+        pairUp(
+          p,
+          candidate,
+          CONFIDENCE_CONTENT_HASH_SAME_FILE,
+          `content-hash match in the same file (surrounding code byte-identical after ` +
+            `whitespace normalization), ${p.line} → ${candidate.line}, within ` +
+            `${SAME_FILE_RELOCATION_WINDOW} lines of the expected line ${expected.line} ` +
+            (expected.viaDiff
+              ? '(prior line shifted by the file diff)'
+              : '(no diff available, prior line unshifted)') +
+            (renamedTo !== undefined ? `, across rename ${p.file} → ${renamedTo}` : ''),
+        );
+      }
     }
     // Phase 2: cross-file leftovers.
     for (const p of prior) {
@@ -549,7 +635,18 @@ export function gitAwareMatch(
           break;
         }
       }
-      if (candidate) pairUp(p, candidate, CONFIDENCE_CONTENT_HASH);
+      if (!candidate) continue;
+      const sameFile = p.file !== undefined && candidate.file === (renames.get(p.file) ?? p.file);
+      pairUp(
+        p,
+        candidate,
+        CONFIDENCE_CONTENT_HASH,
+        sameFile
+          ? `content-hash match in the same file but beyond the ${SAME_FILE_RELOCATION_WINDOW}-line ` +
+              `relocation window (${p.line ?? '?'} → ${candidate.line ?? '?'}): the diff does not ` +
+              `vouch for the move, so the pair holds cross-file confidence`
+          : undefined,
+      );
     }
   }
 
