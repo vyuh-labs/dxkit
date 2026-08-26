@@ -31,19 +31,37 @@ exit 1 — the exact finding, its durable fingerprint, and the paved path out.`;
 
 const ACT_REMEDIATE = `## dxkit agentic remediation
 
-Task: **fix-vulns** — outcome: **landed**
+Task: **fix-vulns** — outcome: **verified**
+
+### Deterministic recipes
+
+Selected orders: 1 recipe-tier, 1 agent-tier: 1 applied, 0 refused, 0 failed.
+- \`dep-advisory:js-yaml\` (override-pin): APPLIED, changed package.json, package-lock.json
+
+### Work-order dispatches (one order per agent run)
+
+Queued 1 agent-tier order(s); per-run cap 3 (\`remediate.maxOrdersPerRun\`).
+
+- \`dep-advisory:lodash\` (dep-advisory, 1 finding(s)): completed
+  - budget (derived, became the driver budget): turns = min(80, max(10, 8 + 4 * 1)) = 12
+  - spent: $0.41 over 9 turns
+  - envelope enforcement: every change stayed inside the order envelope
+  - done (guardrail verifier, 1 target id(s)): 1 closed, 0 still open per the verified floor
 
 ### Agent envelope
 - driver: claude-code
 - model: sonnet (auto tier)
-- spend: $1.84 over 34 turns  (caps: 80 turns, 30 min, $5)
+- spend: $0.41 over 9 turns  (caps: 12 turns, 7 min, $1)
 
 ### Verification
+
+Install: \`npm ci\` succeeded on a clean checkout.
 Correctness floor (attributed vs the pre-agent entry run): passed
 Guardrail: PASSED
 
-The agent's own claim of success is never trusted — the floor and the
-guardrail ran before anything landed.`;
+_Agentic lane inside the verified frame: the agent's own claim of
+success is never trusted — the entry-attributed floor and the guardrail
+ran before anything lands._`;
 
 const ACT_PASSED = `$ ${dxkitCli('guardrail check')}
 
@@ -119,7 +137,7 @@ function triptych(): string {
     },
     {
       t: 'dxkit: the closed loop',
-      d: 'Baseline the debt → gate only the net-new → bounded agents repair → the SAME gate verifies → a receipt lands in the PR.',
+      d: 'Baseline the debt → gate only the net-new → recipes + bounded agents repair → the SAME gate verifies → a receipt lands in the PR.',
       hi: true,
     },
   ];
@@ -278,7 +296,7 @@ export function renderShowcaseHero(opts: ShowcaseOpts): string {
 
   return `<div class="hero">
       <h1>Map the code. Prove each change is safe to merge.<br>Fix the debt. Repeat.</h1>
-      <p>Coding agents write more code than anyone can review by hand. dxkit covers the gap with three things: a <strong>living map</strong> of the codebase that grounds agents in real structure before they edit, a <strong>deterministic check</strong> that proves each change is safe to merge, and a <strong>repair crew</strong> of agents that bump dependencies, fix vulnerabilities, and improve tests, with every fix landing through that same check. Everything on this page ships with the package and works offline.</p>
+      <p>Coding agents write more code than anyone can review by hand. dxkit covers the gap with three things: a <strong>living map</strong> of the codebase that grounds agents in real structure before they edit, a <strong>deterministic check</strong> that proves each change is safe to merge, and a <strong>repair crew</strong> (deterministic recipes first, bounded agents for what remains) that bumps dependencies, fixes vulnerabilities, and improves tests, with every fix landing through that same check. Everything on this page ships with the package and works offline.</p>
       <div class="hero-actions">
         <a class="tbtn primary" href="#doc-how-dxkit-thinks">Read the mental model</a>
         <a class="tbtn" href="#cap-evaluate">Try it read-only: <code>evaluate</code></a>
@@ -293,7 +311,7 @@ export function renderShowcaseHero(opts: ShowcaseOpts): string {
     <div class="acts" id="acts">
       <div class="act-tabs" role="tablist">
         <button class="act-tab on" data-act="0">1 · An agent’s change arrives</button>
-        <button class="act-tab" data-act="1">2 · A bounded agent repairs</button>
+        <button class="act-tab" data-act="1">2 · Recipes + a bounded agent repair</button>
         <button class="act-tab" data-act="2">3 · Same gate, now provable</button>
       </div>
       <div class="act on">${term(ACT_BLOCKED, 'guardrail check')}</div>

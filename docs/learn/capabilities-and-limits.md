@@ -20,8 +20,8 @@ both directions, so you can decide what to rely on it for.
   that could not run is disclosed as unobserved; it never silently reads as
   "clean".
 - **That its own lanes obey the gate.** Anything a scheduled lane or a
-  remediation agent produces lands only through a PR that passes the same
-  guardrail as a human change.
+  remediation run produces (a deterministic recipe's fix or an agent's)
+  lands only through a PR that passes the same guardrail as a human change.
 
 ## What dxkit does not verify
 

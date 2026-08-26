@@ -125,6 +125,13 @@ merge through the same required checks as human PRs.
 - **Agent lane budgets**: per-task spend, turn, and time caps for the
   remediation lane, plus `remediate.maxSpendPerRun` and
   `remediate.maxDispatchBudget` org ceilings.
+- **Remediation lane governance**: `remediate.recipes.enabled` (default
+  on; the deterministic $0 recipe tier runs before any agent, off routes
+  every order to the agent), `remediate.maxOrdersPerRun` (default 3; how
+  many work orders one firing may hand to the agent, 0 restores the
+  single task-prompt run), and `remediate.pauseAfterFailures` (default 2;
+  the circuit breaker pauses a work-order class after this many
+  consecutive failed firings instead of re-spending on it, 0 disables).
 
 Every knob is discoverable: `vyuh-dxkit capabilities --json` is the
 machine-readable menu, and `doctor` proactively recommends unused

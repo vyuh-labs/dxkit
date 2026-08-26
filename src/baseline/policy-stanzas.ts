@@ -213,17 +213,23 @@ export const POLICY_STANZAS: readonly PolicyStanzaMeta[] = [
   {
     key: 'remediate',
     coversKnobs: ['remediate.enabled'],
-    title: 'Agentic remediation (scheduled agent inside the verified frame)',
+    title: 'Work-order remediation (recipes first, then a scoped agent, in the verified frame)',
     blurb: [
-      'An agent works the debt the deterministic lanes cannot close; every run',
-      "is floor-attributed + guardrail-verified before a PR opens (the agent's",
-      'word is never trusted). Credentials come from repo secrets, never here.',
+      'The lane plans debt as finite work orders: deterministic recipes fix what',
+      'they can at $0 (recipes.enabled), only the rest goes to an agent (one order',
+      'per run, up to maxOrdersPerRun), and a class that keeps failing is paused',
+      'by the circuit breaker (pauseAfterFailures). Every run is floor-attributed',
+      "+ guardrail-verified before a PR opens (the agent's word is never trusted).",
+      'Credentials come from repo secrets, never here.',
     ],
     anchor: 'remediate',
     example: () => ({
       enabled: true,
       tasks: ['fix-vulns'],
       schedule: 'weekly',
+      recipes: { enabled: true },
+      maxOrdersPerRun: 3,
+      pauseAfterFailures: 2,
       agent: {
         driver: 'claude-code',
         model: 'auto',

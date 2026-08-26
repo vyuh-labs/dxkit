@@ -157,16 +157,22 @@ export const GATE_COMMANDS = [
     id: 'remediate',
     audience: 'user',
     group: 'gate',
-    summary: 'Agentic remediation inside the verified frame (plan / run / land a PR)',
+    summary:
+      'Work-order remediation: recipes first, then a scoped agent, inside the verified frame',
     typicalRuntime: 'plan < 5 sec; a task run is budget-bounded (default 30 min cap)',
     docsBlurb:
-      'Run a coding agent on the debt the deterministic lanes cannot close (the ' +
-      'grandfathered build/tests, unfixable-by-bump advisories, the lint backlog, missing ' +
-      'tests) — inside the verified frame: entry-attributed correctness floor + guardrail ' +
-      "run before any PR opens, and the agent's own claim of success is never trusted. " +
-      '`remediate plan` shows the per-task model resolution and budget with no key and no ' +
-      'spend; the scheduled workflow (`remediate.enabled: true`) runs the configured tasks ' +
-      'on a cadence, one standing PR per task.',
+      'Plan the repo debt as finite WORK ORDERS (each with its findings, evidence, ' +
+      'envelope, and done command), then work them in two tiers: deterministic recipes ' +
+      'execute first at $0 (lockfile resync, override pins, dependency declarations, lint ' +
+      'autofix), and only the remaining orders go to an agent: one order per agent run (up ' +
+      'to remediate.maxOrdersPerRun per firing, default 3), under a budget derived from ' +
+      'the finding set, with out-of-envelope edits dropped and disclosed. Everything ' +
+      'lands through the verified frame (entry-attributed floor + guardrail before any PR ' +
+      "opens; the agent's own claim of success is never trusted), " +
+      'and a circuit breaker pauses a class that keeps failing instead of re-spending on ' +
+      'it. `remediate plan` shows the orders, tiers, and budgets with no key and no spend; ' +
+      'the scheduled workflow (`remediate.enabled: true`) runs the configured tasks on a ' +
+      'cadence, one standing PR per task.',
     skill: 'dxkit-remediate',
     whenToRecommend: recommendRemediate,
   },
