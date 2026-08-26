@@ -16,16 +16,20 @@ import { REPO_WIDE_ENVELOPE } from '../../../src/remediate/work-orders/types';
 import {
   cachedOsvQuery,
   effectiveBlockSeverities,
+  groupRecipeOrders,
   recipeCounts,
   runRecipeOrders,
   runRecipePhaseForTask,
 } from '../../../src/remediate/recipes/run-recipes';
 import type { RecipeGit } from '../../../src/remediate/recipes/git';
-import type { RecipeDeclaration } from '../../../src/remediate/work-orders/recipes-registry';
+import {
+  RECIPE_REGISTRY,
+  type RecipeDeclaration,
+} from '../../../src/remediate/work-orders/recipes-registry';
 import type { CorrectnessFloorResult } from '../../../src/analyzers/correctness/run';
 import { resolveRemediateConfig } from '../../../src/remediate/config';
 import { trustedLocalContext, untrustedContentContext } from '../../../src/analysis-trust';
-import { fakeExec, makeOrder, tempRepo } from './helpers';
+import { fakeExec, lintFinding, makeOrder, tempRepo } from './helpers';
 
 describe('envelope containment', () => {
   it('speaks the planner language: explicit repo-wide marker, directory prefix, exact file', () => {
@@ -295,6 +299,179 @@ describe('runRecipeOrders', () => {
     if (records[0].outcome.kind === 'refused') {
       expect(records[0].outcome.reason).toContain('ghost-recipe');
     }
+  });
+});
+
+describe('grouped execution (a file of lint slices is ONE fix attempt)', () => {
+  const sliceOrder = (id: string, rule: string, slice: number) =>
+    makeOrder({
+      id,
+      class: 'lint-located',
+      recipe: 'grouped-fixer',
+      findings: [lintFinding(`f-${id}`, 'lint:typescript', 'src/big.ts', rule)],
+      envelope: { paths: ['src/big.ts'], manifests: false },
+      provenance: { source: 'debt-slice', file: 'src/big.ts', slice, of: 3 },
+    });
+  const slices = [
+    sliceOrder('lint-located:src/big.ts#1', 'prefer-const', 1),
+    sliceOrder('lint-located:src/big.ts#2', 'no-unused-vars', 2),
+    sliceOrder('lint-located:src/big.ts#3', 'quotes', 3),
+  ];
+  function groupedRecipe(execute: RecipeDeclaration['execute']): RecipeDeclaration {
+    return {
+      id: 'grouped-fixer',
+      class: 'lint-located',
+      summary: 't',
+      implemented: true,
+      matches: () => true,
+      execute,
+      groupKey: (order) => {
+        const first = order.findings[0]?.evidence;
+        return first && first.type === 'custom-check' && first.file ? first.file : null;
+      },
+    };
+  }
+
+  it('a 3-slice file fixes in ONE execution: all three applied, one commit naming them all', async () => {
+    const git = fakeGit();
+    let executions = 0;
+    const registry = [
+      groupedRecipe(async (order) => {
+        executions += 1;
+        // The merged attempt carries EVERY slice's findings.
+        expect(order.findings).toHaveLength(3);
+        git.dirty.push('src/big.ts');
+        return { kind: 'applied', changedFiles: ['src/big.ts'] };
+      }),
+    ];
+    const records = await runRecipeOrders(slices, {
+      cwd: '/x',
+      trust: trustedLocalContext(),
+      git,
+      exec: fakeExec().exec,
+      registry,
+    });
+    expect(executions).toBe(1);
+    expect(records.map((r) => r.outcome.kind)).toEqual(['applied', 'applied', 'applied']);
+    expect(git.commits).toHaveLength(1);
+    expect(git.commits[0].message).toContain('lint-located:src/big.ts#1');
+    expect(git.commits[0].message).toContain('#2');
+    expect(git.commits[0].message).toContain('#3');
+  });
+
+  it('KNOWN leftovers split per slice: fixed slices apply and COMMIT, the unfixed slice falls to the agent', async () => {
+    const git = fakeGit();
+    const registry = [
+      groupedRecipe(async () => {
+        git.dirty.push('src/big.ts');
+        return {
+          kind: 'failed',
+          step: 'verify-lint',
+          output: 'no-unused-vars remains',
+          leftoverRules: ['no-unused-vars'],
+        };
+      }),
+    ];
+    const records = await runRecipeOrders(slices, {
+      cwd: '/x',
+      trust: trustedLocalContext(),
+      git,
+      exec: fakeExec().exec,
+      registry,
+    });
+    const byId = new Map(records.map((r) => [r.orderId, r.outcome]));
+    expect(byId.get('lint-located:src/big.ts#1')?.kind).toBe('applied');
+    expect(byId.get('lint-located:src/big.ts#3')?.kind).toBe('applied');
+    const open = byId.get('lint-located:src/big.ts#2');
+    expect(open?.kind).toBe('failed');
+    if (open?.kind === 'failed') {
+      expect(open.step).toBe('verify-lint');
+      expect(open.output).toContain('no-unused-vars');
+    }
+    // The partial fix is real work: committed (naming only the closed
+    // slices), never discarded.
+    expect(git.commits).toHaveLength(1);
+    expect(git.commits[0].message).toContain('#1');
+    expect(git.commits[0].message).not.toContain('#2');
+    expect(git.discarded).toEqual([]);
+  });
+
+  it('a plain failure (no structured leftovers, the net-new guard) discards the diff for every slice', async () => {
+    const git = fakeGit();
+    const registry = [
+      groupedRecipe(async () => {
+        git.dirty.push('src/big.ts');
+        return { kind: 'failed', step: 'verify-lint', output: 'net-new rule appeared' };
+      }),
+    ];
+    const records = await runRecipeOrders(slices, {
+      cwd: '/x',
+      trust: trustedLocalContext(),
+      git,
+      exec: fakeExec().exec,
+      registry,
+    });
+    expect(records.every((r) => r.outcome.kind === 'failed')).toBe(true);
+    expect(git.commits).toHaveLength(0);
+    expect(git.discarded).toEqual([['src/big.ts']]);
+  });
+
+  it('end to end with the REAL lint-autofix: three slices, ONE eslint --fix run, all applied', async () => {
+    const cwd = tempRepo({
+      'package.json': '{"name":"fx"}',
+      'node_modules/.bin/eslint': '#!/bin/sh\n',
+      'src/big.ts': 'let x = 1;\nexport default x;\n',
+    });
+    const realSlices = slices.map((o) => ({
+      ...o,
+      recipe: 'lint-autofix',
+      findings: o.findings.map((f) => ({
+        ...f,
+        evidence: { ...f.evidence, file: 'src/big.ts' },
+      })),
+      envelope: { paths: ['src/big.ts'], manifests: false },
+    }));
+    const git = fakeGit();
+    let fixRuns = 0;
+    const { exec } = (() => {
+      const inner = fakeExec((cmd) => {
+        if (cmd.args.includes('--fix')) {
+          fixRuns += 1;
+          git.dirty.push('src/big.ts');
+        }
+        return {
+          code: 0,
+          output: JSON.stringify([{ filePath: `${cwd}/src/big.ts`, messages: [] }]),
+        };
+      });
+      return inner;
+    })();
+    const records = await runRecipeOrders(realSlices, {
+      cwd,
+      trust: trustedLocalContext(),
+      git,
+      exec,
+    });
+    expect(fixRuns).toBe(1);
+    expect(records.map((r) => r.outcome.kind)).toEqual(['applied', 'applied', 'applied']);
+    expect(git.commits).toHaveLength(1);
+  });
+
+  it('the REAL registry groups lint slices by file, and everything else stays singleton', () => {
+    const realSlices = slices.map((o) => ({ ...o, recipe: 'lint-autofix' }));
+    const other = makeOrder({
+      id: 'dep-advisory:js-yaml',
+      class: 'dep-advisory',
+      recipe: 'override-pin',
+    });
+    const groups = groupRecipeOrders(
+      [realSlices[0], other, realSlices[1], realSlices[2]],
+      [...RECIPE_REGISTRY],
+    );
+    expect(groups.map((g) => g.map((o) => o.id))).toEqual([
+      ['lint-located:src/big.ts#1', 'lint-located:src/big.ts#2', 'lint-located:src/big.ts#3'],
+      ['dep-advisory:js-yaml'],
+    ]);
   });
 });
 
