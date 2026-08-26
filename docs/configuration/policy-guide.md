@@ -381,12 +381,17 @@ by real hazards, not style debt.
 
 ## Remediate
 
-**What it does.** The scheduled agentic remediation lane: an agent works
-the debt the deterministic lanes cannot close, INSIDE the verified frame —
-entry-attributed correctness floor + guardrail run before any PR opens, and
-the agent's own claim of success is never trusted. One standing PR per
-task; the body is the verification ledger + the agent envelope (model,
-turns, spend, outcome).
+**What it does.** The scheduled remediation lane. Each firing plans the
+repo's debt as finite work orders and works them in two tiers:
+deterministic recipes first at $0 (lockfile resync, override pins,
+dependency declarations, lint autofix), then a scoped agent for the
+remaining orders, one order per run under a derived budget and an
+enforced envelope, all INSIDE the verified frame (entry-attributed
+correctness floor + guardrail run before any PR opens, and the agent's
+own claim of success is never trusted). A class that keeps failing is
+paused by the circuit breaker (`pauseAfterFailures`) instead of
+re-bought. One standing PR per task; the body is the verification
+ledger + the agent envelope (model, turns, spend, outcome).
 
 **Default and why.** Off. An agent that spends money is never silently
 enabled — not by dxkit, not by `configure --apply`. Enable with

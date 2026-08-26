@@ -176,7 +176,7 @@ export const POSTURE_KNOBS: readonly PostureKnob[] = [
     requiresPlan: false,
     requiresRecommend: true,
     note:
-      'enabling installs the dxkit-remediate managed workflow (runs an agent, spends money), ' +
+      'enabling installs the dxkit-remediate managed workflow (deterministic recipes fix what they can at $0; a scoped agent runs for the rest and spends money), ' +
       "which configure's policy-only merge-write cannot place and must never silently enable — " +
       'so no planConfig; recommendRemediate surfaces the lane when the baseline carries debt ' +
       'the deterministic lanes cannot close.',

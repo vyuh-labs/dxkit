@@ -1,13 +1,19 @@
 # `vyuh-dxkit remediate`
 
-Run a coding agent on the debt the deterministic lanes cannot close: the
-grandfathered broken build, advisories a version bump cannot fix, the
-lint backlog, missing tests, missing docs. The agent runs inside a
-verified frame, and its own claim of success is never trusted: an entry
-correctness-floor snapshot is captured on the pristine tree before the
-agent spawns, then after the run a leftover sweep, a full-scope floor
-attributed against that entry (only net-new failures block; pre-existing
-debt is disclosed, never weaponized), and the guardrail as final arbiter.
+Close the debt the deterministic lanes cannot version-bump away: the
+grandfathered broken build, advisories with no direct upgrade path, the
+lint backlog, missing tests, missing docs. Each run plans that debt as
+finite work orders and works them in two tiers: deterministic recipes
+execute first at $0 (lockfile resync, override pins, dependency
+declarations, lint autofix), and only the remaining orders go to a
+scoped agent, one order per run under a derived budget and an enforced
+envelope. A class that keeps failing is paused by the circuit breaker
+instead of re-bought every firing. Everything runs inside a verified
+frame, and the agent's own claim of success is never trusted: an entry
+correctness-floor snapshot is captured on the pristine tree before any
+fix, then after the run a leftover sweep, the floor attributed against
+that entry (only net-new failures block; pre-existing debt is
+disclosed, never weaponized), and the guardrail as final arbiter.
 Work lands only as a PR carrying the verification ledger.
 
 ## Usage

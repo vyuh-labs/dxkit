@@ -41,11 +41,15 @@ meaning for merge:
   dependency instead, and closing this PR. The PR body states the deadline.
 - **Dependency bump PR**: a proposed upgrade, gated like any change. Review
   the changelog delta and merge or close; there is no hidden semantics.
-- **Remediation PR**: produced by a budget-bounded agent task. The body
-  carries the envelope: who dispatched it, the exact prompt, the model, and
-  the spend. The change passed the same gate as a human PR, and for custom
-  prompts the body says explicitly that no automated score improved; your
-  review is the verification. Review the diff on its merits.
+- **Remediation PR**: produced by the remediation lane, which fixes what
+  it can with deterministic recipes at $0 and hands only the remaining
+  work orders to a budget-bounded agent, one order per run. The body
+  carries the ledger: per-order outcomes for both tiers, each agent
+  dispatch's derived budget and spend, envelope enforcement, and (for a
+  custom dispatch) who dispatched it and the exact prompt. The change
+  passed the same gate as a human PR, and for custom prompts the body says
+  explicitly that no automated score improved; your review is the
+  verification. Review the diff on its merits.
 
 One operational note: a lane PR pushed with the default workflow credential
 may show **no CI checks** (GitHub does not trigger workflows for it). The

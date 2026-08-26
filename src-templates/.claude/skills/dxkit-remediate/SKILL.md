@@ -1,15 +1,17 @@
 ---
 name: dxkit-remediate
-description: Set up and operate the agentic remediation lane — preview which model each task resolves to, run a task locally inside the verified frame, enable the scheduled workflow, read the outcome ledger, and tune the budget. Use when the user says "set up automated remediation", "have an agent fix the backlog", "why did the remediation run fail", "what will remediate cost", "the remediate PR is a draft, why", or anything about the scheduled agent lane. For deterministic dependency bumps (no agent), defer to the deps bump lane; for one-off interactive fixes, dxkit-action.
+description: Set up and operate the remediation lane: preview the work-order plan (tiers, budgets, paused classes) at $0, run a task locally inside the verified frame (deterministic recipes first, a scoped agent only for what remains), enable the scheduled workflow, read the order ledger, and tune the budgets and the circuit breaker. Use when the user says "set up automated remediation", "have an agent fix the backlog", "why did the remediation run fail", "what will remediate cost", "the remediate PR is a draft, why", or anything about the scheduled agent lane. For deterministic dependency bumps (no agent), defer to the deps bump lane; for one-off interactive fixes, dxkit-action.
 ---
 
 # dxkit remediate — the agentic remediation lane
 
-An agent works the debt the deterministic lanes cannot close (the
-grandfathered build/tests, advisories a version bump cannot fix, the lint
-backlog, missing tests) INSIDE dxkit's verified frame: an entry-attributed
-correctness floor and the guardrail run before any PR opens, and the agent's
-own claim of success is never trusted. One standing PR per task; the PR body
+The lane plans the repo's debt (the grandfathered build/tests, advisories a
+version bump cannot fix, the lint backlog) as finite work orders and works
+them in two tiers: deterministic recipes execute first at $0, and only the
+remaining orders go to a scoped agent, one order per run under a derived
+budget and an enforced envelope. Everything lands INSIDE dxkit's verified
+frame: an entry-attributed correctness floor and the guardrail run before
+any PR opens, and the agent's own claim of success is never trusted. One standing PR per task; the PR body
 is the verification ledger plus the agent envelope (model, turns, spend,
 outcome).
 
