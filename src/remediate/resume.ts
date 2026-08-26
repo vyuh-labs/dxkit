@@ -50,12 +50,29 @@ export interface ResumeDecision {
   /** 1-based resume attempt number (marker commits + 1). */
   readonly attempt?: number;
   /** The prior attempt's blocking findings (extracted from the open draft
-   *  PR's ledger body, bounded) — carried into the resumed prompt so
-   *  attempt N+1 starts from "close these findings", not from scratch. */
+   *  PR's ledger body, bounded). On a resume: carried into the resumed
+   *  prompt so attempt N+1 starts from "close these findings". On a
+   *  NON-resume caused by a guardrail-red draft: returned so the caller
+   *  renders it into the next run's order prompts as a NEGATIVE constraint
+   *  (a blocked diff is never a resume anchor — design F). */
   readonly blockingContext?: string;
   /** Why no resume happened, when the knob is ON but nothing resumed —
    *  disclosed by the caller, never silent. Absent when the knob is off. */
   readonly note?: string;
+}
+
+/** Extract the ledger's outcome word from a PR body — the fact the resume
+ *  policy turns on. Anchored to the ledger's own emitted line shapes (the
+ *  runner's `Task: **<task>** ... outcome: **<word>**` header, or the
+ *  executor's bare `outcome: **<word>**` refusal line), never a prose
+ *  mention of the word elsewhere in the body. Undefined when no ledger
+ *  outcome line exists. */
+export function extractLedgerOutcome(body: string | undefined): string | undefined {
+  if (!body) return undefined;
+  return (
+    body.match(/^Task: \*\*[^\n]*outcome: \*\*([a-z-]+)\*\*/m)?.[1] ??
+    body.match(/^outcome: \*\*([a-z-]+)\*\*/m)?.[1]
+  );
 }
 
 /** Extract the ledger's "Blocking findings" list from a PR body, bounded —
@@ -115,9 +132,12 @@ export function prepareResume(
       return { resumed: false, note: `no open draft PR for '${branch}' — fresh run` };
     }
     const blockingContext = extractBlockingContext(open[0]?.body);
+    const priorOutcome = extractLedgerOutcome(open[0]?.body);
+    // Attempt accounting happens for ANY open draft, resume or fresh start:
+    // the cap is the human-escalation tripwire, and a guardrail-red chain
+    // that never counted its attempts would re-spend a full budget on the
+    // same unfixable finding forever (the cap unreachable by construction).
     run('git', ['fetch', 'origin', branch]);
-    // Count prior resume markers on the salvage head (bounded to the branch's
-    // own history vs the current default tree).
     const markers = run('git', [
       'rev-list',
       '--count',
@@ -125,12 +145,63 @@ export function prepareResume(
       'HEAD..FETCH_HEAD',
     ]).trim();
     const prior = Number(markers) || 0;
+    const redContext =
+      priorOutcome === 'guardrail-red' && blockingContext ? { blockingContext } : {};
     if (prior >= MAX_RESUME_ATTEMPTS) {
       return {
         resumed: false,
         note:
-          `salvage branch '${branch}' already resumed ${prior}x (cap ${MAX_RESUME_ATTEMPTS}) — ` +
-          'falling back to a fresh run; review or close the draft PR',
+          `the open draft for '${branch}' has consumed ${prior} attempt(s) ` +
+          `(cap ${MAX_RESUME_ATTEMPTS}) — a human must review or close the draft PR before ` +
+          'the lane spends more on this work; falling back to a fresh run',
+        ...redContext,
+      };
+    }
+    // Resume policy (design F): only a budget-exhausted VERIFIED partial is
+    // a resume anchor — its work passed the gate and was only cut short. A
+    // guardrail-red draft is NOT resumed: continuing a blocked diff anchors
+    // the next attempt on work the gate rejected. Its blocking set instead
+    // becomes a NEGATIVE constraint the next run's order prompts carry
+    // ("do not reintroduce these"). Any other (or unreadable) outcome
+    // conservatively starts fresh, disclosed. The attempt counter STILL
+    // advances (an empty commit built with commit-tree and pushed — the
+    // working tree is never touched, and the push carries zero content),
+    // so a repeating non-resumable chain reaches the cap above.
+    if (priorOutcome !== 'budget-exhausted') {
+      let counterNote = '';
+      try {
+        const tree = run('git', ['rev-parse', 'FETCH_HEAD^{tree}']).trim();
+        const marker = run('git', [
+          '-c',
+          `user.name=${BOT_IDENTITY.name}`,
+          '-c',
+          `user.email=${BOT_IDENTITY.email}`,
+          'commit-tree',
+          tree,
+          '-p',
+          'FETCH_HEAD',
+          '-m',
+          `${RESUME_MARKER} [skip ci]`,
+        ]).trim();
+        run('git', internalGitPushArgs(`${marker}:refs/heads/${branch}`));
+      } catch (e) {
+        counterNote =
+          `; the attempt counter could not advance ` +
+          `(${e instanceof Error ? e.message.split('\n')[0] : String(e)}) — the ` +
+          `${MAX_RESUME_ATTEMPTS}-attempt escalation may not engage`;
+      }
+      return {
+        resumed: false,
+        attempt: prior + 1,
+        note:
+          `open draft for '${branch}' records outcome '${priorOutcome ?? 'unknown'}' — resume ` +
+          `only continues budget-exhausted verified partials; starting fresh ` +
+          `(attempt ${prior + 1} of ${MAX_RESUME_ATTEMPTS} against this draft)` +
+          (priorOutcome === 'guardrail-red' && blockingContext
+            ? ', carrying its blocking findings as a negative constraint'
+            : '') +
+          counterNote,
+        ...redContext,
       };
     }
     run('git', ['checkout', '--detach', 'FETCH_HEAD']);
@@ -178,6 +249,17 @@ export function prepareResume(
 /** The continuation instruction appended to the task prompt on a resume.
  *  When the prior attempt was BLOCKED, its findings ride along so this
  *  attempt starts from "close these", not from scratch. */
+/** The NEGATIVE-constraint paragraph an order prompt carries when a prior
+ *  attempt was guardrail-BLOCKED (and therefore not resumed): the blocked
+ *  diff was discarded, and this run must not reintroduce its findings. */
+export function priorBlockingNote(blockingContext: string): string {
+  return (
+    `\nNEGATIVE CONSTRAINT from a prior BLOCKED attempt (its diff was discarded, not ` +
+    `resumed): the guardrail blocked that attempt on exactly these findings. Do not ` +
+    `reintroduce any of them:\n${blockingContext}`
+  );
+}
+
 export function resumePromptNote(attempt: number, blockingContext?: string): string {
   return (
     `\nRESUMED ATTEMPT #${attempt}: a previous budget-bounded run already committed real ` +

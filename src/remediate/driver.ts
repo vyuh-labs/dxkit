@@ -38,6 +38,16 @@ export interface AgentRunOptions {
   readonly model: string;
   /** Credentials + task env injected HERE only — never argv, never logged. */
   readonly env: Readonly<Record<string, string>>;
+  /**
+   * Tool narrowing for this run (order-driven runs): permission-rule
+   * patterns the driver renders through its declared `toolPolicy` mechanism.
+   * A driver with no `toolPolicy` declaration ignores this — the CALLER must
+   * disclose that the policy could not be applied (never a silent drop).
+   */
+  readonly tools?: {
+    readonly allowed?: readonly string[];
+    readonly disallowed?: readonly string[];
+  };
 }
 
 export interface AgentRunResult {
@@ -135,6 +145,19 @@ export interface AgentDriver {
    * every run is honestly disclosed `backstop-only`.
    */
   readonly inLoopGateMechanism?: 'claude-stop-hook';
+  /**
+   * The driver's tool-narrowing mechanism, when it has one: how
+   * `AgentRunOptions.tools` reaches the agent CLI, with the CLI requirement
+   * documented against the pinned version. Absent = the driver cannot narrow
+   * tools — a stated fact the runner DISCLOSES (the envelope then says the
+   * tool policy could not be applied and the envelope sweep is the
+   * enforcement), never an omission.
+   */
+  readonly toolPolicy?: {
+    readonly mechanism: 'disallowed-tools';
+    /** The CLI capability this depends on, stated against the pinned CLI. */
+    readonly cliRequirement: string;
+  };
   available(cwd: string): { readonly ok: true } | { readonly ok: false; readonly reason: string };
   run(opts: AgentRunOptions): Promise<AgentRunResult>;
 }

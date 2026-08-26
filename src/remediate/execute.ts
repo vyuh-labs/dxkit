@@ -212,6 +212,11 @@ export async function executeTask(
             },
           }
         : {}),
+      // A guardrail-red draft is never a resume anchor (design F): its
+      // blocking set rides the order prompts as a negative constraint.
+      ...(!resume.resumed && resume.blockingContext
+        ? { priorBlocking: resume.blockingContext }
+        : {}),
     });
   } finally {
     reporter.stop();
@@ -437,6 +442,7 @@ export function taskRunJson(run: TaskRun): Record<string, unknown> {
     note: r.note ?? null,
     partial: r.partial ?? false,
     envelope: r.envelope ?? null,
+    orders: r.orders ?? null,
     guardrailVerdict: r.guardrailVerdict ?? null,
     branch: r.task ? remediateBranchFor(r.task) : null,
     prUrl: run.prUrl ?? null,

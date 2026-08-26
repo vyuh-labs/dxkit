@@ -1279,6 +1279,16 @@ export interface GuardrailJsonPayload {
    *  unobserved" from "nobody said". Their pairs carry status
    *  `not_observed` — excluded from `summary.resolved`. */
   readonly notObserved: ReadonlyArray<NotObservedDisclosure>;
+  /** Kinds ref-based mode did not gate this run (they depend on build
+   *  artifacts absent at a bare git ref). ALWAYS present ([] in committed
+   *  modes and when nothing was excluded) so a consumer judging "is this
+   *  finding kind observed here" (the Stop-gate's order scope) never reads
+   *  an ungated kind as verified-absent. The console and markdown renderers
+   *  already disclosed this; the JSON payload now carries the same fact. */
+  readonly refExcludedKinds: ReadonlyArray<{
+    readonly kind: string;
+    readonly currentCount: number;
+  }>;
   /** Present when the dependency-vuln scan was requested but could not run —
    *  a pass is then NOT a clean bill of dependency health. */
   readonly depVulnsUnmeasured?: { readonly reason: string };
@@ -1527,6 +1537,9 @@ export function renderJson(result: GuardrailCheckResult): GuardrailJsonPayload {
     // check, aggregate counts). Always present — an agent reading the JSON
     // must be able to tell "nothing unobserved" from "nobody said".
     notObserved: result.notObserved,
+    // The ref-mode exclusion disclosure, in the JSON payload too (the other
+    // two renderers already print it) — always present, [] when none.
+    refExcludedKinds: result.refExcludedKinds,
     ...(result.depVulnsUnmeasured ? { depVulnsUnmeasured: result.depVulnsUnmeasured } : {}),
     ...(result.deferredCapture && result.deferredCapture.length > 0
       ? { deferredCapture: result.deferredCapture }

@@ -98,6 +98,11 @@ export interface RemediateTask {
   };
 }
 
+/** The agent's human-handoff notes file — the ONE definition of the path
+ *  (the prompts below spell it out in prose; the orders phase allows it
+ *  through every envelope so a stop-and-explain never reads as sprawl). */
+export const REMEDIATION_NOTES_PATH = 'docs/DXKIT-REMEDIATION-NOTES.md';
+
 /** Ground rules appended to every task prompt — the non-negotiables. */
 export const SHARED_RULES = `
 Ground rules (non-negotiable):

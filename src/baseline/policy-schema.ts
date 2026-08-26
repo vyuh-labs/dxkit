@@ -356,6 +356,7 @@ export function buildPolicySchema(version: string): Schema {
           },
           maxSpendPerRun: { type: 'number', description: desc('remediate.maxSpendPerRun') },
           maxDispatchBudget: { type: 'number', description: desc('remediate.maxDispatchBudget') },
+          maxOrdersPerRun: { type: 'number', description: desc('remediate.maxOrdersPerRun') },
           workOrders: obj(
             {
               maxSliceSize: {

@@ -27,6 +27,20 @@ describe('remediate tasks select work-order classes', () => {
     expect([...new Set(all)].sort()).toEqual(Object.keys(WORK_ORDER_CLASSES).sort());
   });
 
+  it('no class-selecting task declares a score hinge (the orders phase carries no hinge tail)', () => {
+    // Order-driven dispatch verifies through the floor + guardrail; the
+    // score-hinge tail lives only on the legacy open-ended path. A task that
+    // both selects classes and declares a hinge would silently skip its
+    // hinge on the orders path — this pin makes that a deliberate change.
+    for (const task of REMEDIATE_TASKS) {
+      if (classesSelectedBy(task.id).length > 0) {
+        expect(task.scoreHinge, `'${task.id}' selects classes and declares a hinge`).toBe(
+          undefined,
+        );
+      }
+    }
+  });
+
   it('the custom dispatch task is open-ended and selects nothing', () => {
     const custom = customDispatchTask('do a thing');
     expect(custom.completion).toBe('open-ended');

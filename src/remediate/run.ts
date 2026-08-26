@@ -27,12 +27,17 @@
 import { runCorrectnessFloor } from '../analyzers/correctness/run';
 import { detectActiveLanguages } from '../languages';
 import { renderRemediateLedger } from './ledger-render';
-import { installFailedNote, verifyCommittedHead } from './verify';
+import {
+  guardrailRedNote,
+  installFailedNote,
+  verificationDisclosures,
+  verifyCommittedHead,
+} from './verify';
 import { resolveModelSetting, type AgentRunResult } from './driver';
 import { AGENT_DRIVERS, knownDriverIds } from './registry';
 import type { RemediateTask } from './tasks';
 import { resolveDispatchedTask } from './dispatch';
-import { resumePromptNote } from './resume';
+import { priorBlockingNote, resumePromptNote } from './resume';
 import { realGit } from './git-ops';
 import { armGateForDriver } from './agent-trust';
 import {
@@ -44,11 +49,11 @@ import {
 import { evaluateScoreHinge, healthHingeScores } from './score-hinge';
 import { salvageForTask } from './config';
 import { recipeTierStep } from './recipes/complete';
+import { dispatchQueuedOrders } from './orders-phase';
 import type { AgentEnvelope, RemediateResult, RemediateRunOptions } from './outcome';
 
-// The outcome vocabulary lives in `./outcome` and the ledger renderer in
-// `./ledger-render` (module-size splits); both are re-exported so consumers
-// keep one import surface.
+// The outcome vocabulary (`./outcome`) and ledger renderer
+// (`./ledger-render`) are re-exported so consumers keep one import surface.
 export type {
   AgentEnvelope,
   RemediateGit,
@@ -119,8 +124,7 @@ export async function runRemediateTask(opts: RemediateRunOptions): Promise<Remed
   const lifetime = clampBudgetToTokenLifetime(opts.config.agent.budget, process.env);
   const budget = lifetime.budget;
   // The ONE salvage resolver (config.ts): explicit policy wins; 'auto'
-  // follows the task's declared completion shape. The CLI's land decision
-  // reads the same function, so the note here and the landing agree.
+  // follows the task's completion shape (the CLI's land decision agrees).
   const effectiveSalvage = salvageForTask(opts.config, task);
   // Budget-envelope disclosures — the ONE phrasing, split to
   // `budget-notes.ts` at the large-file bar.
@@ -206,15 +210,36 @@ export async function runRemediateTask(opts: RemediateRunOptions): Promise<Remed
   const hasRecipeCommits = agentBase !== baseHead;
 
   opts.onPhase?.('agent');
+  // Order-driven dispatch (section 3C): with a queue in hand the agent tier
+  // receives ONE rendered work order per run; null keeps the legacy path.
+  const ordered = await dispatchQueuedOrders(opts, {
+    taskId: task.id,
+    driver,
+    choice,
+    runBudget: budget,
+    envelopeBase,
+    git,
+    baseHead,
+    agentBase,
+    entryFloor,
+    runFloor,
+    recipes: tier.recipes,
+    effectiveSalvage,
+  });
+  if (ordered) return finish(ordered);
+
   // Budget awareness (`budgetPromptNote`): appended by the runner, the one
   // place the effective budget is known, never baked into the task prompts.
   const budgetNote = budgetPromptNote(budget);
   const resumeNote = opts.resume
     ? resumePromptNote(opts.resume.attempt, opts.resume.blockingContext)
     : '';
+  // A prior BLOCKED attempt's findings constrain the legacy prompt too:
+  // an empty order queue must not silently drop the negative constraint.
+  const negativeNote = opts.priorBlocking ? priorBlockingNote(opts.priorBlocking) : '';
   const agentResult: AgentRunResult = await driver.run({
     cwd: opts.cwd,
-    prompt: task.prompt + budgetNote + resumeNote,
+    prompt: task.prompt + budgetNote + resumeNote + negativeNote,
     budget: { maxTurns: budget.maxTurns, maxMinutes: budget.maxMinutes },
     model: choice.native,
     env: opts.agentEnv ?? {},
@@ -388,11 +413,7 @@ export async function runRemediateTask(opts: RemediateRunOptions): Promise<Remed
     task: task.id,
     ...recipesDisclosure,
     envelope,
-    ...(verified.floor ? { floor: verified.floor } : {}),
-    ...(verified.floorAttribution ? { floorAttribution: verified.floorAttribution } : {}),
-    ...(verified.install ? { install: verified.install } : {}),
-    ...(verified.changedFiles ? { changedFiles: verified.changedFiles } : {}),
-    guardrailVerdict: guardrail.verdict,
+    ...verificationDisclosures(verified, guardrail),
     baseHead,
     head,
     ...evidenceTail,
@@ -426,38 +447,18 @@ export async function runRemediateTask(opts: RemediateRunOptions): Promise<Remed
   // a verification that could not run at all (a worktree or package manager
   // failure, the step named) all land nothing; the ledger says which it was.
   if (!guardrail.ran || !guardrail.passesGate) {
-    // Name the blocking findings in the ledger: on an ephemeral runner the
-    // diff evaporates with the job, so "did not pass" with no evidence made
-    // a BLOCKED attempt uninspectable (the workflow additionally uploads the
-    // attempt diff as a run artifact).
-    const evidence =
-      guardrail.blocking && guardrail.blocking.length > 0
-        ? `\n\nBlocking findings:\n${guardrail.blocking.map((b) => `- ${b}`).join('\n')}`
-        : '';
-    // Salvage disposition for a RAN-and-BLOCKED verdict: under draft-pr
-    // salvage the blocked attempt may be pushed as a RED draft (its own
-    // required guardrail check keeps it unmergeable), so the work and the
-    // exact blocking reasons survive the ephemeral runner and the next run
-    // can RESUME from them instead of starting over — guardrail-red is
-    // where the most valuable partial work used to die. An UNRUNNABLE
+    // The ONE guardrail-red phrasing (`guardrailRedNote`): blocking findings
+    // named as evidence (an ephemeral runner's diff evaporates with the
+    // job), and the salvage disposition for a RAN-and-BLOCKED verdict —
+    // under draft-pr salvage the blocked attempt may be pushed as a RED
+    // draft so the work and the exact blocking reasons survive the runner.
+    // A blocked draft is NOT a resume anchor (design F): the next run starts
+    // fresh with the blocking set as a negative constraint. An UNRUNNABLE
     // guardrail stays absolute: an unverified diff is never pushed.
-    const salvageNote =
-      guardrail.ran && effectiveSalvage === 'draft-pr'
-        ? ' Salvage policy: draft-pr — the BLOCKED attempt may be pushed as a red DRAFT ' +
-          '(unmergeable while the guardrail check is red) so the next run can resume from it.'
-        : '';
     return finish({
       outcome: 'guardrail-red',
       ...common,
-      note:
-        (guardrail.ran
-          ? `the guardrail did not pass (${guardrail.verdict}) — nothing merges. The attempt ` +
-            'diff is uploaded as a run artifact when this ran under Actions; locally the ' +
-            'branch stays for inspection.'
-          : `the guardrail could not run (${guardrail.verdict}) — nothing lands. An ` +
-            'agent-authored diff is never pushed unverified.') +
-        salvageNote +
-        evidence,
+      note: guardrailRedNote(guardrail, effectiveSalvage),
     });
   }
 

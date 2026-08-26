@@ -7,7 +7,12 @@
  * plan built from the entry floor, and the tier split.
  */
 import { describe, it, expect } from 'vitest';
-import { partitionByEnvelope, pathInEnvelope } from '../../../src/remediate/recipes/envelope';
+import {
+  partitionByEnvelope,
+  pathAllowedByEnvelope,
+  pathInEnvelope,
+} from '../../../src/remediate/recipes/envelope';
+import { REPO_WIDE_ENVELOPE } from '../../../src/remediate/work-orders/types';
 import {
   cachedOsvQuery,
   effectiveBlockSeverities,
@@ -23,8 +28,13 @@ import { trustedLocalContext, untrustedContentContext } from '../../../src/analy
 import { fakeExec, makeOrder, tempRepo } from './helpers';
 
 describe('envelope containment', () => {
-  it('speaks the planner language: root, directory prefix, exact file', () => {
-    expect(pathInEnvelope('anything/x.ts', { paths: [''], manifests: false })).toBe(true);
+  it('speaks the planner language: explicit repo-wide marker, directory prefix, exact file', () => {
+    // The EXPLICIT marker matches everything; a bare empty string matches
+    // NOTHING (the accidental startsWith('') match-all it used to be).
+    expect(pathInEnvelope('anything/x.ts', { paths: [REPO_WIDE_ENVELOPE], manifests: false })).toBe(
+      true,
+    );
+    expect(pathInEnvelope('anything/x.ts', { paths: [''], manifests: false })).toBe(false);
     expect(pathInEnvelope('src/a/b.ts', { paths: ['src/a/'], manifests: false })).toBe(true);
     expect(pathInEnvelope('src/ab/c.ts', { paths: ['src/a/'], manifests: false })).toBe(false);
     expect(pathInEnvelope('package.json', { paths: ['package.json'], manifests: true })).toBe(true);
@@ -33,6 +43,23 @@ describe('envelope containment', () => {
     );
     const split = partitionByEnvelope(['a.ts', 'b.ts'], { paths: ['a.ts'], manifests: false });
     expect(split).toEqual({ inside: ['a.ts'], outside: ['b.ts'] });
+    // manifests: false excludes dependency files even under the repo-wide
+    // marker; manifests: true admits them (the predicate is pack-injected).
+    const isManifest = (p: string) => p === 'package.json';
+    expect(
+      pathAllowedByEnvelope(
+        'package.json',
+        { paths: [REPO_WIDE_ENVELOPE], manifests: false },
+        isManifest,
+      ),
+    ).toBe(false);
+    expect(
+      pathAllowedByEnvelope(
+        'package.json',
+        { paths: [REPO_WIDE_ENVELOPE], manifests: true },
+        isManifest,
+      ),
+    ).toBe(true);
   });
 });
 
@@ -356,6 +383,102 @@ describe('runRecipePhaseForTask', () => {
     expect(summary.records[0].outcome.kind).toBe('applied');
     expect(recipeCounts(summary)).toEqual({ applied: 1, refused: 0, failed: 0 });
     expect(git.commits[0].message).toContain('fix(stale-lockfile)');
+  });
+
+  it('a refused/failed recipe order JOINS the agent queue (agentOrders), in plan order', async () => {
+    const cwd = tempRepo({
+      'package.json': '{"name":"fx"}',
+      'package-lock.json': '{}',
+      'src/index.ts': 'export const x = 1;\n',
+      '.dxkit/policy.json': '{}',
+    });
+    const git = fakeGit();
+    // The install never dirties the lockfile, so the lockfile-sync recipe
+    // reports applied with no in-envelope change and FAILS at the envelope
+    // step — the class of order the agent tier must pick up in-run.
+    const { exec } = fakeExec(() => undefined);
+    const entryFloor = floorWith([
+      {
+        pack: 'typescript',
+        label: 'lockfile-sync',
+        bin: 'npm',
+        args: ['ci', '--dry-run'],
+        status: 'fail',
+        output: 'EUSAGE',
+      },
+      // A plain failing floor check: the agent-only floor-failure class.
+      { pack: 'typescript', label: 'tests', bin: 'npx', args: ['vitest'], status: 'fail' },
+    ] as CorrectnessFloorResult['checks']);
+    const summary = await runRecipePhaseForTask({
+      cwd,
+      trust: trustedLocalContext(),
+      taskId: 'fix-build',
+      config: resolveRemediateConfig(cwd),
+      entryFloor,
+      git,
+      exec,
+    });
+    expect(summary.ran).toBe(true);
+    expect(summary.records[0].outcome.kind).not.toBe('applied');
+    const ids = (summary.agentOrders ?? []).map((o) => o.id);
+    // Both the non-applied recipe order and the agent-tier floor order are queued.
+    expect(ids.some((id) => id.startsWith('stale-lockfile:'))).toBe(true);
+    expect(ids.some((id) => id.startsWith('floor-failure:'))).toBe(true);
+  });
+
+  it('recipes disabled still plans and routes EVERY selected order to the agent queue', async () => {
+    const cwd = tempRepo({
+      'package.json': '{"name":"fx"}',
+      'package-lock.json': '{}',
+      '.dxkit/policy.json': '{"remediate":{"recipes":{"enabled":false}}}',
+    });
+    const entryFloor = floorWith([
+      {
+        pack: 'typescript',
+        label: 'lockfile-sync',
+        bin: 'npm',
+        args: ['ci', '--dry-run'],
+        status: 'fail',
+        output: 'EUSAGE',
+      },
+    ] as CorrectnessFloorResult['checks']);
+    const summary = await runRecipePhaseForTask({
+      cwd,
+      trust: trustedLocalContext(),
+      taskId: 'fix-build',
+      config: resolveRemediateConfig(cwd),
+      entryFloor,
+    });
+    expect(summary.disabled).toBe(true);
+    expect(summary.ran).toBe(false);
+    expect(summary.records).toHaveLength(0);
+    expect(summary.selectedAgentTier).toBe(1);
+    expect((summary.agentOrders ?? []).map((o) => o.id)).toEqual([
+      expect.stringMatching(/^stale-lockfile:/),
+    ]);
+  });
+
+  it('skips planning entirely when BOTH consumers are off (recipes disabled + order dispatch off)', async () => {
+    const cwd = tempRepo({
+      '.dxkit/policy.json': '{"remediate":{"recipes":{"enabled":false},"maxOrdersPerRun":0}}',
+    });
+    const summary = await runRecipePhaseForTask({
+      cwd,
+      trust: trustedLocalContext(),
+      taskId: 'fix-build',
+      config: resolveRemediateConfig(cwd),
+      entryFloor: floorWith([]),
+      // A gather seam that THROWS proves planning never ran: a planned call
+      // would surface as planError.
+      gather: {
+        runFloor: () => {
+          throw new Error('planning must not run when nothing consumes the plan');
+        },
+      },
+    });
+    expect(summary.disabled).toBe(true);
+    expect(summary.planError).toBeUndefined();
+    expect(summary.agentOrders).toBeUndefined();
   });
 
   it('a task selecting no orders is an honest no-run with the tier split at zero', async () => {
