@@ -1258,6 +1258,12 @@ const tsCoverageProvider: CapabilityProvider<CoverageResult> = {
  * are installed, is the backstop for that case. The `.cmd` variant is npm's
  * Windows shim.
  */
+/** The dependency tree is installed at all (any `node_modules`), the gate
+ *  for a repo-declared script whose binary dxkit cannot name. */
+function hasDependencyTree(cwd: string): boolean {
+  return fileExists(cwd, 'node_modules');
+}
+
 function hasLocalBin(cwd: string, bin: string): boolean {
   return (
     fileExists(cwd, path.join('node_modules', '.bin', bin)) ||
@@ -2234,16 +2240,19 @@ const tsCorrectnessProvider: CorrectnessProvider = {
   syntaxCheck(ctx: CorrectnessContext): CorrectnessCommand | null {
     // Prefer the project's own typecheck script — it carries their exact
     // compiler flags and project-references, the same command their CI runs.
-    // Either path needs the project's own compiler installed (the lint gate's
+    // Either path needs the project provisioned (the lint gate's
     // `hasLocalBin` discipline): on an unprovisioned tree `npm run typecheck`
     // exits 127 ("tsc: not found"), an environment fact, not a syntax verdict,
     // so the builder declines and the runner discloses the skip instead of
-    // the floor reading a missing toolchain as a failure.
-    if (!hasLocalBin(ctx.cwd, 'tsc')) return null;
+    // the floor reading a missing toolchain as a failure. The script may run
+    // a compiler other than tsc (vue-tsc, svelte-check), so its gate is the
+    // dependency tree itself; the bare-tsc path gates on tsc.
     const script = tsTypecheckScript(ctx.cwd);
     if (script !== null) {
+      if (!hasDependencyTree(ctx.cwd)) return null;
       return { label: 'typecheck', bin: 'npm', args: ['run', script] };
     }
+    if (!hasLocalBin(ctx.cwd, 'tsc')) return null;
     // Otherwise, only a project that opts into TypeScript (has a tsconfig) with
     // the compiler installed gets a typecheck floor. A pure-JS repo has no tsc
     // stage — its syntax errors surface when the test runner loads the file.

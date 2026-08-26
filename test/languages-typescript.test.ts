@@ -477,14 +477,28 @@ describe('typescript.correctness', () => {
   // The unprovisioned-worktree class (4.4.5): a repo WITH a typecheck script
   // but no node_modules ran `npm run typecheck`, which exits 127 ("tsc: not
   // found") and read as a net-new floor failure. The script path gates on
-  // the local compiler exactly like the bare-tsc path and the lint gate.
-  it('syntaxCheck skips the project typecheck script too when tsc is not installed', () => {
+  // the dependency tree (the script may run vue-tsc or svelte-check, so the
+  // tsc binary is not its evidence); the bare-tsc path gates on tsc.
+  it('syntaxCheck skips the project typecheck script when nothing is installed', () => {
     fs.writeFileSync(
       path.join(tmp, 'package.json'),
       JSON.stringify({ scripts: { typecheck: 'tsc -b' } }),
     );
     fs.writeFileSync(path.join(tmp, 'tsconfig.json'), '{}');
     expect(typescript.correctness!.syntaxCheck(ctx())).toBeNull();
+  });
+
+  it('syntaxCheck runs a non-tsc typecheck script once the dependency tree exists', () => {
+    fs.writeFileSync(
+      path.join(tmp, 'package.json'),
+      JSON.stringify({ scripts: { typecheck: 'vue-tsc --noEmit' } }),
+    );
+    installBin('vue-tsc');
+    expect(typescript.correctness!.syntaxCheck(ctx())).toEqual({
+      label: 'typecheck',
+      bin: 'npm',
+      args: ['run', 'typecheck'],
+    });
   });
 
   it('affectedTests: vitest related on the affected surface', () => {

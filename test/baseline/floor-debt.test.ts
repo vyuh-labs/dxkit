@@ -100,6 +100,9 @@ describe('createBaseline floor-debt wiring', () => {
     );
     mkdirSync(join(repo, 'src'), { recursive: true });
     writeFileSync(join(repo, 'src', 'index.ts'), 'export const x = 1;\n');
+    // A provisioned tree: the typecheck script only runs once the dependency
+    // tree exists (an unprovisioned tree is an environment fact, not debt).
+    mkdirSync(join(repo, 'node_modules'), { recursive: true });
     execFileSync('git', ['add', '-A'], { cwd: repo });
     execFileSync('git', ['commit', '-qm', 'seed'], { cwd: repo });
   });
