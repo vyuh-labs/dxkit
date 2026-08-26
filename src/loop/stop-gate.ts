@@ -294,6 +294,10 @@ export async function computeStopGate(
       orderNote =
         `dxkit Stop-gate: could not verify work order ${orderRead.scope.orderId} in-session ` +
         `(${verdict.undecidable}); the frame's post-run verification decides.`;
+    } else if (verdict.disclosure) {
+      // Done with a fact worth seeing (sibling findings keep the shared
+      // check red) — rides the allow's stderr, never a block.
+      orderNote = `dxkit Stop-gate: ${verdict.disclosure}`;
     }
   }
 

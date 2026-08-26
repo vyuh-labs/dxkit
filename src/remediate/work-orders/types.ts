@@ -170,9 +170,18 @@ export function floorFindingId(pack: string, label: string, finding?: string): s
   return finding === undefined ? key : `${key}#${finding}`;
 }
 
+/** The EXPLICIT repo-wide envelope marker (a floor failure with no finer
+ *  surface, e.g. a whole-build break). Deliberate, never an accident: the
+ *  containment predicate treats exactly this token as match-everything —
+ *  an empty-string entry no longer silently matches every path (the class
+ *  where `''` + `startsWith('')` made an envelope vacuous). `manifests`
+ *  still gates dependency files independently of the paths. */
+export const REPO_WIDE_ENVELOPE = '*';
+
 /** What the fix may touch. Derived from the findings, never from the agent. */
 export interface WorkOrderEnvelope {
-  /** Repo-relative paths (files, or directory prefixes ending in `/`). */
+  /** Repo-relative paths (files, or directory prefixes ending in `/`), or
+   *  the explicit `REPO_WIDE_ENVELOPE` marker. */
   readonly paths: readonly string[];
   /** Whether dependency manifests + lockfiles inside `paths` may change. */
   readonly manifests: boolean;

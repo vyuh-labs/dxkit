@@ -54,6 +54,7 @@ function illustrativePayload(blocked: boolean): GuardrailJsonPayload {
     attributionGaps: [],
     requiredNotObserved: [],
     notObserved: [],
+    refExcludedKinds: [],
     // The illustration has no allowlist, so nothing is deferred and nothing can
     // lapse. Spelled out rather than omitted — the field is required so a real
     // payload can never quietly lack it.

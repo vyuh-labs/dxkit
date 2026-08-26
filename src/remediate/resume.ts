@@ -61,11 +61,18 @@ export interface ResumeDecision {
   readonly note?: string;
 }
 
-/** Extract the ledger's outcome word from a PR body (the ledger's first
- *  line renders `outcome: **<word>**`) — the fact the resume policy turns
- *  on. Undefined when the body carries no ledger outcome. */
+/** Extract the ledger's outcome word from a PR body — the fact the resume
+ *  policy turns on. Anchored to the ledger's own emitted line shapes (the
+ *  runner's `Task: **<task>** ... outcome: **<word>**` header, or the
+ *  executor's bare `outcome: **<word>**` refusal line), never a prose
+ *  mention of the word elsewhere in the body. Undefined when no ledger
+ *  outcome line exists. */
 export function extractLedgerOutcome(body: string | undefined): string | undefined {
-  return body?.match(/outcome: \*\*([a-z-]+)\*\*/)?.[1];
+  if (!body) return undefined;
+  return (
+    body.match(/^Task: \*\*[^\n]*outcome: \*\*([a-z-]+)\*\*/m)?.[1] ??
+    body.match(/^outcome: \*\*([a-z-]+)\*\*/m)?.[1]
+  );
 }
 
 /** Extract the ledger's "Blocking findings" list from a PR body, bounded —
@@ -125,29 +132,12 @@ export function prepareResume(
       return { resumed: false, note: `no open draft PR for '${branch}' — fresh run` };
     }
     const blockingContext = extractBlockingContext(open[0]?.body);
-    // Resume policy (design F): only a budget-exhausted VERIFIED partial is
-    // a resume anchor — its work passed the gate and was only cut short. A
-    // guardrail-red draft is NOT resumed: continuing a blocked diff anchors
-    // the next attempt on work the gate rejected. Its blocking set instead
-    // becomes a NEGATIVE constraint the next run's order prompts carry
-    // ("do not reintroduce these"). Any other (or unreadable) outcome
-    // conservatively starts fresh, disclosed.
     const priorOutcome = extractLedgerOutcome(open[0]?.body);
-    if (priorOutcome !== 'budget-exhausted') {
-      return {
-        resumed: false,
-        note:
-          `open draft for '${branch}' records outcome '${priorOutcome ?? 'unknown'}' — resume ` +
-          `only continues budget-exhausted verified partials; starting fresh` +
-          (priorOutcome === 'guardrail-red' && blockingContext
-            ? ', carrying its blocking findings as a negative constraint'
-            : ''),
-        ...(priorOutcome === 'guardrail-red' && blockingContext ? { blockingContext } : {}),
-      };
-    }
+    // Attempt accounting happens for ANY open draft, resume or fresh start:
+    // the cap is the human-escalation tripwire, and a guardrail-red chain
+    // that never counted its attempts would re-spend a full budget on the
+    // same unfixable finding forever (the cap unreachable by construction).
     run('git', ['fetch', 'origin', branch]);
-    // Count prior resume markers on the salvage head (bounded to the branch's
-    // own history vs the current default tree).
     const markers = run('git', [
       'rev-list',
       '--count',
@@ -155,12 +145,63 @@ export function prepareResume(
       'HEAD..FETCH_HEAD',
     ]).trim();
     const prior = Number(markers) || 0;
+    const redContext =
+      priorOutcome === 'guardrail-red' && blockingContext ? { blockingContext } : {};
     if (prior >= MAX_RESUME_ATTEMPTS) {
       return {
         resumed: false,
         note:
-          `salvage branch '${branch}' already resumed ${prior}x (cap ${MAX_RESUME_ATTEMPTS}) — ` +
-          'falling back to a fresh run; review or close the draft PR',
+          `the open draft for '${branch}' has consumed ${prior} attempt(s) ` +
+          `(cap ${MAX_RESUME_ATTEMPTS}) — a human must review or close the draft PR before ` +
+          'the lane spends more on this work; falling back to a fresh run',
+        ...redContext,
+      };
+    }
+    // Resume policy (design F): only a budget-exhausted VERIFIED partial is
+    // a resume anchor — its work passed the gate and was only cut short. A
+    // guardrail-red draft is NOT resumed: continuing a blocked diff anchors
+    // the next attempt on work the gate rejected. Its blocking set instead
+    // becomes a NEGATIVE constraint the next run's order prompts carry
+    // ("do not reintroduce these"). Any other (or unreadable) outcome
+    // conservatively starts fresh, disclosed. The attempt counter STILL
+    // advances (an empty commit built with commit-tree and pushed — the
+    // working tree is never touched, and the push carries zero content),
+    // so a repeating non-resumable chain reaches the cap above.
+    if (priorOutcome !== 'budget-exhausted') {
+      let counterNote = '';
+      try {
+        const tree = run('git', ['rev-parse', 'FETCH_HEAD^{tree}']).trim();
+        const marker = run('git', [
+          '-c',
+          `user.name=${BOT_IDENTITY.name}`,
+          '-c',
+          `user.email=${BOT_IDENTITY.email}`,
+          'commit-tree',
+          tree,
+          '-p',
+          'FETCH_HEAD',
+          '-m',
+          `${RESUME_MARKER} [skip ci]`,
+        ]).trim();
+        run('git', internalGitPushArgs(`${marker}:refs/heads/${branch}`));
+      } catch (e) {
+        counterNote =
+          `; the attempt counter could not advance ` +
+          `(${e instanceof Error ? e.message.split('\n')[0] : String(e)}) — the ` +
+          `${MAX_RESUME_ATTEMPTS}-attempt escalation may not engage`;
+      }
+      return {
+        resumed: false,
+        attempt: prior + 1,
+        note:
+          `open draft for '${branch}' records outcome '${priorOutcome ?? 'unknown'}' — resume ` +
+          `only continues budget-exhausted verified partials; starting fresh ` +
+          `(attempt ${prior + 1} of ${MAX_RESUME_ATTEMPTS} against this draft)` +
+          (priorOutcome === 'guardrail-red' && blockingContext
+            ? ', carrying its blocking findings as a negative constraint'
+            : '') +
+          counterNote,
+        ...redContext,
       };
     }
     run('git', ['checkout', '--detach', 'FETCH_HEAD']);

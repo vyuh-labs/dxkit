@@ -7,7 +7,12 @@
  * plan built from the entry floor, and the tier split.
  */
 import { describe, it, expect } from 'vitest';
-import { partitionByEnvelope, pathInEnvelope } from '../../../src/remediate/recipes/envelope';
+import {
+  partitionByEnvelope,
+  pathAllowedByEnvelope,
+  pathInEnvelope,
+} from '../../../src/remediate/recipes/envelope';
+import { REPO_WIDE_ENVELOPE } from '../../../src/remediate/work-orders/types';
 import {
   cachedOsvQuery,
   effectiveBlockSeverities,
@@ -23,8 +28,13 @@ import { trustedLocalContext, untrustedContentContext } from '../../../src/analy
 import { fakeExec, makeOrder, tempRepo } from './helpers';
 
 describe('envelope containment', () => {
-  it('speaks the planner language: root, directory prefix, exact file', () => {
-    expect(pathInEnvelope('anything/x.ts', { paths: [''], manifests: false })).toBe(true);
+  it('speaks the planner language: explicit repo-wide marker, directory prefix, exact file', () => {
+    // The EXPLICIT marker matches everything; a bare empty string matches
+    // NOTHING (the accidental startsWith('') match-all it used to be).
+    expect(pathInEnvelope('anything/x.ts', { paths: [REPO_WIDE_ENVELOPE], manifests: false })).toBe(
+      true,
+    );
+    expect(pathInEnvelope('anything/x.ts', { paths: [''], manifests: false })).toBe(false);
     expect(pathInEnvelope('src/a/b.ts', { paths: ['src/a/'], manifests: false })).toBe(true);
     expect(pathInEnvelope('src/ab/c.ts', { paths: ['src/a/'], manifests: false })).toBe(false);
     expect(pathInEnvelope('package.json', { paths: ['package.json'], manifests: true })).toBe(true);
@@ -33,6 +43,23 @@ describe('envelope containment', () => {
     );
     const split = partitionByEnvelope(['a.ts', 'b.ts'], { paths: ['a.ts'], manifests: false });
     expect(split).toEqual({ inside: ['a.ts'], outside: ['b.ts'] });
+    // manifests: false excludes dependency files even under the repo-wide
+    // marker; manifests: true admits them (the predicate is pack-injected).
+    const isManifest = (p: string) => p === 'package.json';
+    expect(
+      pathAllowedByEnvelope(
+        'package.json',
+        { paths: [REPO_WIDE_ENVELOPE], manifests: false },
+        isManifest,
+      ),
+    ).toBe(false);
+    expect(
+      pathAllowedByEnvelope(
+        'package.json',
+        { paths: [REPO_WIDE_ENVELOPE], manifests: true },
+        isManifest,
+      ),
+    ).toBe(true);
   });
 });
 
@@ -429,6 +456,29 @@ describe('runRecipePhaseForTask', () => {
     expect((summary.agentOrders ?? []).map((o) => o.id)).toEqual([
       expect.stringMatching(/^stale-lockfile:/),
     ]);
+  });
+
+  it('skips planning entirely when BOTH consumers are off (recipes disabled + order dispatch off)', async () => {
+    const cwd = tempRepo({
+      '.dxkit/policy.json': '{"remediate":{"recipes":{"enabled":false},"maxOrdersPerRun":0}}',
+    });
+    const summary = await runRecipePhaseForTask({
+      cwd,
+      trust: trustedLocalContext(),
+      taskId: 'fix-build',
+      config: resolveRemediateConfig(cwd),
+      entryFloor: floorWith([]),
+      // A gather seam that THROWS proves planning never ran: a planned call
+      // would surface as planError.
+      gather: {
+        runFloor: () => {
+          throw new Error('planning must not run when nothing consumes the plan');
+        },
+      },
+    });
+    expect(summary.disabled).toBe(true);
+    expect(summary.planError).toBeUndefined();
+    expect(summary.agentOrders).toBeUndefined();
   });
 
   it('a task selecting no orders is an honest no-run with the tier split at zero', async () => {

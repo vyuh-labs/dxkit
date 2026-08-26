@@ -13,7 +13,12 @@
  */
 import type { AttributedFloorFailure } from '../../analyzers/correctness/attribution';
 import { LOCKFILE_SYNC_LABEL } from '../../languages/capabilities/correctness';
-import { FLOOR_FINDING_KIND, floorFindingId, type WorkOrderFinding } from './types';
+import {
+  FLOOR_FINDING_KIND,
+  REPO_WIDE_ENVELOPE,
+  floorFindingId,
+  type WorkOrderFinding,
+} from './types';
 import {
   INSTALL_FORBIDDEN,
   VALUE_BAND,
@@ -220,7 +225,7 @@ export function floorOrders(
         findings,
         // A generic floor failure names no file; the whole tree minus
         // manifests is the honest envelope (a build/test fix is code).
-        envelope: { paths: [''], manifests: false },
+        envelope: { paths: [REPO_WIDE_ENVELOPE], manifests: false },
         constraints: { ...(install ? { install } : {}), forbidden: [INSTALL_FORBIDDEN] },
         done: doneFor('floor', findings),
         budget: deriveBudget(findings.length, ctx.capFor('floor-failure')),

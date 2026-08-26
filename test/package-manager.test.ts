@@ -139,10 +139,24 @@ describe('command builders', () => {
       const [uBin, uVerb] = upgradeArgv(pm, 'x', '1.0.0', 'dependencies');
       expect(prefixes).toContain(`${uBin} ${uVerb}`);
     }
-    // The documented short install aliases are included where they exist.
-    expect(prefixes).toContain('npm i');
-    expect(prefixes).toContain('pnpm i');
-    expect(prefixes).toContain('bun i');
+    // The documented short install aliases and the other dependency-mutating
+    // verb families (update / remove) are included where they exist.
+    for (const alias of [
+      'npm i',
+      'pnpm i',
+      'bun i',
+      'npm update',
+      'pnpm update',
+      'yarn upgrade',
+      'bun update',
+      'npm uninstall',
+      'npm remove',
+      'pnpm remove',
+      'yarn remove',
+      'bun remove',
+    ]) {
+      expect(prefixes).toContain(alias);
+    }
     // Deterministic (sorted, deduplicated).
     expect([...prefixes]).toEqual([...new Set(prefixes)].sort());
   });

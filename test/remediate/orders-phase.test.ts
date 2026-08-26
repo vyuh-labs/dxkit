@@ -13,7 +13,11 @@ import { describe, it, expect } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { runRemediateTask, type RemediateGit } from '../../src/remediate/run';
+import {
+  renderRemediateLedger,
+  runRemediateTask,
+  type RemediateGit,
+} from '../../src/remediate/run';
 import type { AgentDriver, AgentRunResult } from '../../src/remediate/driver';
 import type { RemediateConfig } from '../../src/remediate/config';
 import { DEFAULT_REMEDIATE_BUDGET } from '../../src/remediate/config';
@@ -24,7 +28,7 @@ import { makeOrder } from './recipes/helpers';
 import type { WorkOrder } from '../../src/remediate/work-orders/types';
 import { orderRunDisallowedTools } from '../../src/remediate/tool-policy';
 import { installCommandPrefixes } from '../../src/package-manager';
-import { readOrderScope } from '../../src/loop/order-scope';
+import { ORDER_TOKEN_ENV, readOrderScope } from '../../src/loop/order-scope';
 
 const GREEN_FLOOR: CorrectnessFloorResult = { ran: true, checks: [], blocks: false };
 
@@ -97,8 +101,11 @@ function fakeDriver(
     run: async (opts) => {
       driver.runs.push(opts);
       // Capture the order scope AS SEEN DURING the run (written before,
-      // cleared after — this is the only window it exists in).
-      driver.scopes.push(readOrderScope(opts.cwd).scope);
+      // cleared after — this is the only window it exists in), bound by the
+      // session token the runner injected into the agent env.
+      driver.scopes.push(
+        readOrderScope(opts.cwd, { expectedToken: opts.env[ORDER_TOKEN_ENV] }).scope,
+      );
       return {
         completed: true,
         timedOut: false,
@@ -245,6 +252,37 @@ describe('derived budget reaches the driver, disclosed with its derivation', () 
     expect(r.orders?.records[0].clamped).toContain('clamped');
   });
 
+  it('turns accumulate across orders against runBudget.maxTurns: clamped, then exhausted with disclosure', async () => {
+    // Run cap 60 turns; each order derives 50. Order a spends 50, b is
+    // clamped to the remaining 10, c finds the turn budget exhausted.
+    const driver = fakeDriver(() => ({ turns: 50 }));
+    const orders = ['a', 'b', 'c'].map((x) =>
+      agentOrder(`floor-failure:${x}`, {
+        budget: { turns: 50, minutes: 5, usd: 1, derivation: 'd' },
+      }),
+    );
+    const r = await runRemediateTask(
+      base(driver, orders, {
+        config: config({
+          agent: {
+            driver: 'fake-agent',
+            model: 'auto',
+            budget: { ...DEFAULT_REMEDIATE_BUDGET, maxTurns: 60 },
+          },
+        }),
+      }),
+    );
+    expect(driver.runs).toHaveLength(2);
+    expect(driver.runs[0].budget.maxTurns).toBe(50);
+    expect(driver.runs[1].budget.maxTurns).toBe(10);
+    const recB = r.orders?.records.find((x) => x.orderId === 'floor-failure:b');
+    expect(recB?.clamped).toContain('turns clamped 50 to 10');
+    const recC = r.orders?.records.find((x) => x.orderId === 'floor-failure:c');
+    expect(recC?.outcome).toBe('not-dispatched');
+    expect(recC?.detail).toContain('turns');
+    expect(r.outcome).toBe('budget-exhausted');
+  });
+
   it('run-budget exhaustion (spend) stops dispatch with the later orders deferred, and the verified diff lands as budget-exhausted', async () => {
     // First order reports spend beyond the whole run cap.
     const driver = fakeDriver(() => ({ costUsd: 99 }));
@@ -269,13 +307,17 @@ describe('the order scope file (the Stop-gate in-session done contract)', () => 
     const scope = driver.scopes[0] as {
       orderId: string;
       absentIds: string[];
+      kinds: string[];
       verifier: string;
+      token: string;
       envelope: { paths: string[] };
     } | null;
     expect(scope).not.toBeNull();
     expect(scope!.orderId).toBe('floor-failure:a');
     expect(scope!.absentIds).toEqual(['typescript:tests#floor-failure:a']);
+    expect(scope!.kinds).toEqual([]);
     expect(scope!.verifier).toBe('floor');
+    expect(scope!.token).toBeTruthy();
     expect(scope!.envelope.paths).toEqual(['src/']);
     // Cleared after the dispatch:
     expect(readOrderScope(opts.cwd).scope).toBeNull();
@@ -420,25 +462,138 @@ describe('refused recipe orders fall through to the agent tier in-run', () => {
   });
 });
 
-describe('the per-order done disclosure', () => {
-  it('floor-verifier orders report closed/open against the verified floor', async () => {
+describe('manifests: false is ENFORCED at the sweep', () => {
+  it('drops a dependency-manifest change even inside the envelope paths, disclosed', async () => {
     const driver = fakeDriver(() => ({}));
-    const failing: CorrectnessFloorResult = {
-      ran: true,
-      checks: [
-        { pack: 'typescript', label: 'tests', bin: 'npx', status: 'fail' },
-      ] as unknown as CorrectnessFloorResult['checks'],
-      blocks: true,
-    };
+    const cwd = tmpCwd();
+    // A real package.json plus a source file makes the TypeScript pack
+    // active (detection needs manifest AND source), so the DEFAULT manifest
+    // predicate (pack-declared patterns, Rule 6) recognizes the manifest —
+    // no injected probe.
+    fs.writeFileSync(path.join(cwd, 'package.json'), '{"name":"fx"}');
+    fs.mkdirSync(path.join(cwd, 'src'), { recursive: true });
+    fs.writeFileSync(path.join(cwd, 'src', 'index.ts'), 'export const x = 1;\n');
+    const git = fakeGit({ outside: ['package.json', 'src/ok.ts'] });
+    const order = agentOrder('floor-failure:a', {
+      envelope: { paths: ['src/', 'package.json'], manifests: false },
+    });
+    const r = await runRemediateTask(base(driver, [order], { cwd, git }));
+    expect(r.orders?.records[0].droppedPaths).toEqual(['package.json']);
+    expect(r.ledger).toContain('manifest-excluded');
+  });
+
+  it('manifests: true keeps manifest changes inside the envelope', async () => {
+    const driver = fakeDriver(() => ({}));
+    const cwd = tmpCwd();
+    fs.writeFileSync(path.join(cwd, 'package.json'), '{"name":"fx"}');
+    fs.mkdirSync(path.join(cwd, 'src'), { recursive: true });
+    fs.writeFileSync(path.join(cwd, 'src', 'index.ts'), 'export const x = 1;\n');
+    const git = fakeGit({ outside: ['package.json'] });
+    const order = agentOrder('floor-failure:a', {
+      envelope: { paths: ['src/', 'package.json'], manifests: true },
+    });
+    const r = await runRemediateTask(base(driver, [order], { cwd, git }));
+    expect(r.orders?.records[0].droppedPaths).toBeUndefined();
+  });
+});
+
+describe('starvation guard: a no-diff fallback run stays non-clean', () => {
+  it('refused-recipe fallback orders that landed nothing yield recipes-refused (never a green no-op)', async () => {
+    const driver = fakeDriver(() => ({}));
+    const fallback = agentOrder('stale-lockfile:package.json', {
+      class: 'stale-lockfile',
+      tier: 'recipe',
+      recipe: 'lockfile-sync',
+    });
+    const git = fakeGit({ diffAfterRuns: false });
+    const r = await runRemediateTask(base(driver, [fallback], { git }));
+    expect(r.outcome).toBe('recipes-refused');
+    expect(r.note).toContain('stale-lockfile:package.json');
+    expect(r.note).toContain('not clean');
+  });
+
+  it('a pure agent-tier queue with no diff stays an honest no-op', async () => {
+    const driver = fakeDriver(() => ({}));
+    const git = fakeGit({ diffAfterRuns: false });
+    const r = await runRemediateTask(base(driver, [agentOrder('floor-failure:a')], { git }));
+    expect(r.outcome).toBe('no-op');
+  });
+});
+
+describe('the legacy path keeps the negative constraint (maxOrdersPerRun: 0)', () => {
+  it('priorBlocking is rendered into the legacy task prompt too, never silently dropped', async () => {
+    const driver = fakeDriver(() => ({}));
+    const r = await runRemediateTask(
+      base(driver, [], {
+        config: config({ maxOrdersPerRun: 0 }),
+        priorBlocking: '- [secret] src/config.ts',
+      }),
+    );
+    expect(driver.runs).toHaveLength(1);
+    expect(driver.runs[0].prompt).not.toContain('Work order');
+    expect(driver.runs[0].prompt).toContain('NEGATIVE CONSTRAINT');
+    expect(driver.runs[0].prompt).toContain('src/config.ts');
+    // No diff on this fake tree — the legacy no-op arm; the prompt content
+    // above is the assertion that matters.
+    expect(r.outcome).toBe('no-op');
+  });
+});
+
+describe('ledger honesty for the recipe section', () => {
+  it('disabled AND plan-broken renders BOTH facts (the disabled note must not hide the planError)', () => {
+    const ledger = renderRemediateLedger({
+      outcome: 'no-op',
+      task: 'fix-build',
+      recipes: {
+        ran: false,
+        disabled: true,
+        planError: 'gather exploded',
+        disclosures: [],
+        selectedRecipeTier: 0,
+        selectedAgentTier: 0,
+        records: [],
+      },
+    });
+    expect(ledger).toContain('Recipes are disabled by policy');
+    expect(ledger).toContain('gather exploded');
+  });
+});
+
+describe('the per-order done disclosure', () => {
+  const failing: CorrectnessFloorResult = {
+    ran: true,
+    checks: [
+      { pack: 'typescript', label: 'tests', bin: 'npx', status: 'fail' },
+    ] as unknown as CorrectnessFloorResult['checks'],
+    blocks: true,
+  };
+
+  it('floor-verifier orders report closed/open against the verified floor (check-level id)', async () => {
+    const driver = fakeDriver(() => ({}));
+    const order = agentOrder('floor-failure:a', {
+      done: { absentIds: ['typescript:tests'], verifier: 'floor', command: 'floor check' },
+    });
     // The entry floor already carries the failure (pre-existing), so the
     // verified outcome is not floor-red; the order's target id stays OPEN.
     const r = await runRemediateTask(
-      base(driver, [agentOrder('floor-failure:a')], {
-        runFloor: () => failing,
-        entryFloor: failing,
-      }),
+      base(driver, [order], { runFloor: () => failing, entryFloor: failing }),
     );
-    expect(r.orders?.records[0].doneAfterVerify).toEqual({ closed: 0, open: 1 });
+    expect(r.orders?.records[0].doneAfterVerify).toEqual({ closed: 0, open: 1, undecided: 0 });
     expect(r.ledger).toContain('still open');
+  });
+
+  it('a target check the verification did not observe is UNDECIDED, never claimed closed', async () => {
+    const driver = fakeDriver(() => ({}));
+    // The order targets a check the verified floor never ran (absent from
+    // its checks) — the pre-fix ledger claimed it closed.
+    const order = agentOrder('floor-failure:b', {
+      done: { absentIds: ['go:build'], verifier: 'floor', command: 'floor check' },
+    });
+    const r = await runRemediateTask(
+      base(driver, [order], { runFloor: () => failing, entryFloor: failing }),
+    );
+    expect(r.orders?.records[0].doneAfterVerify).toEqual({ closed: 0, open: 0, undecided: 1 });
+    expect(r.ledger).toContain('undecided');
+    expect(r.ledger).toContain('not claimed closed');
   });
 });

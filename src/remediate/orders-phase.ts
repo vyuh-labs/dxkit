@@ -32,8 +32,14 @@
  * hinge tail lives only on the legacy path.
  */
 import type { CorrectnessFloorResult } from '../analyzers/correctness/run';
-import { checkKey } from '../analyzers/correctness/attribution';
-import { clearOrderScope, writeOrderScope } from '../loop/order-scope';
+import { detectActiveLanguages, dependencyManifestFilesIn } from '../languages';
+import {
+  ORDER_TOKEN_ENV,
+  clearOrderScope,
+  newOrderScopeToken,
+  writeOrderScope,
+} from '../loop/order-scope';
+import { completeOrdersRun } from './orders-complete';
 import { budgetOverruns, budgetPromptNote } from './budget-notes';
 import type { AgentRunResult, ResolvedModelChoice } from './driver';
 import type { AgentDriver } from './driver';
@@ -47,16 +53,10 @@ import type {
 } from './outcome';
 import type { RemediateBudget } from './config';
 import type { RecipePhaseSummary } from './recipes/run-recipes';
-import { pathInEnvelope } from './recipes/envelope';
+import { pathAllowedByEnvelope } from './recipes/envelope';
 import { priorBlockingNote, resumePromptNote } from './resume';
 import { REMEDIATION_NOTES_PATH, type RemediateTask } from './tasks';
 import { resolveOrderToolPolicy } from './tool-policy';
-import {
-  guardrailRedNote,
-  installFailedNote,
-  verificationDisclosures,
-  verifyCommittedHead,
-} from './verify';
 import { renderWorkOrderPrompt } from './work-orders/render';
 import type { WorkOrder } from './work-orders/types';
 
@@ -82,6 +82,10 @@ export interface OrdersPhaseArgs {
   readonly runFloor: () => CorrectnessFloorResult;
   readonly recipes: RecipePhaseSummary;
   readonly effectiveSalvage: 'discard' | 'draft-pr';
+  /** Injected for tests: is a path a dependency manifest/lockfile? Default
+   *  derives from the active packs' declared patterns (Rule 6) and backs
+   *  the envelope's `manifests: false` enforcement. */
+  readonly isManifestPath?: (path: string) => boolean;
 }
 
 /** Injected clock (tests); production uses Date.now. */
@@ -110,6 +114,20 @@ export async function runOrdersPhase(
   now: Clock = Date.now,
 ): Promise<Partial_> {
   const toolPolicy = resolveOrderToolPolicy(args.driver);
+  // Session binding for the order scope: one token per run, injected into
+  // the agent env so the Stop hook (which inherits it) can tell THIS lane's
+  // scope from a killed or concurrent lane's leftover.
+  const orderToken = newOrderScopeToken();
+  // The manifests:false gate reads the pack-declared manifest-pattern union
+  // (computed lazily once; injectable for tests).
+  let manifestProbe = args.isManifestPath;
+  const isManifestPath = (p: string): boolean => {
+    if (!manifestProbe) {
+      const packs = detectActiveLanguages(opts.cwd);
+      manifestProbe = (x) => dependencyManifestFilesIn([x], packs).length > 0;
+    }
+    return manifestProbe(p);
+  };
   const records: OrderRunRecord[] = [];
   const scrubbed: string[] = [];
   const failures: string[] = [];
@@ -147,23 +165,33 @@ export async function runOrdersPhase(
     const elapsedMinutes = (now() - startedAt) / 60_000;
     const remainingMinutes = args.runBudget.maxMinutes - elapsedMinutes;
     const remainingUsd = args.runBudget.maxUsd - (totalCost ?? 0);
-    if (remainingMinutes < 1 || remainingUsd <= 0) {
+    const remainingTurns = args.runBudget.maxTurns - (totalTurns ?? 0);
+    if (remainingMinutes < 1 || remainingUsd <= 0 || remainingTurns <= 0) {
       partial = true;
+      const dimension = remainingMinutes < 1 ? 'wall clock' : remainingUsd <= 0 ? 'spend' : 'turns';
       stopReason =
-        `the run budget is exhausted (` +
-        `${remainingMinutes < 1 ? 'wall clock' : 'spend'} — caps ` +
-        `${args.runBudget.maxMinutes} min / $${args.runBudget.maxUsd}); later orders are ` +
-        'deferred to the next firing';
+        `the run budget is exhausted (${dimension} — caps ` +
+        `${args.runBudget.maxTurns} turns / ${args.runBudget.maxMinutes} min / ` +
+        `$${args.runBudget.maxUsd}); later orders are deferred to the next firing`;
       records.push(notDispatched(order, stopReason));
       continue;
     }
+    // The per-order derived budget, clamped to the run's remainder in every
+    // dimension — the run-level caps bound the TOTAL across orders, so three
+    // orders can never spend three times the configured turn cap.
     const minutes = Math.min(order.budget.minutes, Math.floor(remainingMinutes));
-    const clamped =
-      minutes < order.budget.minutes
-        ? `minutes clamped ${order.budget.minutes} to ${minutes} (run budget remaining)`
-        : undefined;
+    const turns = Math.min(order.budget.turns, remainingTurns);
+    const clamps = [
+      ...(minutes < order.budget.minutes
+        ? [`minutes clamped ${order.budget.minutes} to ${minutes} (run budget remaining)`]
+        : []),
+      ...(turns < order.budget.turns
+        ? [`turns clamped ${order.budget.turns} to ${turns} (run budget remaining)`]
+        : []),
+    ];
+    const clamped = clamps.length > 0 ? clamps.join('; ') : undefined;
     const orderBudget: RemediateBudget = {
-      maxTurns: order.budget.turns,
+      maxTurns: turns,
       maxMinutes: minutes,
       maxUsd: Math.min(order.budget.usd, remainingUsd),
     };
@@ -180,9 +208,12 @@ export async function runOrdersPhase(
     writeOrderScope(opts.cwd, {
       orderId: order.id,
       absentIds: [...order.done.absentIds],
+      kinds: [...new Set(order.findings.map((f) => f.kind))],
       envelope: { paths: [...order.envelope.paths], manifests: order.envelope.manifests },
       verifier: order.done.verifier,
       command: order.done.command,
+      token: orderToken,
+      writtenAt: new Date().toISOString(),
     });
     let result: AgentRunResult;
     try {
@@ -191,7 +222,9 @@ export async function runOrdersPhase(
         prompt,
         budget: { maxTurns: orderBudget.maxTurns, maxMinutes: orderBudget.maxMinutes },
         model: args.choice.native,
-        env: opts.agentEnv ?? {},
+        // The order token rides the agent env so the Stop hook, which
+        // inherits it, can bind the scope file to THIS session.
+        env: { ...(opts.agentEnv ?? {}), [ORDER_TOKEN_ENV]: orderToken },
         ...(toolPolicy.tools ? { tools: toolPolicy.tools } : {}),
       });
     } finally {
@@ -262,7 +295,8 @@ export async function runOrdersPhase(
     // error — an unenforced diff must not land.
     const enforced = args.git.enforceEnvelope(
       orderBase,
-      (p) => pathInEnvelope(p, order.envelope) || p === REMEDIATION_NOTES_PATH,
+      (p) =>
+        p === REMEDIATION_NOTES_PATH || pathAllowedByEnvelope(p, order.envelope, isManifestPath),
     );
     if (enforced.error) {
       records.push({
@@ -333,137 +367,16 @@ export async function runOrdersPhase(
   };
   if (terminal) return terminal(summary, envelope);
 
-  const evidenceTail = lastTail ? { transcriptTail: lastTail } : {};
-  const hasDiff = args.git.hasDiff(args.baseHead);
-  const hasRecipeCommits = args.agentBase !== args.baseHead;
-  if (!hasDiff) {
-    const neverRanOnly =
-      records.length > 0 &&
-      records.every((r) => r.outcome === 'never-ran' || r.outcome === 'not-dispatched');
-    if (neverRanOnly) {
-      return {
-        outcome: 'agent-never-ran',
-        task: args.taskId,
-        recipes: args.recipes,
-        orders: summary,
-        envelope,
-        floor: args.entryFloor,
-        ...evidenceTail,
-        note: `agent never ran: ${records.find((r) => r.outcome === 'never-ran')?.detail ?? 'see the order records'}`,
-      };
-    }
-    if (!anyCompleted && !partial) {
-      return {
-        outcome: 'agent-failed',
-        task: args.taskId,
-        recipes: args.recipes,
-        orders: summary,
-        envelope,
-        floor: args.entryFloor,
-        ...evidenceTail,
-        note:
-          'every dispatched order ended in an error and produced no committed change. ' +
-          'Nothing to verify; nothing lands' +
-          (hasRecipeCommits
-            ? ' (the recipe commits stay on the branch, unlanded, for the next attempt)'
-            : '') +
-          '.',
-        baseHead: args.baseHead,
-        head: args.git.head(),
-      };
-    }
-    if (!hasRecipeCommits) {
-      return {
-        outcome: 'no-op',
-        task: args.taskId,
-        recipes: args.recipes,
-        orders: summary,
-        envelope,
-        floor: args.entryFloor,
-        ...evidenceTail,
-        ...(scrubbed.length > 0 ? { scrubbedArtifacts: scrubbed } : {}),
-        ...(partial ? { partial } : {}),
-        note:
-          scrubbed.length > 0
-            ? 'the dispatched orders produced no committed change beyond regenerable dxkit ' +
-              'scan state (dropped, disclosed below).'
-            : 'the dispatched orders produced no committed change.',
-        baseHead: args.baseHead,
-        head: args.git.head(),
-      };
-    }
-  }
-
-  const head = args.git.head();
-  const { verified, guardrail } = await verifyCommittedHead(opts, {
-    head,
-    baseHead: args.baseHead,
-    entryFloor: args.entryFloor,
-    runFloor: args.runFloor,
-  });
-
-  // Per-order done, judged from the FINAL verified floor for floor-verifier
-  // orders (a guardrail-verifier order's closure is arbitrated by the
-  // guardrail verdict below and the next plan — the ledger says so).
-  const failingKeys = new Set(
-    (verified.floor?.checks ?? [])
-      .filter((c) => c.status === 'fail')
-      .map((c) => checkKey(c.pack, c.label)),
-  );
-  const byId = new Map(dispatchList.map((o) => [o.id, o] as const));
-  const withDone = records.map((r) => {
-    const order = byId.get(r.orderId);
-    if (!order || order.done.verifier !== 'floor' || r.outcome === 'not-dispatched') return r;
-    const open = order.done.absentIds.filter((id) => failingKeys.has(id.split('#')[0])).length;
-    return { ...r, doneAfterVerify: { closed: order.done.absentIds.length - open, open } };
-  });
-  const finalSummary: OrdersPhaseSummary = { ...summary, records: withDone };
-
-  const common = {
-    task: args.taskId,
-    recipes: args.recipes,
-    orders: finalSummary,
+  return completeOrdersRun(opts, args, {
+    summary,
     envelope,
-    ...verificationDisclosures(verified, guardrail),
-    baseHead: args.baseHead,
-    head,
-    ...evidenceTail,
-    ...(scrubbed.length > 0 ? { scrubbedArtifacts: scrubbed } : {}),
-    ...(partial ? { partial } : {}),
-  };
-
-  if (verified.verdict === 'install-failed') {
-    return { outcome: 'install-failed', ...common, note: installFailedNote(verified) };
-  }
-  if (verified.verdict === 'floor-red') {
-    return {
-      outcome: 'floor-red',
-      ...common,
-      note:
-        'the correctness floor has NET-NEW failures after the order dispatches (the entry ' +
-        'floor did not have them) — nothing lands. An agent that breaks the build gets a ' +
-        'truthful failure, never a PR.',
-    };
-  }
-  if (!guardrail.ran || !guardrail.passesGate) {
-    return {
-      outcome: 'guardrail-red',
-      ...common,
-      note: guardrailRedNote(guardrail, args.effectiveSalvage),
-    };
-  }
-  if (partial) {
-    const salvage =
-      args.effectiveSalvage === 'draft-pr'
-        ? 'salvage policy: draft-pr — the verified partial work may land as a DRAFT.'
-        : 'salvage policy: discard — the partial work is not landed (branch left for inspection).';
-    return {
-      outcome: 'budget-exhausted',
-      ...common,
-      note: `a budget cap cut the order dispatches short — the diff is verified. ${salvage}`,
-    };
-  }
-  return { outcome: 'verified', ...common };
+    records,
+    dispatchList,
+    scrubbed,
+    lastTail,
+    partial,
+    anyCompleted,
+  });
 }
 
 function recordBase(order: WorkOrder): Omit<OrderRunRecord, 'outcome'> {

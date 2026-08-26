@@ -198,13 +198,14 @@ export function provisionArgv(pm: PackageManager): [string, ...string[]] {
  */
 export function installCommandPrefixes(): readonly string[] {
   const prefixes = new Set<string>();
+  // Documented aliases and the other dependency-mutating verbs (update /
+  // remove families) the canonical builders never emit. yarn has no bare
+  // install alias (plain `yarn` installs, which no prefix can single out).
   const aliases: Record<PackageManager, readonly string[]> = {
-    // `i` is the documented install alias for these three; yarn has none
-    // (bare `yarn` installs, which no prefix pattern can single out).
-    npm: ['npm i'],
-    pnpm: ['pnpm i'],
-    bun: ['bun i'],
-    yarn: [],
+    npm: ['npm i', 'npm add', 'npm update', 'npm up', 'npm uninstall', 'npm remove', 'npm rm'],
+    pnpm: ['pnpm i', 'pnpm update', 'pnpm up', 'pnpm remove', 'pnpm rm', 'pnpm uninstall'],
+    bun: ['bun i', 'bun update', 'bun remove', 'bun rm'],
+    yarn: ['yarn up', 'yarn upgrade', 'yarn remove'],
   };
   for (const pm of Object.keys(LOCKFILES) as PackageManager[]) {
     const [provisionBin, provisionVerb] = provisionArgv(pm);

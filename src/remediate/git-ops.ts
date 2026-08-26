@@ -94,7 +94,14 @@ export function realGit(cwd: string): RemediateGit {
       // is clean and only commits are in play. Fail-CLOSED: an enforcement
       // error is returned and the caller must not land the unenforced diff.
       try {
-        const changed = git(['diff', '--name-only', baseHead, 'HEAD']).split('\n').filter(Boolean);
+        // --no-renames: a rename must surface BOTH sides (the old path as a
+        // deletion, the new as an addition). Under rename detection the diff
+        // lists only the post-image, so enforcing an out-of-envelope
+        // `git mv` would DELETE the base file (the restore below never saw
+        // its old path) and land that destructive change undisclosed.
+        const changed = git(['diff', '--no-renames', '--name-only', baseHead, 'HEAD'])
+          .split('\n')
+          .filter(Boolean);
         const outside = changed.filter((f) => !isAllowed(f));
         if (outside.length === 0) return { dropped: [] };
         const baseTracked = new Set(

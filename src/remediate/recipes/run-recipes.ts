@@ -298,6 +298,12 @@ export interface RecipePhaseOptions {
  * discarded).
  */
 export async function runRecipePhaseForTask(opts: RecipePhaseOptions): Promise<RecipePhaseSummary> {
+  // Nothing consumes a plan when BOTH consumers are off: recipes disabled
+  // and order dispatch off (maxOrdersPerRun 0) — do not pay the planning
+  // gathers for a result nobody reads.
+  if (!opts.config.recipes.enabled && opts.config.maxOrdersPerRun <= 0) {
+    return emptyRecipePhase({ disabled: true });
+  }
   let plan;
   try {
     plan = await planRepoWorkOrders(opts.cwd, opts.config, {

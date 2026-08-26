@@ -50,10 +50,17 @@ export interface OrderRunRecord {
    *  line (closure is arbitrated by the one tree verification below). */
   readonly done: { readonly verifier: 'floor' | 'guardrail'; readonly absentIds: number };
   /** For floor-verifier orders, what the FINAL verified floor says about
-   *  the order's target checks (guardrail-verifier closure has no
-   *  per-finding read at this layer — the guardrail verdict + the next
-   *  plan arbitrate, and the ledger says so). */
-  readonly doneAfterVerify?: { readonly closed: number; readonly open: number };
+   *  the order's target findings, through the ONE `floorOrderDone`
+   *  computation the Stop-gate also reads. `undecided` counts ids the
+   *  verification could not observe (skipped/absent check) — never claimed
+   *  closed (guardrail-verifier closure has no per-finding read at this
+   *  layer: the guardrail verdict + the next plan arbitrate, and the
+   *  ledger says so). */
+  readonly doneAfterVerify?: {
+    readonly closed: number;
+    readonly open: number;
+    readonly undecided: number;
+  };
 }
 
 /** The orders phase, disclosed as one summary on the result. */

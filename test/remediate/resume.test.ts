@@ -48,6 +48,8 @@ function fakeExec(opts: {
       return '';
     }
     if (bin === 'git' && args[0] === 'rev-list') return String(opts.markers ?? 0);
+    if (bin === 'git' && args.includes('rev-parse')) return 'tree1234';
+    if (bin === 'git' && args.includes('commit-tree')) return 'marker5678';
     return '';
   };
   return { exec, calls };
@@ -127,7 +129,7 @@ describe('prepareResume — the eligibility ladder', () => {
     expect(resumePromptNote(d.attempt!, d.blockingContext)).toContain('BLOCKED by the guardrail');
   });
 
-  it('a guardrail-red draft is NOT a resume anchor: fresh run, blocking set carried as a negative constraint', () => {
+  it('a guardrail-red draft is NOT a resume anchor: fresh run, blocking set carried as a negative constraint, counter ADVANCED', () => {
     const body =
       'Task: **fix-vulns** — outcome: **guardrail-red**\n\nBlocking findings:\n- [secret] src/config.ts\n';
     const { exec, calls } = fakeExec({ openPr: true, markers: 0, prBody: body });
@@ -135,9 +137,32 @@ describe('prepareResume — the eligibility ladder', () => {
     expect(d.resumed).toBe(false);
     expect(d.note).toContain('guardrail-red');
     expect(d.note).toContain('budget-exhausted');
+    expect(d.note).toContain('attempt 1 of');
+    expect(d.attempt).toBe(1);
     expect(d.blockingContext).toContain('src/config.ts');
-    // No checkout, no marker: the tree is untouched on a refused resume.
+    // No checkout: the tree is untouched on a refused resume — but the
+    // attempt counter STILL advances (a content-free commit-tree marker,
+    // pushed), or a guardrail-red chain never reaches the escalation cap
+    // and re-spends a full budget on the same unfixable finding forever.
     expect(calls.some((c) => c[0] === 'git' && c.includes('--detach'))).toBe(false);
+    expect(calls.some((c) => c[0] === 'git' && c.includes('commit-tree'))).toBe(true);
+    const push = calls.find((c) => c[0] === 'git' && c[1] === 'push');
+    expect(push).toBeDefined();
+    expect(push!.join(' ')).toContain('marker5678:refs/heads/');
+  });
+
+  it('a guardrail-red chain reaches the attempt cap: human escalation, no more marker spend', () => {
+    const body = 'Task: **fix-vulns** — outcome: **guardrail-red**\n';
+    const { exec, calls } = fakeExec({
+      openPr: true,
+      markers: MAX_RESUME_ATTEMPTS,
+      prBody: body,
+    });
+    const d = prepareResume('/repo', 'fix-vulns', ON, exec);
+    expect(d.resumed).toBe(false);
+    expect(d.note).toContain('review or close the draft PR');
+    expect(d.note).toContain(`cap ${MAX_RESUME_ATTEMPTS}`);
+    expect(calls.some((c) => c[0] === 'git' && c.includes('commit-tree'))).toBe(false);
   });
 
   it('an open PR whose ledger outcome is verified (or unreadable) starts fresh, disclosed', () => {
@@ -149,6 +174,17 @@ describe('prepareResume — the eligibility ladder', () => {
     const d2 = prepareResume('/repo', 'fix-vulns', ON, unreadable.exec);
     expect(d2.resumed).toBe(false);
     expect(d2.note).toContain('unknown');
+  });
+
+  it('extractLedgerOutcome is anchored to the ledger line, never a prose mention of an outcome word', () => {
+    const prose =
+      '- earlier attempt discussion mentions outcome: **verified** in passing\n' +
+      'Task: **fix-vulns** — outcome: **budget-exhausted**\n';
+    const { exec } = fakeExec({ openPr: true, markers: 0, prBody: prose });
+    // The mid-line prose mention must not win: the real ledger line says
+    // budget-exhausted, so this RESUMES.
+    const d = prepareResume('/repo', 'fix-vulns', ON, exec);
+    expect(d.resumed).toBe(true);
   });
 
   it('any git/gh failure → fresh run, never a throw', () => {

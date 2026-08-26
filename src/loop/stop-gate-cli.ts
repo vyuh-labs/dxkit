@@ -18,7 +18,7 @@ import {
 } from './gate-cache';
 import { buildFloorGate } from './floor-gate';
 import { readStdinPayload } from './stop-gate-io';
-import { readOrderScope } from './order-scope';
+import { orderScopePresent } from './order-scope';
 import { trustedLocalContext } from '../analysis-trust';
 import { computeStopGate } from './stop-gate';
 
@@ -53,12 +53,13 @@ export async function runStopGate(cwd: string): Promise<void> {
   // signature captures every file the gather would see, so a cache hit is
   // only ever a genuinely-identical tree and the cache can never skip a
   // real net-new finding. Bypass with DXKIT_LOOP_NO_CACHE=1.
-  // An ACTIVE ORDER SCOPE bypasses the verdict cache entirely: the tree
-  // signature deliberately excludes dxkit's own runtime state, so it cannot
-  // see `.dxkit/loop/order.json` appear, change, or clear — a cached ALLOW
-  // from an unscoped stop must never replay over a pending order (and an
-  // order-scoped verdict must never be replayed after the lane clears it).
-  const orderScoped = readOrderScope(repoDir).scope !== null;
+  // ANY order-scope file on disk bypasses the verdict cache entirely: the
+  // tree signature deliberately excludes dxkit's own runtime state, so it
+  // cannot see `.dxkit/loop/order.json` appear, change, or clear — a cached
+  // ALLOW from an unscoped stop must never replay over a pending order, and
+  // a malformed or foreign file still means "something is scoping stops
+  // here": re-derive (which discloses the problem) rather than replay.
+  const orderScoped = orderScopePresent(repoDir);
   const signature =
     process.env.DXKIT_LOOP_NO_CACHE === '1' || orderScoped ? null : workingTreeSignature(repoDir);
   // The environment half of the cache key (T1.3): same tree + DIFFERENT

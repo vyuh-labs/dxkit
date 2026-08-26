@@ -140,6 +140,27 @@ describe('enforceEnvelope (the envelope enforcement half — real git)', () => {
     expect(git('status', '--porcelain')).toBe('');
   });
 
+  it('an out-of-envelope RENAME restores the base file AND removes the new path (rename-aware)', () => {
+    // The destructive class: with rename detection, the diff lists only the
+    // rename's post-image, so enforcement deleted the base file and landed
+    // that change undisclosed. Both sides must be reverted.
+    const base = git('rev-parse', 'HEAD');
+    mkdirSync(join(repo, 'src'), { recursive: true });
+    writeFileSync(join(repo, 'src', 'inside.js'), 'ok\n');
+    git('mv', 'src.js', 'moved.js');
+    commitAll('agent renamed a file out of envelope + real work');
+
+    const ops = realGit(repo);
+    const result = ops.enforceEnvelope(base, (p) => p.startsWith('src/'));
+    expect(result.error).toBeUndefined();
+    expect([...result.dropped].sort()).toEqual(['moved.js', 'src.js']);
+    // The base file is BACK, the rename target is gone, in-envelope work kept.
+    expect(git('show', 'HEAD:src.js')).toBe('module.exports = 1;');
+    expect(() => git('show', 'HEAD:moved.js')).toThrow();
+    expect(git('show', 'HEAD:src/inside.js')).toBe('ok');
+    expect(git('status', '--porcelain')).toBe('');
+  });
+
   it('is a no-op (no commit) when everything is inside the envelope', () => {
     const base = git('rev-parse', 'HEAD');
     writeFileSync(join(repo, 'src.js'), 'module.exports = 2;\n');

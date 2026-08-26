@@ -16,7 +16,16 @@ import type { OrdersPhaseSummary, RemediateResult } from './outcome';
 function renderRecipeSection(recipes: RecipePhaseSummary): string[] {
   const lines: string[] = ['### Deterministic recipes', ''];
   if (recipes.disabled) {
-    lines.push('Recipes are disabled by policy (`remediate.recipes.enabled: false`).', '');
+    lines.push('Recipes are disabled by policy (`remediate.recipes.enabled: false`).');
+    if (recipes.planError) {
+      // Disabled AND broken planning: both facts render — the disabled note
+      // must not hide why no order queue exists for the agent tier.
+      lines.push(
+        `Work-order planning failed (${recipes.planError}); no orders were queued for the ` +
+          'agent tier.',
+      );
+    }
+    lines.push('');
     return lines;
   }
   if (recipes.planError) {
@@ -88,15 +97,20 @@ function renderOrdersSection(orders: OrdersPhaseSummary): string[] {
       );
       lines.push(
         rec.droppedPaths && rec.droppedPaths.length > 0
-          ? `  - envelope enforcement DROPPED out-of-envelope change(s), disclosed: ` +
+          ? `  - envelope enforcement DROPPED out-of-envelope or manifest-excluded ` +
+              `change(s), disclosed: ` +
               rec.droppedPaths.join(', ')
           : '  - envelope enforcement: every change stayed inside the order envelope',
       );
       lines.push(
         rec.doneAfterVerify
           ? `  - done (${rec.done.verifier} verifier, ${rec.done.absentIds} target id(s)): ` +
-              `${rec.doneAfterVerify.closed} closed, ${rec.doneAfterVerify.open} still open ` +
-              `per the verified floor`
+              `${rec.doneAfterVerify.closed} closed, ${rec.doneAfterVerify.open} still open` +
+              (rec.doneAfterVerify.undecided > 0
+                ? `, ${rec.doneAfterVerify.undecided} undecided (the producing check was ` +
+                  `not observed by the verification — not claimed closed)`
+                : '') +
+              ` per the verified floor`
           : `  - done (${rec.done.verifier} verifier, ${rec.done.absentIds} target id(s)): ` +
               `closure is arbitrated by the verification below and the next plan`,
       );

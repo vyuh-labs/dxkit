@@ -37,7 +37,7 @@ import { resolveModelSetting, type AgentRunResult } from './driver';
 import { AGENT_DRIVERS, knownDriverIds } from './registry';
 import type { RemediateTask } from './tasks';
 import { resolveDispatchedTask } from './dispatch';
-import { resumePromptNote } from './resume';
+import { priorBlockingNote, resumePromptNote } from './resume';
 import { realGit } from './git-ops';
 import { armGateForDriver } from './agent-trust';
 import {
@@ -52,9 +52,8 @@ import { recipeTierStep } from './recipes/complete';
 import { dispatchQueuedOrders } from './orders-phase';
 import type { AgentEnvelope, RemediateResult, RemediateRunOptions } from './outcome';
 
-// The outcome vocabulary lives in `./outcome` and the ledger renderer in
-// `./ledger-render` (module-size splits); both are re-exported so consumers
-// keep one import surface.
+// The outcome vocabulary (`./outcome`) and ledger renderer
+// (`./ledger-render`) are re-exported so consumers keep one import surface.
 export type {
   AgentEnvelope,
   RemediateGit,
@@ -125,8 +124,7 @@ export async function runRemediateTask(opts: RemediateRunOptions): Promise<Remed
   const lifetime = clampBudgetToTokenLifetime(opts.config.agent.budget, process.env);
   const budget = lifetime.budget;
   // The ONE salvage resolver (config.ts): explicit policy wins; 'auto'
-  // follows the task's declared completion shape. The CLI's land decision
-  // reads the same function, so the note here and the landing agree.
+  // follows the task's completion shape (the CLI's land decision agrees).
   const effectiveSalvage = salvageForTask(opts.config, task);
   // Budget-envelope disclosures — the ONE phrasing, split to
   // `budget-notes.ts` at the large-file bar.
@@ -212,9 +210,8 @@ export async function runRemediateTask(opts: RemediateRunOptions): Promise<Remed
   const hasRecipeCommits = agentBase !== baseHead;
 
   opts.onPhase?.('agent');
-  // Order-driven dispatch (section 3C, the scoped agent): with a queue in
-  // hand the agent tier receives ONE rendered work order per agent run,
-  // never the open-ended task prompt; null keeps the legacy path below.
+  // Order-driven dispatch (section 3C): with a queue in hand the agent tier
+  // receives ONE rendered work order per run; null keeps the legacy path.
   const ordered = await dispatchQueuedOrders(opts, {
     taskId: task.id,
     driver,
@@ -237,9 +234,12 @@ export async function runRemediateTask(opts: RemediateRunOptions): Promise<Remed
   const resumeNote = opts.resume
     ? resumePromptNote(opts.resume.attempt, opts.resume.blockingContext)
     : '';
+  // A prior BLOCKED attempt's findings constrain the legacy prompt too:
+  // an empty order queue must not silently drop the negative constraint.
+  const negativeNote = opts.priorBlocking ? priorBlockingNote(opts.priorBlocking) : '';
   const agentResult: AgentRunResult = await driver.run({
     cwd: opts.cwd,
-    prompt: task.prompt + budgetNote + resumeNote,
+    prompt: task.prompt + budgetNote + resumeNote + negativeNote,
     budget: { maxTurns: budget.maxTurns, maxMinutes: budget.maxMinutes },
     model: choice.native,
     env: opts.agentEnv ?? {},
