@@ -53,6 +53,7 @@ function config(): RemediateConfig {
     maxSpendPerRun: 0,
     maxDispatchBudget: 0,
     maxOrdersPerRun: 0,
+    pauseAfterFailures: 0,
     resume: false,
     workOrders: { maxSliceSize: 25 },
     recipes: { enabled: true },
@@ -238,5 +239,55 @@ describe('recipe-only remediate runs', () => {
     expect(ran).toBe(true);
     expect(r.recipes?.planError).toContain('planner exploded');
     expect(r.ledger).toContain('planner exploded');
+  });
+});
+
+describe('circuit-breaker pauses inside the frame', () => {
+  it('an all-paused selection completes as a $0 no-op naming the pause, and the ledger renders it (no agent spawn)', async () => {
+    const summary = phase({
+      ran: false,
+      records: [],
+      selectedRecipeTier: 0,
+      selectedAgentTier: 0,
+      paused: [
+        {
+          orderId: 'dep-advisory:js-yaml',
+          class: 'dep-advisory',
+          tier: 'recipe',
+          findings: 2,
+          reason: 'the last 2 counted outcome(s) for this class were failures',
+          unpause: 'change the remediate policy, upgrade dxkit, or dispatch fix-vulns',
+        },
+      ],
+    });
+    const result = await runRemediateTask(base(false, summary));
+    expect(result.outcome).toBe('no-op');
+    expect(result.note).toContain('PAUSED by the circuit breaker');
+    expect(result.note).toContain('dep-advisory');
+    expect(result.note).toContain('Unpause:');
+    expect(result.ledger).toContain('Paused by the circuit breaker');
+    expect(result.ledger).toContain('dep-advisory:js-yaml');
+  });
+
+  it('a selection with one open and one paused order proceeds, with the pause disclosed in the ledger', async () => {
+    const summary = phase({
+      selectedRecipeTier: 1,
+      selectedAgentTier: 0,
+      paused: [
+        {
+          orderId: 'lint-located:src/a.ts',
+          class: 'lint-located',
+          tier: 'recipe',
+          findings: 3,
+          reason: 'streak',
+          unpause: 'policy change',
+        },
+      ],
+      agentOrders: [],
+    });
+    const result = await runRemediateTask(base(true, summary));
+    expect(result.outcome).toBe('verified');
+    expect(result.ledger).toContain('Paused by the circuit breaker');
+    expect(result.ledger).toContain('lint-located:src/a.ts');
   });
 });

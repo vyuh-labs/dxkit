@@ -133,6 +133,7 @@ function config(partial: Partial<RemediateConfig> = {}): RemediateConfig {
     maxDispatchBudget: 0,
     resume: false,
     maxOrdersPerRun: 3,
+    pauseAfterFailures: 0,
     workOrders: { maxSliceSize: 25 },
     recipes: { enabled: true },
     ...partial,

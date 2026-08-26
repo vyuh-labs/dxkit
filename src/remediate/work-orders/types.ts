@@ -239,6 +239,17 @@ export type WorkOrderProvenance =
       readonly deferred?: number;
     };
 
+/** The circuit-breaker mark on a planned order (remediate rethink, 3F):
+ *  the order is still PLANNED (visible, valued, disclosed) but no tier may
+ *  dispatch it. Applied by the gather layer from the order-outcome ledger,
+ *  never by the pure planner. */
+export interface WorkOrderPause {
+  /** Why the class is paused (the failure streak, latest outcome + time). */
+  readonly reason: string;
+  /** What lifts the pause, phrased for a human. */
+  readonly unpause: string;
+}
+
 export interface WorkOrder {
   /** Stable within a plan: `<class>:<natural unit>[#slice]`. */
   readonly id: string;
@@ -255,6 +266,9 @@ export interface WorkOrder {
    *  orders). Structured evidence lives on each finding. */
   readonly outputTail?: string;
   readonly provenance: WorkOrderProvenance;
+  /** Present when the circuit breaker paused this order's class: planned,
+   *  never dispatched, always disclosed. */
+  readonly paused?: WorkOrderPause;
 }
 
 /** A finding the planner could not place in any class, with the reason. */

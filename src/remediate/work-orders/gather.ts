@@ -69,6 +69,21 @@ import {
 import type { InstallFor } from './shared';
 import { WORK_ORDER_CLASSES, isBuiltinWorkOrderClass, type WorkOrderPlan } from './types';
 import type { RemediateTaskId } from '../tasks';
+import {
+  orderHistory,
+  orderLedgerPath,
+  type OrderBranchSource,
+  type OrderLedgerExec,
+  type OrderOutcomeRow,
+} from '../../lanes/order-ledger';
+import { remediateBranchFor } from '../../lanes/branches';
+import {
+  applyClassPauses,
+  evaluateClassPauses,
+  remediateStamp,
+  type ClassPause,
+  type RemediateStamp,
+} from './breaker';
 
 export type FloorSource = 'live' | 'baseline-envelope' | 'loop-snapshot' | 'none';
 
@@ -94,6 +109,18 @@ export interface GatherWorkOrderOptions {
   readonly baselineName?: string;
   /** Injected active packs (tests). */
   readonly packs?: readonly LanguageSupport[];
+  /** Injected order-outcome history rows for the circuit breaker (tests /
+   *  a caller that already read them). Default: the ONE ledger reader over
+   *  the local checkout plus the standing branches. */
+  readonly history?: readonly OrderOutcomeRow[];
+  /** Injected exec for the default history read's branch fetches (tests). */
+  readonly historyExec?: OrderLedgerExec;
+  /** Injected environment stamps for the breaker's unpause comparison
+   *  (tests). Default: `remediateStamp(cwd)`. */
+  readonly stamp?: RemediateStamp;
+  /** A task a human explicitly dispatched: its classes bypass any pause,
+   *  disclosed (never silent). */
+  readonly dispatchedTask?: string;
 }
 
 export interface GatheredWorkOrderInputs {
@@ -387,7 +414,20 @@ export async function gatherWorkOrderInputs(
   };
 }
 
-/** Gather + plan in one call: the surface entry point. */
+/** The standing branches where unmerged order-outcome rows can live: one
+ *  per task that owns a work-order class (derived from the ONE class spine,
+ *  never a hand-kept list — a new class's task is covered automatically). */
+export function orderHistoryBranchSources(): OrderBranchSource[] {
+  const tasks = [...new Set(Object.values(WORK_ORDER_CLASSES).map((c) => c.task))].sort();
+  return tasks.map((task) => ({
+    branch: remediateBranchFor(task),
+    file: orderLedgerPath('remediate', task),
+  }));
+}
+
+/** Gather + plan in one call: the surface entry point. Applies the circuit
+ *  breaker here (Rule 2.30: the plan CLI and the recipe phase both call
+ *  this, so neither can see a different pause set). */
 export async function planRepoWorkOrders(
   cwd: string,
   config: RemediateConfig,
@@ -397,12 +437,43 @@ export async function planRepoWorkOrders(
   floorSource: FloorSource;
   depScanSource: DepScanSource;
   disclosures: readonly string[];
+  /** Classes the circuit breaker paused (orders carry the per-order mark). */
+  pauses: readonly ClassPause[];
 }> {
   const gathered = await gatherWorkOrderInputs(cwd, config, opts);
+  const disclosures = [...gathered.disclosures];
+  let plan = planWorkOrders(gathered.input);
+
+  // The circuit breaker (section 3F): evaluated only when the plan has
+  // orders and the knob is armed — a zero-order plan never pays the
+  // history read.
+  let pauses: readonly ClassPause[] = [];
+  if (plan.orders.length > 0 && config.pauseAfterFailures > 0) {
+    let rows = opts.history;
+    if (rows === undefined) {
+      const history = orderHistory(cwd, {
+        branches: orderHistoryBranchSources(),
+        ...(opts.historyExec ? { exec: opts.historyExec } : {}),
+        ...(opts.now ? { now: opts.now } : {}),
+      });
+      rows = history.rows;
+      disclosures.push(...history.disclosures);
+    }
+    const evaluated = evaluateClassPauses(rows, {
+      threshold: config.pauseAfterFailures,
+      current: opts.stamp ?? remediateStamp(cwd),
+      ...(opts.dispatchedTask ? { dispatchedTask: opts.dispatchedTask } : {}),
+    });
+    disclosures.push(...evaluated.disclosures);
+    plan = applyClassPauses(plan, evaluated.pauses);
+    pauses = [...evaluated.pauses.values()];
+  }
+
   return {
-    plan: planWorkOrders(gathered.input),
+    plan,
     floorSource: gathered.floorSource,
     depScanSource: gathered.depScanSource,
-    disclosures: gathered.disclosures,
+    disclosures,
+    pauses,
   };
 }

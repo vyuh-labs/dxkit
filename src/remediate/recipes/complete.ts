@@ -39,6 +39,9 @@ export async function recipeTierStep(
       taskId: args.task.id,
       config: opts.config,
       entryFloor: args.entryFloor,
+      // An explicit human dispatch overrides the circuit breaker for this
+      // task's classes (disclosed by the breaker, never silent).
+      ...(opts.explicitDispatch ? { gather: { dispatchedTask: args.task.id } } : {}),
     });
   } catch (err) {
     recipes = {
@@ -51,7 +54,31 @@ export async function recipeTierStep(
     };
   }
   const selected = recipes.selectedRecipeTier + recipes.selectedAgentTier;
-  if (selected === 0) return { recipes };
+  if (selected === 0) {
+    // Every dispatchable order gone but PAUSED orders remain: the circuit
+    // breaker declined the spend. Complete here at $0 with the pause and
+    // its unpause conditions named — falling through would hand the task's
+    // open-ended legacy prompt to an agent, re-buying the exact failure the
+    // pause exists to stop.
+    const pausedClasses = [...new Set((recipes.paused ?? []).map((p) => p.class))];
+    if (pausedClasses.length > 0) {
+      const first = recipes.paused![0];
+      return {
+        recipes,
+        done: {
+          outcome: 'no-op',
+          task: args.task.id,
+          recipes,
+          floor: args.entryFloor,
+          note:
+            `every work order this task selects is PAUSED by the circuit breaker ` +
+            `(class(es): ${pausedClasses.join(', ')}); no agent was spawned, nothing was ` +
+            `spent ($0). Reason: ${first.reason}. Unpause: ${first.unpause}.`,
+        },
+      };
+    }
+    return { recipes };
+  }
   // Order-driven dispatch (the scoped-agent unit): with a plan in hand and a
   // positive per-run order cap, everything the recipe tier left OPEN — the
   // agent-tier orders plus every refused/failed recipe order — goes to the

@@ -44,6 +44,7 @@ function config(salvage: RemediateConfig['salvage'] = 'discard'): RemediateConfi
     maxSpendPerRun: 0,
     maxDispatchBudget: 0,
     maxOrdersPerRun: 0,
+    pauseAfterFailures: 0,
     resume: false,
     workOrders: { maxSliceSize: 25 },
     recipes: { enabled: true },
@@ -309,5 +310,137 @@ describe('executeTask landing layer (#273)', () => {
     expect(run.landed).toBe(false);
     expect(run.landRefused).toContain("HEAD is on 'feat/x'");
     expect(run.landingBlocked).toBeUndefined();
+  });
+});
+
+describe('order-outcome ledger wiring (scheduler memory, 3F)', () => {
+  function resultWithOrders(outcome: RemediateResult['outcome']): RemediateResult {
+    return {
+      outcome,
+      task: 'write-docs',
+      ledger: 'THE VERIFICATION LEDGER',
+      baseHead: 'aaaa1111',
+      head: 'bbbb2222',
+      orders: {
+        cap: 3,
+        queued: 1,
+        records: [
+          {
+            orderId: 'dep-advisory:x',
+            class: 'dep-advisory',
+            findings: 1,
+            budget: { turns: 5, minutes: 5, usd: 1, derivation: 'd' },
+            outcome: 'completed',
+            done: { verifier: 'guardrail', absentIds: 1 },
+          },
+        ],
+      },
+    };
+  }
+
+  it('a LANDING run writes the composed ledger file and hands its path to the lander', async () => {
+    const cwd = tempRepo();
+    let landerPath: string | undefined;
+    let written: unknown[] | undefined;
+    let published = false;
+    const run = await executeTask(
+      cwd,
+      config(),
+      'write-docs',
+      'pr',
+      seams({
+        runTask: async () => resultWithOrders('verified'),
+        landHead: (opts) => {
+          landerPath = opts.orderLedgerPath;
+          return { outcome: 'pr-opened', mode: 'pr', prUrl: 'https://example.test/pr/3' };
+        },
+        writeOrderLedger: (_cwd, _task, rows) => {
+          written = [...rows];
+          return '.dxkit/lanes/remediate-write-docs.orders.jsonl';
+        },
+        publishOrderRows: () => {
+          published = true;
+          return { published: true };
+        },
+      }),
+    );
+    expect(run.landed).toBe(true);
+    expect(landerPath).toBe('.dxkit/lanes/remediate-write-docs.orders.jsonl');
+    expect(written).toHaveLength(1);
+    expect((written![0] as { outcome: string }).outcome).toBe('verified');
+    expect(published).toBe(false);
+  });
+
+  it('a NON-landing outcome publishes rows to the standing branch (the breaker must see failures)', async () => {
+    const cwd = tempRepo();
+    let publishedRows: unknown[] | undefined;
+    let wroteLocal = false;
+    const run = await executeTask(
+      cwd,
+      config(),
+      'write-docs',
+      'pr',
+      seams({
+        runTask: async () => resultWithOrders('guardrail-red'),
+        writeOrderLedger: () => {
+          wroteLocal = true;
+          return null;
+        },
+        publishOrderRows: (_cwd, _task, rows) => {
+          publishedRows = [...rows];
+          return { published: true };
+        },
+      }),
+    );
+    expect(run.landed).toBe(false);
+    expect(wroteLocal).toBe(false);
+    expect(publishedRows).toHaveLength(1);
+    expect((publishedRows![0] as { outcome: string }).outcome).toBe('guardrail-red');
+  });
+
+  it('a local --land none run touches neither channel (tree and remote stay clean)', async () => {
+    const cwd = tempRepo();
+    let touched = false;
+    await executeTask(
+      cwd,
+      config(),
+      'write-docs',
+      'none',
+      seams({
+        runTask: async () => resultWithOrders('guardrail-red'),
+        writeOrderLedger: () => {
+          touched = true;
+          return null;
+        },
+        publishOrderRows: () => {
+          touched = true;
+          return { published: true };
+        },
+      }),
+    );
+    expect(touched).toBe(false);
+  });
+
+  it('a run with no order records writes nothing (legacy path)', async () => {
+    const cwd = tempRepo();
+    let touched = false;
+    await executeTask(
+      cwd,
+      config(),
+      'write-docs',
+      'pr',
+      seams({
+        runTask: async () => ({ ...verifiedResult() }),
+        writeOrderLedger: () => {
+          touched = true;
+          return null;
+        },
+        publishOrderRows: () => {
+          touched = true;
+          return { published: true };
+        },
+      }),
+    );
+    expect(touched).toBe(false);
   });
 });

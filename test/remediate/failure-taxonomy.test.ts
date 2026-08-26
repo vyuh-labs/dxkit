@@ -213,6 +213,7 @@ function config(): RemediateConfig {
     maxSpendPerRun: 0,
     maxDispatchBudget: 0,
     maxOrdersPerRun: 0,
+    pauseAfterFailures: 0,
     resume: false,
     workOrders: { maxSliceSize: 25 },
     recipes: { enabled: true },
