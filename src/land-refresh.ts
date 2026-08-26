@@ -24,20 +24,39 @@ import { internalGitPushArgs } from './git-internal-push';
 
 export type LandMode = 'pr' | 'push';
 
-export type Exec = (bin: string, args: readonly string[], opts?: { allowFail?: boolean }) => string;
+export type Exec = (
+  bin: string,
+  args: readonly string[],
+  opts?: {
+    allowFail?: boolean;
+    /** Piped to stdin (git plumbing like `hash-object --stdin`). */
+    input?: string;
+    /** Extra env vars layered over the process env (e.g. GIT_INDEX_FILE). */
+    env?: Readonly<Record<string, string>>;
+  },
+) => string;
 
-/** Real exec: capture stdout, tolerate failure only when asked. */
+/** Real exec: capture stdout, tolerate failure only when asked. The ONE
+ *  machine git-exec factory (Rule 2): every lane spawn inherits the
+ *  no-prompt hardening below instead of minting its own wrapper. */
 export function makeExec(cwd: string): Exec {
   return (bin, args, opts = {}) => {
     try {
       return execFileSync(bin, [...args], {
         cwd,
         encoding: 'utf8',
-        // Never hang a refresh on an interactive credential prompt; a bad
-        // remote fails fast and the caller surfaces it.
-        env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+        // Never hang a machine spawn on an interactive credential prompt; a
+        // bad remote fails fast and the caller surfaces it. Both prompt
+        // paths are disabled (HTTPS and SSH), the remote-ref discipline.
+        env: {
+          ...process.env,
+          GIT_TERMINAL_PROMPT: '0',
+          GIT_SSH_COMMAND: process.env.GIT_SSH_COMMAND ?? 'ssh -o BatchMode=yes',
+          ...(opts.env ?? {}),
+        },
         timeout: 60_000,
-        stdio: ['ignore', 'pipe', 'pipe'],
+        stdio: [opts.input !== undefined ? 'pipe' : 'ignore', 'pipe', 'pipe'],
+        ...(opts.input !== undefined ? { input: opts.input } : {}),
       }).toString();
     } catch (e) {
       if (opts.allowFail) return '';

@@ -24,6 +24,7 @@
 import * as fs from 'fs';
 import * as logger from '../logger';
 import { resolveRemediateConfig, tasksWithinSpendCeiling } from './config';
+import { staleDispatchWorkflowNote } from './dispatch';
 import { REMEDIATE_TASKS } from './tasks';
 
 // The executor (run one task + land it) lives in `./execute`, `remediate
@@ -66,13 +67,33 @@ export interface RemediateOptions {
   readonly taskId: string;
   readonly land?: 'pr' | 'none';
   readonly json?: boolean;
+  /** `--dispatch-override`: an explicit human dispatch that lifts a
+   *  circuit-breaker pause on this task's classes for this one run. An
+   *  EXPLICIT signal only — never inferred from ambient environment (an
+   *  inferred override would let any non-Actions automation bypass every
+   *  pause forever). */
+  readonly dispatchOverride?: boolean;
 }
 
 /** `remediate --task <t>` — run one task, verify, optionally land. */
 export async function runRemediate(cwd: string, opts: RemediateOptions): Promise<void> {
   const config = resolveRemediateConfig(cwd);
   logger.header(`dxkit remediate — ${opts.taskId}`);
-  const run = await executeTask(cwd, config, opts.taskId, opts.land === 'pr' ? 'pr' : 'none');
+  // The circuit-breaker override is the EXPLICIT --dispatch-override flag
+  // and nothing else: the updated workflow passes it when a
+  // workflow_dispatch names this task, and a human passes it at the
+  // terminal. Ambient environment never bypasses a pause. A dispatch on a
+  // pre-flag workflow is detectable and advised, not silently ignored.
+  const staleNote = staleDispatchWorkflowNote(process.env, !!opts.dispatchOverride);
+  if (staleNote) logger.warn(staleNote);
+  const run = await executeTask(
+    cwd,
+    config,
+    opts.taskId,
+    opts.land === 'pr' ? 'pr' : 'none',
+    {},
+    { explicitDispatch: !!opts.dispatchOverride },
+  );
   if (opts.json) {
     process.stdout.write(
       JSON.stringify({ schema: 'remediate.v1', ...taskRunJson(run) }, null, 2) + '\n',
@@ -157,6 +178,6 @@ export async function runRemediateConfigured(
 export function remediateUsage(): string {
   return (
     `usage: vyuh-dxkit remediate --task <${REMEDIATE_TASKS.map((t) => t.id).join('|')}> ` +
-    `[--land pr] [--json] | remediate configured [--land pr] | remediate plan`
+    `[--land pr] [--dispatch-override] [--json] | remediate configured [--land pr] | remediate plan`
   );
 }

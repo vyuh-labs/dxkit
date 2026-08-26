@@ -404,6 +404,10 @@ export async function run(argv: string[]): Promise<void> {
       default: { type: 'string' },
       // `remediate --task <t>` — which registry task the agent runs.
       task: { type: 'string' },
+      // `remediate --task <t> --dispatch-override` — an explicit human
+      // dispatch: overrides a circuit-breaker pause on the task's classes
+      // for this one run. Never inferred from ambient environment.
+      'dispatch-override': { type: 'boolean', default: false },
       verbose: { type: 'boolean', default: false },
       'no-save': { type: 'boolean', default: false },
       detailed: { type: 'boolean', default: false },
@@ -3205,6 +3209,7 @@ export async function run(argv: string[]): Promise<void> {
         taskId,
         land: landRaw === 'pr' ? 'pr' : 'none',
         json: !!values.json,
+        dispatchOverride: !!values['dispatch-override'],
       });
       break;
     }

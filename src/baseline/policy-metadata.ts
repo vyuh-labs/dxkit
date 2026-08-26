@@ -260,6 +260,14 @@ export const POLICY_PARAMS: readonly PolicyParamMeta[] = [
     anchor: 'remediate-orders-per-run',
   },
   {
+    path: 'remediate.pauseAfterFailures',
+    summary:
+      'circuit breaker: pause a work-order class after this many consecutive failed ' +
+      'firings (default 2; 0 disables; unpaused by a policy change, a dxkit upgrade, ' +
+      'or an explicit dispatch override)',
+    anchor: 'remediate-pause',
+  },
+  {
     path: 'remediate.workOrders.maxSliceSize',
     summary: 'largest number of findings one debt work order may carry (default 25)',
     anchor: 'remediate-work-orders',

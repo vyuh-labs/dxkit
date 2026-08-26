@@ -267,6 +267,11 @@ export interface RemediateRunOptions {
    *  resume anchor — the attempt's diff is discarded and this rides the next
    *  run's order prompts as a NEGATIVE constraint ("do not reintroduce"). */
   readonly priorBlocking?: string;
+  /** True when a human explicitly asked for THIS task (a workflow_dispatch
+   *  naming it, or a local `remediate --task`): the circuit breaker's
+   *  pauses on the task's classes are overridden for this run, disclosed.
+   *  Scheduled matrix runs leave it unset. */
+  readonly explicitDispatch?: boolean;
   /** Injected for tests: replaces the recipe phase (plan + execute the
    *  deterministic tier), the armInLoopGate seam pattern. */
   readonly runRecipePhase?: typeof runRecipePhaseForTask;

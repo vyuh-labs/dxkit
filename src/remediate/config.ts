@@ -33,6 +33,9 @@ export const DEFAULT_REMEDIATE_BUDGET: RemediateBudget = {
 /** Default `remediate.maxOrdersPerRun`. */
 export const DEFAULT_MAX_ORDERS_PER_RUN = 3;
 
+/** Default `remediate.pauseAfterFailures` (the circuit breaker). */
+export const DEFAULT_PAUSE_AFTER_FAILURES = 2;
+
 export interface RemediateConfig {
   readonly enabled: boolean;
   readonly tasks: readonly RemediateTaskId[];
@@ -83,6 +86,13 @@ export interface RemediateConfig {
    *  task prompt). Orders beyond the cap are disclosed, never silently
    *  dropped. */
   readonly maxOrdersPerRun: number;
+  /** The circuit breaker (`remediate.pauseAfterFailures`, default 2;
+   *  0 disables): a work-order class whose last N consecutive counted
+   *  FIRINGS are failures is PAUSED — planned but not dispatched, with
+   *  the reason and the unpause conditions disclosed — until the policy
+   *  changes, dxkit changes, an explicit dispatch override names its
+   *  task, or the failures age out of the history window. */
+  readonly pauseAfterFailures: number;
   /** Work-order planning knobs (`remediate.workOrders`). */
   readonly workOrders: {
     /** Largest number of findings one debt slice may carry
@@ -143,18 +153,24 @@ export function budgetForTask(config: RemediateConfig, taskId: string): Remediat
   };
 }
 
-/** Apply the run-level spend ceiling: tasks whose cumulative per-task maxUsd
- *  fits run now; the rest are deferred to the next firing (deterministic —
- *  declaration order). No ceiling → everything runs. */
-export function tasksWithinSpendCeiling(config: RemediateConfig): {
+/** Apply the run-level spend ceiling to an ordered task list (default: the
+ *  policy's declaration order): tasks whose cumulative per-task maxUsd fits
+ *  run now; the rest are deferred to the next firing (deterministic). No
+ *  ceiling → everything runs. The scheduled matrix passes a VALUE-ordered
+ *  list derived from the open work orders (`deriveScheduledMatrix`), so the
+ *  ceiling trims the lowest-value tasks first there. */
+export function tasksWithinSpendCeiling(
+  config: RemediateConfig,
+  orderedTasks: readonly RemediateTaskId[] = config.tasks,
+): {
   readonly run: readonly RemediateTaskId[];
   readonly deferred: readonly RemediateTaskId[];
 } {
-  if (config.maxSpendPerRun <= 0) return { run: config.tasks, deferred: [] };
+  if (config.maxSpendPerRun <= 0) return { run: orderedTasks, deferred: [] };
   const run: RemediateTaskId[] = [];
   const deferred: RemediateTaskId[] = [];
   let spend = 0;
-  for (const taskId of config.tasks) {
+  for (const taskId of orderedTasks) {
     const usd = budgetForTask(config, taskId).maxUsd;
     if (spend + usd <= config.maxSpendPerRun) {
       spend += usd;
@@ -236,6 +252,13 @@ export function resolveRemediateConfig(cwd: string): RemediateConfig {
       raw.maxOrdersPerRun >= 0
         ? raw.maxOrdersPerRun
         : DEFAULT_MAX_ORDERS_PER_RUN,
+    // 0 is a meaningful value (breaker off), same shape as maxOrdersPerRun.
+    pauseAfterFailures:
+      typeof raw.pauseAfterFailures === 'number' &&
+      Number.isInteger(raw.pauseAfterFailures) &&
+      raw.pauseAfterFailures >= 0
+        ? raw.pauseAfterFailures
+        : DEFAULT_PAUSE_AFTER_FAILURES,
     workOrders: {
       maxSliceSize: positiveNumber(
         ((raw.workOrders ?? {}) as Record<string, unknown>).maxSliceSize,

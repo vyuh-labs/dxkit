@@ -52,16 +52,13 @@ import { failingFloorDebt, floorDebtToBaseChecks, type FloorDebt } from '../../b
 import { readFloorBaseline } from '../../loop/floor-state';
 import { isSanitized } from '../../baseline/sanitize';
 import type { RichBaselineEntry } from '../../baseline/types';
-import { activeDeferredEntries, tryLoadAllowlist, type AllowlistFile } from '../../allowlist/file';
+import { tryLoadAllowlist } from '../../allowlist/file';
 import { partitionByActiveAllowlist } from '../../baseline/allowlist-match';
 import { discoverPackDepRoots } from '../../analyzers/security/nested-dep-roots';
-import { gatherDepVulnsWithAvailability } from '../../analyzers/security/gather';
 import type { DepVulnFinding } from '../../languages/capabilities/types';
 import { budgetForTask, type RemediateConfig } from '../config';
 import {
   planWorkOrders,
-  type AdvisoryInput,
-  type DeferredInput,
   type FloorFailureInput,
   type ManifestRoot,
   type PlannerInput,
@@ -69,16 +66,29 @@ import {
 import type { InstallFor } from './shared';
 import { WORK_ORDER_CLASSES, isBuiltinWorkOrderClass, type WorkOrderPlan } from './types';
 import type { RemediateTaskId } from '../tasks';
+import {
+  orderHistory,
+  orderLedgerPath,
+  type OrderBranchSource,
+  type OrderLedgerExec,
+  type OrderOutcomeRow,
+} from '../../lanes/order-ledger';
+import { remediateBranchFor } from '../../lanes/branches';
+import {
+  applyClassPauses,
+  evaluateClassPauses,
+  remediateStamp,
+  type ClassPause,
+  type RemediateStamp,
+} from './breaker';
 
 export type FloorSource = 'live' | 'baseline-envelope' | 'loop-snapshot' | 'none';
 
-/** Which source answered the deferral join. */
-export type DepScanSource = 'bom-artifact' | 'live-scan' | 'injected' | 'not-needed';
-
-/** How long a persisted BoM artifact counts as fresh for the deferral join.
- *  Deferral windows are days; a week-old fixed-version fact is still the
- *  right starting point, and the disclosure names the age either way. */
-export const BOM_FRESHNESS_DAYS = 7;
+// The deferral join (deferred allowlist entries joined to a dependency
+// scan) lives in `./deferrals` (module-size split); its public shapes are
+// re-exported here so consumers keep one import surface.
+export { BOM_FRESHNESS_DAYS, type DepScanSource } from './deferrals';
+import { joinDeferrals, type DepScanSource } from './deferrals';
 
 export interface GatherWorkOrderOptions {
   /** Run the live floor (default: read a stored envelope). */
@@ -94,6 +104,18 @@ export interface GatherWorkOrderOptions {
   readonly baselineName?: string;
   /** Injected active packs (tests). */
   readonly packs?: readonly LanguageSupport[];
+  /** Injected order-outcome history rows for the circuit breaker (tests /
+   *  a caller that already read them). Default: the ONE ledger reader over
+   *  the local checkout plus the standing branches. */
+  readonly history?: readonly OrderOutcomeRow[];
+  /** Injected exec for the default history read's branch fetches (tests). */
+  readonly historyExec?: OrderLedgerExec;
+  /** Injected environment stamps for the breaker's unpause comparison
+   *  (tests). Default: `remediateStamp(cwd)`. */
+  readonly stamp?: RemediateStamp;
+  /** A task a human explicitly dispatched: its classes bypass any pause,
+   *  disclosed (never silent). */
+  readonly dispatchedTask?: string;
 }
 
 export interface GatheredWorkOrderInputs {
@@ -102,18 +124,27 @@ export interface GatheredWorkOrderInputs {
   readonly depScanSource: DepScanSource;
   /** Degraded reads, phrased for humans; empty when nothing degraded. */
   readonly disclosures: readonly string[];
+  /** STRUCTURAL evidence degradation (an unreadable baseline, no floor
+   *  evidence at all): a zero-order plan built on this cannot claim
+   *  "nothing to do" — the scheduled matrix falls back to the static task
+   *  list instead of silently spawning nothing. Null = evidence healthy. */
+  readonly evidenceDegraded: string | null;
 }
 
-function readBaseline(cwd: string, name: string, disclosures: string[]): BaselineFile | null {
+function readBaseline(
+  cwd: string,
+  name: string,
+  disclosures: string[],
+): { baseline: BaselineFile | null; unreadable: boolean } {
   const p = pathForBaseline(cwd, name);
   try {
-    return fs.existsSync(p) ? readBaselineFile(p) : null;
+    return { baseline: fs.existsSync(p) ? readBaselineFile(p) : null, unreadable: false };
   } catch (err) {
     disclosures.push(
       `baseline '${name}' exists but could not be read (${err instanceof Error ? err.message : String(err)}); ` +
         'the plan proceeds WITHOUT the recorded backlog: floor attribution and debt are incomplete',
     );
-    return null;
+    return { baseline: null, unreadable: true };
   }
 }
 
@@ -236,106 +267,6 @@ function gatherFloor(
   return { failures: [], source: 'none' };
 }
 
-function advisoryFromLive(f: DepVulnFinding): AdvisoryInput {
-  return {
-    id: f.fingerprint!,
-    package: f.package,
-    ...(f.installedVersion !== undefined ? { installedVersion: f.installedVersion } : {}),
-    advisoryId: f.id,
-    ...(f.severity !== undefined ? { severity: f.severity } : {}),
-    ...(f.fixedVersion !== undefined ? { fixedVersion: f.fixedVersion } : {}),
-    ...(f.reachable !== undefined ? { reachable: f.reachable } : {}),
-    ...(f.packId !== undefined ? { pack: f.packId } : {}),
-  };
-}
-
-function advisoryFromEntry(e: Extract<RichBaselineEntry, { kind: 'dep-vuln' }>): AdvisoryInput {
-  return {
-    id: e.id,
-    package: e.package,
-    ...(e.installedVersion !== undefined ? { installedVersion: e.installedVersion } : {}),
-    advisoryId: e.advisoryId,
-    ...(e.severity !== undefined ? { severity: e.severity } : {}),
-  };
-}
-
-/** A fresh persisted BoM artifact's findings, when one exists (the scan the
- *  repo already paid for), else null. Defensive: any shape surprise reads as
- *  absent, never a crash. */
-function bomArtifactFindings(
-  cwd: string,
-  now: Date,
-): { findings: DepVulnFinding[]; ageDays: number } | null {
-  try {
-    const p = path.join(cwd, '.dxkit', 'bom.json');
-    if (!fs.existsSync(p)) return null;
-    const bom = JSON.parse(fs.readFileSync(p, 'utf8')) as {
-      analyzedAt?: string;
-      entries?: ReadonlyArray<{ vulns?: DepVulnFinding[] }>;
-    };
-    if (typeof bom.analyzedAt !== 'string' || !Array.isArray(bom.entries)) return null;
-    const ageDays = (now.getTime() - Date.parse(bom.analyzedAt)) / 86_400_000;
-    if (!Number.isFinite(ageDays) || ageDays < 0 || ageDays > BOM_FRESHNESS_DAYS) return null;
-    const findings = bom.entries.flatMap((e) => e.vulns ?? []).filter((v) => v && v.fingerprint);
-    return { findings, ageDays };
-  } catch {
-    return null;
-  }
-}
-
-async function joinDeferrals(
-  cwd: string,
-  allowlist: AllowlistFile | null,
-  byId: ReadonlyMap<string, RichBaselineEntry>,
-  opts: GatherWorkOrderOptions,
-  disclosures: string[],
-): Promise<{ deferred: DeferredInput[]; depScanSource: DepScanSource }> {
-  const now = opts.now ?? new Date();
-  const deferred = activeDeferredEntries(allowlist, now);
-  const needsScan = deferred.some((d) => d.kind === 'dep-vuln');
-  const scanned = new Map<string, DepVulnFinding>();
-  let depScanSource: DepScanSource = 'not-needed';
-  if (needsScan) {
-    if (opts.scanDepVulns) {
-      depScanSource = 'injected';
-      for (const f of (await opts.scanDepVulns(cwd)) ?? []) {
-        if (f.fingerprint) scanned.set(f.fingerprint, f);
-      }
-    } else {
-      const bom = bomArtifactFindings(cwd, now);
-      if (bom) {
-        depScanSource = 'bom-artifact';
-        disclosures.push(
-          `deferral join read the persisted BoM artifact (.dxkit/bom.json, ` +
-            `${bom.ageDays.toFixed(1)} day(s) old) instead of paying a live dependency audit`,
-        );
-        for (const f of bom.findings) scanned.set(f.fingerprint!, f);
-      } else {
-        depScanSource = 'live-scan';
-        disclosures.push(
-          'deferral join ran a live dependency audit (no fresh .dxkit/bom.json artifact to read)',
-        );
-        const result = await gatherDepVulnsWithAvailability(cwd);
-        for (const f of result.envelope?.findings ?? []) {
-          if (f.fingerprint) scanned.set(f.fingerprint, f);
-        }
-      }
-    }
-  }
-  const joined = deferred.map((d): DeferredInput => {
-    const base = { fingerprint: d.fingerprint, expiresAt: d.expiresAt! };
-    const hit = scanned.get(d.fingerprint);
-    if (hit) return { ...base, kind: 'dep-vuln', advisory: advisoryFromLive(hit) };
-    const entry = byId.get(d.fingerprint);
-    if (!entry) return { ...base, kind: 'unjoined', declaredKind: d.kind };
-    if (entry.kind === 'dep-vuln')
-      return { ...base, kind: 'dep-vuln', advisory: advisoryFromEntry(entry) };
-    if (entry.kind === 'custom-check') return { ...base, kind: 'custom-check', entry };
-    return { ...base, kind: 'other', entry };
-  });
-  return { deferred: joined, depScanSource };
-}
-
 /** Per class, the selecting task's effective budget (one budget per concept). */
 function budgetResolver(config: RemediateConfig): PlannerInput['policy']['budgetFor'] {
   return (cls) => {
@@ -351,8 +282,21 @@ export async function gatherWorkOrderInputs(
 ): Promise<GatheredWorkOrderInputs> {
   const disclosures: string[] = [];
   const packs = opts.packs ?? detectActiveLanguages(cwd);
-  const baseline = readBaseline(cwd, opts.baselineName ?? DEFAULT_BASELINE_NAME, disclosures);
+  const { baseline, unreadable } = readBaseline(
+    cwd,
+    opts.baselineName ?? DEFAULT_BASELINE_NAME,
+    disclosures,
+  );
   const floor = gatherFloor(cwd, baseline, packs, opts);
+  // Evidence health for the scheduled matrix (never for the plan itself:
+  // partial orders are still shown). A stored-floor default with no floor
+  // evidence anywhere ('none'), or a baseline that exists but cannot be
+  // read, means a zero-order plan proves nothing.
+  const evidenceDegraded = unreadable
+    ? 'the baseline exists but could not be read'
+    : floor.source === 'none'
+      ? 'no floor evidence is available (no baseline floor envelope, no loop snapshot; pass --with-floor to measure live)'
+      : null;
 
   const rich = (baseline?.findings ?? []).filter((e): e is RichBaselineEntry => !isSanitized(e));
   const byId = new Map(rich.map((e) => [e.id, e]));
@@ -375,6 +319,7 @@ export async function gatherWorkOrderInputs(
     floorSource: floor.source,
     depScanSource,
     disclosures,
+    evidenceDegraded,
     input: {
       floorFailures: floor.failures,
       blocking: [],
@@ -387,7 +332,20 @@ export async function gatherWorkOrderInputs(
   };
 }
 
-/** Gather + plan in one call: the surface entry point. */
+/** The standing branches where unmerged order-outcome rows can live: one
+ *  per task that owns a work-order class (derived from the ONE class spine,
+ *  never a hand-kept list — a new class's task is covered automatically). */
+export function orderHistoryBranchSources(): OrderBranchSource[] {
+  const tasks = [...new Set(Object.values(WORK_ORDER_CLASSES).map((c) => c.task))].sort();
+  return tasks.map((task) => ({
+    branch: remediateBranchFor(task),
+    file: orderLedgerPath('remediate', task),
+  }));
+}
+
+/** Gather + plan in one call: the surface entry point. Applies the circuit
+ *  breaker here (Rule 2.30: the plan CLI and the recipe phase both call
+ *  this, so neither can see a different pause set). */
 export async function planRepoWorkOrders(
   cwd: string,
   config: RemediateConfig,
@@ -397,12 +355,46 @@ export async function planRepoWorkOrders(
   floorSource: FloorSource;
   depScanSource: DepScanSource;
   disclosures: readonly string[];
+  /** Structural evidence degradation (see `GatheredWorkOrderInputs`). */
+  evidenceDegraded: string | null;
+  /** Classes the circuit breaker paused (orders carry the per-order mark). */
+  pauses: readonly ClassPause[];
 }> {
   const gathered = await gatherWorkOrderInputs(cwd, config, opts);
+  const disclosures = [...gathered.disclosures];
+  let plan = planWorkOrders(gathered.input);
+
+  // The circuit breaker (section 3F): evaluated only when the plan has
+  // orders and the knob is armed — a zero-order plan never pays the
+  // history read.
+  let pauses: readonly ClassPause[] = [];
+  if (plan.orders.length > 0 && config.pauseAfterFailures > 0) {
+    let rows = opts.history;
+    if (rows === undefined) {
+      const history = orderHistory(cwd, {
+        branches: orderHistoryBranchSources(),
+        ...(opts.historyExec ? { exec: opts.historyExec } : {}),
+        ...(opts.now ? { now: opts.now } : {}),
+      });
+      rows = history.rows;
+      disclosures.push(...history.disclosures);
+    }
+    const evaluated = evaluateClassPauses(rows, {
+      threshold: config.pauseAfterFailures,
+      current: opts.stamp ?? remediateStamp(cwd),
+      ...(opts.dispatchedTask ? { dispatchedTask: opts.dispatchedTask } : {}),
+    });
+    disclosures.push(...evaluated.disclosures);
+    plan = applyClassPauses(plan, evaluated.pauses);
+    pauses = [...evaluated.pauses.values()];
+  }
+
   return {
-    plan: planWorkOrders(gathered.input),
+    plan,
     floorSource: gathered.floorSource,
     depScanSource: gathered.depScanSource,
-    disclosures: gathered.disclosures,
+    disclosures,
+    evidenceDegraded: gathered.evidenceDegraded,
+    pauses,
   };
 }

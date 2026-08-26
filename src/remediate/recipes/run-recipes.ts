@@ -52,6 +52,17 @@ export interface RecipeOrderRecord {
   readonly droppedPaths?: readonly string[];
 }
 
+/** One order the circuit breaker paused — planned, selected by this task,
+ *  and deliberately NOT dispatched by any tier (disclosed, never silent). */
+export interface PausedOrderRecord {
+  readonly orderId: string;
+  readonly class: string;
+  readonly tier: 'recipe' | 'agent';
+  readonly findings: number;
+  readonly reason: string;
+  readonly unpause: string;
+}
+
 export interface RecipePhaseSummary {
   /** Did the phase execute at all? False when disabled, when planning
    *  failed, or when the task selects no recipe-tier orders. */
@@ -68,6 +79,10 @@ export interface RecipePhaseSummary {
    *  is disclosed so a reader knows what remains. */
   readonly selectedRecipeTier: number;
   readonly selectedAgentTier: number;
+  /** Orders the task selected whose class the circuit breaker PAUSED: in
+   *  neither tier count above, dispatched by nothing, disclosed here and in
+   *  the ledger (remediate rethink 3F — never a silent skip). */
+  readonly paused?: readonly PausedOrderRecord[];
   readonly records: readonly RecipeOrderRecord[];
   /** The orders LEFT for the agent tier after this phase, in plan (value)
    *  order: the selected agent-tier orders, plus every recipe-tier order
@@ -317,7 +332,21 @@ export async function runRecipePhaseForTask(opts: RecipePhaseOptions): Promise<R
       ...(opts.config.recipes.enabled ? {} : { disabled: true }),
     });
   }
-  const selected = selectOrders(plan.plan, classesSelectedBy(opts.taskId));
+  const allSelected = selectOrders(plan.plan, classesSelectedBy(opts.taskId));
+  // The circuit breaker's marks (applied by the ONE gather+plan entry
+  // point): a paused order is dispatched by NO tier — not the recipe tier
+  // here, not the agent queue below — and is disclosed, never dropped.
+  const pausedOrders = allSelected.filter((o) => o.paused);
+  const paused: PausedOrderRecord[] = pausedOrders.map((o) => ({
+    orderId: o.id,
+    class: String(o.class),
+    tier: o.tier,
+    findings: o.findings.length,
+    reason: o.paused!.reason,
+    unpause: o.paused!.unpause,
+  }));
+  const pausedDisclosure = paused.length > 0 ? { paused } : {};
+  const selected = allSelected.filter((o) => !o.paused);
   const recipeTier = selected.filter((o) => o.tier === 'recipe');
   if (!opts.config.recipes.enabled) {
     // The knob's documented meaning: route EVERY selected order to the
@@ -328,6 +357,7 @@ export async function runRecipePhaseForTask(opts: RecipePhaseOptions): Promise<R
       disclosures: plan.disclosures,
       selectedRecipeTier: 0,
       selectedAgentTier: selected.length,
+      ...pausedDisclosure,
       agentOrders: selected,
     });
   }
@@ -335,6 +365,7 @@ export async function runRecipePhaseForTask(opts: RecipePhaseOptions): Promise<R
     disclosures: plan.disclosures,
     selectedRecipeTier: recipeTier.length,
     selectedAgentTier: selected.length - recipeTier.length,
+    ...pausedDisclosure,
   };
   if (recipeTier.length === 0) {
     return { ran: false, records: [], ...summaryBase, agentOrders: selected };

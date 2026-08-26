@@ -14,7 +14,7 @@ Work lands only as a PR carrying the verification ledger.
 
 ```bash
 vyuh-dxkit remediate plan [path] [--json] [--with-floor]  # dry-run: no key, no spend
-vyuh-dxkit remediate [path] --task <id> [--land pr] [--json]
+vyuh-dxkit remediate [path] --task <id> [--land pr] [--dispatch-override] [--json]
 vyuh-dxkit remediate configured [path] [--land pr] [--json]
 ```
 
@@ -31,7 +31,17 @@ vyuh-dxkit remediate configured [path] [--land pr] [--json]
   are listed under `undispatchable` with the reason. The floor is read from
   the baseline's recorded envelope (or the loop snapshot) so the plan stays
   cheap; `--with-floor` runs the live floor instead, and the output says
-  which source it used (`workOrderFloorSource`).
+  which source it used (`workOrderFloorSource`). The scheduled matrix
+  (`matrixTasks`) is derived from the OPEN orders in value order: a task
+  with no open orders spawns no scheduled job, open-ended tasks
+  (`improve-tests`, `write-docs`) appear only when policy lists them
+  explicitly (disclosed as the legacy shape), and classes the circuit
+  breaker paused are shown with the reason and the unpause conditions
+  (`pausedClasses`). When the plan's evidence is degraded (an unreadable
+  baseline, no floor evidence anywhere), the matrix falls back to the
+  static policy task list with the reason named, so a fail-open zero can
+  never silently turn the schedule off. A dispatch naming a task bypasses
+  the matrix and runs exactly that task.
 - `--task <id>` runs one task. With `--land pr` a `verified` outcome (or a
   `budget-exhausted` one under the `draft-pr` salvage policy) pushes the
   standing branch `dxkit/remediate-<task>` and opens or updates its PR.
@@ -75,6 +85,18 @@ campaigns (below) and can never be scheduled from policy.
   and named. `remediate plan` prints the per-run projection (the sum of
   the matrix tasks' caps) either way — each matrix task is its own
   invocation with its own cap, so one firing may spend the sum.
+- `remediate.pauseAfterFailures` (default 2, 0 = off): the circuit
+  breaker. A work-order class whose last N counted FIRINGS are failures
+  (guardrail-red, floor-red, install-failed, a failed recipe; one red run
+  counts once per class; refusals and infrastructure never count) is
+  paused: planned but not dispatched, always disclosed. The pause lifts on
+  a remediate policy change, a dxkit upgrade, an explicit dispatch
+  override (`--dispatch-override`, which the current workflow template
+  passes when a dispatch names the task), or when the failures age out of
+  the 60-day order-history window. Outcome rows live in
+  `.dxkit/lanes/<lane>-<task>.orders.jsonl` (committed with a landing;
+  pushed as a metadata commit on the standing branch when nothing lands,
+  parented only on the remote branch head, never on local history).
 - `remediate.maxDispatchBudget` (0 = undeclared): the dispatch spend
   authority. It clamps the `max_usd` override AND the `max_turns`
   override (proportionally against the policy budget) — turns govern real

@@ -25,6 +25,7 @@ function renderRecipeSection(recipes: RecipePhaseSummary): string[] {
           'agent tier.',
       );
     }
+    lines.push(...renderPausedOrders(recipes));
     lines.push('');
     return lines;
   }
@@ -63,7 +64,22 @@ function renderRecipeSection(recipes: RecipePhaseSummary): string[] {
     }
   }
   for (const d of recipes.disclosures) lines.push(`- plan disclosure: ${d}`);
+  lines.push(...renderPausedOrders(recipes));
   lines.push('');
+  return lines;
+}
+
+/** Circuit-breaker pauses (3F): a paused order is planned and selected but
+ *  dispatched by NO tier — the ledger names each one, the reason, and what
+ *  lifts the pause. Never a silent skip. */
+function renderPausedOrders(recipes: RecipePhaseSummary): string[] {
+  const paused = recipes.paused ?? [];
+  if (paused.length === 0) return [];
+  const lines: string[] = ['', '**Paused by the circuit breaker (not dispatched):**'];
+  for (const p of paused) {
+    lines.push(`- \`${p.orderId}\` (${p.class}, ${p.findings} finding(s)): ${p.reason}`);
+  }
+  lines.push(`- unpause: ${paused[0].unpause}`);
   return lines;
 }
 
@@ -236,7 +252,13 @@ export function renderRemediateLedger(r: Omit<RemediateResult, 'ledger'>): strin
     lines.push('');
   }
 
-  if (r.recipes && (r.recipes.ran || r.recipes.disabled || r.recipes.planError)) {
+  if (
+    r.recipes &&
+    (r.recipes.ran ||
+      r.recipes.disabled ||
+      r.recipes.planError ||
+      (r.recipes.paused?.length ?? 0) > 0)
+  ) {
     lines.push(...renderRecipeSection(r.recipes));
   }
 

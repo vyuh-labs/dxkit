@@ -5,7 +5,7 @@
  * managed workflow reads. Split from `cli.ts` purely for module size.
  */
 import * as logger from '../logger';
-import { budgetForTask, resolveRemediateConfig, tasksWithinSpendCeiling } from './config';
+import { budgetForTask, resolveRemediateConfig } from './config';
 import { resolveModelSetting } from './driver';
 import { AGENT_DRIVERS, driverById } from './registry';
 import { remediateTaskById } from './tasks';
@@ -19,6 +19,8 @@ import {
 } from './work-orders/gather';
 import { renderWorkOrderSummary } from './work-orders/render';
 import type { WorkOrderPlan } from './work-orders/types';
+import type { ClassPause } from './work-orders/breaker';
+import { deriveScheduledMatrix } from './work-orders/schedule';
 
 export interface RemediatePlanOptions {
   readonly json?: boolean;
@@ -55,6 +57,7 @@ function projectWorkOrders(plan: WorkOrderPlan) {
       recipe: o.recipe ?? null,
       findings: o.findings.length,
       findingIds: o.findings.map((f) => f.id),
+      paused: o.paused ?? null,
       attribution: [...new Set(o.findings.map((f) => f.attribution))],
       envelope: o.envelope,
       install: o.constraints.install ?? null,
@@ -103,27 +106,17 @@ export async function runRemediatePlan(
   });
 
   const availability = driver ? driver.available(cwd) : undefined;
-  // The run-level spend ceiling, applied here so the WORKFLOW's matrix reads
-  // the trimmed list from the plan (one derivation) instead of re-deriving it.
-  const ceiling = tasksWithinSpendCeiling(config);
-  // The disclosed per-RUN spend projection (the undisclosed-4x class): each
-  // matrix task is its own invocation with its own maxUsd, so one firing may
-  // spend the SUM — a ceiling multiplication the serial shape's coupling
-  // used to hide. Derived from the same per-task budgets the runner
-  // enforces, and shown whether or not maxSpendPerRun caps it.
-  const projectedMaxSpendUsd = ceiling.run.reduce(
-    (sum, taskId) => sum + budgetForTask(config, taskId).maxUsd,
-    0,
-  );
 
   // The work-order plan (remediate rethink, section 3A): the finite units the
   // lane would dispatch, from the live entry floor + debt + deferrals via the
-  // ONE gather adapter. Fail-open: a gather failure is disclosed, never a
-  // crashed plan.
+  // ONE gather adapter (circuit-breaker pauses applied there). Fail-open: a
+  // gather failure is disclosed, never a crashed plan.
   let plan: WorkOrderPlan | null = null;
   let floorSource: FloorSource | null = null;
   let depScanSource: DepScanSource | null = null;
   let disclosures: readonly string[] = [];
+  let pauses: readonly ClassPause[] = [];
+  let evidenceDegraded: string | null = null;
   let planError: string | null = null;
   try {
     const gathered = await planRepoWorkOrders(cwd, config, {
@@ -134,9 +127,26 @@ export async function runRemediatePlan(
     floorSource = gathered.floorSource;
     depScanSource = gathered.depScanSource;
     disclosures = gathered.disclosures;
+    pauses = gathered.pauses;
+    evidenceDegraded = gathered.evidenceDegraded;
   } catch (err) {
     planError = err instanceof Error ? err.message : String(err);
   }
+
+  // The scheduled matrix, derived from the OPEN orders (section 3F): a task
+  // with no open (unpaused) orders spawns no job; the value order comes from
+  // the plan; the spend ceiling trims lowest-value first. Falls back to the
+  // static policy task list when no plan exists, disclosed.
+  const matrix = deriveScheduledMatrix({ config, plan, planError, evidenceDegraded });
+  // The disclosed per-RUN spend projection (the undisclosed-4x class): each
+  // matrix task is its own invocation with its own maxUsd, so one firing may
+  // spend the SUM — a ceiling multiplication the serial shape's coupling
+  // used to hide. Derived from the same per-task budgets the runner
+  // enforces, and shown whether or not maxSpendPerRun caps it.
+  const projectedMaxSpendUsd = matrix.run.reduce(
+    (sum, taskId) => sum + budgetForTask(config, taskId).maxUsd,
+    0,
+  );
 
   if (opts.json) {
     process.stdout.write(
@@ -152,10 +162,20 @@ export async function runRemediatePlan(
           salvage: config.salvage,
           schedule: config.schedule,
           tasks: rows,
-          /** The per-task workflow matrix: enabled tasks within the run's
-           *  spend ceiling, in declaration order. */
-          matrixTasks: ceiling.run,
-          deferredBySpendCeiling: ceiling.deferred,
+          /** The per-task workflow matrix: derived from the OPEN work orders
+           *  (value order, spend ceiling applied); a task with no open
+           *  orders spawns no job. Static policy-list fallback when no plan
+           *  exists (matrixSource says which). */
+          matrixTasks: matrix.run,
+          deferredBySpendCeiling: matrix.deferred,
+          matrixSource: matrix.source,
+          matrixEvidenceDegraded: evidenceDegraded,
+          matrixNoOpenOrders: matrix.noOpenOrders,
+          matrixLegacyOpenEnded: matrix.legacyOpenEnded,
+          matrixDisclosures: matrix.disclosures,
+          /** Classes the circuit breaker paused (orders carry per-order
+           *  marks; this is the class-level summary with the reasons). */
+          pausedClasses: pauses,
           maxSpendPerRun: config.maxSpendPerRun,
           /** What one firing may spend: Σ of the matrix tasks' per-task
            *  maxUsd (each matrix job is its own invocation with its own
@@ -216,7 +236,7 @@ export async function runRemediatePlan(
     );
   }
   logger.info(
-    `per-run spend projection: up to $${projectedMaxSpendUsd} across ${ceiling.run.length} ` +
+    `per-run spend projection: up to $${projectedMaxSpendUsd} across ${matrix.run.length} ` +
       `task(s) in one firing` +
       (config.maxSpendPerRun > 0
         ? ` (maxSpendPerRun: $${config.maxSpendPerRun})`
@@ -239,11 +259,20 @@ export async function runRemediatePlan(
   for (const unknown of config.unknownTasks) {
     logger.warn(`  unknown task in policy (ignored): '${unknown}'`);
   }
-  if (ceiling.deferred.length > 0) {
+  if (matrix.deferred.length > 0) {
     logger.warn(
-      `  spend ceiling ($${config.maxSpendPerRun}/run): ${ceiling.deferred.join(', ')} ` +
+      `  spend ceiling ($${config.maxSpendPerRun}/run): ${matrix.deferred.join(', ')} ` +
         'deferred to the next firing (disclosed, never dropped).',
     );
+  }
+  logger.info(
+    `scheduled matrix (${matrix.source}): ` +
+      (matrix.run.length > 0 ? matrix.run.join(', ') : 'no jobs (nothing to spend on)'),
+  );
+  for (const d of matrix.disclosures) logger.dim(`  ${d}`);
+  for (const pause of pauses) {
+    logger.warn(`  circuit breaker: class '${pause.class}' PAUSED: ${pause.reason}`);
+    logger.warn(`    unpause: ${pause.unpause}`);
   }
 
   if (planError) {
