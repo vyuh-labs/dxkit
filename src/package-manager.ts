@@ -184,6 +184,40 @@ export function provisionArgv(pm: PackageManager): [string, ...string[]] {
   }
 }
 
+/**
+ * Command prefixes ("<bin> <verb>", plus the bare-verb aliases each manager
+ * accepts) that install or mutate dependencies, across every package manager
+ * dxkit knows. Derived from the canonical command builders above wherever a
+ * builder exists (provision, add-dev, upgrade), with the short aliases each
+ * ecosystem documents declared HERE, in the one module that owns package
+ * manager vocabulary, never in a consumer.
+ *
+ * Consumers: the remediate order runs forbid agent-run installs (installs are
+ * a frame/recipe step so the lockfile is always re-synced and pre-checked),
+ * and render these prefixes into the driver's tool-deny patterns.
+ */
+export function installCommandPrefixes(): readonly string[] {
+  const prefixes = new Set<string>();
+  const aliases: Record<PackageManager, readonly string[]> = {
+    // `i` is the documented install alias for these three; yarn has none
+    // (bare `yarn` installs, which no prefix pattern can single out).
+    npm: ['npm i'],
+    pnpm: ['pnpm i'],
+    bun: ['bun i'],
+    yarn: [],
+  };
+  for (const pm of Object.keys(LOCKFILES) as PackageManager[]) {
+    const [provisionBin, provisionVerb] = provisionArgv(pm);
+    prefixes.add(`${provisionBin} ${provisionVerb}`);
+    const [addBin, addVerb] = addDevPrefix(pm).split(' ');
+    prefixes.add(`${addBin} ${addVerb}`);
+    const [upgradeBin, upgradeVerb] = upgradeArgv(pm, 'pkg', '0.0.0', 'dependencies');
+    prefixes.add(`${upgradeBin} ${upgradeVerb}`);
+    for (const alias of aliases[pm]) prefixes.add(alias);
+  }
+  return [...prefixes].sort();
+}
+
 // ---------------------------------------------------------------------------
 // Frozen-lockfile install + lockfile-sync check: the ONE definition CI and the
 // lane's verification share (4.4.5). Before this, every workflow template
