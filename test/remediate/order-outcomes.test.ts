@@ -158,6 +158,119 @@ describe('orderOutcomeRows (the projection)', () => {
   it('a run with no order records yields no rows (legacy path, refusals)', () => {
     expect(orderOutcomeRows({ outcome: 'refused' }, 't', META)).toEqual([]);
   });
+
+  it('ONE terminal row per order: an agent attempt supersedes the recipe failure it fell through from', () => {
+    const result: Pick<RemediateResult, 'outcome' | 'recipes' | 'orders'> = {
+      outcome: 'verified',
+      recipes: recipes({
+        records: [
+          {
+            orderId: 'dep-advisory:x',
+            class: 'dep-advisory',
+            recipe: 'override-pin',
+            outcome: { kind: 'failed', step: 'verify', output: 'still present' },
+          },
+        ],
+      }),
+      orders: {
+        cap: 3,
+        queued: 1,
+        records: [
+          {
+            orderId: 'dep-advisory:x',
+            class: 'dep-advisory',
+            findings: 1,
+            budget: { turns: 5, minutes: 5, usd: 1, derivation: 'x' },
+            outcome: 'completed',
+            done: { verifier: 'guardrail', absentIds: 1 },
+          },
+        ],
+      },
+    };
+    const rows = orderOutcomeRows(result, 'fix-vulns', META);
+    // The recipe failed, the agent fixed it in the SAME run: one row, the
+    // terminal tier's verified outcome — a kept failure row would let the
+    // breaker pause a class that is actively being fixed.
+    expect(rows).toHaveLength(1);
+    expect(rows[0].tier).toBe('agent');
+    expect(rows[0].outcome).toBe('verified');
+  });
+
+  it('a NEUTRAL agent record (not dispatched, never ran) leaves the recipe evidence standing', () => {
+    const result: Pick<RemediateResult, 'outcome' | 'recipes' | 'orders'> = {
+      outcome: 'recipes-refused',
+      recipes: recipes({
+        records: [
+          {
+            orderId: 'dep-advisory:x',
+            class: 'dep-advisory',
+            recipe: 'override-pin',
+            outcome: { kind: 'failed', step: 'verify', output: 'still present' },
+          },
+        ],
+      }),
+      orders: {
+        cap: 0,
+        queued: 1,
+        records: [orderRecord('dep-advisory:x', 'not-dispatched', { detail: 'cap 0' })],
+      },
+    };
+    const rows = orderOutcomeRows(result, 'fix-vulns', META);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].tier).toBe('recipe');
+    expect(rows[0].outcome).toBe('failed-recipe');
+  });
+
+  it('paused orders collapse to ONE bookkeeping marker per class per firing', () => {
+    const result: Pick<RemediateResult, 'outcome' | 'recipes' | 'orders'> = {
+      outcome: 'no-op',
+      recipes: recipes({
+        paused: [
+          {
+            orderId: 'lint-located:a',
+            class: 'lint-located',
+            tier: 'recipe',
+            findings: 2,
+            reason: 'streak',
+            unpause: 'x',
+          },
+          {
+            orderId: 'lint-located:b',
+            class: 'lint-located',
+            tier: 'agent',
+            findings: 1,
+            reason: 'streak',
+            unpause: 'x',
+          },
+        ],
+      }),
+    };
+    const rows = orderOutcomeRows(result, 'fix-lint', META);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].outcome).toBe('paused');
+    expect(rows[0].detail).toContain('2 order(s) paused');
+  });
+
+  it("'score-red' (and every unlisted red) is classified breaker-NEUTRAL by the exhaustive verdict switch", () => {
+    const rows = orderOutcomeRows(
+      {
+        outcome: 'score-red',
+        recipes: recipes({
+          records: [
+            {
+              orderId: 'r1',
+              class: 'stale-lockfile',
+              recipe: 'lockfile-sync',
+              outcome: { kind: 'applied', changedFiles: ['x'] },
+            },
+          ],
+        }),
+      },
+      't',
+      META,
+    );
+    expect(rows[0].outcome).toBe('no-op');
+  });
 });
 
 function tempCwd(): string {
@@ -184,9 +297,11 @@ const BRANCH_ROW: OrderOutcomeRow = {
 };
 
 describe('writeLocalOrderLedger (landing channel)', () => {
-  it('composes standing-branch rows + local rows + new rows into the local file', () => {
+  it('composes standing-branch rows + local rows + new rows into the local file, through the ONE branch read', () => {
     const cwd = tempCwd();
+    const seen: string[] = [];
     const exec: OrderLedgerGitExec = (bin, args) => {
+      seen.push(args[0]);
       if (args[0] === 'fetch') return '';
       if (args[0] === 'rev-parse') return 'head\n';
       if (args[0] === 'show') return serializeOrderRows([BRANCH_ROW]);
@@ -200,6 +315,25 @@ describe('writeLocalOrderLedger (landing channel)', () => {
     // Oldest first: the branch's unmerged failure row survives the landing.
     expect(lines[0]).toContain('floor-red');
     expect(lines[1]).toContain('guardrail-red');
+    // The read is the shared fetch/rev-parse/show sequence (Rule 2.30:
+    // one branch-read function, no second fetch/show pair).
+    expect(seen).toEqual(['fetch', 'rev-parse', 'show']);
+  });
+
+  it("carries a NEWER schema's rows through verbatim when rewriting the durable file", () => {
+    const cwd = tempCwd();
+    const futureLine = JSON.stringify({ ...ROW, schema_version: 99, futureField: 'kept' });
+    const exec: OrderLedgerGitExec = (bin, args) => {
+      if (args[0] === 'fetch') return '';
+      if (args[0] === 'rev-parse') return 'head\n';
+      if (args[0] === 'show') return serializeOrderRows([BRANCH_ROW]) + futureLine + '\n';
+      throw new Error(`unexpected ${args.join(' ')}`);
+    };
+    const rel = writeLocalOrderLedger(cwd, 'fix-vulns', [ROW], exec);
+    const text = fs.readFileSync(path.join(cwd, rel!), 'utf8');
+    expect(text).toContain(futureLine);
+    expect(text).toContain('floor-red');
+    expect(text).toContain('guardrail-red');
   });
 
   it('an unreachable branch composes local + new rows only (fail-open)', () => {
@@ -268,13 +402,33 @@ describe('publishOrderRows (non-landing channel)', () => {
     expect(cacheinfo[3]).toContain(orderLedgerPath('remediate', 'fix-vulns'));
   });
 
-  it('with no standing branch, the commit bases on the checkout HEAD (branch created)', () => {
+  it('with no reachable standing branch, the commit is an ORPHAN over the ledger file only: no local commit becomes reachable', () => {
     const cwd = tempCwd();
     const { exec, calls } = plumbingExec({ branchExists: false });
     const out = publishOrderRows(cwd, 'fix-vulns', [ROW], exec);
     expect(out.published).toBe(true);
     const commitTree = calls.find((c) => c.includes('commit-tree'))!;
-    expect(commitTree).toContain('checkouthead');
+    // No parent at all (orphan), and no read of a local ref: the local
+    // history on a non-landing path is unverified content and must never
+    // become reachable from the remote through the ledger push.
+    expect(commitTree).not.toContain('-p');
+    expect(commitTree.join(' ')).not.toContain('checkouthead');
+    expect(calls.some((c) => c[0] === 'rev-parse' && c[1] === 'HEAD')).toBe(false);
+    expect(calls.some((c) => c[0] === 'read-tree')).toBe(false);
+    const push = calls.find((c) => c.includes('push'))!;
+    expect(push).toContain('commitsha:refs/heads/dxkit/remediate-fix-vulns');
+  });
+
+  it('with a standing branch, the commit parents ONLY on the fetched remote head, never local HEAD', () => {
+    const cwd = tempCwd();
+    const { exec, calls } = plumbingExec({});
+    publishOrderRows(cwd, 'fix-vulns', [ROW], exec);
+    const commitTree = calls.find((c) => c.includes('commit-tree'))!;
+    const parents = commitTree.filter((_, i) => commitTree[i - 1] === '-p');
+    expect(parents).toEqual(['branchhead']);
+    expect(calls.some((c) => c[0] === 'rev-parse' && c[1] === 'HEAD')).toBe(false);
+    const readTree = calls.find((c) => c[0] === 'read-tree')!;
+    expect(readTree[1]).toBe('branchhead');
   });
 
   it('retries ONCE on a push race and succeeds on the fresh base', () => {
