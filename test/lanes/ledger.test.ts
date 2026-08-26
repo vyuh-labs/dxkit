@@ -149,7 +149,7 @@ describe('the merged-means-delivered write points', () => {
 
   it('the remediate landing commits the ledger before the push', () => {
     const src = readFileSync(join(__dirname, '../../src/remediate/land.ts'), 'utf8');
-    const commitAt = src.indexOf("exec('git', ['add', opts.ledgerPath])");
+    const commitAt = src.indexOf("exec('git', ['add', ...ledgerPaths])");
     expect(commitAt).toBeGreaterThan(-1);
     // the push CALL (not the import line) comes after the ledger commit
     expect(commitAt).toBeLessThan(src.lastIndexOf('internalGitPushArgs('));

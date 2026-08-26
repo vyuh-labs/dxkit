@@ -72,7 +72,22 @@ export interface RemediateOptions {
 export async function runRemediate(cwd: string, opts: RemediateOptions): Promise<void> {
   const config = resolveRemediateConfig(cwd);
   logger.header(`dxkit remediate — ${opts.taskId}`);
-  const run = await executeTask(cwd, config, opts.taskId, opts.land === 'pr' ? 'pr' : 'none');
+  // Explicit-dispatch signal for the circuit breaker: locally, `--task` IS
+  // a human naming the task; under Actions only a workflow_dispatch that
+  // named this task counts (the scheduled matrix also invokes `--task`,
+  // and the workflow passes the dispatch input through DXKIT_DISPATCH_TASK).
+  const explicitDispatch =
+    process.env.GITHUB_ACTIONS === 'true'
+      ? (process.env.DXKIT_DISPATCH_TASK ?? '').trim() === opts.taskId
+      : true;
+  const run = await executeTask(
+    cwd,
+    config,
+    opts.taskId,
+    opts.land === 'pr' ? 'pr' : 'none',
+    {},
+    { explicitDispatch },
+  );
   if (opts.json) {
     process.stdout.write(
       JSON.stringify({ schema: 'remediate.v1', ...taskRunJson(run) }, null, 2) + '\n',

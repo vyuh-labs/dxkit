@@ -36,14 +36,21 @@ export interface LandRemediateOptions {
    *  work before the push — the event then rides the PR's own diff, so
    *  "delivered" means MERGED (design §10). */
   readonly ledgerPath?: string;
+  /** Repo-relative order-outcome ledger file (the scheduler's memory,
+   *  rethink 3F), committed in the same path-scoped bookkeeping commit. */
+  readonly orderLedgerPath?: string;
   readonly exec?: Exec;
 }
 
 export function landRemediateHead(opts: LandRemediateOptions): LandRefreshResult {
   const exec = opts.exec ?? makeExec(opts.cwd);
   const branch = remediateBranchFor(opts.taskId);
-  if (opts.ledgerPath) {
-    exec('git', ['add', opts.ledgerPath]);
+  const ledgerPaths = [
+    ...(opts.ledgerPath ? [opts.ledgerPath] : []),
+    ...(opts.orderLedgerPath ? [opts.orderLedgerPath] : []),
+  ];
+  if (ledgerPaths.length > 0) {
+    exec('git', ['add', ...ledgerPaths]);
     // Explicit bot identity: a CI runner has none ambient, and a machine
     // commit should carry machine provenance locally too.
     exec(
@@ -63,13 +70,13 @@ export function landRemediateHead(opts: LandRemediateOptions): LandRefreshResult
         // and force-push unreviewed agent working state under a message that
         // reads as bookkeeping.
         '--',
-        opts.ledgerPath,
+        ...ledgerPaths,
       ],
       { allowFail: true },
     );
     // A bookkeeping failure must not block landing verified work, but a
     // silently lost event undercounts Delivered — say so (X-3).
-    const dirty = exec('git', ['status', '--porcelain', '--', opts.ledgerPath], {
+    const dirty = exec('git', ['status', '--porcelain', '--', ...ledgerPaths], {
       allowFail: true,
     }).trim();
     if (dirty !== '') {
