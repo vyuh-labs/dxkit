@@ -126,6 +126,24 @@ work-order layer sits between the plan and the driver.
   code behaves, and the four undocumented budget knobs
   (`taskBudgets`, `maxSpendPerRun`, `maxDispatchBudget`, `resume`)
   are in the knob index and guide.
+- **Final review round: attribution honesty across the release.** An
+  incremental Stop-gate run now reports a code finding in a file the
+  scan did not include as "not observed" instead of resolved (and a
+  work order targeting it stays undecided, never done); a relocated
+  target finding keeps its order open; a lane whose install fails at
+  the base too skips the floor with an `unprovisioned` disclosure
+  instead of blaming missing toolchains on the change; the lane's
+  install is the pack-declared provision (so lockfile-less Node repos
+  get `npm install`, and python/ruby/php provision too); `update`
+  restamps content hashes only for a baseline captured on a proven
+  clean tree and names the cause when it cannot; pnpm's lockfile
+  dry-run is a disclosed skip (no non-writing check exists); the
+  same-file relocation tier of the matcher needs a plausible distance;
+  every lockfile (bun.lock included) sits inside the dependency
+  envelope; fix versions resolve per installation, not per advisory;
+  a leftover `order.json` is removed instead of disabling the verdict
+  cache forever; the resume cap counts from the order ledger; and a
+  version or policy lift resets the circuit breaker streak.
 
 ### Upgrade notes
 
