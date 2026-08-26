@@ -460,3 +460,41 @@ export async function resolveAliases(
 export function __clearOsvCache(): void {
   cache.clear();
 }
+
+// ---------------------------------------------------------------------------
+// Query-by-package (4.4.5, the recipe tier's pre-check): "which advisories
+// affect pkg@version?" via the OSV /v1/query endpoint, kept in this module so
+// there is exactly ONE OSV client (Rule 2). The recipes use it as a
+// $0 refusal gate BEFORE installing or pinning a candidate version, turning
+// "the agent installed a vulnerable package and the guardrail went red" into
+// "the recipe refused, with the advisory named".
+// ---------------------------------------------------------------------------
+
+/**
+ * The injectable query function. Returns the advisories affecting
+ * `pkg@version` in `ecosystem` (OSV ecosystem name, e.g. `npm`), or `null`
+ * when the query could not be answered (network failure, non-OK response);
+ * callers DISCLOSE a null and fall back to their downstream gate (the
+ * guardrail re-audit), never treat it as "no advisories".
+ */
+export type OsvPackageQuery = (
+  pkg: string,
+  version: string,
+  ecosystem: string,
+) => Promise<OsvVuln[] | null>;
+
+export const queryOsvPackage: OsvPackageQuery = async (pkg, version, ecosystem) => {
+  try {
+    const res = await fetch('https://api.osv.dev/v1/query', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ package: { name: pkg, ecosystem }, version }),
+      signal: AbortSignal.timeout(OSV_REQUEST_TIMEOUT_MS),
+    });
+    if (!res.ok) return null;
+    const body = (await res.json()) as { vulns?: OsvVuln[] };
+    return Array.isArray(body.vulns) ? body.vulns : [];
+  } catch {
+    return null;
+  }
+};

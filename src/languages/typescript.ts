@@ -2372,6 +2372,21 @@ const tsLintGateProvider: LintGateProvider = {
       expectedExit: 0,
     };
   },
+  // The lint-autofix recipe's fix mode (4.4.5): `eslint --fix` scoped to the
+  // work order's files. One run both writes the auto-fixes and reports the
+  // remaining (unfixable) findings through the SAME json parser the gate
+  // uses, so the recipe's verify reads the leftovers of the very command
+  // that fixed. eslint exits 1 when unfixed errors remain; the recipe
+  // parses regardless of exit (the seam's own doctrine).
+  fixCommand(ctx) {
+    if (ctx.files.length === 0 || !hasLocalBin(ctx.cwd, 'eslint')) return null;
+    return {
+      bin: 'npx',
+      args: ['--no-install', 'eslint', '--fix', '--format', 'json', ...ctx.files],
+      parse: { kind: 'structured', label: 'eslint-json', parse: parseEslintJson },
+      expectedExit: 0,
+    };
+  },
   recallInputs(ctx) {
     // eslint sees what its PLUGINS tell it to see, and the argv never mentions
     // them. `eslint-plugin-react-hooks ^7.0.1 -> 7.1.1` adds rules under a

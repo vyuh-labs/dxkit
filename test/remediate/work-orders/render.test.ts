@@ -180,7 +180,8 @@ describe('renderWorkOrderSummary', () => {
     expect(line).toContain('dep-advisory:axios');
     expect(line).toContain('2 finding(s)');
     expect(line).toContain('net-new');
-    expect(line).toContain('recipe override-pin (declared, not yet executable)');
+    expect(line).toContain('recipe override-pin');
+    expect(line).not.toContain('not yet executable');
     expect(line).toContain('16 turns / 9 min / $1');
     expect(line).toContain('done via guardrail');
   });

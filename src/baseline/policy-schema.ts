@@ -365,6 +365,13 @@ export function buildPolicySchema(version: string): Schema {
             },
             'Work-order planning: how the backlog is cut into finite, verifiable units.',
           ),
+          recipes: obj(
+            {
+              enabled: boolProp('remediate.recipes.enabled'),
+            },
+            'The deterministic recipe tier: recipe work orders execute in the frame ' +
+              'before any agent spawns.',
+          ),
           resume: boolProp('remediate.resume'),
         },
         'Agentic remediation: a scheduled agent inside the verified frame.',

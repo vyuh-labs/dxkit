@@ -280,3 +280,18 @@ export function armInLoopGate(
   }
   return probeStopGateWiring(cwd, opts);
 }
+
+import type { AgentDriver } from './driver';
+
+/** The runner's default in-loop-gate probe for a driver: arm the Claude
+ *  Stop-hook mechanism where the driver has one, else an honest
+ *  backstop-only status with the reason. Injectable in the runner via
+ *  `armInLoopGate` (tests); phrased here so the runner stays lean. */
+export function armGateForDriver(driver: AgentDriver, cwd: string): InLoopGateStatus {
+  return driver.inLoopGateMechanism === 'claude-stop-hook'
+    ? armInLoopGate(cwd, { ci: process.env.GITHUB_ACTIONS === 'true' })
+    : {
+        mode: 'backstop-only',
+        reason: `driver ${driver.id} has no in-loop gate mechanism; post-run verification is the gate`,
+      };
+}

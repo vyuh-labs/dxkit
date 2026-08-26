@@ -7,7 +7,56 @@
 import { renderFloorVerification, renderGuardrailVerdict } from '../lanes/verification-render';
 import { describeInstall } from '../lanes/verify-tree';
 import { renderScoreHinge } from './score-hinge';
+import { recipeCounts, type RecipePhaseSummary } from './recipes/run-recipes';
 import type { RemediateResult } from './run';
+
+/** The deterministic-recipe section: one line per order (applied / refused /
+ *  failed with the reason), the tier split, and every disclosure: a $0
+ *  refusal is only worth its price if the reader can see WHY. */
+function renderRecipeSection(recipes: RecipePhaseSummary): string[] {
+  const lines: string[] = ['### Deterministic recipes', ''];
+  if (recipes.disabled) {
+    lines.push('Recipes are disabled by policy (`remediate.recipes.enabled: false`).', '');
+    return lines;
+  }
+  if (recipes.planError) {
+    lines.push(
+      `Work-order planning failed (${recipes.planError}); no recipe ran, and the agent path ` +
+        'proceeded as before.',
+      '',
+    );
+    return lines;
+  }
+  const counts = recipeCounts(recipes);
+  lines.push(
+    `Selected orders: ${recipes.selectedRecipeTier} recipe-tier, ` +
+      `${recipes.selectedAgentTier} agent-tier` +
+      (recipes.records.length > 0
+        ? `: ${counts.applied} applied, ${counts.refused} refused, ${counts.failed} failed.`
+        : '.'),
+  );
+  for (const rec of recipes.records) {
+    const o = rec.outcome;
+    if (o.kind === 'applied') {
+      lines.push(
+        `- \`${rec.orderId}\` (${rec.recipe}): APPLIED, changed ${o.changedFiles.join(', ')}` +
+          (o.notes && o.notes.length > 0 ? ` (${o.notes.join('; ')})` : ''),
+      );
+    } else if (o.kind === 'refused') {
+      lines.push(`- \`${rec.orderId}\` (${rec.recipe}): refused, ${o.reason}`);
+    } else {
+      lines.push(`- \`${rec.orderId}\` (${rec.recipe}): FAILED at ${o.step}, ${o.output}`);
+    }
+    if (rec.droppedPaths && rec.droppedPaths.length > 0) {
+      lines.push(
+        `  - discarded out-of-envelope change(s), disclosed: ${rec.droppedPaths.join(', ')}`,
+      );
+    }
+  }
+  for (const d of recipes.disclosures) lines.push(`- plan disclosure: ${d}`);
+  lines.push('');
+  return lines;
+}
 
 export function renderRemediateLedger(r: Omit<RemediateResult, 'ledger'>): string {
   const lines: string[] = ['## dxkit agentic remediation', ''];
@@ -113,6 +162,10 @@ export function renderRemediateLedger(r: Omit<RemediateResult, 'ledger'>): strin
       lines.push('', 'Prompt (verbatim):', '', '```', r.dispatch.prompt, '```');
     }
     lines.push('');
+  }
+
+  if (r.recipes && (r.recipes.ran || r.recipes.disabled || r.recipes.planError)) {
+    lines.push(...renderRecipeSection(r.recipes));
   }
 
   lines.push('### Verification', '');

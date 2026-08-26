@@ -34,10 +34,16 @@ import type { RemediateTask } from './tasks';
 import { resolveDispatchedTask } from './dispatch';
 import { resumePromptNote } from './resume';
 import { realGit } from './git-ops';
-import { armInLoopGate, type InLoopGateStatus } from './agent-trust';
-import { clampBudgetToTokenLifetime, unenforceableCapsFor } from './budget-notes';
+import { armGateForDriver } from './agent-trust';
+import {
+  budgetOverruns,
+  budgetPromptNote,
+  clampBudgetToTokenLifetime,
+  unenforceableCapsFor,
+} from './budget-notes';
 import { evaluateScoreHinge, healthHingeScores } from './score-hinge';
 import { salvageForTask } from './config';
+import { recipeTierStep } from './recipes/complete';
 import type { AgentEnvelope, RemediateResult, RemediateRunOptions } from './outcome';
 
 // The outcome vocabulary lives in `./outcome` and the ledger renderer in
@@ -127,22 +133,10 @@ export async function runRemediateTask(opts: RemediateRunOptions): Promise<Remed
     ? 'api-key'
     : 'subscription';
 
-  // The in-loop gate (#305): pre-trust the lane's own CI checkout so the
-  // committed Stop hook can actually LOAD (an untrusted workspace made the
-  // in-loop gate silently absent on every CI lane run ever), then probe the
-  // wiring and disclose the result — armed vs backstop-only, with the
-  // reason, in the envelope. Drivers without an in-loop mechanism are
-  // honestly backstop-only. Injectable for tests (the runFloor seam pattern).
-  const armGate =
-    opts.armInLoopGate ??
-    ((): InLoopGateStatus =>
-      driver.inLoopGateMechanism === 'claude-stop-hook'
-        ? armInLoopGate(opts.cwd, { ci: process.env.GITHUB_ACTIONS === 'true' })
-        : {
-            mode: 'backstop-only',
-            reason: `driver ${driver.id} has no in-loop gate mechanism; post-run verification is the gate`,
-          });
-  const inLoopGate = armGate();
+  // The in-loop gate (#305): probe the wiring and disclose the result,
+  // armed vs backstop-only with the reason, in the envelope
+  // (`armGateForDriver`). Injectable for tests (the runFloor seam pattern).
+  const inLoopGate = (opts.armInLoopGate ?? (() => armGateForDriver(driver, opts.cwd)))();
 
   const envelopeBase = {
     driver: driver.id,
@@ -195,18 +189,26 @@ export async function runRemediateTask(opts: RemediateRunOptions): Promise<Remed
   const entryScores = task.scoreHinge ? await hingeProbe(task.scoreHinge) : undefined;
   const baseHead = git.head();
 
+  // The deterministic recipe tier (section 3B, `recipeTierStep`): execute
+  // recipe-tier orders FIRST, each committed inside its envelope. A
+  // recipe-only plan completes right here with no agent spawn, the ONE
+  // tree verification still arbitrating. Fail-open on planning.
+  opts.onPhase?.('recipes');
+  const tier = await recipeTierStep(opts, { task, entryFloor, baseHead, git, runFloor });
+  const recipesDisclosure = { recipes: tier.recipes };
+  if (tier.done) return finish(tier.done);
+  // The agent's OWN base: recipe commits advance the branch first, so every
+  // "did the agent produce work" question measures from here; otherwise a
+  // dead agent wears the recipes' commits and an honest never-ran claim
+  // reads as contradicted. Verification and the lander's range stay
+  // anchored at baseHead so recipe commits are verified and land.
+  const agentBase = git.head();
+  const hasRecipeCommits = agentBase !== baseHead;
+
   opts.onPhase?.('agent');
-  // Budget awareness: the agent is TOLD its caps so it lands work in
-  // mergeable increments instead of being surprised mid-edit by the kill —
-  // the difference between a salvageable 90% and a stranded one. Appended by
-  // the runner (the one place the effective budget is known), never baked
-  // into the task prompts.
-  const budgetNote =
-    `\nBudget for this run (runner-enforced): ~${budget.maxMinutes} minutes, ` +
-    `${budget.maxTurns} turns, $${budget.maxUsd}. Commit completed units as you go, and ` +
-    `reserve the final minutes to commit ALL remaining work and record where you stopped ` +
-    `in docs/DXKIT-REMEDIATION-NOTES.md — work committed before the cap survives; ` +
-    `uncommitted edits are swept into a single unlabeled-context commit.`;
+  // Budget awareness (`budgetPromptNote`): appended by the runner, the one
+  // place the effective budget is known, never baked into the task prompts.
+  const budgetNote = budgetPromptNote(budget);
   const resumeNote = opts.resume
     ? resumePromptNote(opts.resume.attempt, opts.resume.blockingContext)
     : '';
@@ -232,13 +234,11 @@ export async function runRemediateTask(opts: RemediateRunOptions): Promise<Remed
     ? { transcriptTail: agentResult.transcriptTail }
     : {};
 
-  // Sweep uncommitted leftovers into a loudly-labeled commit — work the
-  // budget kill stranded mid-edit is still evidence, and a dirty tree must
-  // never leak into the landing layer unreviewed. The sweep runs BEFORE the
-  // driver's never-ran claim is honored: a classification must never decide
-  // the fate of evidence it has not looked at (#272 — a wall-clock kill the
-  // driver misread as "never ran" returned early here and discarded 30
-  // minutes of stranded work). A genuinely never-ran agent leaves nothing
+  // Sweep uncommitted leftovers into a loudly-labeled commit: stranded
+  // mid-edit work is still evidence, and a dirty tree must never leak into
+  // the landing layer unreviewed. Runs BEFORE the never-ran claim is
+  // honored: a classification must never decide the fate of evidence it
+  // has not looked at (#272). A genuinely never-ran agent leaves nothing
   // to sweep, so this is a no-op on that path.
   opts.onPhase?.('sweep');
   const sweepError = git.sweepLeftovers();
@@ -246,8 +246,8 @@ export async function runRemediateTask(opts: RemediateRunOptions): Promise<Remed
   // agent committed mid-run) BEFORE the diff question — an attempt whose
   // only content was scan output must read as a no-op, and a real attempt
   // must not carry `.dxkit/reports/*` into its PR. Disclosed below.
-  const scrubbed = git.scrubRuntimeArtifacts(baseHead);
-  const hasDiff = git.hasDiff(baseHead);
+  const scrubbed = git.scrubRuntimeArtifacts(agentBase);
+  const hasDiff = git.hasDiff(agentBase);
 
   if (agentResult.neverRan) {
     // The tree is the arbiter of "ran": commits past baseHead, or leftovers
@@ -261,6 +261,7 @@ export async function runRemediateTask(opts: RemediateRunOptions): Promise<Remed
       return finish({
         outcome: 'agent-never-ran',
         task: task.id,
+        ...recipesDisclosure,
         envelope,
         floor: entryFloor,
         ...evidenceTail,
@@ -276,21 +277,9 @@ export async function runRemediateTask(opts: RemediateRunOptions): Promise<Remed
     };
   }
 
-  // Reported spend exceeding the (advisory) cap is an honest post-hoc claim
-  // — "the run overran maxUsd" — for any driver that at least REPORTS cost.
-  const overUsd =
-    driver.budgetSupport.cost !== 'none' &&
-    agentResult.costUsd !== undefined &&
-    agentResult.costUsd > budget.maxUsd;
-  // A cap dxkit cannot enforce is a cap dxkit may not claim was HIT — a
-  // driver that merely reports turns without enforcing them would mislabel
-  // a natural completion as budget-exhausted while the envelope discloses
-  // the cap as unenforceable.
-  const overTurns =
-    driver.budgetSupport.turns === 'enforced' &&
-    agentResult.turns !== undefined &&
-    agentResult.turns >= budget.maxTurns;
-  const partial = agentResult.timedOut || overUsd || overTurns;
+  // Budget-overrun facts, claimed only where dxkit can (`budgetOverruns`:
+  // reported cost vs advisory cap; turns only when the driver enforces).
+  const { overUsd, partial } = budgetOverruns(driver, agentResult, budget);
 
   // A failed sweep is a hard stop REGARDLESS of whether the agent committed
   // work: `git add -A` already staged the leftovers, so proceeding would let
@@ -301,6 +290,7 @@ export async function runRemediateTask(opts: RemediateRunOptions): Promise<Remed
       return finish({
         outcome: 'agent-never-ran',
         task: task.id,
+        ...recipesDisclosure,
         envelope,
         floor: entryFloor,
         ...evidenceTail,
@@ -310,6 +300,7 @@ export async function runRemediateTask(opts: RemediateRunOptions): Promise<Remed
     return finish({
       outcome: 'sweep-failed',
       task: task.id,
+      ...recipesDisclosure,
       envelope,
       floor: entryFloor,
       ...evidenceTail,
@@ -336,38 +327,47 @@ export async function runRemediateTask(opts: RemediateRunOptions): Promise<Remed
       return finish({
         outcome: 'agent-failed',
         task: task.id,
+        ...recipesDisclosure,
         envelope,
         floor: entryFloor,
         ...evidenceTail,
         note:
           `the agent run ended in an error and produced no committed change` +
           `${agentResult.failure ? `: ${agentResult.failure.reason}` : ''}. ` +
-          'Nothing to verify; nothing lands.',
+          'Nothing to verify; nothing lands' +
+          (hasRecipeCommits
+            ? ' (the recipe commits stay on the branch, unlanded, for the next attempt)'
+            : '') +
+          '.',
         baseHead,
         head: git.head(),
       });
     }
-    return finish({
-      outcome: 'no-op',
-      task: task.id,
-      envelope,
-      floor: entryFloor,
-      ...evidenceTail,
-      // The agent's own account of why nothing changed (#285): a clean
-      // no-op discards the transcript by design, which made "no-op against
-      // a visibly non-empty inventory" unautopsiable. Attempt-record
-      // evidence only — never the ledger / PR body.
-      ...(agentResult.finalMessage ? { agentFinalMessage: agentResult.finalMessage } : {}),
-      ...(scrubbed.length > 0 ? { scrubbedArtifacts: scrubbed } : {}),
-      ...(partial ? { partial } : {}),
-      note:
-        scrubbed.length > 0
-          ? 'agent ran and produced no committed change beyond regenerable dxkit scan state ' +
-            '(dropped, disclosed below).'
-          : 'agent ran and produced no committed change.',
-      baseHead,
-      head: git.head(),
-    });
+    // The AGENT added nothing, but applied recipe commits are real work:
+    // fall through so the combined head is verified and can land.
+    if (!hasRecipeCommits)
+      return finish({
+        outcome: 'no-op',
+        task: task.id,
+        ...recipesDisclosure,
+        envelope,
+        floor: entryFloor,
+        ...evidenceTail,
+        // The agent's own account of why nothing changed (#285): a clean
+        // no-op discards the transcript by design, which made "no-op against
+        // a visibly non-empty inventory" unautopsiable. Attempt-record
+        // evidence only, never the ledger / PR body.
+        ...(agentResult.finalMessage ? { agentFinalMessage: agentResult.finalMessage } : {}),
+        ...(scrubbed.length > 0 ? { scrubbedArtifacts: scrubbed } : {}),
+        ...(partial ? { partial } : {}),
+        note:
+          scrubbed.length > 0
+            ? 'agent ran and produced no committed change beyond regenerable dxkit scan state ' +
+              '(dropped, disclosed below).'
+            : 'agent ran and produced no committed change.',
+        baseHead,
+        head: git.head(),
+      });
   }
 
   // Verify the committed head the way CI will (the ONE tree verification,
@@ -386,6 +386,7 @@ export async function runRemediateTask(opts: RemediateRunOptions): Promise<Remed
 
   const common = {
     task: task.id,
+    ...recipesDisclosure,
     envelope,
     ...(verified.floor ? { floor: verified.floor } : {}),
     ...(verified.floorAttribution ? { floorAttribution: verified.floorAttribution } : {}),
