@@ -200,7 +200,7 @@ describe('order-intrinsic feasibility lives in matches (an executor-certain refu
     );
   });
 
-  it('lint-autofix: a user check, a fixCommand-less pack, or a sliced order tiers agent', () => {
+  it('lint-autofix: a user check or a fixCommand-less pack tiers agent; a SLICED order stays recipe (grouped fix)', () => {
     const ok = {
       id: 'lint-located:src/a.ts',
       class: 'lint-located' as const,
@@ -210,12 +210,14 @@ describe('order-intrinsic feasibility lives in matches (an executor-certain refu
     expect(tierOf({ ...ok, findings: [lintFinding('lint:typescript')] })).toBe('recipe');
     expect(tierOf({ ...ok, findings: [lintFinding('arch-rules')] })).toBe('agent');
     expect(tierOf({ ...ok, findings: [lintFinding('lint:go')] })).toBe('agent');
+    // The estate fix: 700 sliced orders on big files must not all go to the
+    // agent at full budgets when one file-level --fix answers them.
     expect(
       tierOf({
         ...ok,
         findings: [lintFinding('lint:typescript')],
         provenance: { source: 'debt-slice', file: 'src/a.ts', slice: 1, of: 3 },
       }),
-    ).toBe('agent');
+    ).toBe('recipe');
   });
 });

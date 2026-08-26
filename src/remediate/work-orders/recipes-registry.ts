@@ -47,10 +47,10 @@ function floorPackOf(order: WorkOrder): string | null {
   return packs.size === 1 ? [...packs][0] : null;
 }
 
-/** Is this a slice of a larger per-file set? A file-scoped fixer cannot be
- *  verified one slice at a time. */
-function isSlicedOrder(order: WorkOrder): boolean {
-  return order.provenance.source === 'debt-slice' && order.provenance.of > 1;
+/** The file a located-lint order fixes (its grouping key). */
+function lintFileOf(order: WorkOrder): string | null {
+  const first = order.findings[0]?.evidence;
+  return first && first.type === 'custom-check' && first.file ? first.file : null;
 }
 
 export interface RecipeDeclaration {
@@ -70,6 +70,14 @@ export interface RecipeDeclaration {
    *  inside the remediate frame through the injected bounded exec under the
    *  required trust context; see `../recipes/types.ts` for the contract. */
   readonly execute?: (order: WorkOrder, ctx: RecipeExecuteContext) => Promise<RecipeOutcome>;
+  /** OPTIONAL: orders of this recipe with the same non-null key execute as
+   *  ONE attempt (the runner merges their findings, runs `execute` once,
+   *  and evaluates each order's done individually). Today: lint-autofix
+   *  keys by file, because `eslint --fix` on the whole file is one run
+   *  whatever slice asked for it (40 slices of one file must not pay 40
+   *  linter runs), and any slice's done criterion is checkable against
+   *  the one result. */
+  readonly groupKey?: (order: WorkOrder) => string | null;
 }
 
 /** The class a recipe id serves, from the one table. */
@@ -160,12 +168,13 @@ export const RECIPE_REGISTRY: readonly RecipeDeclaration[] = [
     summary: "the pack linter's own autofix, restricted to the order's file and rules",
     implemented: true,
     // Every finding must carry a rule (an unparsed diagnostic cannot be
-    // scoped to a fixer), the check must be a PACK lint gate whose pack
-    // declares a fix mode, and the order must not be a slice of a larger
-    // per-file set. Which rules the fixer actually closes stays the
-    // executor's runtime verify.
+    // scoped to a fixer) and the check must be a PACK lint gate whose pack
+    // declares a fix mode. Sliced orders ARE eligible: the grouped
+    // execution (groupKey) runs the file-level fix once for all of a
+    // file's slices and evaluates each slice's done individually. Which
+    // rules the fixer actually closes stays the executor's runtime verify.
     matches: (order) => {
-      if (order.findings.length === 0 || isSlicedOrder(order)) return false;
+      if (order.findings.length === 0) return false;
       const first = order.findings[0].evidence;
       const pack = first.type === 'custom-check' ? lintPackOf(first.check) : null;
       return (
@@ -177,6 +186,7 @@ export const RECIPE_REGISTRY: readonly RecipeDeclaration[] = [
       );
     },
     execute: executeLintAutofix,
+    groupKey: lintFileOf,
   },
 ];
 

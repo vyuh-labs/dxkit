@@ -94,17 +94,44 @@ describe('lint-autofix recipe', () => {
     expect(calls).toHaveLength(0);
   });
 
-  it('refuses a sliced order (a file-scoped fix cannot be verified per slice)', async () => {
+  it('a sliced order executes like any other (the runner groups a file into one fix attempt)', async () => {
     const cwd = eslintRepo();
-    const { exec } = fakeExec();
+    const { exec } = fakeExec(() => ({ code: 0, output: eslintJson(cwd, []) }));
     const outcome = await executeLintAutofix(
       lintOrder('lint:typescript', 'src/a.ts', {
         provenance: { source: 'debt-slice', file: 'src/a.ts', slice: 1, of: 3 },
       }),
       makeCtx(cwd, { exec }),
     );
-    expect(outcome.kind).toBe('refused');
-    if (outcome.kind === 'refused') expect(outcome.reason).toContain('sliced');
+    expect(outcome.kind).toBe('applied');
+  });
+
+  it('KNOWN leftover rules come back structurally (the grouped runner splits per slice); an unknown rule fails plain', async () => {
+    const cwd = eslintRepo();
+    // The order knows prefer-const (its own finding rule): a prefer-const
+    // leftover is structured.
+    const { exec: execA } = fakeExec(() => ({
+      code: 1,
+      output: eslintJson(cwd, [{ ruleId: 'prefer-const', message: 'x' }]),
+    }));
+    const known = await executeLintAutofix(
+      lintOrder('lint:typescript', 'src/a.ts'),
+      makeCtx(cwd, { exec: execA }),
+    );
+    expect(known.kind).toBe('failed');
+    if (known.kind === 'failed') expect(known.leftoverRules).toEqual(['prefer-const']);
+    // A rule the order never carried is net-new (or unparsed): plain
+    // failure, no structured leftovers, so the runner discards the diff.
+    const { exec: execB } = fakeExec(() => ({
+      code: 1,
+      output: eslintJson(cwd, [{ ruleId: 'no-debugger', message: 'x' }]),
+    }));
+    const unknown = await executeLintAutofix(
+      lintOrder('lint:typescript', 'src/a.ts'),
+      makeCtx(cwd, { exec: execB }),
+    );
+    expect(unknown.kind).toBe('failed');
+    if (unknown.kind === 'failed') expect(unknown.leftoverRules).toBeUndefined();
   });
 
   it('refuses a pack that declares no fix mode, with the pack named', async () => {
