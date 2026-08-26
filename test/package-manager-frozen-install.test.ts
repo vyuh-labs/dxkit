@@ -8,6 +8,7 @@ import {
   isPeerConflictOnly,
   lockfileSyncCheck,
   renderInstallDependenciesShell,
+  resyncInstallFor,
   LOCKFILES,
   type PackageManager,
 } from '../src/package-manager';
@@ -192,5 +193,42 @@ describe('lockfileSyncCheck', () => {
     const c = lockfileSyncCheck('yarn');
     expect(c.kind).toBe('skipped');
     if (c.kind === 'skipped') expect(c.reason).toContain('immutable');
+  });
+});
+
+describe('resyncInstallFor (the lock-writing install, 4.4.5)', () => {
+  it('npm re-resolves quietly, with the SAME declared peer-conflict fallback doctrine', () => {
+    const plan = resyncInstallFor('npm');
+    expect(plan.argv).toEqual(['npm', 'install', '--no-audit', '--no-fund']);
+    expect(plan.fallback?.argv).toContain('--legacy-peer-deps');
+    // The fallback fires on the peer-conflict shape ONLY (the shared gate).
+    expect(plan.fallback?.matches('npm error ERESOLVE unable to resolve')).toBe(true);
+    expect(plan.fallback?.matches('EUSAGE lock file out of sync')).toBe(false);
+    // The fallback reason is the one shared doctrine string, not a fork of it.
+    const dir = repoWith(['package.json', 'package-lock.json']);
+    expect(plan.fallback?.reason).toBe(frozenInstallFor(dir)!.fallback!.reason);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('the CI-default trap: pnpm and yarn berry flip to frozen under CI, so both carry the mutable flag', () => {
+    expect(resyncInstallFor('pnpm').argv).toEqual(['pnpm', 'install', '--no-frozen-lockfile']);
+    const yarn = resyncInstallFor('yarn');
+    expect(yarn.argv).toEqual(['yarn', 'install', '--no-immutable']);
+    // yarn classic (v1) does not know the berry flag: the declared fallback
+    // drops to the plain (already lock-writing) install, gated on that
+    // exact failure shape, never a blanket retry.
+    expect(yarn.fallback?.argv).toEqual(['yarn', 'install']);
+    expect(yarn.fallback?.matches('error Unknown option: --no-immutable')).toBe(true);
+    expect(yarn.fallback?.matches('YN0028: lockfile would have been modified')).toBe(false);
+  });
+
+  it('every PM has a lock-writing form, and none of them is the frozen install', () => {
+    for (const pm of ['npm', 'pnpm', 'yarn', 'bun'] as const) {
+      const resync = resyncInstallFor(pm);
+      expect(resync.argv.length).toBeGreaterThan(1);
+      expect(resync.argv.join(' ')).not.toContain(' --frozen-lockfile');
+      expect(resync.argv.join(' ')).not.toContain(' --immutable');
+      expect(resync.argv).not.toContain('ci');
+    }
   });
 });

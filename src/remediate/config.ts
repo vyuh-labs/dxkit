@@ -80,6 +80,13 @@ export interface RemediateConfig {
      *  (`remediate.workOrders.maxSliceSize`, default 25). */
     readonly maxSliceSize: number;
   };
+  /** The deterministic recipe tier (`remediate.recipes`). */
+  readonly recipes: {
+    /** Run recipe-tier work orders inside the frame before any agent spawns
+     *  (`remediate.recipes.enabled`, default true: a $0 deterministic fix
+     *  beats an agent run; set false to route every order to the agent). */
+    readonly enabled: boolean;
+  };
 }
 
 /**
@@ -216,6 +223,9 @@ export function resolveRemediateConfig(cwd: string): RemediateConfig {
         ((raw.workOrders ?? {}) as Record<string, unknown>).maxSliceSize,
         DEFAULT_MAX_SLICE_SIZE,
       ),
+    },
+    recipes: {
+      enabled: ((raw.recipes ?? {}) as Record<string, unknown>).enabled !== false,
     },
   };
 }

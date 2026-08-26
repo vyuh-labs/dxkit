@@ -257,6 +257,12 @@ export const POLICY_PARAMS: readonly PolicyParamMeta[] = [
     summary: 'largest number of findings one debt work order may carry (default 25)',
     anchor: 'remediate-work-orders',
   },
+  {
+    path: 'remediate.recipes.enabled',
+    summary:
+      'run deterministic recipe-tier work orders inside the frame before any agent spawns (default true)',
+    anchor: 'remediate-recipes',
+  },
 ];
 
 const paramByPath = new Map(POLICY_PARAMS.map((p) => [p.path, p]));

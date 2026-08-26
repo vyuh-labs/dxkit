@@ -354,6 +354,7 @@ describe('remediate plan --json: work orders', () => {
       remediate: {
         enabled: true,
         workOrders: { maxSliceSize: 2 },
+        recipes: { enabled: true },
         taskBudgets: { 'fix-lint': { maxTurns: 3 } },
       },
     });

@@ -47,6 +47,7 @@ stanzas).
 | `remediate.enabled`                 | [#remediate](#remediate)                                 |
 | `remediate.maxDispatchBudget`       | [#remediate-dispatch-budget](#remediate-dispatch-budget) |
 | `remediate.maxSpendPerRun`          | [#remediate-spend-per-run](#remediate-spend-per-run)     |
+| `remediate.recipes.enabled`         | [#remediate-recipes](#remediate-recipes)                 |
 | `remediate.resume`                  | [#remediate-resume](#remediate-resume)                   |
 | `remediate.salvage`                 | [#remediate-salvage](#remediate-salvage)                 |
 | `remediate.schedule`                | [#remediate-schedule](#remediate-schedule)               |
@@ -626,10 +627,10 @@ branch to resume and starts fresh.
 **What it does.** `vyuh-dxkit remediate plan` cuts the finding sets dxkit
 already computes (the entry floor's failures, deferred advisories inside
 their window, the grandfathered lint backlog) into finite work orders and
-lists them with their class, tier, budget, and done criterion. Today this is
-a plan surface: the tasks still run their existing prompts. Task selection
-over orders (each task working only the orders of its classes) arrives with
-the executor unit, which consumes these same orders.
+lists them with their class, tier, budget, and done criterion. The remediate
+run consumes the same plan: recipe-tier orders execute deterministically
+first (see [Remediate recipes](#remediate-recipes)); agent-tier orders still
+run through the task prompts.
 
 **Per parameter.**
 
@@ -641,3 +642,40 @@ the executor unit, which consumes these same orders.
 
 **Default and why.** `25`: a slice one agent session closes with headroom
 in the derived budget.
+
+## Remediate recipes
+
+**What it does.** With `remediate.recipes.enabled` (default `true`), the
+remediate run executes recipe-tier work orders deterministically BEFORE any
+agent spawns: a stale lockfile is re-synced with the repo's own package
+manager and confirmed by the frozen dry-run; a fixable transitive advisory
+is pinned through an npm override (the candidate version is OSV pre-checked,
+and a pin that would leave a block-tier advisory in place is refused with
+the advisory named); a net-new unresolved bare import is declared and
+installed after the same OSV pre-check; a file's located lint findings run
+through the pack linter's own fix mode. Each recipe commits inside its
+order's envelope (out-of-envelope changes are discarded and disclosed), and
+the run's single tree verification (clean worktree, frozen install,
+attributed floor, guardrail) remains the arbiter of the combined result.
+When every selected order is recipe-tier, the run completes with no agent
+spawn at all: a $0 remediate run. A recipe that cannot act refuses with the
+reason in the ledger; a recipe whose own verify does not confirm discards
+its diff. When such a recipe-only run fixes nothing (every recipe refused
+or failed), the outcome is `recipes-refused`, a non-clean result the
+scheduled lane surfaces, never a green no-op that would quietly starve the
+same orders week after week.
+
+**Default and why.** `true` when remediation is used at all: a deterministic
+fix that verifies is strictly cheaper and more reliable than an agent
+attempt at the same order. Set `false` to route every order to the agent
+(for example while evaluating the recipes' behavior on an unusual repo
+layout).
+
+**Interactions.** Recipes run only where the trust context allows repo
+execution (they run package-manager and linter commands); an untrusted tree
+yields disclosed per-order refusals. Recipe availability varies by
+ecosystem this release: lockfile re-sync and dependency declaration cover
+the npm-family package managers (yarn's missing dry-run is a disclosed
+refusal), override pinning is npm only, and lint autofix requires the pack
+to declare a fix mode (TypeScript/JavaScript's eslint today). Everything a
+recipe declines is a named refusal, never a silent skip.

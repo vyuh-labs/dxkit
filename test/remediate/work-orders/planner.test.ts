@@ -257,8 +257,11 @@ describe('planWorkOrders: advisories', () => {
       deferred: 2,
       earliestExpiry: '2026-09-01',
     });
-    expect(axios.tier).toBe('recipe');
-    expect(axios.recipe).toBe('override-pin');
+    // TWO manifest roots and no per-advisory rootDir: the owning manifest is
+    // ambiguous, which the executor could only refuse at runtime, so the
+    // registry's matches tiers the order to the agent (4.4.5 review).
+    expect(axios.tier).toBe('agent');
+    expect(axios.recipe).toBeUndefined();
     // baselined dep-vuln DEBT produces an order too (fix-vulns' backlog)
     const lodash = plan.orders[1];
     expect(lodash.findings[0].attribution).toBe('pre-existing');
@@ -380,8 +383,11 @@ describe('planWorkOrders: lint (one order per file, every source)', () => {
       slice: 1,
       of: 3,
     });
-    expect(plan.orders[0].tier).toBe('recipe');
-    expect(plan.orders[0].recipe).toBe('lint-autofix');
+    // A SLICED order cannot be file-scope autofixed and verified per slice,
+    // so it tiers to the agent by matches (4.4.5 review), not via a runtime
+    // refusal the plan surface would render as executable determinism.
+    expect(plan.orders[0].tier).toBe('agent');
+    expect(plan.orders[0].recipe).toBeUndefined();
   });
 
   it('binary custom-check debt and other kinds land in undispatchable with identity-only evidence', () => {

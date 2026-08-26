@@ -25,7 +25,10 @@ import * as path from 'path';
 /** Best-effort git stdout as lines; throws are surfaced to the caller so
  *  it can fail safe. `args` is fixed + caller-controlled (no shell). */
 function gitLines(cwd: string, args: string[]): string[] {
-  const out = execFileSync('git', args, {
+  // core.quotepath=false: git otherwise C-escapes non-ASCII path bytes
+  // ("s\303\244"), and an escaped name matches no real file, so envelope
+  // checks and per-path operations downstream silently miss those paths.
+  const out = execFileSync('git', ['-c', 'core.quotepath=false', ...args], {
     cwd,
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'ignore'],
