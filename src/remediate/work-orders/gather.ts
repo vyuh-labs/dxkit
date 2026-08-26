@@ -39,7 +39,11 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { runCorrectnessFloor, type CorrectnessFloorResult } from '../../analyzers/correctness/run';
 import { attributeFloorFailures } from '../../analyzers/correctness/attribution';
-import { detectActiveLanguages, matchesManifestPattern } from '../../languages';
+import {
+  allDependencyManifestPatterns,
+  detectActiveLanguages,
+  matchesManifestPattern,
+} from '../../languages';
 import { LOCKFILE_SYNC_LABEL } from '../../languages/capabilities/correctness';
 import type { LanguageSupport } from '../../languages/types';
 import {
@@ -174,9 +178,9 @@ export function manifestRoots(
   packs: readonly LanguageSupport[],
   disclosures: string[],
 ): ManifestRoot[] {
-  const patterns = [
-    ...new Set(packs.flatMap((p) => p.capabilities?.depVulns?.manifestPatterns ?? [])),
-  ];
+  // The ONE manifest + lockfile union (manifests AND root-marker lockfiles
+  // such as bun.lock), so an envelope never excludes a file the fix edits.
+  const patterns = allDependencyManifestPatterns(packs);
   const dirs = new Set<string>(['']);
   for (const pack of packs) {
     const discovery = discoverPackDepRoots(cwd, pack);

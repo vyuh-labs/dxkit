@@ -140,6 +140,26 @@ describe('advisoryDetailMap', () => {
     expect(disclosures.join(' ')).toContain('1 of 1 advisories resolved via OSV');
   });
 
+  it('two installations of one advisory resolve separately, each to its own minimal safe move', async () => {
+    const disclosures: string[] = [];
+    const { fetcher } = fetcherWith({ 'GHSA-1': osvRecord(['3.14.1', '4.1.0']) });
+    // Same advisory, two packages/roots at different installed versions:
+    // keyed by advisory alone the last-resolved answer (4.1.0) was handed to
+    // BOTH, so the 3.x installation got a surprise major.
+    const details = await advisoryDetailMap({
+      deferred: [],
+      debt: [
+        debtEntry('d-old', 'js-yaml', 'GHSA-1', '3.13.0'),
+        debtEntry('d-new', 'js-yaml', 'GHSA-1', '4.0.0'),
+      ],
+      scanned: new Map(),
+      osvFetcher: fetcher,
+      disclosures,
+    });
+    expect(details.get('d-old')).toEqual({ fixedVersion: '3.14.1' });
+    expect(details.get('d-new')).toEqual({ fixedVersion: '4.1.0' });
+  });
+
   it('an unreachable OSV is fail-open and DISCLOSED: no fix, no crash, no guess', async () => {
     const disclosures: string[] = [];
     const details = await advisoryDetailMap({

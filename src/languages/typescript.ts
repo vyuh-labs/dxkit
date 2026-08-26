@@ -9,7 +9,12 @@ import { walkSourceFiles } from '../analyzers/tools/walk-source-files';
 import { matchesAnyBasenameGlob, matchesTestPatterns } from '../analyzers/tools/walk-globs';
 import { execFileSync } from 'child_process';
 import { enrichReleaseDates } from '../analyzers/tools/npm-registry';
-import { resolveCvssScores, resolveFixVersions } from '../analyzers/tools/osv';
+import {
+  fixResolutionKey,
+  resolveCvssScores,
+  resolveFixVersions,
+  type FixResolutionInput,
+} from '../analyzers/tools/osv';
 import { isMajorBump } from '../analyzers/tools/semver-bump';
 import {
   enrichWithUpgradePlans,
@@ -571,15 +576,15 @@ async function gatherTsDepVulnsViaNpmAudit(
           f.topLevelDep.includes(f.package),
       );
       if (fixTargets.length > 0) {
-        const resolvedFixes = await resolveFixVersions(
-          fixTargets.map((f) => ({
-            primaryId: f.id,
-            aliases: f.aliases ?? [],
-            ...(f.installedVersion !== undefined ? { installedVersion: f.installedVersion } : {}),
-          })),
-        );
+        const fixInput = (f: DepVulnFinding): FixResolutionInput => ({
+          primaryId: f.id,
+          aliases: f.aliases ?? [],
+          package: f.package,
+          ...(f.installedVersion !== undefined ? { installedVersion: f.installedVersion } : {}),
+        });
+        const resolvedFixes = await resolveFixVersions(fixTargets.map(fixInput));
         for (const f of fixTargets) {
-          const v = resolvedFixes.get(f.id);
+          const v = resolvedFixes.get(fixResolutionKey(fixInput(f)));
           if (v === undefined) continue;
           f.fixedVersion = v;
           if (f.breakingUpgrade === undefined && f.installedVersion) {

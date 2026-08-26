@@ -123,17 +123,40 @@ export function selectFixVersion(
   return undefined;
 }
 
+/** One installation of one advisory: the unit fix resolution answers for.
+ *  An advisory alone is NOT the unit: the same advisory can be installed
+ *  twice (two packages it covers, two nested roots at different versions),
+ *  and each installation has its own minimal safe move. */
+export interface FixResolutionInput {
+  readonly primaryId: string;
+  readonly aliases: readonly string[];
+  /** The affected package, when the finding names it. */
+  readonly package?: string;
+  readonly installedVersion?: string;
+}
+
+/**
+ * The ONE key `resolveFixVersions` answers under: (advisory, package,
+ * installed version). Keying by advisory id alone collapsed two
+ * installations of one advisory onto whichever resolved last, so a finding
+ * at 1.x could be handed the 2.x fix of its sibling.
+ */
+export function fixResolutionKey(input: FixResolutionInput): string {
+  return `${input.primaryId}\u0000${input.package ?? ''}\u0000${input.installedVersion ?? ''}`;
+}
+
 /**
  * Best-effort fix-version resolution with alias-fallback — the sibling of
  * `resolveCvssScores`, sharing the same session cache (one OSV fetch serves
  * severity + fix resolution). For each input, resolves the primary id then
  * each alias until a record with fixed events answers, and selects the
  * target for the input's installed version via `selectFixVersion`. Returns
- * a map keyed by `primaryId`; absent/undefined ⟹ no deterministic fix
- * target — the caller stays honest ("no fix available"), never guesses.
+ * a map keyed by `fixResolutionKey(input)`; absent/undefined ⟹ no
+ * deterministic fix target, so the caller stays honest ("no fix available"),
+ * never guesses.
  */
 export async function resolveFixVersions(
-  inputs: ReadonlyArray<{ primaryId: string; aliases: string[]; installedVersion?: string }>,
+  inputs: ReadonlyArray<FixResolutionInput>,
   fetcher: OsvFetcher = DEFAULT_FETCHER,
 ): Promise<Map<string, string | undefined>> {
   const allIds = [...new Set(inputs.flatMap((i) => [i.primaryId, ...i.aliases]))];
@@ -146,7 +169,7 @@ export async function resolveFixVersions(
       resolved = selectFixVersion(events, input.installedVersion);
       if (resolved !== undefined) break;
     }
-    out.set(input.primaryId, resolved);
+    out.set(fixResolutionKey(input), resolved);
   }
   return out;
 }

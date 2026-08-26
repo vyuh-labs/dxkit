@@ -21,7 +21,12 @@
  * Fail-open throughout: an unreachable OSV leaves fields absent (the order
  * honestly stays agent-tier), disclosed, never a crash and never a guess.
  */
-import { resolveFixVersions, type OsvFetcher } from '../../analyzers/tools/osv';
+import {
+  fixResolutionKey,
+  resolveFixVersions,
+  type FixResolutionInput,
+  type OsvFetcher,
+} from '../../analyzers/tools/osv';
 import type { RichBaselineEntry } from '../../baseline/types';
 import type { DepVulnFinding } from '../../languages/capabilities/types';
 import type { AdvisoryDetail, DeferredInput } from './planner';
@@ -34,9 +39,10 @@ export const OSV_FIX_RESOLUTION_CAP = 100;
 interface NeedsFix {
   /** The finding id the detail map is keyed by. */
   readonly id: string;
-  readonly advisoryId: string;
-  readonly aliases: string[];
-  readonly installedVersion?: string;
+  /** What OSV is asked: (advisory, package, installed version), the ONE
+   *  key the client answers under. Two findings sharing an advisory (two
+   *  packages, two roots at different versions) are two questions. */
+  readonly resolution: FixResolutionInput;
 }
 
 export interface AdvisoryDetailArgs {
@@ -67,11 +73,14 @@ export async function advisoryDetailMap(
     const scanned = args.scanned.get(d.advisory.id);
     needsFix.push({
       id: d.advisory.id,
-      advisoryId: d.advisory.advisoryId,
-      aliases: scanned?.aliases ?? [],
-      ...(d.advisory.installedVersion !== undefined
-        ? { installedVersion: d.advisory.installedVersion }
-        : {}),
+      resolution: {
+        primaryId: d.advisory.advisoryId,
+        aliases: scanned?.aliases ?? [],
+        package: d.advisory.package,
+        ...(d.advisory.installedVersion !== undefined
+          ? { installedVersion: d.advisory.installedVersion }
+          : {}),
+      },
     });
   }
 
@@ -93,9 +102,12 @@ export async function advisoryDetailMap(
     if (scanned?.fixedVersion !== undefined) continue;
     needsFix.push({
       id: e.id,
-      advisoryId: e.advisoryId,
-      aliases: scanned?.aliases ?? [],
-      ...(e.installedVersion !== undefined ? { installedVersion: e.installedVersion } : {}),
+      resolution: {
+        primaryId: e.advisoryId,
+        aliases: scanned?.aliases ?? [],
+        package: e.package,
+        ...(e.installedVersion !== undefined ? { installedVersion: e.installedVersion } : {}),
+      },
     });
   }
 
@@ -108,16 +120,12 @@ export async function advisoryDetailMap(
     );
   }
   const resolved = await resolveFixVersions(
-    within.map((n) => ({
-      primaryId: n.advisoryId,
-      aliases: n.aliases,
-      ...(n.installedVersion !== undefined ? { installedVersion: n.installedVersion } : {}),
-    })),
+    within.map((n) => n.resolution),
     ...(args.osvFetcher ? [args.osvFetcher] : []),
   );
   let hits = 0;
   for (const n of within) {
-    const fixedVersion = resolved.get(n.advisoryId);
+    const fixedVersion = resolved.get(fixResolutionKey(n.resolution));
     if (fixedVersion === undefined) continue;
     hits += 1;
     details.set(n.id, { ...details.get(n.id), fixedVersion });

@@ -22,7 +22,7 @@ import {
 } from '../../languages';
 import type { LanguageId, LanguageSupport } from '../../languages/types';
 import type { CorrectnessScope } from '../../languages/capabilities/correctness';
-import { runLockfileCheck } from './lockfile-check';
+import { runLockfileCheckAcrossRoots } from './lockfile-check';
 import { parseFailuresSafely, runResolutionCheck, runStructureCheck } from './pure-checks';
 export { IMPORT_RESOLUTION_LABEL, UNRESOLVED_REMEDY } from './pure-checks';
 import {
@@ -302,7 +302,10 @@ export function runCorrectnessFloor(opts: CorrectnessFloorOptions): CorrectnessF
     // source-only fast run skips the dry-run.
     const lockfileDue = scope === 'full' || ctx.changedFiles.length === 0;
     if (provider.lockfileCheck && lockfileDue) {
-      const lock = runLockfileCheck(id, provider, ctx, exec);
+      // Every dependency root the audit reads (repo root + nested lockfile
+      // roots), one decomposed check per pack.
+      const pack = opts.packs.find((p) => p.id === id) ?? {};
+      const lock = runLockfileCheckAcrossRoots(id, provider, pack, ctx, exec);
       if (lock !== null) checks.push(lock);
     }
   }

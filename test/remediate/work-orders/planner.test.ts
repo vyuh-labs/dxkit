@@ -194,6 +194,40 @@ describe('planWorkOrders: entry floor', () => {
     expect(noInstall.orders[0].tier).toBe('agent');
   });
 
+  it('a lockfile-sync check that decomposes by dependency root mints one stale-lockfile order per failing root', () => {
+    const lockfile: FloorFailureInput = {
+      pack: 'typescript',
+      label: LOCKFILE_SYNC_LABEL,
+      command: 'npm ci --dry-run --ignore-scripts --no-audit --no-fund',
+      output:
+        '[repo root]\nnpm error Missing: a@1 from lock file\n[packages/api]\nnpm error Missing: b@2',
+      attribution: 'net-new',
+      precision: 'finding',
+      findings: ['.', 'packages/api'],
+      netNewFindings: ['packages/api'],
+    };
+    const plan = planWorkOrders({ ...empty(), floorFailures: [lockfile] });
+    const ids = plan.orders.map((o) => o.id).sort();
+    expect(ids).toEqual(['stale-lockfile:typescript', 'stale-lockfile:typescript:packages/api']);
+    const rootOrder = plan.orders.find((o) => o.id === 'stale-lockfile:typescript')!;
+    const nested = plan.orders.find((o) => o.id === 'stale-lockfile:typescript:packages/api')!;
+    // the nested order's envelope is ITS root's manifests, so the recipe
+    // resyncs there (owningManifestRoot), never at the repo root
+    expect(nested.envelope).toEqual({ paths: ['packages/api/package.json'], manifests: true });
+    expect(rootOrder.envelope).toEqual({
+      paths: ['package-lock.json', 'package.json'],
+      manifests: true,
+    });
+    // per-root attribution from the comparator's finding-level answer
+    expect(rootOrder.findings[0].attribution).toBe('pre-existing');
+    expect(nested.findings[0].attribution).toBe('net-new');
+    expect(rootOrder.findings[0].id).toBe(`${checkKey('typescript', LOCKFILE_SYNC_LABEL)}#.`);
+    expect(nested.findings[0].id).toBe(
+      `${checkKey('typescript', LOCKFILE_SYNC_LABEL)}#packages/api`,
+    );
+    expect(plan.orders.every((o) => o.class === 'stale-lockfile')).toBe(true);
+  });
+
   it('no install command known: the order carries none (disclosed at render), never a guessed one', () => {
     const input: PlannerInput = {
       ...empty(),
