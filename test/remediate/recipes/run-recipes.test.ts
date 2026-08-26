@@ -495,3 +495,94 @@ describe('runRecipePhaseForTask', () => {
     expect(summary.records).toHaveLength(0);
   });
 });
+
+describe('circuit-breaker partition (runRecipePhaseForTask)', () => {
+  const failedRow = (n: number) => ({
+    schema_version: 1,
+    timestamp: `2026-08-1${n}T00:00:00.000Z`,
+    lane: 'remediate',
+    task: 'fix-build',
+    orderId: `stale-lockfile:${n}`,
+    class: 'stale-lockfile',
+    tier: 'recipe' as const,
+    outcome: 'guardrail-red' as const,
+    dxkitVersion: '4.4.5',
+    policyHash: 'hash-a',
+  });
+  const STAMP = { dxkitVersion: '4.4.5', policyHash: 'hash-a' };
+  const pausedEntryFloor: CorrectnessFloorResult = {
+    ran: true,
+    blocks: true,
+    scope: 'full',
+    checks: [
+      {
+        pack: 'typescript',
+        label: 'lockfile-sync',
+        bin: 'npm',
+        args: ['ci', '--dry-run'],
+        status: 'fail',
+        output: 'EUSAGE',
+      },
+    ],
+  };
+
+  it('a paused class is in NEITHER tier: no recipe executes, the agent queue excludes it, the pause is disclosed', async () => {
+    const cwd = tempRepo({
+      'package.json': '{"name":"fx"}',
+      'package-lock.json': '{}',
+      'src/index.ts': 'export const x = 1;\n',
+      '.dxkit/policy.json': '{}',
+    });
+    const { exec, calls } = fakeExec();
+    const summary = await runRecipePhaseForTask({
+      cwd,
+      trust: trustedLocalContext(),
+      taskId: 'fix-build',
+      config: resolveRemediateConfig(cwd),
+      entryFloor: pausedEntryFloor,
+      exec,
+      gather: { history: [failedRow(1), failedRow(2)], stamp: STAMP },
+    });
+    expect(summary.ran).toBe(false);
+    expect(summary.records).toEqual([]);
+    expect(calls).toEqual([]); // nothing spawned for a paused order
+    expect(summary.selectedRecipeTier).toBe(0);
+    expect(summary.selectedAgentTier).toBe(0);
+    expect(summary.agentOrders).toEqual([]);
+    expect(summary.paused).toHaveLength(1);
+    expect(summary.paused![0].class).toBe('stale-lockfile');
+    expect(summary.paused![0].reason).toContain('failures');
+    expect(summary.paused![0].unpause).toContain('fix-build');
+  });
+
+  it('an explicit dispatch threaded through gather lifts the pause and the recipe tier runs again', async () => {
+    const cwd = tempRepo({
+      'package.json': '{"name":"fx"}',
+      'package-lock.json': '{}',
+      'src/index.ts': 'export const x = 1;\n',
+      '.dxkit/policy.json': '{}',
+    });
+    const git = fakeGit();
+    const { exec } = fakeExec((cmd) => {
+      if (cmd.args.includes('install')) git.dirty.push('package-lock.json');
+      return undefined;
+    });
+    const summary = await runRecipePhaseForTask({
+      cwd,
+      trust: trustedLocalContext(),
+      taskId: 'fix-build',
+      config: resolveRemediateConfig(cwd),
+      entryFloor: pausedEntryFloor,
+      git,
+      exec,
+      gather: {
+        history: [failedRow(1), failedRow(2)],
+        stamp: STAMP,
+        dispatchedTask: 'fix-build',
+      },
+    });
+    expect(summary.paused ?? []).toEqual([]);
+    expect(summary.selectedRecipeTier).toBe(1);
+    expect(summary.records[0]?.outcome.kind).toBe('applied');
+  });
+});

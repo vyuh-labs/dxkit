@@ -5,7 +5,13 @@
  * ledger.
  */
 import { describe, it, expect } from 'vitest';
-import { DISPATCH_ENV, readDispatchOverrides } from '../../src/remediate/dispatch';
+import { readFileSync } from 'fs';
+import { join } from 'path';
+import {
+  DISPATCH_ENV,
+  readDispatchOverrides,
+  staleDispatchWorkflowNote,
+} from '../../src/remediate/dispatch';
 import { customDispatchTask, SHARED_RULES } from '../../src/remediate/tasks';
 import { runRemediateTask, type RemediateGit } from '../../src/remediate/run';
 import type { AgentDriver, AgentRunResult } from '../../src/remediate/driver';
@@ -168,6 +174,7 @@ function config(): RemediateConfig {
     maxSpendPerRun: 0,
     maxDispatchBudget: 0,
     maxOrdersPerRun: 0,
+    pauseAfterFailures: 0,
     resume: false,
     workOrders: { maxSliceSize: 25 },
     recipes: { enabled: true },
@@ -233,5 +240,35 @@ describe('runRemediateTask — the custom dispatch task', () => {
     expect(r.ledger).toContain('Raise docstring coverage in src/api only.');
     expect(r.ledger).toContain('no score hinge');
     expect(r.ledger).toContain('clamped');
+  });
+});
+
+describe('staleDispatchWorkflowNote (the pre-flag workflow detector)', () => {
+  const base = { GITHUB_ACTIONS: 'true', GITHUB_EVENT_NAME: 'workflow_dispatch' };
+
+  it('advises vyuh-dxkit update on a workflow_dispatch run whose template never defined the dispatch env', () => {
+    const note = staleDispatchWorkflowNote(base, false);
+    expect(note).toContain('vyuh-dxkit update');
+  });
+
+  it('stays silent when the updated template defined the variable (even blank), when the flag was passed, on scheduled runs, and outside Actions', () => {
+    expect(staleDispatchWorkflowNote({ ...base, DXKIT_DISPATCH_TASK: '' }, false)).toBeUndefined();
+    expect(staleDispatchWorkflowNote(base, true)).toBeUndefined();
+    expect(
+      staleDispatchWorkflowNote({ GITHUB_ACTIONS: 'true', GITHUB_EVENT_NAME: 'schedule' }, false),
+    ).toBeUndefined();
+    expect(staleDispatchWorkflowNote({}, false)).toBeUndefined();
+  });
+});
+
+describe('the workflow template carries the explicit override flag', () => {
+  it('derives --dispatch-override from the dispatch input and defines DXKIT_DISPATCH_TASK on the run step', () => {
+    const template = readFileSync(
+      join(__dirname, '..', '..', 'src-templates', '.github', 'workflows', 'dxkit-remediate.yml'),
+      'utf8',
+    );
+    expect(template).toContain('OVERRIDE="--dispatch-override"');
+    expect(template).toContain('--land pr $OVERRIDE');
+    expect(template).toContain("DXKIT_DISPATCH_TASK: ${{ github.event.inputs.task || '' }}");
   });
 });

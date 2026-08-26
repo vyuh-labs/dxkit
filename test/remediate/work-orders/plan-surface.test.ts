@@ -433,5 +433,83 @@ describe('remediate plan --json: work orders', () => {
     );
     expect(out.workOrderPlanError).toContain('floor exploded');
     expect(out.workOrders).toEqual([]);
+    // Fail-open matrix: the static policy task list still runs, disclosed.
+    expect(out.matrixSource).toBe('static-fallback');
+    expect(out.matrixTasks).toEqual(['fix-vulns']);
+  });
+
+  it('degraded evidence (no floor source anywhere) falls the matrix back to the static task list, disclosed', async () => {
+    writePolicy({ remediate: { enabled: true, tasks: ['fix-vulns', 'fix-lint'] } });
+    writeBaseline([lintEntry('l1', 'src/a.ts', 1, 'eqeqeq')]); // no floorDebt envelope
+    const out = await captureJson(() =>
+      runRemediatePlan(repo, { json: true, gather: { packs: TS } }),
+    );
+    expect(out.matrixEvidenceDegraded).toContain('no floor evidence');
+    expect(out.matrixSource).toBe('static-fallback');
+    expect(out.matrixTasks).toEqual(['fix-vulns', 'fix-lint']);
+    const disclosures = out.matrixDisclosures as string[];
+    expect(disclosures.some((d) => d.includes('degraded'))).toBe(true);
+  });
+
+  it('the matrix derives from OPEN orders (value order, no-order tasks spawn no job, legacy open-ended disclosed) and pauses are first-class', async () => {
+    writePolicy({
+      remediate: {
+        enabled: true,
+        tasks: ['fix-build', 'fix-lint', 'fix-vulns', 'write-docs'],
+      },
+    });
+    writeBaseline(
+      [lintEntry('l1', 'src/a.ts', 1, 'eqeqeq'), lintEntry('l2', 'src/b.ts', 2, 'eqeqeq')],
+      FLOOR_DEBT,
+    );
+    writeAllowlist([DEFER_ENTRY]);
+    const stamp = { dxkitVersion: '4.4.5', policyHash: 'h' };
+    const pauseRow = (n: number) => ({
+      schema_version: 1,
+      timestamp: `2026-08-1${n}T00:00:00.000Z`,
+      lane: 'remediate',
+      task: 'fix-lint',
+      orderId: `lint-located:src/a.ts#${n}`,
+      class: 'lint-located',
+      tier: 'agent' as const,
+      outcome: 'guardrail-red' as const,
+      dxkitVersion: stamp.dxkitVersion,
+      policyHash: stamp.policyHash,
+    });
+    const out = await captureJson(() =>
+      runRemediatePlan(repo, {
+        json: true,
+        gather: {
+          packs: TS,
+          scanDepVulns: async () => [SCAN_FINDING],
+          now: NOW,
+          history: [pauseRow(1), pauseRow(2)],
+          stamp,
+        },
+      }),
+    );
+    // Value order: the advisory order ranks first, then the floor order;
+    // fix-lint's only orders are paused, so it spawns no job; write-docs
+    // is open-ended and kept only because policy lists it (legacy).
+    expect(out.matrixSource).toBe('orders');
+    expect(out.matrixTasks).toEqual(['fix-vulns', 'fix-build', 'write-docs']);
+    expect(out.matrixNoOpenOrders).toEqual(['fix-lint']);
+    expect(out.matrixLegacyOpenEnded).toEqual(['write-docs']);
+    const matrixDisclosures = out.matrixDisclosures as string[];
+    expect(matrixDisclosures.some((d) => d.includes('legacy shape'))).toBe(true);
+    expect(matrixDisclosures.some((d) => d.includes('PAUSED by the circuit breaker'))).toBe(true);
+    // Pauses are first-class in the JSON: the class summary and the
+    // per-order marks agree.
+    const paused = out.pausedClasses as Array<Record<string, unknown>>;
+    expect(paused).toHaveLength(1);
+    expect(paused[0].class).toBe('lint-located');
+    expect(String(paused[0].unpause)).toContain('fix-lint');
+    const orders = out.workOrders as Array<Record<string, unknown>>;
+    for (const o of orders) {
+      if (o.class === 'lint-located') expect(o.paused).not.toBeNull();
+      else expect(o.paused).toBeNull();
+    }
+    // The spend projection follows the derived matrix.
+    expect(out.projectedMaxSpendUsd).toBe(15);
   });
 });

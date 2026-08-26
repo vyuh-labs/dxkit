@@ -10,8 +10,6 @@
  * the lander are each unit-tested through their own seams, but the wiring
  * between them was untestable without spawning a real agent.
  */
-import * as fs from 'fs';
-import * as path from 'path';
 import { execFileSync } from 'child_process';
 import { assembleLanePrBody } from '../pr/assemble';
 import * as logger from '../logger';
@@ -29,6 +27,13 @@ import { runRemediateTask, type RemediateResult } from './run';
 import { landRemediateHead, remediateBranchFor } from './land';
 import { describeDeliveryProbe, probeDeliveryPreconditions } from '../lanes/delivery-preconditions';
 import { appendLaneEvent, LANE_LEDGER_SCHEMA_VERSION } from '../lanes/ledger';
+import { orderOutcomeRows, publishOrderRows, writeLocalOrderLedger } from './order-outcomes';
+import { remediateStamp } from './work-orders/breaker';
+import { currentHead, writeAttemptRecord, writeProvisionalRecord } from './attempt-record';
+
+// Attempt-record helpers live in `./attempt-record` (module-size split);
+// re-exported so consumers keep one import surface.
+export { taskRunJson } from './attempt-record';
 
 export interface TaskRun {
   readonly result: RemediateResult;
@@ -95,6 +100,18 @@ export interface ExecutorSeams {
   readonly defaultBranch?: (cwd: string) => string;
   /** Injected for tests: the $0 landing preflight (#286). */
   readonly probeDelivery?: typeof probeDeliveryPreconditions;
+  /** Injected for tests: the order-outcome ledger writers (3F). */
+  readonly writeOrderLedger?: typeof writeLocalOrderLedger;
+  readonly publishOrderRows?: typeof publishOrderRows;
+}
+
+/** Executor extras beyond the positional contract (kept separate from the
+ *  test-only seams: these are production inputs). */
+export interface ExecuteTaskExtras {
+  /** A human explicitly asked for this task (workflow_dispatch naming it,
+   *  or a local `remediate --task`): circuit-breaker pauses on its classes
+   *  are overridden for this run, disclosed. */
+  readonly explicitDispatch?: boolean;
 }
 
 /** Run one task through the runner and (optionally) land it — the ONE
@@ -105,6 +122,7 @@ export async function executeTask(
   taskId: string,
   land: 'pr' | 'none',
   seams: ExecutorSeams = {},
+  extras: ExecuteTaskExtras = {},
 ): Promise<TaskRun> {
   // Per-task budget: the override-merged budget rides a task-scoped config
   // copy, so the runner's enforcement + ledger see the effective caps.
@@ -217,10 +235,32 @@ export async function executeTask(
       ...(!resume.resumed && resume.blockingContext
         ? { priorBlocking: resume.blockingContext }
         : {}),
+      ...(extras.explicitDispatch ? { explicitDispatch: true } : {}),
     });
   } finally {
     reporter.stop();
   }
+
+  // The scheduler's memory (rethink 3F): project this run's per-order
+  // records into order-outcome ledger rows. Timestamps are stamped HERE by
+  // the runner layer (the delivery-ledger convention; the planner only
+  // reads). Rows exist only for landing-intent runs: a local `--land none`
+  // run leaves the tree and the remote untouched.
+  const orderRows =
+    land === 'pr'
+      ? orderOutcomeRows(result, taskId, {
+          timestamp: new Date().toISOString(),
+          stamp: remediateStamp(cwd),
+        })
+      : [];
+  // Non-landing durability: a frame-authored metadata commit on the
+  // standing branch (the resume-marker channel) — without it, the circuit
+  // breaker is blind to exactly the failures it exists to remember.
+  const publishRows = (): void => {
+    if (orderRows.length === 0) return;
+    const pub = (seams.publishOrderRows ?? publishOrderRows)(cwd, taskId, orderRows);
+    if (!pub.published && pub.note) logger.warn(`order ledger: ${pub.note}`);
+  };
 
   const draftSalvage = result.outcome === 'budget-exhausted' && salvage === 'draft-pr';
   // Guardrail-red under draft-pr salvage: the BLOCKED attempt is pushed as a
@@ -232,6 +272,7 @@ export async function executeTask(
   const blockedSalvage = result.outcome === 'guardrail-red' && salvage === 'draft-pr';
   const landEligible = result.outcome === 'verified' || draftSalvage || blockedSalvage;
   if (land !== 'pr' || !landEligible) {
+    publishRows();
     return finalizeTaskRun(cwd, taskId, {
       result,
       landed: false,
@@ -244,6 +285,7 @@ export async function executeTask(
   const defaultBranch = (seams.defaultBranch ?? detectDefaultBranch)(cwd);
   const branch = (seams.branch ?? currentBranch)(cwd);
   if (branch !== 'HEAD' && branch !== defaultBranch) {
+    publishRows();
     return finalizeTaskRun(cwd, taskId, {
       result,
       landed: false,
@@ -271,6 +313,13 @@ export async function executeTask(
       : {}),
     ...(result.envelope ? { driver: result.envelope.driver } : {}),
   });
+  // The order-outcome rows ride the SAME landing commit (composed with any
+  // unmerged standing-branch rows first, so a force-push never erases the
+  // failure history a prior non-landing run recorded).
+  const orderLedgerRel =
+    orderRows.length > 0
+      ? (seams.writeOrderLedger ?? writeLocalOrderLedger)(cwd, taskId, orderRows)
+      : null;
   // Evidence BEFORE delivery (#273): the attempt record — with the commit
   // range the workflow's patch-artifact fallback needs — is written before
   // the push, landed:false, and flipped by the finalize below on success. A
@@ -304,8 +353,12 @@ export async function executeTask(
       }),
       draft: draftSalvage || blockedSalvage,
       ledgerPath,
+      ...(orderLedgerRel ? { orderLedgerPath: orderLedgerRel } : {}),
     });
   } catch (err) {
+    // The landing failed; the outcome rows still matter to next week's
+    // breaker — try the metadata channel before disclosing the failure.
+    publishRows();
     // A landing failure is a DISCLOSED outcome, never a crash: the ledger,
     // record, and step summary all render as usual — the GateFailure
     // discipline applied to the land layer.
@@ -358,107 +411,6 @@ function finalizeTaskRun(cwd: string, taskId: string, run: TaskRun): TaskRun {
     );
   }
   return run;
-}
-
-/** The machine-readable attempt record — written pre-push (landed:false)
- *  AND at every finalize, so the evidence exists no matter where the
- *  landing dies. Best-effort plumbing, never a failure. */
-/**
- * PROVISIONAL attempt record, written BEFORE the driver spawns (#289): a
- * SIGKILL (runner OOM) is uncatchable, so every disclosure mechanism the
- * frame owns dies with it — the record written only at finalize meant a
- * killed frame left zero evidence and any committed work evaporated
- * unrecorded. This is the evidence-before-the-risky-step principle moved
- * one step earlier: the record names how far the run got (`phase:
- * 'agent'`) and carries `baseHead`, so the workflow's evidence step can
- * format-patch `baseHead..HEAD` of whatever the agent had committed
- * before death (falling back to the checkout's live HEAD — the record
- * has no `head` yet). Finalize overwrites it on every normal path.
- */
-function writeProvisionalRecord(cwd: string, taskId: string, baseHead: string): void {
-  try {
-    const dir = path.join(cwd, '.dxkit', 'cache');
-    fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(
-      path.join(dir, `remediate-${taskId}.json`),
-      JSON.stringify(
-        {
-          phase: 'agent',
-          outcome: 'provisional',
-          task: taskId,
-          landed: false,
-          baseHead,
-          head: null,
-          note:
-            'provisional record written before the agent spawned — if this survives the run, ' +
-            'the frame died mid-agent-phase (it could not write its own obituary); partial ' +
-            'work, if any, is in the baseHead..HEAD range of the checkout',
-        },
-        null,
-        2,
-      ) + '\n',
-      'utf8',
-    );
-  } catch {
-    // evidence plumbing, never a failure
-  }
-}
-
-/** HEAD of the checkout, or null (evidence plumbing, never a failure). */
-function currentHead(cwd: string): string | null {
-  try {
-    return execFileSync('git', ['rev-parse', 'HEAD'], {
-      cwd,
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-    }).trim();
-  } catch {
-    return null;
-  }
-}
-
-function writeAttemptRecord(cwd: string, taskId: string, run: TaskRun): void {
-  try {
-    const dir = path.join(cwd, '.dxkit', 'cache');
-    fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(
-      path.join(dir, `remediate-${taskId}.json`),
-      JSON.stringify(taskRunJson(run), null, 2) + '\n',
-      'utf8',
-    );
-  } catch {
-    // the record is evidence plumbing, never a failure
-  }
-}
-
-export function taskRunJson(run: TaskRun): Record<string, unknown> {
-  const r = run.result;
-  return {
-    // The frame reached finalize — distinguishes this record from the
-    // provisional one a SIGKILL leaves behind (#289).
-    phase: 'final',
-    outcome: r.outcome,
-    task: r.task ?? null,
-    note: r.note ?? null,
-    partial: r.partial ?? false,
-    envelope: r.envelope ?? null,
-    orders: r.orders ?? null,
-    guardrailVerdict: r.guardrailVerdict ?? null,
-    branch: r.task ? remediateBranchFor(r.task) : null,
-    prUrl: run.prUrl ?? null,
-    landRefused: run.landRefused ?? null,
-    landingBlocked: run.landingBlocked ?? null,
-    landed: run.landed,
-    // The commit range of the attempt — what the workflow's evidence step
-    // format-patches into a run artifact when nothing landed.
-    baseHead: r.baseHead ?? null,
-    head: r.head ?? null,
-    // Failure evidence (machine-readable record only — never the PR body).
-    transcriptTail: r.transcriptTail ?? null,
-    // The agent's own account of a no-op (#285) — autopsiable, never rendered.
-    agentFinalMessage: r.agentFinalMessage ?? null,
-    ledger: r.ledger,
-  };
 }
 
 /** Credentials the configured driver declares, read from THIS process env

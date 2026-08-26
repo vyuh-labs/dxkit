@@ -188,3 +188,28 @@ export function readDispatchOverrides(
       customPrompt !== undefined,
   };
 }
+
+/**
+ * Stale-workflow detection for the dispatch override (scheduler memory,
+ * 3F): the UPDATED managed workflow always defines DXKIT_DISPATCH_TASK on
+ * the run step (empty on scheduled runs), and passes --dispatch-override
+ * when the workflow_dispatch input names this task. A workflow_dispatch
+ * run where the variable is entirely ABSENT is therefore running a
+ * template from before the flag existed: its dispatches can never lift a
+ * circuit-breaker pause, and the operator should refresh the workflow.
+ * Pure over the env snapshot; the CLI surfaces the note as a warning.
+ */
+export function staleDispatchWorkflowNote(
+  env: Readonly<Record<string, string | undefined>>,
+  dispatchOverride: boolean,
+): string | undefined {
+  if (dispatchOverride) return undefined;
+  if (env.GITHUB_ACTIONS !== 'true') return undefined;
+  if (env.GITHUB_EVENT_NAME !== 'workflow_dispatch') return undefined;
+  if ('DXKIT_DISPATCH_TASK' in env) return undefined;
+  return (
+    'this looks like a workflow_dispatch run on a workflow template from before the ' +
+    'dispatch-override flag: the dispatch cannot lift a circuit-breaker pause. Run ' +
+    '`vyuh-dxkit update` to refresh the managed workflow.'
+  );
+}

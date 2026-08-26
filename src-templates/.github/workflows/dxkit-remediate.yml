@@ -118,6 +118,15 @@ jobs:
           if (deferred.length > 0) {
             console.log(`::notice title=remediate spend ceiling::deferred to the next firing: ${deferred.join(', ')}`);
           }
+          // Scheduler-memory disclosures (never silent): classes the circuit
+          // breaker paused, tasks with no open orders (no job, $0), and the
+          // matrix derivation notes from the plan.
+          for (const pause of p.pausedClasses ?? []) {
+            console.log(`::notice title=remediate circuit breaker::class '${pause.class}' is PAUSED: ${pause.reason}. Unpause: ${pause.unpause}`);
+          }
+          for (const note of p.matrixDisclosures ?? []) {
+            console.log(`::notice title=remediate matrix::${note}`);
+          }
           console.log('matrix:', JSON.stringify(tasks));
           EOF
 
@@ -260,6 +269,11 @@ __DXKIT_LANE_TOKEN_TASK_STEPS__
           # comment-defer pattern — free text never touches a shell line).
           # Blank on scheduled runs; the CLI clamps budget overrides to the
           # committed remediate.maxDispatchBudget and discloses every clamp.
+          # The dispatch input, always DEFINED here (blank on scheduled
+          # runs): the run step derives the explicit --dispatch-override
+          # flag from it, and the CLI uses the variable's absence to detect
+          # a pre-flag workflow template (advises `vyuh-dxkit update`).
+          DXKIT_DISPATCH_TASK: ${{ github.event.inputs.task || '' }}
           DXKIT_CUSTOM_PROMPT: ${{ github.event.inputs.prompt || '' }}
           DXKIT_DISPATCH_MAX_USD: ${{ github.event.inputs.max_usd || '' }}
           DXKIT_DISPATCH_MAX_TURNS: ${{ github.event.inputs.max_turns || '' }}
@@ -268,8 +282,16 @@ __DXKIT_LANE_TOKEN_TASK_STEPS__
 __DXKIT_REMEDIATE_CREDENTIAL_ENV__
         run: |
           if [ -x ./node_modules/.bin/vyuh-dxkit ]; then DXKIT=./node_modules/.bin/vyuh-dxkit; else DXKIT=vyuh-dxkit; fi
+          # The dispatch override is an EXPLICIT flag, passed only when a
+          # human's workflow_dispatch named exactly this task: it lifts a
+          # circuit-breaker pause on the task's classes for this one run.
+          # Scheduled matrix runs never carry it.
+          OVERRIDE=""
+          if [ -n "$DXKIT_DISPATCH_TASK" ] && [ "$DXKIT_DISPATCH_TASK" = "${{ matrix.task }}" ]; then
+            OVERRIDE="--dispatch-override"
+          fi
           set +e
-          "$DXKIT" remediate --task "${{ matrix.task }}" --land pr
+          "$DXKIT" remediate --task "${{ matrix.task }}" --land pr $OVERRIDE
           EXIT=$?
           set -e
           # Kill-shaped death disclosure (dxkit #289): SIGKILL is uncatchable,
