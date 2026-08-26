@@ -4,6 +4,9 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Manual re-runs on an exact ref: the release preflight needs a green CI run
+  # on the tagged SHA, and outage-corrupted run records cannot be re-run.
+  workflow_dispatch:
 
 jobs:
   build:
