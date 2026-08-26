@@ -3,28 +3,37 @@
  * the value" gate, not a one-off. Each scenario stages a small fixture repo
  * (a real git repo with a committed baseline, allowlist, and policy) and
  * drives the ONE public entry point `runRemediateTask` through the REAL
- * planner, recipe phase, order dispatch, envelope enforcement, and ledger,
- * with only the spawnable edges injected (exec, driver, floor, guardrail,
- * verification worktree). No network, no real package manager, no real agent.
+ * planner, recipe phase, order dispatch, envelope enforcement, git
+ * operations, and ledger. Stubbed (named precisely, they are more than the
+ * spawnable edges): the recipe/floor command exec, the agent driver, the
+ * entry floor and the verification floor/guardrail results, the
+ * verification worktree + install seams, and every standing-branch network
+ * read (order history defaults to an empty injected list; the real-ledger
+ * scenario reads the JSONL the runs themselves wrote, with only the remote
+ * probe offline). No network, no real package manager, no real agent.
  *
- * The three claims this pins, per the release's own acceptance list:
+ * The claims this pins, per the release's own acceptance list:
  *   a. a recipe-only plan (stale lockfile; deferred advisory with a fixed
  *      version) lands VERIFIED with ZERO driver invocations, the ledger
  *      carrying per-order applied outcomes ($0 by construction: the driver
  *      here throws on contact);
  *   b. an agent-tier order reaches the driver as the RENDERED ORDER (the
  *      attribution split, the envelope, the done command are in the prompt)
- *      under a budget DERIVED from the finding set (lower than the legacy
- *      default), and an out-of-envelope edit the agent makes is DROPPED
- *      WITH DISCLOSURE while the in-envelope fix lands;
+ *      under the exact budget the derivation formula gives its finding set
+ *      (lower than the legacy default), and an out-of-envelope edit the
+ *      agent makes is DROPPED WITH DISCLOSURE while the in-envelope fix
+ *      lands;
  *   c. two consecutive failed firings for a class PAUSE it (the next run
  *      spends $0 and names the unpause conditions); an explicit dispatch
- *      overrides the pause and the work lands.
+ *      overrides the pause and the work lands. Proven twice: once with
+ *      injected history rows (fast), and once through the real persistence
+ *      seam, where two failing runs write real JSONL ledger rows (the
+ *      order-outcomes path the executor uses) and the third run's breaker
+ *      reads them back with matching environment stamps.
  */
 import { describe, it, expect, afterEach } from 'vitest';
 import { execFileSync } from 'child_process';
 import * as fs from 'fs';
-import * as os from 'os';
 import * as path from 'path';
 import { runRemediateTask } from '../../src/remediate/run';
 import type { RemediateResult, RemediateRunOptions } from '../../src/remediate/run';
@@ -35,19 +44,27 @@ import {
   type RecipePhaseOptions,
 } from '../../src/remediate/recipes/run-recipes';
 import { resolveRemediateConfig, DEFAULT_REMEDIATE_BUDGET } from '../../src/remediate/config';
-import type { AgentDriver, AgentRunResult } from '../../src/remediate/driver';
 import type { CorrectnessFloorResult } from '../../src/analyzers/correctness/run';
 import { LOCKFILE_SYNC_LABEL } from '../../src/languages/capabilities/correctness';
 import { getLanguage } from '../../src/languages';
 import type { DepVulnFinding } from '../../src/languages/capabilities/types';
-import type { OrderOutcomeRow } from '../../src/lanes/order-ledger';
+import {
+  ORDER_LEDGER_SCHEMA_VERSION,
+  orderLedgerPath,
+  parseOrderRows,
+  type OrderLedgerExec,
+  type OrderOutcomeRow,
+} from '../../src/lanes/order-ledger';
+import { orderOutcomeRows, writeLocalOrderLedger } from '../../src/remediate/order-outcomes';
+import { remediateStamp } from '../../src/remediate/work-orders/breaker';
+import { BUDGET_DERIVATION } from '../../src/remediate/work-orders/shared';
 import type { GatherWorkOrderOptions } from '../../src/remediate/work-orders/gather';
 import { trustedLocalContext } from '../../src/analysis-trust';
-import type { CommandOutcome, RunnableCommand } from '../../src/analyzers/tools/bounded-exec';
+import { GREEN_FLOOR, stubDriver } from './helpers';
+import { fakeExec, tempRepo, type ExecScript } from './recipes/helpers';
 
 const TS_PACKS = [getLanguage('typescript')!];
 const NOW = new Date('2026-08-25T00:00:00Z');
-const GREEN_FLOOR: CorrectnessFloorResult = { ran: true, blocks: false, checks: [] };
 
 // ---------------------------------------------------------------------------
 // Fixture estate
@@ -55,23 +72,30 @@ const GREEN_FLOOR: CorrectnessFloorResult = { ran: true, blocks: false, checks: 
 
 const cleanups: string[] = [];
 afterEach(() => {
-  for (const dir of cleanups.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
+  // Per-dir try/catch: one EBUSY must not leak every other fixture.
+  for (const dir of cleanups.splice(0)) {
+    try {
+      fs.rmSync(dir, { recursive: true, force: true });
+    } catch {
+      // best-effort cleanup; the OS temp reaper owns the stragglers
+    }
+  }
 });
 
 function git(cwd: string, args: string[]): string {
   return execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
 }
 
-/** A real committed git repo staged from a file map. */
+/** A real committed git repo staged from a file map (`tempRepo` + git).
+ *  Signing is disabled repo-locally so a global `commit.gpgsign true`
+ *  cannot break the fixture commits, including the ones `realRecipeGit`
+ *  and `realGit` make during the run. */
 function fixtureRepo(files: Record<string, string>): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-e2e-'));
+  const dir = tempRepo(files);
   cleanups.push(dir);
-  for (const [rel, content] of Object.entries(files)) {
-    const abs = path.join(dir, rel);
-    fs.mkdirSync(path.dirname(abs), { recursive: true });
-    fs.writeFileSync(abs, content);
-  }
   git(dir, ['init', '-q', '-b', 'main']);
+  git(dir, ['config', 'commit.gpgsign', 'false']);
+  git(dir, ['config', 'tag.gpgsign', 'false']);
   git(dir, ['-c', 'user.name=t', '-c', 'user.email=t@t', 'add', '-A']);
   git(dir, ['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'fixture base']);
   return dir;
@@ -155,75 +179,45 @@ function estate(extraFiles: Record<string, string> = {}, policyExtra: object = {
 }
 
 // ---------------------------------------------------------------------------
-// Injected edges (everything spawnable)
+// Injected edges
 // ---------------------------------------------------------------------------
 
-/** A recording fake exec for the recipe tier: every package-manager install
- *  "writes" the lockfile (so the recipe's diff is real and committable);
- *  everything else succeeds cleanly. */
-function recipesExec(cwd: string): {
-  exec: (cmd: RunnableCommand, execCwd: string) => CommandOutcome;
-  calls: RunnableCommand[];
-} {
-  const calls: RunnableCommand[] = [];
-  return {
-    calls,
-    exec: (cmd, execCwd) => {
-      calls.push(cmd);
-      if (cmd.bin === 'npm' && cmd.args.some((a) => a === 'install' || a === 'ci')) {
-        fs.appendFileSync(path.join(execCwd ?? cwd, 'package-lock.json'), '\n');
-      }
-      return { available: true, code: 0, output: '' };
-    },
-  };
+/** The recipe tier's exec, on the shared recording fake: every
+ *  package-manager install "writes" the lockfile (so the recipe's diff is
+ *  real and committable); everything else succeeds cleanly. */
+function lockWritingExec(repo: string): ReturnType<typeof fakeExec> {
+  return fakeExec((cmd, execCwd) => {
+    if (cmd.bin === 'npm' && cmd.args.some((a) => a === 'install' || a === 'ci')) {
+      fs.appendFileSync(path.join(execCwd ?? repo, 'package-lock.json'), '\n');
+    }
+  });
 }
 
-/** A driver that records every run and, unless given work to do, throws on
- *  contact, the $0 proof for recipe-only and paused plans. */
-function driverStub(work?: (opts: Parameters<AgentDriver['run']>[0]) => Partial<AgentRunResult>): {
-  driver: AgentDriver;
-  runs: Parameters<AgentDriver['run']>[0][];
-} {
-  const runs: Parameters<AgentDriver['run']>[0][] = [];
-  const driver: AgentDriver = {
-    id: 'fake-agent',
-    budgetSupport: { turns: 'enforced', cost: 'reported' },
-    credentialEnv: [],
-    cli: null,
-    resolveModel: (tier) => `fake-${tier}`,
-    available: () => ({ ok: true }),
-    run: async (opts) => {
-      runs.push(opts);
-      if (!work) throw new Error('the driver must never be invoked on this run ($0 contract)');
-      return { completed: true, timedOut: false, transcriptTail: '', ...work(opts) };
-    },
-  };
-  return { driver, runs };
-}
+/** An offline ledger exec: every git spawn (ls-remote, fetch) fails, so
+ *  branch reads fall open to "local file only" with a disclosure. */
+const offlineLedgerExec: OrderLedgerExec = () => {
+  throw new Error('offline: this fixture has no remote');
+};
 
 interface EstateRun {
   readonly repo: string;
   readonly taskId: string;
-  readonly driver: AgentDriver;
+  readonly driver: ReturnType<typeof stubDriver>['driver'];
   readonly entryFloor?: CorrectnessFloorResult;
   readonly scan?: DepVulnFinding[];
   readonly gather?: Partial<GatherWorkOrderOptions>;
   readonly explicitDispatch?: boolean;
-  readonly exec?: ReturnType<typeof recipesExec>;
+  readonly exec?: ReturnType<typeof fakeExec>;
 }
 
 /** Drive `runRemediateTask` through the REAL recipe phase (real planner,
- *  real recipes, real git) with the spawnable edges injected. */
+ *  real recipes, real git) with the edges above injected. The entry floor
+ *  arrives through the runner's declared `entryFloor` seam; the floor runs
+ *  the verification pays are stubbed green. Order history defaults to an
+ *  injected empty list so no test spawns `git ls-remote` by accident; the
+ *  real-ledger scenario overrides it deliberately. */
 async function runOnEstate(o: EstateRun): Promise<RemediateResult> {
-  const entry = o.entryFloor ?? GREEN_FLOOR;
-  let floorCalls = 0;
-  const runFloor = () => {
-    floorCalls += 1;
-    // First call is the entry snapshot on the pristine tree; verification
-    // floors run after the fix landed, so they read green.
-    return floorCalls === 1 ? entry : GREEN_FLOOR;
-  };
-  const exec = o.exec ?? recipesExec(o.repo);
+  const exec = o.exec ?? lockWritingExec(o.repo);
   const opts: RemediateRunOptions = {
     cwd: o.repo,
     trust: trustedLocalContext(),
@@ -231,7 +225,8 @@ async function runOnEstate(o: EstateRun): Promise<RemediateResult> {
     config: resolveRemediateConfig(o.repo),
     drivers: [o.driver],
     git: realGit(o.repo),
-    runFloor,
+    entryFloor: o.entryFloor ?? GREEN_FLOOR,
+    runFloor: () => GREEN_FLOOR,
     runGuardrail: async () => ({ verdict: 'PASSED', ran: true, passesGate: true }),
     verifySeams: {
       worktree: async (_o, fn) => fn(o.repo),
@@ -251,6 +246,7 @@ async function runOnEstate(o: EstateRun): Promise<RemediateResult> {
           packs: TS_PACKS,
           scanDepVulns: async () => o.scan ?? [],
           now: NOW,
+          history: [],
           ...o.gather,
           // The frame's own gather flags (the dispatch override) win.
           ...phase.gather,
@@ -267,7 +263,7 @@ async function runOnEstate(o: EstateRun): Promise<RemediateResult> {
 describe('e2e a: a recipe-only plan lands verified at $0', () => {
   it('deferred advisory with a fixed version: override-pin applies, commits, verifies; the driver is never touched', async () => {
     const repo = estate();
-    const { driver, runs } = driverStub(); // throws on contact
+    const { driver, runs } = stubDriver(); // throws on contact
     const r = await runOnEstate({
       repo,
       taskId: 'fix-vulns',
@@ -296,7 +292,7 @@ describe('e2e a: a recipe-only plan lands verified at $0', () => {
 
   it('stale lockfile: lockfile-sync resyncs with the repo pm, verifies with the frozen dry-run, commits; zero driver invocations', async () => {
     const repo = estate();
-    const { driver, runs } = driverStub();
+    const { driver, runs } = stubDriver();
     const staleEntry: CorrectnessFloorResult = {
       ran: true,
       blocks: true,
@@ -311,7 +307,7 @@ describe('e2e a: a recipe-only plan lands verified at $0', () => {
         },
       ],
     };
-    const exec = recipesExec(repo);
+    const exec = lockWritingExec(repo);
     const r = await runOnEstate({
       repo,
       taskId: 'fix-build',
@@ -327,7 +323,7 @@ describe('e2e a: a recipe-only plan lands verified at $0', () => {
     ]);
     // The resync actually ran through the injected exec and the lockfile
     // change was committed by the recipe.
-    expect(exec.calls.some((c) => c.bin === 'npm')).toBe(true);
+    expect(exec.calls.some((c) => c.cmd.bin === 'npm')).toBe(true);
     expect(git(repo, ['log', '--oneline'])).toContain('lockfile-sync recipe');
     expect(r.ledger).toContain('stale-lockfile:typescript');
   });
@@ -338,11 +334,11 @@ describe('e2e a: a recipe-only plan lands verified at $0', () => {
 // ---------------------------------------------------------------------------
 
 describe('e2e b: an agent-tier order is dispatched scoped and enforced', () => {
-  it('the driver gets the rendered order (attribution split, envelope, done command) under a derived budget; out-of-envelope edits are dropped with disclosure, the in-envelope fix lands', async () => {
+  it('the driver gets the rendered order (attribution split, envelope, done command) under the derived budget; out-of-envelope edits are dropped with disclosure, the in-envelope fix lands', async () => {
     const repo = estate();
     // No fixed version: override-pin cannot serve it, so the order tiers
     // agent and reaches the driver.
-    const { driver, runs } = driverStub((opts) => {
+    const { driver, runs } = stubDriver((opts) => {
       // The "agent" fixes the manifest (inside the envelope) and also
       // sprawls outside it; the sweep commits both, enforcement drops one.
       const manifest = JSON.parse(
@@ -374,8 +370,11 @@ describe('e2e b: an agent-tier order is dispatched scoped and enforced', () => {
     // The done command.
     expect(prompt).toContain('Done when: every id above is absent');
     expect(prompt).toContain('Check with:');
-    // The budget is DERIVED from the finding set: one finding derives far
-    // below the legacy default cap, and the derivation is disclosed.
+    // The budget IS the derivation formula's answer for ONE finding, so a
+    // regression back to a flat cap fails here; it also sits far below the
+    // legacy default, and the derivation is disclosed.
+    const derivedForOneFinding = BUDGET_DERIVATION.baseTurns + BUDGET_DERIVATION.perFindingTurns;
+    expect(runs[0].budget.maxTurns).toBe(derivedForOneFinding);
     expect(runs[0].budget.maxTurns).toBeLessThan(DEFAULT_REMEDIATE_BUDGET.maxTurns);
     expect(r.orders?.records[0]?.budget.derivation).toContain('turns');
 
@@ -402,7 +401,7 @@ const STAMP = { dxkitVersion: 'stamp-v', policyHash: 'stamp-h' };
 
 function failedRow(timestamp: string): OrderOutcomeRow {
   return {
-    schema_version: 1,
+    schema_version: ORDER_LEDGER_SCHEMA_VERSION,
     timestamp,
     lane: 'remediate',
     task: 'fix-vulns',
@@ -419,8 +418,8 @@ describe('e2e c: the circuit breaker pauses a failing class and an explicit disp
 
   it('two consecutive failed firings pause the class: the next run spends $0, marks the orders paused, and names the unpause conditions', async () => {
     const repo = estate();
-    const { driver, runs } = driverStub(); // throws on contact
-    const exec = recipesExec(repo);
+    const { driver, runs } = stubDriver(); // throws on contact
+    const exec = lockWritingExec(repo);
     const r = await runOnEstate({
       repo,
       taskId: 'fix-vulns',
@@ -448,7 +447,7 @@ describe('e2e c: the circuit breaker pauses a failing class and an explicit disp
 
   it('an explicit dispatch overrides the pause (disclosed) and the recipe lands the fix', async () => {
     const repo = estate();
-    const { driver, runs } = driverStub();
+    const { driver, runs } = stubDriver();
     const r = await runOnEstate({
       repo,
       taskId: 'fix-vulns',
@@ -466,5 +465,69 @@ describe('e2e c: the circuit breaker pauses a failing class and an explicit disp
     ]);
     // The override is disclosed, never silent.
     expect((r.recipes?.disclosures ?? []).join('\n')).toContain('dispatched explicitly');
+  });
+
+  it('the real persistence seam: two failing runs write JSONL ledger rows, and the third run reads them back and pauses', async () => {
+    // In-run agent dispatch off so a failed recipe order dead-ends the run
+    // (recipes-refused) instead of reaching the driver: the failing firing
+    // stays $0 and the driver stub can keep throwing on contact.
+    const repo = estate({}, { maxOrdersPerRun: 0 });
+    const failingExec: ExecScript = (cmd) =>
+      cmd.bin === 'npm' ? { code: 1, output: 'npm error install exploded' } : undefined;
+    const stamp = remediateStamp(repo);
+
+    // Two failing firings, each recorded the way the executor records them
+    // (the order-outcomes projection + the landing-path ledger write, with
+    // only the remote probe offline).
+    for (const timestamp of ['2026-08-18T00:00:00.000Z', '2026-08-19T00:00:00.000Z']) {
+      const { driver } = stubDriver();
+      const r = await runOnEstate({
+        repo,
+        taskId: 'fix-vulns',
+        driver,
+        scan: [scanFinding('4.1.0')],
+        exec: fakeExec(failingExec),
+      });
+      expect(r.outcome).toBe('recipes-refused');
+      const rows = orderOutcomeRows(r, 'fix-vulns', { timestamp, stamp });
+      expect(rows.map((row) => row.outcome)).toEqual(['failed-recipe']);
+      expect(writeLocalOrderLedger(repo, 'fix-vulns', rows, offlineLedgerExec)).toBe(
+        orderLedgerPath('remediate', 'fix-vulns'),
+      );
+    }
+
+    // The JSONL file the runs wrote exists and carries the environment
+    // stamps the breaker compares against.
+    const ledgerAbs = path.join(repo, orderLedgerPath('remediate', 'fix-vulns'));
+    expect(fs.existsSync(ledgerAbs)).toBe(true);
+    const persisted = parseOrderRows(fs.readFileSync(ledgerAbs, 'utf8'));
+    expect(persisted).toHaveLength(2);
+    for (const row of persisted) {
+      expect(row.schema_version).toBe(ORDER_LEDGER_SCHEMA_VERSION);
+      expect(row.outcome).toBe('failed-recipe');
+      expect(row.dxkitVersion).toBe(stamp.dxkitVersion);
+      expect(row.policyHash).toBe(stamp.policyHash);
+    }
+
+    // Third run: NO injected history, so the breaker's default read walks
+    // the real path (the local JSONL plus the standing-branch probe, which
+    // is offline here and discloses itself) and pauses the class.
+    const { driver, runs } = stubDriver();
+    const exec = fakeExec(failingExec);
+    const r = await runOnEstate({
+      repo,
+      taskId: 'fix-vulns',
+      driver,
+      scan: [scanFinding('4.1.0')],
+      exec,
+      gather: { history: undefined, historyExec: offlineLedgerExec },
+    });
+    expect(runs).toHaveLength(0);
+    expect(exec.calls).toHaveLength(0);
+    expect(r.outcome).toBe('no-op');
+    expect(r.note).toContain('PAUSED');
+    expect((r.recipes?.paused ?? []).map((p) => p.class)).toEqual(['dep-advisory']);
+    // The offline standing-branch probe is a disclosure, never an error.
+    expect((r.recipes?.disclosures ?? []).join('\n')).toContain('no remote reachable');
   });
 });
