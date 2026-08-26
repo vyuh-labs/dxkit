@@ -379,7 +379,7 @@ export function buildPolicySchema(version: string): Schema {
           ),
           resume: boolProp('remediate.resume'),
         },
-        'Agentic remediation: a scheduled agent inside the verified frame.',
+        'Work-order remediation: recipes first, then a scoped agent, inside the verified frame.',
       ),
       graph: obj(
         {

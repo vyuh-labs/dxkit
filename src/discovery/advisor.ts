@@ -244,7 +244,7 @@ export function recommendExpiryNotice(ctx: RecommendContext): Recommendation | n
 }
 
 /**
- * Agentic remediation lane: fires when the repo carries debt the
+ * Remediation lane (recipes first, then a scoped agent): fires when the repo carries debt the
  * deterministic lanes cannot close — grandfathered floor debt (a broken
  * build / failing tests recorded in the baseline) or dependency
  * vulnerabilities while the bump lane is ALREADY enabled (so the fixable
@@ -275,10 +275,12 @@ export function recommendRemediate(ctx: RecommendContext): Recommendation | null
       : `${depVulns} dependency vulnerabilit${depVulns === 1 ? 'y' : 'ies'} remain that the bump lane cannot version-solve`;
   return {
     reason:
-      `${why} — the agentic remediate lane runs an agent INSIDE the verified frame ` +
-      `(entry-attributed floor + guardrail before any PR; the agent's word is never ` +
-      `trusted). Preview the resolution with the command below; enable the scheduled ` +
-      `lane with .dxkit/policy.json remediate.enabled: true + vyuh-dxkit update`,
+      `${why}: the remediate lane plans that debt as finite work orders, fixes what ` +
+      `it can with deterministic recipes at $0, and sends only the rest to a scoped ` +
+      `agent INSIDE the verified frame (entry-attributed floor + guardrail before ` +
+      `any PR; the agent's word is never trusted). Preview the orders with the ` +
+      `command below; enable the scheduled lane with .dxkit/policy.json ` +
+      `remediate.enabled: true + vyuh-dxkit update`,
     command: 'vyuh-dxkit remediate plan',
   };
 }
