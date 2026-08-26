@@ -29,7 +29,7 @@
  */
 import * as fs from 'fs';
 import * as path from 'path';
-import { execFileSync } from 'child_process';
+import { makeExec, type Exec } from '../land-refresh';
 import { readJsonlFile } from '../jsonl';
 import { LANES_DIR } from './ledger';
 
@@ -121,21 +121,38 @@ function isOrderRow(raw: unknown): raw is OrderOutcomeRow {
   );
 }
 
-/** Parse JSONL text into validated rows — fail-open per line, and a row
- *  from a NEWER schema is skipped (this dxkit cannot interpret it). */
-export function parseOrderRows(text: string): OrderOutcomeRow[] {
+/** A ledger text split for the WRITER: the rows this dxkit understands,
+ *  plus every other non-empty line VERBATIM (a row a newer schema wrote, a
+ *  corrupt line). Only the reader filters; a writer that rewrites the
+ *  durable file must carry foreign lines through untouched, or an upgrade
+ *  rolls back and silently loses the newer build's memory. */
+export interface LedgerText {
+  readonly rows: OrderOutcomeRow[];
+  readonly foreign: string[];
+}
+
+export function parseLedgerText(text: string): LedgerText {
   const rows: OrderOutcomeRow[] = [];
+  const foreign: string[] = [];
   for (const line of text.split('\n')) {
     const trimmed = line.trim();
     if (!trimmed) continue;
     try {
       const raw: unknown = JSON.parse(trimmed);
       if (isOrderRow(raw)) rows.push(raw);
+      else foreign.push(trimmed);
     } catch {
-      // a corrupt line is skipped, never a crash
+      // a corrupt line never crashes the reader; the writer preserves it
+      foreign.push(trimmed);
     }
   }
-  return rows;
+  return { rows, foreign };
+}
+
+/** Reader-side parse: validated rows only (foreign lines are the writer's
+ *  concern — see `parseLedgerText`). */
+export function parseOrderRows(text: string): OrderOutcomeRow[] {
+  return parseLedgerText(text).rows;
 }
 
 /** Every order row committed in the local checkout's lanes directory. */
@@ -157,7 +174,10 @@ export function readLocalOrderRows(cwd: string): OrderOutcomeRow[] {
 }
 
 function rowKey(r: OrderOutcomeRow): string {
-  return `${r.task}\0${r.orderId}\0${r.timestamp}`;
+  // Tier is part of identity: one run stamps one timestamp, and an order
+  // can legitimately carry a recipe-tier row and an agent-tier row from
+  // the same firing (a failed recipe the agent then picked up).
+  return `${r.task}\0${r.orderId}\0${r.tier}\0${r.timestamp}`;
 }
 
 /** Union row lists (a row can arrive via both the merged default branch and
@@ -192,8 +212,19 @@ export interface OrderWindowOptions {
   readonly maxPerClass?: number;
 }
 
-/** Apply the bounded window: drop rows older than `windowDays`, keep the
- *  newest `maxPerClass` rows per class, return oldest first. */
+/** Is a row a COUNTED outcome (a breaker failure or success)? Everything
+ *  else — paused markers, refusals, infrastructure — is bookkeeping. */
+export function isCountedOutcome(outcome: OrderRowOutcome): boolean {
+  return ORDER_FAILURE_OUTCOMES.has(outcome) || ORDER_SUCCESS_OUTCOMES.has(outcome);
+}
+
+/** Apply the bounded window: drop rows older than `windowDays`, then keep
+ *  the newest `maxPerClass` COUNTED rows and, separately, the newest
+ *  `maxPerClass` bookkeeping rows per class, oldest first. The caps are
+ *  separate on purpose: a weekly stream of neutral 'paused' markers must
+ *  never evict the failure evidence the pause stands on (an evidence-
+ *  evicted lift would be silent; the WINDOW age-out is the only documented
+ *  lift, and the breaker discloses it). */
 export function boundOrderWindow(
   rows: readonly OrderOutcomeRow[],
   opts: OrderWindowOptions = {},
@@ -215,22 +246,22 @@ export function boundOrderWindow(
   const kept: OrderOutcomeRow[] = [];
   for (const list of byClass.values()) {
     const sorted = [...list].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
-    kept.push(...sorted.slice(Math.max(0, sorted.length - maxPerClass)));
+    const counted = sorted.filter((r) => isCountedOutcome(r.outcome));
+    const bookkeeping = sorted.filter((r) => !isCountedOutcome(r.outcome));
+    kept.push(...counted.slice(Math.max(0, counted.length - maxPerClass)));
+    kept.push(...bookkeeping.slice(Math.max(0, bookkeeping.length - maxPerClass)));
   }
   return kept.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
 }
 
-/** Injectable exec for the branch reads (tests; the writer shares it). */
-export type OrderLedgerExec = (bin: string, args: readonly string[]) => string;
+/** Injectable exec for the branch reads and the writer's plumbing: the
+ *  ONE machine git-exec shape (`land-refresh.ts:makeExec` — no-prompt
+ *  hardening, bounded, stdin + env support). Re-exported here so ledger
+ *  consumers need no second import home; never a second factory. */
+export type OrderLedgerExec = Exec;
 
 export function realOrderLedgerExec(cwd: string): OrderLedgerExec {
-  return (bin, args) =>
-    execFileSync(bin, [...args], {
-      cwd,
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-      timeout: 60_000,
-    }).toString();
+  return makeExec(cwd);
 }
 
 /** One standing-branch source: the branch plus the repo-relative ledger
@@ -240,13 +271,15 @@ export interface OrderBranchSource {
   readonly file: string;
 }
 
-/** Rows currently on one standing branch, or null when the branch (or the
- *  file) is unreachable — the caller decides whether that is a disclosure
- *  (a fetch failure) or normal (the file simply does not exist yet). */
+/** One standing branch's ledger state (rows + foreign lines + head), or
+ *  null when the branch is unreachable — the caller decides whether that
+ *  is a disclosure (a fetch failure) or normal (no branch yet). The ONE
+ *  branch read; the writer's compose consumes the same result (Rule 2.30,
+ *  never a second fetch/show pair). */
 export function readBranchOrderRows(
   source: OrderBranchSource,
   exec: OrderLedgerExec,
-): { rows: OrderOutcomeRow[]; head: string } | null {
+): { rows: OrderOutcomeRow[]; foreign: string[]; head: string } | null {
   try {
     exec('git', ['fetch', 'origin', source.branch]);
     const head = exec('git', ['rev-parse', 'FETCH_HEAD']).trim();
@@ -255,9 +288,10 @@ export function readBranchOrderRows(
       text = exec('git', ['show', `FETCH_HEAD:${source.file}`]);
     } catch {
       // the branch exists but has no ledger file yet — an empty history
-      return { rows: [], head };
+      return { rows: [], foreign: [], head };
     }
-    return { rows: parseOrderRows(text), head };
+    const parsed = parseLedgerText(text);
+    return { rows: parsed.rows, foreign: parsed.foreign, head };
   } catch {
     return null;
   }

@@ -20,8 +20,10 @@ import {
   mergeOrderRows,
   orderHistory,
   orderLedgerPath,
+  parseLedgerText,
   parseOrderRows,
   readLocalOrderRows,
+  realOrderLedgerExec,
   serializeOrderRows,
   type OrderOutcomeRow,
 } from '../../src/lanes/order-ledger';
@@ -59,6 +61,12 @@ describe('row parsing and files', () => {
     const rows = parseOrderRows(text);
     expect(rows).toHaveLength(1);
     expect(rows[0].orderId).toBe('dep-advisory:lodash');
+    // The WRITER's view keeps what the reader skipped, verbatim: a newer
+    // schema's row and a corrupt line are foreign lines, never data loss.
+    const split = parseLedgerText(text);
+    expect(split.rows).toHaveLength(1);
+    expect(split.foreign).toHaveLength(3);
+    expect(split.foreign.some((l) => l.includes('"schema_version":2'))).toBe(true);
   });
 
   it('readLocalOrderRows reads only *.orders.jsonl files in the lanes dir', () => {
@@ -91,12 +99,44 @@ describe('row parsing and files', () => {
 });
 
 describe('merge + window', () => {
-  it('mergeOrderRows dedupes on (task, orderId, timestamp) across channels, oldest first', () => {
+  it('mergeOrderRows dedupes on (task, orderId, tier, timestamp) across channels, oldest first', () => {
     const a = row({ timestamp: '2026-08-01T00:00:00.000Z' });
     const b = row({ timestamp: '2026-08-02T00:00:00.000Z', outcome: 'verified' });
     const merged = mergeOrderRows([b, a], [a], [b]);
     expect(merged).toHaveLength(2);
     expect(merged[0].timestamp < merged[1].timestamp).toBe(true);
+  });
+
+  it('TIER is part of the row identity: a recipe row and an agent row for one order in one run both survive', () => {
+    // One run stamps one timestamp; a recipe-failed order the agent then
+    // fixed carries two rows — first-wins on a tier-less key would keep
+    // the failure and lose the fix.
+    const failed = row({ tier: 'recipe', outcome: 'failed-recipe' });
+    const fixed = row({ tier: 'agent', outcome: 'verified' });
+    const merged = mergeOrderRows([failed], [fixed]);
+    expect(merged).toHaveLength(2);
+    expect(merged.map((r) => r.outcome).sort()).toEqual(['failed-recipe', 'verified']);
+  });
+
+  it('bookkeeping rows never evict the failure evidence: the per-class cap counts outcome rows and neutral rows separately', () => {
+    const now = new Date('2026-08-25T00:00:00.000Z');
+    const failure = row({ timestamp: '2026-08-01T00:00:00.000Z', outcome: 'guardrail-red' });
+    const pausedFlood = Array.from({ length: 10 }, (_, i) =>
+      row({
+        timestamp: `2026-08-${String(2 + i).padStart(2, '0')}T00:00:00.000Z`,
+        orderId: `p${i}`,
+        outcome: 'paused',
+      }),
+    );
+    const bounded = boundOrderWindow([failure, ...pausedFlood], {
+      now,
+      windowDays: 60,
+      maxPerClass: 3,
+    });
+    // The single counted failure row survives ANY number of paused
+    // markers; the markers are capped on their own budget.
+    expect(bounded.filter((r) => r.outcome === 'guardrail-red')).toHaveLength(1);
+    expect(bounded.filter((r) => r.outcome === 'paused')).toHaveLength(3);
   });
 
   it('boundOrderWindow drops rows older than the window and caps rows per class (newest kept)', () => {
@@ -200,6 +240,16 @@ describe('orderHistory (the ONE reader)', () => {
     };
     const history = orderHistory(cwd, { branches: [branchSource], exec });
     expect(history.disclosures.some((d) => d.includes(branchSource.branch))).toBe(true);
+  });
+
+  it('the real exec is the ONE hardened machine git-exec factory (no-prompt env, stdin support)', () => {
+    const exec = realOrderLedgerExec(process.cwd());
+    expect(exec('sh', ['-c', 'printf "%s" "$GIT_TERMINAL_PROMPT"'])).toBe('0');
+    expect(exec('sh', ['-c', 'printf "%s" "$GIT_SSH_COMMAND"'])).toContain('BatchMode=yes');
+    expect(exec('cat', [], { input: 'stdin works' })).toBe('stdin works');
+    expect(exec('sh', ['-c', 'printf "%s" "$DXKIT_X"'], { env: { DXKIT_X: 'layered' } })).toBe(
+      'layered',
+    );
   });
 
   it('existingRemoteBranches parses ls-remote output and null-signals a failed probe', () => {
