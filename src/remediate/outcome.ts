@@ -16,6 +16,58 @@ import type { HingeEvidence, HingeScores } from './score-hinge';
 import type { RemediateConfig } from './config';
 import type { InLoopGateStatus } from './agent-trust';
 import type { RecipePhaseSummary, runRecipePhaseForTask } from './recipes/run-recipes';
+import type { WorkOrderBudget } from './work-orders/types';
+
+/** How (whether) the driver applied the run's tool-narrowing policy —
+ *  disclosed in the envelope, never a silent drop. */
+export type ToolPolicyDisclosure =
+  | {
+      readonly mechanism: 'disallowed-tools';
+      readonly disallowed: readonly string[];
+      /** The driver's documented CLI requirement for the mechanism. */
+      readonly cliRequirement: string;
+    }
+  | { readonly mechanism: 'none'; readonly reason: string };
+
+/** One order's dispatch record (the orders phase: one order per agent run). */
+export interface OrderRunRecord {
+  readonly orderId: string;
+  readonly class: string;
+  readonly findings: number;
+  /** The planner-derived budget for this order (with its derivation string),
+   *  which BECAME the driver budget for the run — plus the clamp note when
+   *  the run's remaining budget cut it down. */
+  readonly budget: WorkOrderBudget;
+  readonly clamped?: string;
+  readonly outcome: 'completed' | 'partial' | 'failed' | 'never-ran' | 'not-dispatched';
+  /** Failure/never-ran/not-dispatched reason. */
+  readonly detail?: string;
+  readonly spent?: { readonly turns?: number; readonly costUsd?: number };
+  /** Out-of-envelope paths the sweep DROPPED, disclosed (the enforcement
+   *  half of the envelope; the prompt half is advisory). */
+  readonly droppedPaths?: readonly string[];
+  /** The order's done criterion, echoed for the ledger's per-order done
+   *  line (closure is arbitrated by the one tree verification below). */
+  readonly done: { readonly verifier: 'floor' | 'guardrail'; readonly absentIds: number };
+  /** For floor-verifier orders, what the FINAL verified floor says about
+   *  the order's target checks (guardrail-verifier closure has no
+   *  per-finding read at this layer — the guardrail verdict + the next
+   *  plan arbitrate, and the ledger says so). */
+  readonly doneAfterVerify?: { readonly closed: number; readonly open: number };
+}
+
+/** The orders phase, disclosed as one summary on the result. */
+export interface OrdersPhaseSummary {
+  /** Effective `remediate.maxOrdersPerRun`. */
+  readonly cap: number;
+  /** Orders queued for the agent tier (before the cap). */
+  readonly queued: number;
+  readonly records: readonly OrderRunRecord[];
+  /** True when a prior BLOCKED attempt's findings were rendered into each
+   *  order prompt as a negative constraint (resume policy: a guardrail-red
+   *  attempt is never a resume anchor). */
+  readonly priorBlockingApplied?: boolean;
+}
 
 export type RemediateOutcome =
   | 'verified' // diff produced, floor net-new-clean, guardrail PASSED — ready to land
@@ -62,6 +114,9 @@ export interface AgentEnvelope {
   };
   /** Caps the driver cannot enforce — disclosed, never silent. */
   readonly unenforceableCaps: readonly string[];
+  /** The tool-narrowing policy applied to order-driven runs (absent on the
+   *  legacy task-prompt path, whose permissions are unchanged). */
+  readonly toolPolicy?: ToolPolicyDisclosure;
   /**
    * Was the in-loop Stop-gate actually WIRED for this run (#305)?
    * `in-loop-gated` = the committed Stop hook verifiably loads (settings +
@@ -124,6 +179,10 @@ export interface RemediateResult {
    *  failed records, envelope drops, and the tier split, rendered into the
    *  ledger whenever the phase was consulted. */
   readonly recipes?: RecipePhaseSummary;
+  /** The order-driven agent phase (4.4.5, scoped agent): one order per
+   *  agent run, per-order records with derived budgets, envelope
+   *  enforcement drops, and done disclosures — rendered into the ledger. */
+  readonly orders?: OrdersPhaseSummary;
   /** The verification ledger — PR body / job summary markdown. */
   readonly ledger: string;
 }
@@ -141,6 +200,17 @@ export interface RemediateGit {
   /** Any CONTENT change in base..HEAD? (Commit count is the wrong
    *  question: a resume marker is an empty commit.) */
   hasDiff(baseHead: string): boolean;
+  /** Revert every committed change in base..HEAD whose path `isAllowed`
+   *  rejects — files back to their base state, one disclosure commit — and
+   *  return the dropped paths. The envelope's ENFORCEMENT half (the prompt
+   *  half is advisory): sprawl outside an order's envelope becomes
+   *  unlandable by construction, the runtime-artifact-scrub doctrine.
+   *  `error` set = enforcement could not run; the caller must NOT land the
+   *  unenforced diff. */
+  enforceEnvelope(
+    baseHead: string,
+    isAllowed: (path: string) => boolean,
+  ): { readonly dropped: readonly string[]; readonly error?: string };
 }
 
 export interface RemediateRunOptions {
@@ -186,6 +256,10 @@ export interface RemediateRunOptions {
    *  optional blockingContext is the prior attempt's guardrail findings
    *  (from its draft-PR ledger) — appended to the prompt, never the ledger. */
   readonly resume?: { readonly attempt: number; readonly blockingContext?: string };
+  /** A prior BLOCKED (guardrail-red) attempt's blocking findings. Never a
+   *  resume anchor — the attempt's diff is discarded and this rides the next
+   *  run's order prompts as a NEGATIVE constraint ("do not reintroduce"). */
+  readonly priorBlocking?: string;
   /** Injected for tests: replaces the recipe phase (plan + execute the
    *  deterministic tier), the armInLoopGate seam pattern. */
   readonly runRecipePhase?: typeof runRecipePhaseForTask;

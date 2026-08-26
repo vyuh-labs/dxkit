@@ -8,7 +8,7 @@ import { renderFloorVerification, renderGuardrailVerdict } from '../lanes/verifi
 import { describeInstall } from '../lanes/verify-tree';
 import { renderScoreHinge } from './score-hinge';
 import { recipeCounts, type RecipePhaseSummary } from './recipes/run-recipes';
-import type { RemediateResult } from './run';
+import type { OrdersPhaseSummary, RemediateResult } from './outcome';
 
 /** The deterministic-recipe section: one line per order (applied / refused /
  *  failed with the reason), the tier split, and every disclosure: a $0
@@ -54,6 +54,54 @@ function renderRecipeSection(recipes: RecipePhaseSummary): string[] {
     }
   }
   for (const d of recipes.disclosures) lines.push(`- plan disclosure: ${d}`);
+  lines.push('');
+  return lines;
+}
+
+/** The order-driven agent section: one entry per order — derived budget
+ *  (with its derivation) vs spend, envelope enforcement outcomes, and the
+ *  done disclosure. The reviewer sees exactly what each dispatch was scoped
+ *  to and what the runner dropped. */
+function renderOrdersSection(orders: OrdersPhaseSummary): string[] {
+  const lines: string[] = ['### Work-order dispatches (one order per agent run)', ''];
+  lines.push(
+    `Queued ${orders.queued} agent-tier order(s); per-run cap ${orders.cap} ` +
+      `(\`remediate.maxOrdersPerRun\`).`,
+  );
+  if (orders.priorBlockingApplied) {
+    lines.push(
+      'A prior BLOCKED attempt was not resumed; its blocking findings rode every order ' +
+        'prompt as a negative constraint.',
+    );
+  }
+  for (const rec of orders.records) {
+    lines.push('');
+    lines.push(`- \`${rec.orderId}\` (${rec.class}, ${rec.findings} finding(s)): ${rec.outcome}`);
+    if (rec.detail) lines.push(`  - ${rec.detail}`);
+    if (rec.outcome !== 'not-dispatched') {
+      lines.push(`  - budget (derived, became the driver budget): ${rec.budget.derivation}`);
+      if (rec.clamped) lines.push(`  - ${rec.clamped}`);
+      const spent = rec.spent;
+      lines.push(
+        `  - spent: ${spent?.costUsd !== undefined ? `$${spent.costUsd.toFixed(2)}` : 'cost not reported'} over ` +
+          `${spent?.turns !== undefined ? `${spent.turns} turns` : 'an unreported turn count'}`,
+      );
+      lines.push(
+        rec.droppedPaths && rec.droppedPaths.length > 0
+          ? `  - envelope enforcement DROPPED out-of-envelope change(s), disclosed: ` +
+              rec.droppedPaths.join(', ')
+          : '  - envelope enforcement: every change stayed inside the order envelope',
+      );
+      lines.push(
+        rec.doneAfterVerify
+          ? `  - done (${rec.done.verifier} verifier, ${rec.done.absentIds} target id(s)): ` +
+              `${rec.doneAfterVerify.closed} closed, ${rec.doneAfterVerify.open} still open ` +
+              `per the verified floor`
+          : `  - done (${rec.done.verifier} verifier, ${rec.done.absentIds} target id(s)): ` +
+              `closure is arbitrated by the verification below and the next plan`,
+      );
+    }
+  }
   lines.push('');
   return lines;
 }
@@ -113,6 +161,16 @@ export function renderRemediateLedger(r: Omit<RemediateResult, 'ledger'>): strin
         ? `- in-loop gate: ARMED — ${e.inLoopGate.reason}`
         : `- in-loop gate: BACKSTOP-ONLY — ${e.inLoopGate.reason}`,
     );
+    // The tool policy applied to order-driven runs — how the driver
+    // narrowed tools, or the disclosed fact that it could not.
+    if (e.toolPolicy) {
+      lines.push(
+        e.toolPolicy.mechanism === 'disallowed-tools'
+          ? `- tool policy: disallowed-tools — denied: ${e.toolPolicy.disallowed.join(', ')} ` +
+              `(${e.toolPolicy.cliRequirement})`
+          : `- tool policy: NOT applied — ${e.toolPolicy.reason}`,
+      );
+    }
     if (e.failure) lines.push(`- driver-reported failure: ${e.failure}`);
     if (e.turns !== undefined && e.turns > e.budget.maxTurns) {
       // The 81-vs-80 confusion: the driver's reported count can exceed the
@@ -166,6 +224,10 @@ export function renderRemediateLedger(r: Omit<RemediateResult, 'ledger'>): strin
 
   if (r.recipes && (r.recipes.ran || r.recipes.disabled || r.recipes.planError)) {
     lines.push(...renderRecipeSection(r.recipes));
+  }
+
+  if (r.orders) {
+    lines.push(...renderOrdersSection(r.orders));
   }
 
   lines.push('### Verification', '');

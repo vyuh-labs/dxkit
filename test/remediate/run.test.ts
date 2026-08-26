@@ -42,6 +42,7 @@ function fakeGit(opts: { diff?: boolean; sweepError?: string } = {}): RemediateG
     head: () => head,
     sweepLeftovers: () => opts.sweepError,
     scrubRuntimeArtifacts: () => [],
+    enforceEnvelope: () => ({ dropped: [] }),
     hasDiff: () => {
       if (opts.diff) head = 'head1111';
       return !!opts.diff;
@@ -93,6 +94,7 @@ function config(
     taskBudgets: {},
     maxSpendPerRun: 0,
     maxDispatchBudget: 0,
+    maxOrdersPerRun: 0,
     resume: false,
     workOrders: { maxSliceSize: 25 },
     recipes: { enabled: true },
@@ -180,6 +182,7 @@ describe('refusal + infra arms (each truthful and distinct)', () => {
         return undefined;
       },
       scrubRuntimeArtifacts: () => [],
+      enforceEnvelope: () => ({ dropped: [] }),
       hasDiff: () => false,
     };
     const driver = fakeDriver({ completed: false, neverRan: { reason: 'exit 143' } });

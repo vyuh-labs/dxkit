@@ -253,6 +253,13 @@ export const POLICY_PARAMS: readonly PolicyParamMeta[] = [
     anchor: 'remediate-resume',
   },
   {
+    path: 'remediate.maxOrdersPerRun',
+    summary:
+      'most agent-tier work orders one run dispatches, one order per agent run, highest ' +
+      'value first (default 3; 0 disables order-driven dispatch)',
+    anchor: 'remediate-orders-per-run',
+  },
+  {
     path: 'remediate.workOrders.maxSliceSize',
     summary: 'largest number of findings one debt work order may carry (default 25)',
     anchor: 'remediate-work-orders',

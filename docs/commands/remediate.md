@@ -21,8 +21,10 @@ vyuh-dxkit remediate configured [path] [--land pr] [--json]
 - `plan` shows, per enabled task, the task > tier > driver-native model
   resolution, the effective per-task budget, and the spend-ceiling-trimmed
   matrix the managed workflow reads. It also lists the planned WORK ORDERS
-  (`workOrders` in `--json`): the finite units a later executor will
-  dispatch, built from the entry floor, deferred advisories inside their
+  (`workOrders` in `--json`): the finite units the run consumes (recipe-tier
+  orders execute deterministically in the frame; the remaining agent-tier
+  orders are dispatched one order per agent run, up to
+  `remediate.maxOrdersPerRun`), built from the entry floor, deferred advisories inside their
   window (joined to the live dependency scan), and the lint backlog, each
   with its class, tier (`recipe` where a registered recipe matches, else
   `agent`), derived budget, and done criterion. Findings no class can take

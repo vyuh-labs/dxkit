@@ -46,6 +46,7 @@ stanzas).
 | `remediate.agent.model`             | [#remediate-model](#remediate-model)                     |
 | `remediate.enabled`                 | [#remediate](#remediate)                                 |
 | `remediate.maxDispatchBudget`       | [#remediate-dispatch-budget](#remediate-dispatch-budget) |
+| `remediate.maxOrdersPerRun`         | [#remediate-orders-per-run](#remediate-orders-per-run)   |
 | `remediate.maxSpendPerRun`          | [#remediate-spend-per-run](#remediate-spend-per-run)     |
 | `remediate.recipes.enabled`         | [#remediate-recipes](#remediate-recipes)                 |
 | `remediate.resume`                  | [#remediate-resume](#remediate-resume)                   |
@@ -603,10 +604,11 @@ along with the dispatcher and the verbatim prompt.
 ## Remediate resume
 
 **What it does.** With `remediate.resume: true` the next run of a task
-CONTINUES from its prior salvage branch (a draft PR left by a
-budget-bounded or guardrail-blocked attempt) instead of starting over. A
-resumed attempt after a guardrail block gets the prior blocking findings
-in its prompt. Attempts are capped at 2 per branch (the counter travels
+CONTINUES from its prior salvage branch instead of starting over. Only a
+budget-exhausted VERIFIED partial is a resume anchor: its work passed the
+gate and was only cut short. A guardrail-blocked draft is never resumed;
+its blocking findings ride the next run's order prompts as a negative
+constraint instead. Attempts are capped at 2 per branch (the counter travels
 with the branch, so a no-op resume still consumes one); at the cap the
 task falls back to a fresh run. The entry floor still snapshots the
 pristine default tree first, so a broken partial reads as net-new and can
@@ -629,8 +631,9 @@ already computes (the entry floor's failures, deferred advisories inside
 their window, the grandfathered lint backlog) into finite work orders and
 lists them with their class, tier, budget, and done criterion. The remediate
 run consumes the same plan: recipe-tier orders execute deterministically
-first (see [Remediate recipes](#remediate-recipes)); agent-tier orders still
-run through the task prompts.
+first (see [Remediate recipes](#remediate-recipes)); the remaining agent-tier
+orders are dispatched one order per agent run (see
+[Remediate orders per run](#remediate-orders-per-run)).
 
 **Per parameter.**
 
@@ -679,3 +682,28 @@ the npm-family package managers (yarn's missing dry-run is a disclosed
 refusal), override pinning is npm only, and lint autofix requires the pack
 to declare a fix mode (TypeScript/JavaScript's eslint today). Everything a
 recipe declines is a named refusal, never a silent skip.
+
+## Remediate orders per run
+
+**What it does.** `remediate.maxOrdersPerRun` caps how many agent-tier work
+orders one remediate run dispatches. The agent tier no longer receives an
+open-ended task prompt: each remaining order for the selected task, including
+every recipe-tier order whose recipe refused or failed, is dispatched ONE
+ORDER PER AGENT RUN, highest value first, up to this cap. Each dispatch
+carries the rendered work order (findings with evidence, the attribution
+split, the envelope, the constraints, the done command), the order's derived
+budget as the driver budget, and the order's done criterion for the in-session
+Stop-gate; after the run, committed changes outside the order's envelope are
+dropped with disclosure, so sprawl cannot land. Orders beyond the cap are
+disclosed and deferred to the next firing.
+
+**Default and why.** `3`: enough to close several small orders in one firing
+while keeping each dispatch scoped and the run inside its wall clock. `0`
+turns order-driven dispatch off and restores the single open-ended task
+prompt (the pre-4.4.5 shape).
+
+**Interactions.** Per-order budgets are clamped to the run's remaining
+[budget](#remediate-budget); the total never exceeds the task's caps. Where
+the driver can narrow tools, package-manager install commands are denied
+for order runs (installs are a frame/recipe step) and the applied policy is
+disclosed in the envelope.

@@ -69,6 +69,14 @@ export interface RecipePhaseSummary {
   readonly selectedRecipeTier: number;
   readonly selectedAgentTier: number;
   readonly records: readonly RecipeOrderRecord[];
+  /** The orders LEFT for the agent tier after this phase, in plan (value)
+   *  order: the selected agent-tier orders, plus every recipe-tier order
+   *  whose recipe refused or failed (the in-run fallback — a refused
+   *  recipe order joins the agent queue instead of dead-ending the run).
+   *  Absent when no plan was built (planning failed, or an injected
+   *  summary predates the field) — the runner then keeps the legacy
+   *  task-prompt path. */
+  readonly agentOrders?: readonly WorkOrder[];
 }
 
 export function emptyRecipePhase(extra?: Partial<RecipePhaseSummary>): RecipePhaseSummary {
@@ -290,9 +298,6 @@ export interface RecipePhaseOptions {
  * discarded).
  */
 export async function runRecipePhaseForTask(opts: RecipePhaseOptions): Promise<RecipePhaseSummary> {
-  if (!opts.config.recipes.enabled) {
-    return emptyRecipePhase({ disabled: true });
-  }
   let plan;
   try {
     plan = await planRepoWorkOrders(opts.cwd, opts.config, {
@@ -300,16 +305,34 @@ export async function runRecipePhaseForTask(opts: RecipePhaseOptions): Promise<R
       ...opts.gather,
     });
   } catch (err) {
-    return emptyRecipePhase({ planError: err instanceof Error ? err.message : String(err) });
+    const planError = err instanceof Error ? err.message : String(err);
+    return emptyRecipePhase({
+      planError,
+      ...(opts.config.recipes.enabled ? {} : { disabled: true }),
+    });
   }
   const selected = selectOrders(plan.plan, classesSelectedBy(opts.taskId));
   const recipeTier = selected.filter((o) => o.tier === 'recipe');
+  if (!opts.config.recipes.enabled) {
+    // The knob's documented meaning: route EVERY selected order to the
+    // agent tier. The plan is still built (order-driven dispatch needs it);
+    // no recipe executes.
+    return emptyRecipePhase({
+      disabled: true,
+      disclosures: plan.disclosures,
+      selectedRecipeTier: 0,
+      selectedAgentTier: selected.length,
+      agentOrders: selected,
+    });
+  }
   const summaryBase = {
     disclosures: plan.disclosures,
     selectedRecipeTier: recipeTier.length,
     selectedAgentTier: selected.length - recipeTier.length,
   };
-  if (recipeTier.length === 0) return { ran: false, records: [], ...summaryBase };
+  if (recipeTier.length === 0) {
+    return { ran: false, records: [], ...summaryBase, agentOrders: selected };
+  }
   const records = await runRecipeOrders(recipeTier, {
     cwd: opts.cwd,
     trust: opts.trust,
@@ -320,7 +343,14 @@ export async function runRecipePhaseForTask(opts: RecipePhaseOptions): Promise<R
     ...(opts.auditDepVulns ? { auditDepVulns: opts.auditDepVulns } : {}),
     ...(opts.blockSeverities ? { blockSeverities: opts.blockSeverities } : {}),
   });
-  return { ran: true, records, ...summaryBase };
+  // The agent queue, in plan (value) order: agent-tier orders plus every
+  // recipe order whose recipe did not APPLY — a refused/failed recipe order
+  // falls through to the agent within THIS run instead of dead-ending it.
+  const applied = new Set(
+    records.filter((r) => r.outcome.kind === 'applied').map((r) => r.orderId),
+  );
+  const agentOrders = selected.filter((o) => o.tier === 'agent' || !applied.has(o.id));
+  return { ran: true, records, ...summaryBase, agentOrders };
 }
 
 /** Convenience projections for the frame's decision + ledger. */

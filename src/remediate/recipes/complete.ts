@@ -9,7 +9,7 @@
 import type { CorrectnessFloorResult } from '../../analyzers/correctness/run';
 import type { RemediateGit, RemediateResult, RemediateRunOptions } from '../outcome';
 import type { RemediateTask } from '../tasks';
-import { installFailedNote, verifyCommittedHead } from '../verify';
+import { installFailedNote, verificationDisclosures, verifyCommittedHead } from '../verify';
 import { recipeCounts, runRecipePhaseForTask, type RecipePhaseSummary } from './run-recipes';
 
 type Partial = Omit<RemediateResult, 'ledger' | 'dispatch' | 'resume'>;
@@ -51,7 +51,21 @@ export async function recipeTierStep(
     };
   }
   const selected = recipes.selectedRecipeTier + recipes.selectedAgentTier;
-  if (selected === 0 || recipes.selectedAgentTier > 0) return { recipes };
+  if (selected === 0) return { recipes };
+  // Order-driven dispatch (the scoped-agent unit): with a plan in hand and a
+  // positive per-run order cap, everything the recipe tier left OPEN — the
+  // agent-tier orders plus every refused/failed recipe order — goes to the
+  // orders phase ONE ORDER PER AGENT RUN, so a refused recipe never
+  // dead-ends the run. The run completes here only when nothing is left.
+  const orderDispatch = opts.config.maxOrdersPerRun > 0 && recipes.agentOrders !== undefined;
+  if (orderDispatch) {
+    if ((recipes.agentOrders ?? []).length > 0) return { recipes };
+  } else if (recipes.selectedAgentTier > 0) {
+    // No order queue (dispatch off, or a summary without a plan): the
+    // pre-order-dispatch shape — a mixed plan continues on the legacy
+    // task-prompt agent path.
+    return { recipes };
+  }
   const done = await completeRecipeOnlyRun(opts, {
     taskId: args.task.id,
     recipes,
@@ -82,12 +96,13 @@ export async function completeRecipeOnlyRun(
   const zeroDollar = 'No agent was spawned: every selected work order was recipe-tier ($0 run).';
   if (!args.hasDiff) {
     // NOT a clean no-op: the orders exist, every recipe refused or failed,
-    // and no agent tier exists in a recipe-only run to pick them up; a
-    // green outcome here would let the scheduled lane loop forever over
-    // debt nothing is working. `recipes-refused` is non-clean by
-    // construction (the executor's clean set never contains it), so the
-    // lane surfaces it; the agent-tier fallback within one run is the
-    // scoped-agent unit's job.
+    // and no agent dispatch remains in this run to pick them up (the
+    // in-run fallback routes refused orders to the agent tier whenever
+    // `remediate.maxOrdersPerRun` allows it — reaching this arm means it
+    // did not). A green outcome here would let the scheduled lane loop
+    // forever over debt nothing is working; `recipes-refused` is non-clean
+    // by construction (the executor's clean set never contains it).
+    const dispatchOff = opts.config.maxOrdersPerRun <= 0;
     return {
       outcome: 'recipes-refused',
       task: args.taskId,
@@ -96,7 +111,11 @@ export async function completeRecipeOnlyRun(
       note:
         `${zeroDollar} Every recipe declined: ${counts.refused} refused, ${counts.failed} ` +
         'failed, nothing was fixed, and the orders remain open. Per-order reasons are in ' +
-        'the recipe section below; these orders need the agent tier or a human.',
+        'the recipe section below; these orders need the agent tier or a human.' +
+        (dispatchOff
+          ? ' In-run agent dispatch is off (remediate.maxOrdersPerRun: 0); raise it to let ' +
+            'the agent tier pick these orders up.'
+          : ''),
     };
   }
   const { verified, guardrail } = await verifyCommittedHead(opts, {
@@ -108,11 +127,7 @@ export async function completeRecipeOnlyRun(
   const common = {
     task: args.taskId,
     recipes: args.recipes,
-    ...(verified.floor ? { floor: verified.floor } : {}),
-    ...(verified.floorAttribution ? { floorAttribution: verified.floorAttribution } : {}),
-    ...(verified.install ? { install: verified.install } : {}),
-    ...(verified.changedFiles ? { changedFiles: verified.changedFiles } : {}),
-    guardrailVerdict: guardrail.verdict,
+    ...verificationDisclosures(verified, guardrail),
     baseHead: args.baseHead,
     head: args.head,
   };

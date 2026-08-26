@@ -358,6 +358,79 @@ describe('runRecipePhaseForTask', () => {
     expect(git.commits[0].message).toContain('fix(stale-lockfile)');
   });
 
+  it('a refused/failed recipe order JOINS the agent queue (agentOrders), in plan order', async () => {
+    const cwd = tempRepo({
+      'package.json': '{"name":"fx"}',
+      'package-lock.json': '{}',
+      'src/index.ts': 'export const x = 1;\n',
+      '.dxkit/policy.json': '{}',
+    });
+    const git = fakeGit();
+    // The install never dirties the lockfile, so the lockfile-sync recipe
+    // reports applied with no in-envelope change and FAILS at the envelope
+    // step — the class of order the agent tier must pick up in-run.
+    const { exec } = fakeExec(() => undefined);
+    const entryFloor = floorWith([
+      {
+        pack: 'typescript',
+        label: 'lockfile-sync',
+        bin: 'npm',
+        args: ['ci', '--dry-run'],
+        status: 'fail',
+        output: 'EUSAGE',
+      },
+      // A plain failing floor check: the agent-only floor-failure class.
+      { pack: 'typescript', label: 'tests', bin: 'npx', args: ['vitest'], status: 'fail' },
+    ] as CorrectnessFloorResult['checks']);
+    const summary = await runRecipePhaseForTask({
+      cwd,
+      trust: trustedLocalContext(),
+      taskId: 'fix-build',
+      config: resolveRemediateConfig(cwd),
+      entryFloor,
+      git,
+      exec,
+    });
+    expect(summary.ran).toBe(true);
+    expect(summary.records[0].outcome.kind).not.toBe('applied');
+    const ids = (summary.agentOrders ?? []).map((o) => o.id);
+    // Both the non-applied recipe order and the agent-tier floor order are queued.
+    expect(ids.some((id) => id.startsWith('stale-lockfile:'))).toBe(true);
+    expect(ids.some((id) => id.startsWith('floor-failure:'))).toBe(true);
+  });
+
+  it('recipes disabled still plans and routes EVERY selected order to the agent queue', async () => {
+    const cwd = tempRepo({
+      'package.json': '{"name":"fx"}',
+      'package-lock.json': '{}',
+      '.dxkit/policy.json': '{"remediate":{"recipes":{"enabled":false}}}',
+    });
+    const entryFloor = floorWith([
+      {
+        pack: 'typescript',
+        label: 'lockfile-sync',
+        bin: 'npm',
+        args: ['ci', '--dry-run'],
+        status: 'fail',
+        output: 'EUSAGE',
+      },
+    ] as CorrectnessFloorResult['checks']);
+    const summary = await runRecipePhaseForTask({
+      cwd,
+      trust: trustedLocalContext(),
+      taskId: 'fix-build',
+      config: resolveRemediateConfig(cwd),
+      entryFloor,
+    });
+    expect(summary.disabled).toBe(true);
+    expect(summary.ran).toBe(false);
+    expect(summary.records).toHaveLength(0);
+    expect(summary.selectedAgentTier).toBe(1);
+    expect((summary.agentOrders ?? []).map((o) => o.id)).toEqual([
+      expect.stringMatching(/^stale-lockfile:/),
+    ]);
+  });
+
   it('a task selecting no orders is an honest no-run with the tier split at zero', async () => {
     const cwd = tempRepo({ '.dxkit/policy.json': '{}' });
     const summary = await runRecipePhaseForTask({

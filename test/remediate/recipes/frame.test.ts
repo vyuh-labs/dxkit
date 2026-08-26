@@ -21,6 +21,7 @@ function fakeGit(diff: boolean): RemediateGit {
     head: () => (diff ? 'head1111' : 'base0000'),
     sweepLeftovers: () => undefined,
     scrubRuntimeArtifacts: () => [],
+    enforceEnvelope: () => ({ dropped: [] }),
     hasDiff: () => diff,
   };
 }
@@ -51,6 +52,7 @@ function config(): RemediateConfig {
     taskBudgets: {},
     maxSpendPerRun: 0,
     maxDispatchBudget: 0,
+    maxOrdersPerRun: 0,
     resume: false,
     workOrders: { maxSliceSize: 25 },
     recipes: { enabled: true },
@@ -104,6 +106,7 @@ function recipeCommitGit(diffs: Record<string, boolean>): RemediateGit {
     head: () => (calls++ === 0 ? 'base0000' : 'recipe111'),
     sweepLeftovers: () => undefined,
     scrubRuntimeArtifacts: () => [],
+    enforceEnvelope: () => ({ dropped: [] }),
     hasDiff: (base: string) => diffs[base] ?? false,
   };
 }

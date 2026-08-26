@@ -79,6 +79,61 @@ function guardrailShapeFor(verified: VerifyTreeResult): GuardrailGateResult {
   };
 }
 
+/** The verification-fact fields every post-verify outcome carries — ONE
+ *  projection (run.ts's agent tail, the recipe-only completion, and the
+ *  orders phase all spread it, so the three ledgers cannot drift). */
+export function verificationDisclosures(
+  verified: VerifyTreeResult,
+  guardrail: GuardrailGateResult,
+): {
+  floor?: VerifyTreeResult['floor'];
+  floorAttribution?: VerifyTreeResult['floorAttribution'];
+  install?: VerifyTreeResult['install'];
+  changedFiles?: VerifyTreeResult['changedFiles'];
+  guardrailVerdict: string;
+} {
+  return {
+    ...(verified.floor ? { floor: verified.floor } : {}),
+    ...(verified.floorAttribution ? { floorAttribution: verified.floorAttribution } : {}),
+    ...(verified.install ? { install: verified.install } : {}),
+    ...(verified.changedFiles ? { changedFiles: verified.changedFiles } : {}),
+    guardrailVerdict: guardrail.verdict,
+  };
+}
+
+/**
+ * The guardrail-red note, phrased once for the agent-diff surfaces (the
+ * legacy task path and the orders phase): the verdict, the blocking
+ * findings as evidence (an ephemeral runner's diff evaporates with the
+ * job), and the salvage disposition for a RAN-and-BLOCKED verdict.
+ */
+export function guardrailRedNote(
+  guardrail: GuardrailGateResult,
+  effectiveSalvage: 'discard' | 'draft-pr',
+): string {
+  const evidence =
+    guardrail.blocking && guardrail.blocking.length > 0
+      ? `\n\nBlocking findings:\n${guardrail.blocking.map((b) => `- ${b}`).join('\n')}`
+      : '';
+  const salvageNote =
+    guardrail.ran && effectiveSalvage === 'draft-pr'
+      ? ' Salvage policy: draft-pr — the BLOCKED attempt may be pushed as a red DRAFT ' +
+        '(unmergeable while the guardrail check is red) so the work and the exact blocking ' +
+        'findings survive the ephemeral runner. A blocked draft is not a resume anchor: the ' +
+        'next run starts fresh, with these findings as a negative constraint.'
+      : '';
+  return (
+    (guardrail.ran
+      ? `the guardrail did not pass (${guardrail.verdict}) — nothing merges. The attempt ` +
+        'diff is uploaded as a run artifact when this ran under Actions; locally the ' +
+        'branch stays for inspection.'
+      : `the guardrail could not run (${guardrail.verdict}) — nothing lands. An ` +
+        'agent-authored diff is never pushed unverified.') +
+    salvageNote +
+    evidence
+  );
+}
+
 /** The install-failed outcome's note: what failed, why it matters, the
  *  usual cause, and the install output as evidence. */
 export function installFailedNote(verified: VerifyTreeResult): string {
