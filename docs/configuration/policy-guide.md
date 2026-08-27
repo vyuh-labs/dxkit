@@ -346,6 +346,13 @@ peer conflict to fail its install), `["peer-conflict"]` keeps it explicit.
 Unknown entries are ignored and disclosed. Run `vyuh-dxkit update` after a
 change so the workflows re-render.
 
+**Frame-owned invariants.** The remediate lane treats the dependency tree
+as frame-owned: the agent is told not to edit the lockfile or run installs,
+and after each order the frame re-runs the strategy's resync (under these
+same tolerances) and the lockfile-sync check before verifying the order. A
+withdrawn tolerance therefore also decides whether the frame can
+re-establish a peer-conflicted tree after an agent's manifest change.
+
 **Interactions.** The remediate lane's verification reports which fallback
 fired, and when a failure is a withdrawn tolerance it names this knob as
 the remedy. A failure identical on the candidate and the base branch reads

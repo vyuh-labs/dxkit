@@ -21,11 +21,25 @@
  *   5. after the run: leftover sweep, runtime-artifact scrub, then ENVELOPE
  *      ENFORCEMENT — committed changes outside the order's envelope (plus
  *      the always-allowed remediation notes file) are DROPPED WITH
- *      DISCLOSURE, so sprawl is unlandable by construction.
+ *      DISCLOSURE, so sprawl is unlandable by construction;
+ *   6. the FRAME-OWNED INVARIANTS (4.4.6, `lanes/tree-invariants.ts`): every
+ *      invariant the order's diff tripped is re-established by the frame
+ *      (a manifest change re-runs the pack's resync, so an agent's hand
+ *      edit to a lockfile is replaced by the tool's truth) and committed as
+ *      the frame's own; one that cannot be re-established DROPS the order
+ *      at that step, named;
+ *   7. PER-ORDER VERIFICATION (4.4.6): the order's commits are verified
+ *      (install + floor) on top of the previously verified head; a failing
+ *      order is DROPPED (its commits reverted, the reason recorded) and the
+ *      next order dispatches from the verified head. The unit of work is
+ *      the order, so the unit of landing is the order.
  *
- * The combined head then goes through the ONE tree verification exactly as
- * the legacy path's does; the outcome mapping shares the runner's phrasing
- * helpers (`verify.ts`), never a second copy.
+ * The landed head then goes through the ONE tree verification with the
+ * guardrail as the final arbiter, exactly as the legacy path's does; the
+ * outcome mapping shares the runner's phrasing helpers (`verify.ts`),
+ * never a second copy. A run with kept AND dropped orders completes
+ * `partially-landed`: non-clean, a PR for the kept set, the dropped orders
+ * named as still open.
  *
  * Order-driven tasks are bounded (no score hinge by construction — the
  * catalog test pins that a class-selecting task declares none), so the
@@ -59,6 +73,9 @@ import { REMEDIATION_NOTES_PATH, type RemediateTask } from './tasks';
 import { resolveOrderToolPolicy } from './tool-policy';
 import { renderWorkOrderPrompt } from './work-orders/render';
 import type { WorkOrder } from './work-orders/types';
+import type { TreeInvariantStep } from '../lanes/tree-invariants';
+import { frameInvariantStep, frameInvariantsForEnvelope } from './frame-invariants';
+import { placeOrder } from './order-placement';
 
 type Partial_ = Omit<RemediateResult, 'ledger' | 'dispatch' | 'resume'>;
 
@@ -114,6 +131,12 @@ export async function runOrdersPhase(
   now: Clock = Date.now,
 ): Promise<Partial_> {
   const toolPolicy = resolveOrderToolPolicy(args.driver);
+  // The frame's tree-invariant step, bound once per run (4.4.6).
+  const invariantStep: TreeInvariantStep = frameInvariantStep(
+    opts.cwd,
+    opts.trust,
+    opts.frameInvariants ?? {},
+  );
   // Session binding for the order scope: one token per run, injected into
   // the agent env so the Stop hook (which inherits it) can tell THIS lane's
   // scope from a killed or concurrent lane's leftover.
@@ -195,8 +218,15 @@ export async function runOrdersPhase(
       maxMinutes: minutes,
       maxUsd: Math.min(order.budget.usd, remainingUsd),
     };
+    // The frame's contract for THIS order's envelope (R2: the agent is told
+    // what the frame owns, from the same invariants the step will apply).
+    const invariantsInScope = frameInvariantsForEnvelope(
+      opts.cwd,
+      order.envelope,
+      opts.frameInvariants ?? {},
+    );
     const prompt =
-      renderWorkOrderPrompt(order) +
+      renderWorkOrderPrompt(order, { invariants: invariantsInScope }) +
       budgetPromptNote(orderBudget) +
       (clamped ? `\nRun-budget note: ${clamped}.` : '') +
       resumeNote +
@@ -327,7 +357,7 @@ export async function runOrdersPhase(
     partial = partial || overruns.partial;
     if (result.failure) failures.push(`order ${order.id}: ${result.failure.reason}`);
     if (result.completed) anyCompleted = true;
-    records.push({
+    const record: OrderRunRecord = {
       ...recordBase(order),
       ...(clamped ? { clamped } : {}),
       outcome: result.neverRan
@@ -347,7 +377,41 @@ export async function runOrdersPhase(
           }
         : {}),
       ...(enforced.dropped.length > 0 ? { droppedPaths: enforced.dropped } : {}),
-    });
+    };
+    // Nothing committed for this order: nothing to place. The record stands
+    // on the agent's outcome alone (a failed or empty dispatch).
+    if (!args.git.hasDiff(orderBase)) {
+      records.push(record);
+      continue;
+    }
+    const placement = await placeOrder(opts, args, { order, orderBase, record, invariantStep });
+    records.push(placement.record);
+    if (placement.fatal) {
+      // The drop's own cleanup failed: the tree state is unknown. Stop
+      // dispatching; the kept orders' records and ledger still render.
+      const fatal = placement.fatal;
+      terminal = (summary, envelope) => ({
+        outcome: 'sweep-failed',
+        task: args.taskId,
+        recipes: args.recipes,
+        orders: summary,
+        envelope,
+        floor: args.entryFloor,
+        ...(lastTail ? { transcriptTail: lastTail } : {}),
+        ...(partial ? { partial } : {}),
+        note: fatal,
+        baseHead: args.baseHead,
+        head: args.git.head(),
+      });
+      continue;
+    }
+    if (placement.record.disposition?.kind === 'unverifiable') {
+      // Per-order verification infrastructure is unavailable: dispatching
+      // further orders would stack unverifiable work. Stop, disclosed.
+      stopReason =
+        'per-order verification infrastructure is unavailable ' +
+        `(order ${order.id}: ${placement.record.disposition.reason}); later orders were not dispatched`;
+    }
   }
 
   const summary: OrdersPhaseSummary = {

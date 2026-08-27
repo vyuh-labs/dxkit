@@ -30,6 +30,9 @@ export async function verifyCommittedHead(
     readonly baseHead: string;
     readonly entryFloor: CorrectnessFloorResult;
     readonly runFloor: () => CorrectnessFloorResult;
+    /** Per-order verification (4.4.6): install + floor for THIS order's
+     *  commits, the guardrail deferred to the one final pass. */
+    readonly deferGuardrail?: string;
   },
 ): Promise<{ verified: VerifyTreeResult; guardrail: GuardrailGateResult }> {
   const verified = await verifyTree({
@@ -45,6 +48,7 @@ export async function verifyCommittedHead(
     // The entry floor always ran: an absent base check is a check the
     // agent's change introduced, net-new (conservative).
     absentMeans: 'net-new',
+    ...(args.deferGuardrail !== undefined ? { deferGuardrail: args.deferGuardrail } : {}),
     onStep: (step) => {
       const phase = PHASE_OF[step];
       if (phase) opts.onPhase?.(phase);
@@ -67,6 +71,13 @@ export async function verifyCommittedHead(
  */
 function guardrailShapeFor(verified: VerifyTreeResult): GuardrailGateResult {
   if (verified.guardrail) return verified.guardrail;
+  if (verified.verdict === 'floor-verified') {
+    return {
+      verdict: `deferred (${verified.guardrailDeferred ?? 'to the final pass over the landed head'})`,
+      ran: false,
+      passesGate: false,
+    };
+  }
   if (verified.failure) {
     return {
       verdict:
@@ -104,6 +115,7 @@ export function verificationDisclosures(
   installToleranceWarnings?: readonly string[];
   changedFiles?: VerifyTreeResult['changedFiles'];
   guardrailVerdict: string;
+  guardrailRan: boolean;
 } {
   // The tolerance-resolution warnings (unknown policy entries, a policy
   // opt-out conflicting with observed repo config): the disclosure home the
@@ -117,6 +129,7 @@ export function verificationDisclosures(
     ...(warnings.length > 0 ? { installToleranceWarnings: warnings } : {}),
     ...(verified.changedFiles ? { changedFiles: verified.changedFiles } : {}),
     guardrailVerdict: guardrail.verdict,
+    guardrailRan: guardrail.ran,
   };
 }
 
@@ -173,4 +186,75 @@ export function installFailedNote(verified: VerifyTreeResult): string {
     (failed ? `\n\n${describeInstall(failed)}` : '') +
     (failed ? `\n\nInstall output:\n\`\`\`\n${failed.output}\n\`\`\`` : '')
   );
+}
+
+/** The guardrail-deferral reason every per-order verification carries. */
+export const PER_ORDER_GUARDRAIL_DEFERRED =
+  'per-order verification runs the install and the floor; the guardrail arbitrates once over ' +
+  'the landed head';
+
+/** How one order's verification came out: KEPT (verified, lands), DROPPED
+ *  (a real verdict against the tree: the commits are reverted, the order
+ *  stays open), or UNVERIFIABLE (verification INFRASTRUCTURE failed: the
+ *  commits STAY on the branch, nothing lands, the run completes
+ *  `verification-unavailable`). Infrastructure is never a verdict on the
+ *  work, so it must never destroy it. */
+export type OrderHeadVerdict =
+  | { readonly kind: 'kept'; readonly verified: VerifyTreeResult }
+  | {
+      readonly kind: 'dropped';
+      readonly step: 'install' | 'floor';
+      readonly reason: string;
+      readonly verified: VerifyTreeResult;
+    }
+  | { readonly kind: 'unverifiable'; readonly reason: string; readonly verified: VerifyTreeResult };
+
+/**
+ * The ONE per-order verdict projection (4.4.6): verify ONE order's commits
+ * (install + floor, guardrail deferred) and place them. Both consumers
+ * (the recipe group before the agent tier, each agent order) read it.
+ */
+export async function verifyOrderHead(
+  opts: RemediateRunOptions,
+  args: {
+    readonly head: string;
+    readonly baseHead: string;
+    readonly entryFloor: CorrectnessFloorResult;
+    readonly runFloor: () => CorrectnessFloorResult;
+  },
+): Promise<OrderHeadVerdict> {
+  const { verified } = await verifyCommittedHead(opts, {
+    ...args,
+    deferGuardrail: PER_ORDER_GUARDRAIL_DEFERRED,
+  });
+  switch (verified.verdict) {
+    case 'floor-verified':
+      return { kind: 'kept', verified };
+    case 'install-failed':
+      return { kind: 'dropped', step: 'install', reason: installFailedNote(verified), verified };
+    case 'floor-red': {
+      const failing = (verified.floorAttribution ?? [])
+        .filter((a) => a.attribution === 'net-new')
+        .map((a) => `${a.check.pack} ${a.check.label}`);
+      return {
+        kind: 'dropped',
+        step: 'floor',
+        reason:
+          'the correctness floor has NET-NEW failures after this order' +
+          (failing.length > 0 ? ` (${failing.join(', ')})` : ''),
+        verified,
+      };
+    }
+    default:
+      // 'error' and 'skipped-untrusted': verification itself could not run.
+      // A transient worktree or disk failure says NOTHING about the work,
+      // so the commits are preserved, never reset (fix 1 of the review).
+      return {
+        kind: 'unverifiable',
+        reason: verified.failure
+          ? `verification infrastructure failed at step '${verified.failure.step}': ${verified.failure.message}`
+          : `verification ended '${verified.verdict}' without reaching a verdict on the tree`,
+        verified,
+      };
+  }
 }

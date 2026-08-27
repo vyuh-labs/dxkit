@@ -1,3 +1,4 @@
+import { NO_TREE_INVARIANTS } from './capabilities/tree-invariants';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -768,6 +769,7 @@ export const php: LanguageSupport = {
   // defeat name-matching for a meaningful slice of calls.
   callGraphReliability: 'partial',
 
+  treeInvariants: NO_TREE_INVARIANTS,
   correctness: phpCorrectnessProvider,
   lintGate: phpLintGateProvider,
 

@@ -1,3 +1,4 @@
+import { NO_TREE_INVARIANTS } from './capabilities/tree-invariants';
 import * as fs from 'fs';
 import * as path from 'path';
 import { builtinModules } from 'module';
@@ -3095,6 +3096,7 @@ export const typescript: LanguageSupport = {
     }),
   },
 
+  treeInvariants: NO_TREE_INVARIANTS,
   correctness: tsCorrectnessProvider,
   lintGate: tsLintGateProvider,
 

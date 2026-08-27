@@ -170,6 +170,10 @@ export type VerifyTreeVerdict =
   | 'floor-red'
   /** The guardrail ran and did not pass (BLOCKED or the CANNOT-GATE tier). */
   | 'guardrail-red'
+  /** Clean worktree installs and the floor has no net-new failure; the
+   *  guardrail was DEFERRED by the caller (`deferGuardrail`) to one final
+   *  pass over a later head. Never a landing verdict on its own. */
+  | 'floor-verified'
   /** The trust context does not allow repo execution here: nothing spawned,
    *  nothing verified. `failure` carries the disclosure (step `trust`). */
   | 'skipped-untrusted'
@@ -191,6 +195,8 @@ export interface VerifyTreeResult {
   /** Present on `error` (the step that failed and why) and on
    *  `skipped-untrusted` (the trust disclosure, step `trust`). */
   readonly failure?: GateFailure;
+  /** Present on `floor-verified`: why the guardrail did not run here. */
+  readonly guardrailDeferred?: string;
 }
 
 /** Injection points, one per step, so the composition is testable without a
@@ -233,6 +239,14 @@ export interface VerifyTreeOptions {
   readonly tolerances?: ResolvedTolerances;
   /** Per-command budget for the install + floor commands (ms). */
   readonly timeoutMs?: number;
+  /**
+   * Present when the caller arbitrates the guardrail ONCE over a later
+   * head (the remediate lane's per-order verification: install + floor per
+   * order, one guardrail pass over the landed head). The reason is
+   * disclosed on the result; the verdict is then `floor-verified`, never
+   * `verified`, so a deferred pass can never read as a landing verdict.
+   */
+  readonly deferGuardrail?: string;
   /** Progress hook, called as each step begins (the lane's heartbeat). */
   readonly onStep?: (step: VerifyTreeStep) => void;
   readonly seams?: VerifyTreeSeams;
@@ -457,6 +471,9 @@ export async function verifyTree(opts: VerifyTreeOptions): Promise<VerifyTreeRes
         }
       }
 
+      if (opts.deferGuardrail !== undefined) {
+        return { verdict: 'floor-verified', ...partial, guardrailDeferred: opts.deferGuardrail };
+      }
       enter('guardrail');
       const guardrail = await runGuardrail(wt);
       if (!guardrail.ran) {

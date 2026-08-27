@@ -8,6 +8,7 @@ import { execFileSync } from 'child_process';
 import { BOT_IDENTITY } from '../land-refresh';
 import { DXKIT_RUNTIME_ARTIFACT_PATHS, isRuntimeArtifactPath } from '../runtime-artifacts';
 import type { RemediateGit } from './run';
+import { realRecipeGit } from './recipes/git';
 
 /** Runtime paths as pathspecs for staged-restore (strip trailing slash). */
 const RUNTIME_PATHSPECS = DXKIT_RUNTIME_ARTIFACT_PATHS.map((p) => p.replace(/\/$/, ''));
@@ -130,6 +131,40 @@ export function realGit(cwd: string): RemediateGit {
         const lines =
           e instanceof Error ? e.message.split('\n').filter((l) => l.trim()) : [String(e)];
         return { dropped: [], error: lines[lines.length - 1] ?? String(e) };
+      }
+    },
+    resetTo(head) {
+      git(['reset', '-q', '--hard', head]);
+    },
+    changedPaths(baseHead) {
+      return git(['diff', '--no-renames', '--name-only', baseHead, 'HEAD'])
+        .split('\n')
+        .filter(Boolean);
+    },
+    // The ONE path-scoped bot commit (the recipe phase's surface).
+    commitPaths: (paths, message) => realRecipeGit(cwd).commitPaths(paths, message),
+    cleanPaths(paths) {
+      // Path-scoped: `git clean` with explicit pathspecs removes only the
+      // UNTRACKED files among them — never a blanket clean of the tree.
+      if (paths.length === 0) return;
+      git(['clean', '-f', '-q', '--', ...paths]);
+    },
+    revertPaths(baseHead, paths) {
+      // Targeted revert of the branch's own commits: move the branch back
+      // (soft, so the working tree and any user dirt stay untouched), then
+      // restore exactly the named paths to their base state. A path
+      // tracked at the base returns to base content; one absent at the
+      // base is removed. Everything else in the tree is left alone.
+      git(['reset', '-q', '--soft', baseHead]);
+      const baseTracked = new Set(
+        git(['ls-tree', '-r', '--name-only', baseHead]).split('\n').filter(Boolean),
+      );
+      for (const p of paths) {
+        if (baseTracked.has(p)) {
+          git(['checkout', baseHead, '--', p]);
+        } else {
+          git(['rm', '-f', '-q', '--ignore-unmatch', '--', p]);
+        }
       }
     },
   };

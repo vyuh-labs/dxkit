@@ -7,6 +7,8 @@ import type { LanguageId, LanguageSupport } from '../src/languages';
 import { TOOL_DEFS } from '../src/analyzers/tools/tool-registry';
 import { TOOLCHAIN_DEFS } from '../src/execution';
 import { TOLERANCE_CLASSES } from '../src/languages/capabilities/install-strategy';
+import { collectTreeInvariants } from '../src/languages';
+import { defaultResolvedTolerances } from '../src/install/tolerances';
 import { grammarShape } from '../src/ast/grammar-shape';
 import { modelShapeForGrammar } from '../src/ast/grammar-model-shape';
 
@@ -1080,4 +1082,68 @@ describe.each(LANGUAGES as LanguageSupport[])('language contract: $id', (lang) =
       expect(signal.anyOf.length).toBeGreaterThan(0);
     }
   });
+});
+
+// ─── Frame-owned tree invariants (4.4.6) ────────────────────────────────────
+// Every pack declares `treeInvariants` (required at compile time; the
+// contract pins the runtime shape): a pure, deterministic, total provider
+// whose invariants are well-formed. Packs with an install strategy get the
+// DERIVED dependency invariant at every variant root through the ONE
+// collector: it applies on the manifest/lockfile, owns the lockfile,
+// re-establishes through the strategy's resync (or declares none) and
+// verifies through the strategy's sync check.
+describe('tree invariants: every pack declares its frame-owned invariants', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-tree-inv-'));
+  const tolerances = defaultResolvedTolerances();
+
+  for (const lang of LANGUAGES) {
+    it(`${lang.id} declares a pure, deterministic, well-formed treeInvariants provider`, () => {
+      expect(typeof lang.treeInvariants.invariants).toBe('function');
+      const first = lang.treeInvariants.invariants(tmp, ['src/a']);
+      const second = lang.treeInvariants.invariants(tmp, ['src/a']);
+      expect(Array.isArray(first)).toBe(true);
+      expect(first.map((i) => i.id)).toEqual(second.map((i) => i.id));
+      for (const inv of first) {
+        expect(inv.id.length).toBeGreaterThan(0);
+        expect(inv.pack).toBe(lang.id);
+        expect(typeof inv.appliesWhen).toBe('function');
+        expect(inv.appliesWhen([])).toBe(false);
+        expect(Array.isArray(inv.ownedPaths)).toBe(true);
+        expect(inv.verify.kind).toMatch(/^(command|skipped|none)$/);
+        for (const p of inv.ownedPaths) expect(path.isAbsolute(p)).toBe(false);
+      }
+    });
+  }
+
+  for (const lang of LANGUAGES.filter((l) => l.installStrategy !== undefined)) {
+    it(`${lang.id}: the dependency invariant is derived from every install-strategy variant`, () => {
+      for (const variant of lang.installStrategy!.variants()) {
+        const dir = fs.mkdtempSync(path.join(tmp, `${lang.id}-`));
+        for (const f of variant.when) fs.writeFileSync(path.join(dir, f), '');
+        const invs = collectTreeInvariants(
+          [lang],
+          dir,
+          [variant.when[0]],
+          tolerances,
+        ).invariants.filter((i) => i.id === 'lockfile-sync');
+        expect(invs, `${lang.id} ${variant.strategy.manager}`).toHaveLength(1);
+        const inv = invs[0];
+        expect(inv.pack).toBe(lang.id);
+        expect(inv.root).toBe('');
+        expect(inv.reestablish).toBe(variant.strategy.modes.resync ?? null);
+        expect(inv.ownedPaths).toEqual(
+          variant.strategy.lockfile === null ? [] : [variant.strategy.lockfile],
+        );
+        if (variant.strategy.lockfile !== null) {
+          expect(inv.appliesWhen([variant.strategy.lockfile])).toBe(true);
+        }
+        expect(inv.appliesWhen(['src/unrelated.file'])).toBe(false);
+        // Not derived where nothing is there to install.
+        const empty = fs.mkdtempSync(path.join(tmp, 'empty-'));
+        expect(collectTreeInvariants([lang], empty, [], tolerances).invariants).toEqual(
+          lang.treeInvariants.invariants(empty, []),
+        );
+      }
+    });
+  }
 });

@@ -54,7 +54,7 @@ import { remediateBranchFor } from '../lanes/branches';
 import { internalGitPushArgs } from '../git-internal-push';
 import { BOT_IDENTITY } from '../land-refresh';
 import type { RemediateStamp } from './work-orders/breaker';
-import type { RemediateOutcome, RemediateResult } from './outcome';
+import type { OrderDisposition, RemediateOutcome, RemediateResult } from './outcome';
 
 /** Hard cap on recognized rows kept in one task's ledger file (append-only
  *  otherwise; comfortably wider than the reader's window so nothing in
@@ -73,6 +73,14 @@ function committedVerdict(outcome: RemediateOutcome): OrderRowOutcome {
   switch (outcome) {
     case 'verified':
       return 'verified';
+    // The kept orders of a partially-landed run verified and land (the
+    // dropped ones carry their own row through `droppedVerdict`).
+    case 'partially-landed':
+      return 'verified';
+    // Verification infrastructure failed: nothing was certified either
+    // way. Neutral for the breaker (nothing was tried against the code).
+    case 'verification-unavailable':
+      return 'unverifiable';
     case 'budget-exhausted':
       return 'budget-exhausted-verified';
     case 'guardrail-red':
@@ -98,6 +106,31 @@ function committedVerdict(outcome: RemediateOutcome): OrderRowOutcome {
     case 'agent-failed':
       return 'agent-failed';
   }
+}
+
+/** The row of an order DROPPED at its own verification (4.4.6): the
+ *  breaker counts the dropped order's class on the step that dropped it,
+ *  never the run as a whole. */
+function droppedVerdict(d: Extract<OrderDisposition, { kind: 'dropped' }>): OrderRowOutcome {
+  switch (d.step) {
+    case 'tree-invariants':
+      return 'invariant-failed';
+    case 'install':
+      return 'install-failed';
+    case 'floor':
+      return 'floor-red';
+  }
+}
+
+/** The row outcome of an order that COMMITTED work: its own disposition
+ *  when one was decided (per-order landing), else the run verdict. */
+function placedVerdict(
+  disposition: OrderDisposition | undefined,
+  outcome: RemediateOutcome,
+): OrderRowOutcome {
+  if (disposition?.kind === 'dropped') return droppedVerdict(disposition);
+  if (disposition?.kind === 'unverifiable') return 'unverifiable';
+  return committedVerdict(outcome);
 }
 
 function bounded(text: string | undefined): string | undefined {
@@ -137,7 +170,7 @@ export function orderOutcomeRows(
     const o = rec.outcome;
     const outcome: OrderRowOutcome =
       o.kind === 'applied'
-        ? committedVerdict(result.outcome)
+        ? placedVerdict(rec.disposition, result.outcome)
         : o.kind === 'refused'
           ? 'refused'
           : 'failed-recipe';
@@ -146,7 +179,9 @@ export function orderOutcomeRows(
         ? bounded(o.reason)
         : o.kind === 'failed'
           ? bounded(`${o.step}: ${o.output}`)
-          : undefined;
+          : rec.disposition?.kind === 'dropped'
+            ? bounded(`${rec.disposition.step}: ${rec.disposition.reason}`)
+            : undefined;
     byOrder.set(rec.orderId, {
       ...base,
       orderId: rec.orderId,
@@ -168,16 +203,28 @@ export function orderOutcomeRows(
         ? 'never-ran'
         : rec.outcome === 'not-dispatched'
           ? 'not-dispatched'
-          : rec.outcome === 'failed'
+          : rec.outcome === 'failed' && rec.disposition === undefined
             ? 'agent-failed'
-            : committedVerdict(result.outcome);
+            : rec.outcome === 'failed' && rec.disposition?.kind === 'kept'
+              ? // The commits verified and land, but the DRIVER reported the
+                // run failed: real progress, not a success — a distinct
+                // NEUTRAL row so the breaker's streak neither resets nor
+                // grows on it (review fix 9).
+                'partial-kept'
+              : placedVerdict(rec.disposition, result.outcome);
+    const detail =
+      rec.disposition?.kind === 'dropped'
+        ? `${rec.disposition.step}: ${rec.disposition.reason}`
+        : rec.disposition?.kind === 'unverifiable'
+          ? `unverifiable: ${rec.disposition.reason}`
+          : rec.detail;
     byOrder.set(rec.orderId, {
       ...base,
       orderId: rec.orderId,
       class: rec.class,
       tier: 'agent',
       outcome,
-      ...(rec.detail ? { detail: bounded(rec.detail) } : {}),
+      ...(detail ? { detail: bounded(detail) } : {}),
       ...(rec.spent ? { spend: rec.spent } : {}),
     });
   }
