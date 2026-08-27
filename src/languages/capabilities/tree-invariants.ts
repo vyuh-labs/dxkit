@@ -105,14 +105,26 @@ export function pathUnderRoot(filePath: string, root: string): boolean {
   return filePath === root || filePath.startsWith(root + '/');
 }
 
+/** The directory of a repo-relative POSIX path (an empty string for a
+ *  root-level file). */
+function dirOf(p: string): string {
+  const i = p.lastIndexOf('/');
+  return i === -1 ? '' : p.slice(0, i);
+}
+
 /**
- * The ONE derivation of the dependency invariant from an install strategy:
- * applies when a changed path under `root` is a dependency manifest (per
- * the pack's declared `manifestPatterns`, matched by `matchesManifest`) or
- * the strategy's lockfile; owned = the lockfile; re-established by the
- * strategy's RESYNC mode; verified by the strategy's sync check under the
- * repo's authorized tolerances (`lockfileCheckFromStrategy`, the same
- * derivation the floor reads).
+ * The ONE derivation of the dependency invariant from an install strategy,
+ * anchored to the OWNING dependency root (never a bare dirname): it applies
+ * to the strategy's lockfile, to a manifest sitting AT the root itself, and
+ * to a nested manifest under the root only when the root is
+ * lockfile-anchored (a workspace member resolves to the workspace root's
+ * strategy) and the path is not owned by another discovered root
+ * (`otherRoots`). A manifest in a directory with neither its own lockfile
+ * nor a lockfile-anchored parent maps to NO invariant (the collector
+ * discloses it; the frame never guesses an install). Owned = the lockfile;
+ * re-established by the strategy's RESYNC mode; verified by the strategy's
+ * sync check under the repo's authorized tolerances
+ * (`lockfileCheckFromStrategy`, the same derivation the floor reads).
  */
 export function dependencyTreeInvariant(args: {
   readonly pack: string;
@@ -121,11 +133,16 @@ export function dependencyTreeInvariant(args: {
   readonly manifestPatterns: readonly string[];
   readonly matchesManifest: (filePath: string, pattern: string) => boolean;
   readonly tolerances: ResolvedTolerances;
+  /** The pack's OTHER dependency roots: a path under one of them belongs
+   *  to that root's invariant, never this one's. */
+  readonly otherRoots?: readonly string[];
 }): TreeInvariant {
   const { pack, root, strategy, manifestPatterns, matchesManifest, tolerances } = args;
+  const otherRoots = args.otherRoots ?? [];
   const lockfilePath = strategy.lockfile === null ? null : path.posix.join(root, strategy.lockfile);
-  const isLockfile = (p: string) => lockfilePath !== null && p === lockfilePath;
   const isManifest = (p: string) => manifestPatterns.some((m) => matchesManifest(p, m));
+  const underOther = (p: string) =>
+    otherRoots.some((r) => r !== root && r !== '' && pathUnderRoot(p, r));
   const check = lockfileCheckFromStrategy(strategy, tolerances);
   const manifestWord =
     manifestPatterns.length > 0 ? manifestPatterns[0] : 'the dependency manifest';
@@ -139,7 +156,15 @@ export function dependencyTreeInvariant(args: {
     ownedPaths: lockfilePath === null ? [] : [lockfilePath],
     agentEdits: root === '' ? manifestWord : path.posix.join(root, manifestWord),
     appliesWhen: (changedPaths) =>
-      changedPaths.some((p) => pathUnderRoot(p, root) && (isLockfile(p) || isManifest(p))),
+      changedPaths.some((p) => {
+        if (lockfilePath !== null && p === lockfilePath) return true;
+        if (!pathUnderRoot(p, root) || underOther(p)) return false;
+        if (!isManifest(p)) return false;
+        // The root's own manifest always applies; a nested manifest applies
+        // only under a lockfile-anchored root (a workspace member, whose
+        // resync happens at the root that owns the lockfile).
+        return dirOf(p) === root || lockfilePath !== null;
+      }),
     reestablish: strategy.modes.resync ?? null,
     verify:
       check === null

@@ -59,6 +59,10 @@ export type OrderRowOutcome =
   | 'agent-failed'
   | 'never-ran'
   | 'not-dispatched'
+  /** The order's commits verified and land, but the DRIVER reported the
+   *  run as failed (4.4.6): real progress, not a success — neutral for
+   *  the breaker (neither counts nor resets a streak). */
+  | 'partial-kept'
   | 'sweep-failed'
   | 'no-op'
   | 'paused'
