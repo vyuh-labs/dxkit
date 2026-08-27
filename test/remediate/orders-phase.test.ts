@@ -93,6 +93,8 @@ function fakeGit(script: GitScript = {}): RemediateGit & {
     },
     changedPaths: () => ['src/a.ts'],
     commitPaths: () => {},
+    cleanPaths: () => {},
+    revertPaths: () => {},
   };
   return g;
 }

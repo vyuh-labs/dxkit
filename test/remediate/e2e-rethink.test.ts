@@ -502,7 +502,7 @@ describe('e2e d: the live shape, nine pins then a hand-edited lockfile', () => {
     expect(r.recipes?.records.map((rec) => [rec.orderId, rec.outcome.kind])).toEqual([
       ['dep-advisory:js-yaml', 'applied'],
     ]);
-    expect(r.recipes?.groupVerification?.kept).toBe(true);
+    expect(r.recipes?.groupVerification?.kind).toBe('kept');
     // R1: the invariant step re-established lockfile-sync after the agent.
     const rec = r.orders?.records[0];
     expect(rec?.invariants?.map((o) => [o.id, o.status])).toEqual([
@@ -553,12 +553,7 @@ describe('e2e d: the live shape, nine pins then a hand-edited lockfile', () => {
 
     expect(runs).toHaveLength(1);
     expect(r.outcome).toBe('partially-landed');
-    expect(r.recipes?.records[0].disposition).toEqual({
-      kind: 'kept',
-      head: r.recipes?.groupVerification?.kept
-        ? (r.recipes.groupVerification as { head: string }).head
-        : '',
-    });
+    expect(r.recipes?.records[0].disposition?.kind).toBe('kept');
     const rec = r.orders?.records[0];
     expect(rec?.disposition).toEqual({
       kind: 'dropped',

@@ -142,6 +142,8 @@ function fakeGit(): RemediateGit {
     resetTo: () => {},
     changedPaths: () => [],
     commitPaths: () => {},
+    cleanPaths: () => {},
+    revertPaths: () => {},
     hasDiff: () => {
       head = 'head1111';
       return true;

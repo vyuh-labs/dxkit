@@ -25,6 +25,8 @@ function fakeGit(diff: boolean): RemediateGit {
     resetTo: () => {},
     changedPaths: () => [],
     commitPaths: () => {},
+    cleanPaths: () => {},
+    revertPaths: () => {},
     hasDiff: () => diff,
   };
 }
@@ -114,6 +116,8 @@ function recipeCommitGit(diffs: Record<string, boolean>): RemediateGit {
     resetTo: () => {},
     changedPaths: () => [],
     commitPaths: () => {},
+    cleanPaths: () => {},
+    revertPaths: () => {},
     hasDiff: (base: string) => diffs[base] ?? false,
   };
 }

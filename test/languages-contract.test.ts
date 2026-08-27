@@ -1120,9 +1120,12 @@ describe('tree invariants: every pack declares its frame-owned invariants', () =
       for (const variant of lang.installStrategy!.variants()) {
         const dir = fs.mkdtempSync(path.join(tmp, `${lang.id}-`));
         for (const f of variant.when) fs.writeFileSync(path.join(dir, f), '');
-        const invs = collectTreeInvariants([lang], dir, [variant.when[0]], tolerances).filter(
-          (i) => i.id === 'lockfile-sync',
-        );
+        const invs = collectTreeInvariants(
+          [lang],
+          dir,
+          [variant.when[0]],
+          tolerances,
+        ).invariants.filter((i) => i.id === 'lockfile-sync');
         expect(invs, `${lang.id} ${variant.strategy.manager}`).toHaveLength(1);
         const inv = invs[0];
         expect(inv.pack).toBe(lang.id);
@@ -1137,7 +1140,7 @@ describe('tree invariants: every pack declares its frame-owned invariants', () =
         expect(inv.appliesWhen(['src/unrelated.file'])).toBe(false);
         // Not derived where nothing is there to install.
         const empty = fs.mkdtempSync(path.join(tmp, 'empty-'));
-        expect(collectTreeInvariants([lang], empty, [], tolerances)).toEqual(
+        expect(collectTreeInvariants([lang], empty, [], tolerances).invariants).toEqual(
           lang.treeInvariants.invariants(empty, []),
         );
       }

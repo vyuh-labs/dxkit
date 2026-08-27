@@ -6,7 +6,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { execFileSync } from 'child_process';
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { realGit } from '../../src/remediate/git-ops';
@@ -177,5 +177,44 @@ describe('enforceEnvelope (the envelope enforcement half — real git)', () => {
     const result = ops.enforceEnvelope('not-a-ref', () => true);
     expect(result.dropped).toEqual([]);
     expect(result.error).toBeTruthy();
+  });
+});
+
+describe('revertPaths: the targeted revert (review fix 2)', () => {
+  it('reverts exactly the named committed paths, leaving pre-existing uncommitted dirt untouched', () => {
+    // A user's uncommitted edit that has nothing to do with the group.
+    writeFileSync(join(repo, 'README.md'), 'original readme\n');
+    commitAll('add readme');
+    const base = git('rev-parse', 'HEAD');
+    writeFileSync(join(repo, 'README.md'), 'DIRTY local edit, never committed\n');
+    // The group's own commits: a tracked-file change and a new file.
+    writeFileSync(join(repo, 'package.json'), '{"overrides":{"x":"1"}}\n');
+    writeFileSync(join(repo, 'new-file.txt'), 'added by the group\n');
+    git('add', 'package.json', 'new-file.txt');
+    git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'group commit');
+
+    realGit(repo).revertPaths(base, ['package.json', 'new-file.txt']);
+
+    // The branch is back at the base; the group's paths are restored.
+    expect(git('rev-parse', 'HEAD')).toBe(base);
+    expect(git('status', '--porcelain', '--', 'package.json', 'new-file.txt')).toBe('');
+    // The user's dirty README survived, byte for byte, still uncommitted.
+    expect(git('status', '--porcelain', '--', 'README.md')).toContain('README.md');
+    expect(readFileSync(join(repo, 'README.md'), 'utf8')).toBe(
+      'DIRTY local edit, never committed\n',
+    );
+  });
+});
+
+describe('cleanPaths: the path-scoped clean (review fix 7)', () => {
+  it('removes exactly the named untracked files and never touches tracked or unnamed ones', () => {
+    writeFileSync(join(repo, 'stray.lock'), 'created by the frame step\n');
+    writeFileSync(join(repo, 'user-notes.txt'), 'unrelated untracked file\n');
+    writeFileSync(join(repo, 'src.js'), 'module.exports = 2;\n'); // tracked, modified
+    realGit(repo).cleanPaths(['stray.lock', 'src.js']);
+    const status = git('status', '--porcelain');
+    expect(status).not.toContain('stray.lock'); // removed (untracked, named)
+    expect(status).toContain('user-notes.txt'); // untouched (not named)
+    expect(status).toContain('src.js'); // untouched (tracked; clean skips it)
   });
 });

@@ -188,6 +188,8 @@ function fakeGit(opts: { diff?: boolean } = {}): RemediateGit {
     resetTo: () => {},
     changedPaths: () => [],
     commitPaths: () => {},
+    cleanPaths: () => {},
+    revertPaths: () => {},
     hasDiff: () => !!opts.diff,
   };
 }

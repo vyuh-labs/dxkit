@@ -32,6 +32,9 @@ import type { RecipePhaseSummary } from '../../src/remediate/recipes/run-recipes
 import type { WorkOrder } from '../../src/remediate/work-orders/types';
 import type { InstallOutcome } from '../../src/lanes/verify-tree';
 import { orderOutcomeRows } from '../../src/remediate/order-outcomes';
+import { isCountedOutcome } from '../../src/lanes/order-ledger';
+import type { OrderRunRecord } from '../../src/remediate/outcome';
+import type { TreeInvariantStepResult } from '../../src/lanes/tree-invariants';
 import { executeTask } from '../../src/remediate/cli';
 import { GREEN_FLOOR } from './helpers';
 import { makeOrder } from './recipes/helpers';
@@ -53,6 +56,8 @@ function fakeGit() {
   const g = {
     resets: [] as string[],
     commitCalls: [] as string[],
+    cleans: [] as string[][],
+    reverts: [] as { base: string; paths: readonly string[] }[],
     head: () => `head${commits}`,
     commit: () => {
       commits += 1;
@@ -72,6 +77,13 @@ function fakeGit() {
     commitPaths: (_p: readonly string[], message: string) => {
       g.commitCalls.push(message);
       commits += 1;
+    },
+    cleanPaths: (paths: readonly string[]) => {
+      g.cleans.push([...paths]);
+    },
+    revertPaths: (base: string, paths: readonly string[]) => {
+      g.reverts.push({ base, paths: [...paths] });
+      commits = Number(base.replace('head', ''));
     },
   };
   return g as RemediateGit & typeof g;
@@ -180,7 +192,13 @@ function runWith(o: {
     armInLoopGate: () => ({ mode: 'backstop-only' as const, reason: 'test' }),
     runRecipePhase: async () => (o.recipePhase ? o.recipePhase() : summary(o.orders)),
     frameInvariants: {
-      step: () => ({ applied: [], notApplicable: [], changedPaths: [], failed: false }),
+      step: async () => ({
+        applied: [],
+        notApplicable: [],
+        changedPaths: [],
+        disclosures: [],
+        failed: false,
+      }),
     },
   }).then((r) => Object.assign(r, { guardrailCalls }));
 }
@@ -303,7 +321,7 @@ describe('per-order landing: a recipe group before the agent tier', () => {
       // head2 (broken) and is dropped back to head1.
       failAt: ['head2'],
     });
-    expect(r.recipes?.groupVerification).toEqual({ kept: true, head: 'head1' });
+    expect(r.recipes?.groupVerification).toEqual({ kind: 'kept', head: 'head1' });
     expect(r.recipes?.records[0].disposition).toEqual({ kind: 'kept', head: 'head1' });
     expect(r.orders?.records[0].disposition?.kind).toBe('dropped');
     expect(git.resets).toEqual(['head1']);
@@ -346,16 +364,24 @@ describe('per-order landing: a recipe group before the agent tier', () => {
         });
       },
       frameInvariants: {
-        step: () => ({ applied: [], notApplicable: [], changedPaths: [], failed: false }),
+        step: async () => ({
+          applied: [],
+          notApplicable: [],
+          changedPaths: [],
+          disclosures: [],
+          failed: false,
+        }),
       },
     });
     expect(r.recipes?.groupVerification).toEqual({
-      kept: false,
+      kind: 'dropped',
       step: 'install',
       reason: expect.stringContaining('lockfile-drift'),
       droppedOrderIds: ['dep-advisory:js-yaml'],
     });
-    expect(git.resets[0]).toBe('head0');
+    // Targeted revert of the group's OWN paths, never a hard reset (fix 2).
+    expect(git.reverts).toEqual([{ base: 'head0', paths: ['package.json'] }]);
+    expect(git.resets).toEqual([]);
     expect(r.recipes?.records[0].disposition?.kind).toBe('dropped');
     // The agent order dispatched from the base and landed.
     expect(r.orders?.records[0].disposition?.kind).toBe('kept');
@@ -403,5 +429,242 @@ describe('the executor lands a partially-landed run as a normal PR and keeps it 
     expect(run.prUrl).toBe('https://example.test/pr/9');
     expect(landed?.draft).toBe(false);
     expect(landed?.prTitle).toContain('partial: some orders dropped');
+  });
+});
+
+describe('review fix 1: verification infrastructure never destroys committed work', () => {
+  it('a worktree failure yields UNVERIFIABLE: commits stay, nothing reset, later orders not dispatched, nothing lands', async () => {
+    const git = fakeGit();
+    const r = await runRemediateTask({
+      cwd: tmpCwd(),
+      trust: trustedLocalContext(),
+      taskId: 'fix-vulns',
+      config: config(),
+      drivers: [driver()],
+      git,
+      runFloor: () => GREEN_FLOOR,
+      runGuardrail: async () => ({ verdict: 'PASSED', ran: true, passesGate: true }),
+      verifySeams: {
+        // Order a's head1 verifies; order b's head2 hits a transient
+        // infrastructure failure before any verdict on the tree.
+        worktree: async <T>(opts: { ref: string }, fn: (p: string) => Promise<T>) => {
+          if (opts.ref === 'head2') throw new Error('worktree creation failed: disk full');
+          return fn(opts.ref);
+        },
+        install: () => INSTALLED,
+        changedFiles: () => ['src/a.ts'],
+      },
+      armInLoopGate: () => ({ mode: 'backstop-only' as const, reason: 'test' }),
+      runRecipePhase: async () =>
+        summary([
+          agentOrder('floor-failure:a'),
+          agentOrder('floor-failure:b'),
+          agentOrder('floor-failure:c'),
+        ]),
+      frameInvariants: {
+        step: async () => ({
+          applied: [],
+          notApplicable: [],
+          changedPaths: [],
+          disclosures: [],
+          failed: false,
+        }),
+      },
+    });
+    expect(r.outcome).toBe('verification-unavailable');
+    const recs = r.orders?.records ?? [];
+    expect(recs[0].disposition).toEqual({ kind: 'kept', head: 'head1' });
+    expect(recs[1].disposition).toEqual({
+      kind: 'unverifiable',
+      reason: expect.stringContaining('disk full'),
+    });
+    // Real work preserved: NOTHING was reset, the head still carries the
+    // commits, and the later order was not dispatched (disclosed).
+    expect(git.resets).toEqual([]);
+    expect(git.head()).toBe('head2');
+    expect(recs[2].outcome).toBe('not-dispatched');
+    expect(recs[2].detail).toContain('verification infrastructure is unavailable');
+    expect(r.note).toContain('stays on the local branch');
+    expect(r.ledger).toContain('UNVERIFIABLE');
+    // The rows are NEUTRAL: nothing was certified either way.
+    const rows = orderOutcomeRows(r, 'fix-vulns', {
+      timestamp: '2026-08-27T00:00:00Z',
+      stamp: { dxkitVersion: 'v', policyHash: 'h' },
+    });
+    expect(rows.map((row) => [row.orderId, row.outcome])).toEqual([
+      ['floor-failure:a', 'unverifiable'],
+      ['floor-failure:b', 'unverifiable'],
+      ['floor-failure:c', 'not-dispatched'],
+    ]);
+    for (const row of rows) expect(isCountedOutcome(row.outcome)).toBe(false);
+  });
+});
+
+describe('review fix 5: an unrunnable guardrail never produces a blocked draft', () => {
+  async function land(guardrailRan: boolean) {
+    const cwd = tmpCwd();
+    let landedDraft: boolean | undefined;
+    const run = await executeTask(cwd, { ...config(), salvage: 'draft-pr' }, 'fix-vulns', 'pr', {
+      runTask: async () => ({
+        outcome: 'guardrail-red',
+        task: 'fix-vulns',
+        ledger: 'LEDGER',
+        guardrailRan,
+        baseHead: 'aaaa1111',
+        head: 'bbbb2222',
+      }),
+      branch: () => 'main',
+      defaultBranch: () => 'main',
+      landHead: (o) => {
+        landedDraft = o.draft;
+        return {
+          outcome: 'pr-opened' as const,
+          mode: 'pr' as const,
+          prUrl: 'https://example.test/pr/7',
+        };
+      },
+      probeDelivery: () => ({ probes: [], anyBlocked: false, unverifiable: false }),
+      writeOrderLedger: () => null,
+      publishOrderRows: () => ({ published: true }),
+    });
+    return { run, landedDraft };
+  }
+
+  it('guardrail RAN and blocked: the draft-pr salvage pushes a red draft', async () => {
+    const { run, landedDraft } = await land(true);
+    expect(run.landed).toBe(true);
+    expect(landedDraft).toBe(true);
+  });
+
+  it('guardrail did NOT run: nothing lands, no draft claims a block that never happened', async () => {
+    const { run, landedDraft } = await land(false);
+    expect(run.landed).toBe(false);
+    expect(landedDraft).toBeUndefined();
+  });
+});
+
+describe('review fix 7: a drop cleans exactly what the step created, and a failing cleanup is fatal but not silent', () => {
+  const failedStep = (): Promise<TreeInvariantStepResult> =>
+    Promise.resolve({
+      applied: [
+        {
+          id: 'lockfile-sync',
+          pack: 'typescript',
+          root: '',
+          status: 'could-not-reestablish' as const,
+          step: 'reestablish' as const,
+          reason: 'resync exploded',
+          changedPaths: ['stray.lock'],
+        },
+      ],
+      notApplicable: [],
+      changedPaths: ['stray.lock'],
+      disclosures: [],
+      failed: true,
+    });
+
+  it('the drop resets to the order base and path-scope-cleans only the step-created files', async () => {
+    const git2 = fakeGit();
+    const r2 = await runRemediateTask({
+      cwd: tmpCwd(),
+      trust: trustedLocalContext(),
+      taskId: 'fix-vulns',
+      config: config(),
+      drivers: [driver()],
+      git: git2,
+      runFloor: () => GREEN_FLOOR,
+      runGuardrail: async () => ({ verdict: 'PASSED', ran: true, passesGate: true }),
+      verifySeams: {
+        worktree: async <T>(opts: { ref: string }, fn: (p: string) => Promise<T>) => fn(opts.ref),
+        install: () => INSTALLED,
+        changedFiles: () => ['src/a.ts'],
+      },
+      armInLoopGate: () => ({ mode: 'backstop-only' as const, reason: 'test' }),
+      runRecipePhase: async () => summary([agentOrder('floor-failure:a')]),
+      frameInvariants: { step: failedStep },
+    });
+    expect(r2.outcome).toBe('install-failed');
+    expect(r2.orders?.records[0].disposition).toEqual({
+      kind: 'dropped',
+      step: 'tree-invariants',
+      reason: expect.stringContaining('resync exploded'),
+    });
+    expect(git2.resets).toEqual(['head0']);
+    expect(git2.cleans).toEqual([['stray.lock']]);
+  });
+
+  it('a reset that throws is a fatal DISCLOSED stop: the kept records survive and nothing lands', async () => {
+    const git = fakeGit();
+    git.resetTo = () => {
+      throw new Error('reset refused by the filesystem');
+    };
+    // Order a passes its invariant step; order b's fails, and the drop's
+    // reset then throws: the run must stop with a's record intact.
+    let stepCalls = 0;
+    const r = await runRemediateTask({
+      cwd: tmpCwd(),
+      trust: trustedLocalContext(),
+      taskId: 'fix-vulns',
+      config: config(),
+      drivers: [driver()],
+      git,
+      runFloor: () => GREEN_FLOOR,
+      runGuardrail: async () => ({ verdict: 'PASSED', ran: true, passesGate: true }),
+      verifySeams: {
+        worktree: async <T>(opts: { ref: string }, fn: (p: string) => Promise<T>) => fn(opts.ref),
+        install: () => INSTALLED,
+        changedFiles: () => ['src/a.ts'],
+      },
+      armInLoopGate: () => ({ mode: 'backstop-only' as const, reason: 'test' }),
+      runRecipePhase: async () =>
+        summary([agentOrder('floor-failure:a'), agentOrder('floor-failure:b')]),
+      frameInvariants: {
+        step: () => {
+          stepCalls += 1;
+          return stepCalls === 1
+            ? Promise.resolve({
+                applied: [],
+                notApplicable: [],
+                changedPaths: [],
+                disclosures: [],
+                failed: false,
+              })
+            : failedStep();
+        },
+      },
+    });
+    expect(r.outcome).toBe('sweep-failed');
+    expect(r.note).toContain('reset refused by the filesystem');
+    expect(r.note).toContain('tree state is unknown');
+    // The already-kept order's record survived into the summary + ledger.
+    const recs = r.orders?.records ?? [];
+    expect(recs.map((x) => [x.orderId, x.disposition?.kind])).toEqual([
+      ['floor-failure:a', 'kept'],
+      ['floor-failure:b', 'dropped'],
+    ]);
+    expect(r.ledger).toContain('landing: KEPT');
+    expect(r.ledger).toContain('DROPPED at tree-invariants');
+  });
+});
+
+describe('review fix 9: a kept order from a FAILED driver run rows neutral, never a success', () => {
+  it("rows 'partial-kept' (lands, but neither resets nor extends a breaker streak)", () => {
+    const kept: OrderRunRecord = {
+      orderId: 'floor-failure:a',
+      class: 'floor-failure',
+      findings: 1,
+      budget: { turns: 12, minutes: 6, usd: 2, derivation: 'x' },
+      outcome: 'failed',
+      detail: 'driver reported an error after committing',
+      done: { verifier: 'floor', absentIds: 1 },
+      disposition: { kind: 'kept', head: 'head1' },
+    };
+    const rows = orderOutcomeRows(
+      { outcome: 'verified', orders: { cap: 3, queued: 1, records: [kept] } },
+      'fix-vulns',
+      { timestamp: '2026-08-27T00:00:00Z', stamp: { dxkitVersion: 'v', policyHash: 'h' } },
+    );
+    expect(rows.map((row) => row.outcome)).toEqual(['partial-kept']);
+    expect(isCountedOutcome('partial-kept')).toBe(false);
   });
 });

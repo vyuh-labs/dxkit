@@ -29,6 +29,7 @@ import { collectTreeInvariants } from '../../src/languages';
 import type { LanguageSupport } from '../../src/languages/types';
 import { NO_TREE_INVARIANTS } from '../../src/languages/capabilities/tree-invariants';
 import type { TreeInvariant } from '../../src/languages/capabilities/tree-invariants';
+import type { TreeInvariantStep } from '../../src/lanes/tree-invariants';
 import { runRemediateTask, type RemediateGit } from '../../src/remediate/run';
 import type { AgentDriver } from '../../src/remediate/driver';
 import { DEFAULT_REMEDIATE_BUDGET, type RemediateConfig } from '../../src/remediate/config';
@@ -36,8 +37,10 @@ import type { RecipePhaseSummary } from '../../src/remediate/recipes/run-recipes
 import type { WorkOrder } from '../../src/remediate/work-orders/types';
 import { renderWorkOrderPrompt } from '../../src/remediate/work-orders/render';
 import { frameInvariantsForEnvelope } from '../../src/remediate/frame-invariants';
+import { runRecipeOrders } from '../../src/remediate/recipes/run-recipes';
+import type { RecipeDeclaration } from '../../src/remediate/work-orders/recipes-registry';
 import { GREEN_FLOOR } from './helpers';
-import { makeOrder } from './recipes/helpers';
+import { fakeExec, lintFinding, makeOrder } from './recipes/helpers';
 
 // ─── The synthetic pack ─────────────────────────────────────────────────────
 const SYNTHETIC_INVARIANT: TreeInvariant = {
@@ -91,6 +94,7 @@ function fakeGit(changed: readonly string[]) {
   const g = {
     commitCalls: [] as { paths: readonly string[]; message: string }[],
     resets: [] as string[],
+    cleans: [] as string[][],
     head: () => `head${commits}`,
     sweepLeftovers: () => undefined,
     scrubRuntimeArtifacts: () => [] as string[],
@@ -108,6 +112,10 @@ function fakeGit(changed: readonly string[]) {
       g.commitCalls.push({ paths, message });
       commits += 1;
     },
+    cleanPaths: (paths: readonly string[]) => {
+      g.cleans.push([...paths]);
+    },
+    revertPaths: () => {},
   };
   return g as RemediateGit & typeof g;
 }
@@ -202,6 +210,8 @@ async function run(o: {
         exec: o.exec.exec,
         tolerances: defaultResolvedTolerances(),
         git: { changedPaths: () => [...o.tree()] },
+        // No pre-existing drift at the base in these scenarios.
+        baseVerify: async () => 'holds',
       },
     });
   } finally {
@@ -211,13 +221,14 @@ async function run(o: {
 
 describe('R1: the frame applies a synthetic pack invariant exactly when the order trips it', () => {
   it('the collector picks the synthetic declaration up (registry-driven, never a hardcoded list)', () => {
-    const invs = collectTreeInvariants(
+    const collected = collectTreeInvariants(
       [mockPack, packWithout],
       '/repo',
       ['src/a.pbk'],
       defaultResolvedTolerances(),
     );
-    expect(invs.map((i) => i.id)).toEqual(['playbook-generated']);
+    expect(collected.invariants.map((i) => i.id)).toEqual(['playbook-generated']);
+    expect(collected.disclosures).toEqual([]);
   });
 
   it("an order whose diff trips the invariant: check, regenerate, re-check, the owned path committed as the frame's own, disclosed on the record", async () => {
@@ -348,5 +359,244 @@ describe('R2: the order prompt states the contract from the same declaration', (
     expect(d.runs).toHaveLength(2);
     expect(d.runs[0].prompt).toContain('do not edit playbook.gen or run installs');
     expect(d.runs[1].prompt).not.toContain('playbook-generated');
+  });
+});
+
+// ─── Review fix 8: the legacy task path shares the frame contract ───────────
+describe('R8: the legacy task-prompt path gets the same contract, tool policy, and invariant step', () => {
+  function legacyGit() {
+    const g = {
+      commitCalls: [] as { paths: readonly string[]; message: string }[],
+      head: () => 'head0',
+      sweepLeftovers: () => undefined,
+      scrubRuntimeArtifacts: () => [] as string[],
+      hasDiff: () => true,
+      enforceEnvelope: () => ({ dropped: [] as string[] }),
+      resetTo: () => {},
+      changedPaths: () => ['src/x.pbk'],
+      commitPaths: (paths: readonly string[], message: string) => {
+        g.commitCalls.push({ paths, message });
+      },
+      cleanPaths: () => {},
+      revertPaths: () => {},
+    };
+    return g as RemediateGit & typeof g;
+  }
+
+  function legacyDriver() {
+    const d = {
+      id: 'fake-agent',
+      budgetSupport: { turns: 'enforced', cost: 'reported' },
+      credentialEnv: [],
+      cli: null,
+      toolPolicy: { mechanism: 'disallowed-tools' as const, cliRequirement: 'test CLI' },
+      resolveModel: (tier: string) => `fake-${tier}`,
+      available: () => ({ ok: true }),
+      runs: [] as Parameters<AgentDriver['run']>[0][],
+      run: async (opts: Parameters<AgentDriver['run']>[0]) => {
+        d.runs.push(opts);
+        return { completed: true, timedOut: false, transcriptTail: '' };
+      },
+    };
+    return d as unknown as AgentDriver & { runs: Parameters<AgentDriver['run']>[0][] };
+  }
+
+  async function runLegacy(o: {
+    readonly git: ReturnType<typeof legacyGit>;
+    readonly driver: ReturnType<typeof legacyDriver>;
+    readonly stepResult: Awaited<ReturnType<TreeInvariantStep>>;
+  }) {
+    const stepInputs: { changedPaths: readonly string[]; baseHead?: string }[] = [];
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-legacy-frame-'));
+    try {
+      const r = await runRemediateTask({
+        cwd,
+        trust: trustedLocalContext(),
+        taskId: 'fix-vulns',
+        config: { ...config(), maxOrdersPerRun: 0 },
+        drivers: [o.driver],
+        git: o.git,
+        runFloor: () => GREEN_FLOOR,
+        runGuardrail: async () => ({ verdict: 'PASSED', ran: true, passesGate: true }),
+        verifySeams: {
+          worktree: async <T>(_o: unknown, fn: (p: string) => Promise<T>) => fn('/tmp/fake-wt'),
+          install: () => ({ status: 'no-provision-declared', packs: [] }) as const,
+          changedFiles: () => ['src/x.pbk'],
+        },
+        armInLoopGate: () => ({ mode: 'backstop-only' as const, reason: 'test' }),
+        runRecipePhase: async () => ({
+          ran: false,
+          disclosures: [],
+          selectedRecipeTier: 0,
+          selectedAgentTier: 0,
+          records: [],
+        }),
+        frameInvariants: {
+          invariantsFor: () => [SYNTHETIC_INVARIANT],
+          step: async (input) => {
+            stepInputs.push(input);
+            return o.stepResult;
+          },
+        },
+      });
+      return { r, stepInputs };
+    } finally {
+      fs.rmSync(cwd, { recursive: true, force: true });
+    }
+  }
+
+  it('the prompt names the contract, the driver gets the install denial, and the step runs after the agent (one code path)', async () => {
+    const git = legacyGit();
+    const driver = legacyDriver();
+    const { r, stepInputs } = await runLegacy({
+      git,
+      driver,
+      stepResult: {
+        applied: [
+          {
+            id: 'playbook-generated',
+            pack: 'playbook',
+            root: '',
+            status: 'reestablished',
+            command: 'playbook-gen-mock regen',
+            changedPaths: ['playbook.gen'],
+            verification: 'verified',
+          },
+        ],
+        notApplicable: [],
+        changedPaths: ['playbook.gen'],
+        disclosures: [],
+        failed: false,
+      },
+    });
+    // R2 on the legacy path: the contract rides the open-ended task prompt.
+    expect(driver.runs[0].prompt).toContain('do not edit playbook.gen or run installs');
+    // The install denial reaches the driver through its declared mechanism.
+    expect(driver.runs[0].tools?.disallowed?.length).toBeGreaterThan(0);
+    // The SAME step ran after the agent, anchored at the agent base, and
+    // the frame committed what it re-established.
+    expect(stepInputs).toEqual([{ changedPaths: ['src/x.pbk'], baseHead: 'head0' }]);
+    expect(git.commitCalls).toHaveLength(1);
+    expect(git.commitCalls[0].paths).toEqual(['playbook.gen']);
+    expect(git.commitCalls[0].message).toContain(
+      're-establish playbook-generated after the task run',
+    );
+    expect(r.outcome).toBe('verified');
+    expect(r.frameInvariants?.applied.map((x) => x.status)).toEqual(['reestablished']);
+    expect(r.ledger).toContain('frame invariant: playbook-generated');
+  });
+
+  it('a legacy run whose invariant cannot be re-established fails at that step, commits preserved', async () => {
+    const git = legacyGit();
+    const driver = legacyDriver();
+    const { r } = await runLegacy({
+      git,
+      driver,
+      stepResult: {
+        applied: [
+          {
+            id: 'playbook-generated',
+            pack: 'playbook',
+            root: '',
+            status: 'could-not-reestablish',
+            step: 'reestablish',
+            reason: 'generator exploded',
+            changedPaths: [],
+          },
+        ],
+        notApplicable: [],
+        changedPaths: [],
+        disclosures: [],
+        failed: true,
+      },
+    });
+    expect(r.outcome).toBe('install-failed');
+    expect(r.note).toContain('generator exploded');
+    expect(r.note).toContain('stay on the branch');
+    expect(git.commitCalls).toEqual([]);
+  });
+});
+
+// ─── Review fix 10: every group member is recorded on every exit path ───────
+describe("R10: an invariant failure never swallows the open group members' records", () => {
+  it('the applied member records the invariant failure AND the open member records its leftover rules', async () => {
+    const orders = [
+      makeOrder({
+        id: 'lint-located:src/file.ts#1',
+        class: 'lint-located',
+        tier: 'recipe',
+        recipe: 'synthetic-lint',
+        envelope: { paths: ['src/file.ts'], manifests: false },
+        findings: [lintFinding('idA', 'lint', 'src/file.ts', 'ruleA')],
+      }),
+      makeOrder({
+        id: 'lint-located:src/file.ts#2',
+        class: 'lint-located',
+        tier: 'recipe',
+        recipe: 'synthetic-lint',
+        envelope: { paths: ['src/file.ts'], manifests: false },
+        findings: [lintFinding('idB', 'lint', 'src/file.ts', 'ruleB')],
+      }),
+    ];
+    const registry: RecipeDeclaration[] = [
+      {
+        id: 'synthetic-lint',
+        class: 'lint-located',
+        summary: 'synthetic grouped lint recipe',
+        implemented: true,
+        matches: () => true,
+        groupKey: () => 'src/file.ts',
+        // ruleA is fixed (its member closes); ruleB remains open.
+        execute: async () => ({
+          kind: 'failed',
+          step: 'verify-lint',
+          output: 'rules remain',
+          leftoverRules: ['ruleB'],
+        }),
+      },
+    ];
+    let reads = 0;
+    const discards: string[][] = [];
+    const records = await runRecipeOrders(orders, {
+      cwd: '/repo',
+      trust: trustedLocalContext(),
+      git: {
+        changedPaths: () => (reads++ === 0 ? [] : ['src/file.ts']),
+        discardPaths: (paths) => {
+          discards.push([...paths]);
+        },
+        commitPaths: () => {},
+      },
+      exec: fakeExec().exec,
+      registry,
+      invariantStep: async () => ({
+        applied: [
+          {
+            id: 'playbook-generated',
+            pack: 'playbook',
+            root: '',
+            status: 'could-not-reestablish',
+            step: 'reestablish',
+            reason: 'generator exploded',
+            changedPaths: [],
+          },
+        ],
+        notApplicable: [],
+        changedPaths: [],
+        disclosures: [],
+        failed: true,
+      }),
+    });
+    // EVERY member has a row: the closed member's invariant failure AND the
+    // open member's leftover-rules record (the pre-fix bug dropped it while
+    // it still entered the agent queue).
+    expect(records.map((r) => [r.orderId, r.outcome.kind])).toEqual([
+      ['lint-located:src/file.ts#1', 'failed'],
+      ['lint-located:src/file.ts#2', 'failed'],
+    ]);
+    expect(records[0].outcome).toMatchObject({ step: 'tree-invariants' });
+    expect(records[1].outcome).toMatchObject({ step: 'verify-lint' });
+    expect(JSON.stringify(records[1].outcome)).toContain('ruleB');
+    expect(discards).toEqual([['src/file.ts']]);
   });
 });
