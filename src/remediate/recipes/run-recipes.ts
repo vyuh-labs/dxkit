@@ -43,68 +43,26 @@ import type { WorkOrder } from '../work-orders/types';
 import { partitionByEnvelope, pathInEnvelope } from './envelope';
 import { realRecipeGit, type RecipeGit } from './git';
 import type { RecipeOutcome } from './types';
+import {
+  emptyRecipePhase,
+  type PausedOrderRecord,
+  type RecipeOrderRecord,
+  type RecipePhaseSummary,
+} from './phase-summary';
 
-export interface RecipeOrderRecord {
-  readonly orderId: string;
-  readonly class: string;
-  readonly recipe: string;
-  readonly outcome: RecipeOutcome;
-  /** Out-of-envelope paths the enforcement discarded (disclosed). */
-  readonly droppedPaths?: readonly string[];
-}
-
-/** One order the circuit breaker paused — planned, selected by this task,
- *  and deliberately NOT dispatched by any tier (disclosed, never silent). */
-export interface PausedOrderRecord {
-  readonly orderId: string;
-  readonly class: string;
-  readonly tier: 'recipe' | 'agent';
-  readonly findings: number;
-  readonly reason: string;
-  readonly unpause: string;
-}
-
-export interface RecipePhaseSummary {
-  /** Did the phase execute at all? False when disabled, when planning
-   *  failed, or when the task selects no recipe-tier orders. */
-  readonly ran: boolean;
-  /** `remediate.recipes.enabled: false` (disclosed, never silent). */
-  readonly disabled?: boolean;
-  /** Planning broke (fail-open: the agent path proceeds; the ledger says
-   *  why no recipe ran). */
-  readonly planError?: string;
-  /** Degraded gather reads, straight from the ONE gather adapter. */
-  readonly disclosures: readonly string[];
-  /** Orders the task selected, split by tier. Agent-tier orders are NOT
-   *  dispatched by this phase (the scoped-agent unit owns that); the count
-   *  is disclosed so a reader knows what remains. */
-  readonly selectedRecipeTier: number;
-  readonly selectedAgentTier: number;
-  /** Orders the task selected whose class the circuit breaker PAUSED: in
-   *  neither tier count above, dispatched by nothing, disclosed here and in
-   *  the ledger (remediate rethink 3F — never a silent skip). */
-  readonly paused?: readonly PausedOrderRecord[];
-  readonly records: readonly RecipeOrderRecord[];
-  /** The orders LEFT for the agent tier after this phase, in plan (value)
-   *  order: the selected agent-tier orders, plus every recipe-tier order
-   *  whose recipe refused or failed (the in-run fallback — a refused
-   *  recipe order joins the agent queue instead of dead-ending the run).
-   *  Absent when no plan was built (planning failed, or an injected
-   *  summary predates the field) — the runner then keeps the legacy
-   *  task-prompt path. */
-  readonly agentOrders?: readonly WorkOrder[];
-}
-
-export function emptyRecipePhase(extra?: Partial<RecipePhaseSummary>): RecipePhaseSummary {
-  return {
-    ran: false,
-    disclosures: [],
-    selectedRecipeTier: 0,
-    selectedAgentTier: 0,
-    records: [],
-    ...extra,
-  };
-}
+// The summary shapes live in `./phase-summary` (module-size split); re-exported
+// so consumers keep one import surface.
+export {
+  emptyRecipePhase,
+  recipeCounts,
+  type PausedOrderRecord,
+  type RecipeGroupVerification,
+  type RecipeOrderRecord,
+  type RecipePhaseSummary,
+} from './phase-summary';
+import type { TreeInvariantStep } from '../../lanes/tree-invariants';
+import { describeTreeInvariantOutcome } from '../../lanes/tree-invariants';
+import { frameInvariantStep } from '../frame-invariants';
 
 export interface RunRecipeOrdersDeps {
   readonly cwd: string;
@@ -119,6 +77,9 @@ export interface RunRecipeOrdersDeps {
   /** The advisory block tier for the OSV pre-checks; defaults to the repo's
    *  policy through the one normalizer (`effectiveBlockSeverities`). */
   readonly blockSeverities?: ReadonlySet<FindingSeverity>;
+  /** The frame's tree-invariant step (4.4.6); defaults to the real step
+   *  bound to this phase's exec + git. */
+  readonly invariantStep?: TreeInvariantStep;
 }
 
 /** The repo's effective advisory block tier, through the ONE policy
@@ -202,13 +163,17 @@ export async function runRecipeOrders(
   const registry = deps.registry ?? RECIPE_REGISTRY;
   const queryOsv = cachedOsvQuery(deps.queryOsv ?? queryOsvPackage);
   const blockSeverities = deps.blockSeverities ?? effectiveBlockSeverities(deps.cwd);
-  // The repo-root tolerance set, resolved ONCE for the whole phase.
+  // The repo-root tolerance set, resolved ONCE for the whole phase and
+  // shared with the frame's invariant step (one resolution per phase).
   const tolerances = deps.tolerances ?? resolveTolerances(deps.cwd);
+  const invariantStep =
+    deps.invariantStep ??
+    frameInvariantStep(deps.cwd, deps.trust, { exec: deps.exec, git: deps.git, tolerances });
   const records: RecipeOrderRecord[] = [];
   const recordAll = (
     group: readonly WorkOrder[],
     outcome: RecipeOutcome,
-    extra?: Pick<RecipeOrderRecord, 'droppedPaths'>,
+    extra?: Pick<RecipeOrderRecord, 'droppedPaths' | 'invariants'>,
   ) => {
     for (const order of group) {
       records.push({
@@ -346,11 +311,55 @@ export async function runRecipeOrders(
         dropped,
       );
     } else {
+      // The frame's invariant step (4.4.6) on the recipe's own diff, BEFORE
+      // the commit: an invariant the diff tripped is re-established (its
+      // rewritten paths ride the same commit as the frame's own) or the
+      // whole diff is discarded with the failure named, so a recipe can
+      // never commit a manifest whose lockfile the frame could not sync.
+      let invariants: ReturnType<TreeInvariantStep>;
+      try {
+        invariants = invariantStep({ changedPaths: inside });
+      } catch (err) {
+        deps.git.discardPaths(inside);
+        recordAll(
+          applying,
+          {
+            kind: 'failed',
+            step: 'tree-invariants',
+            output: tail(err instanceof Error ? err.message : String(err)),
+          },
+          dropped,
+        );
+        continue;
+      }
+      const invariantsDisclosure =
+        invariants.applied.length > 0 ? { invariants: invariants.applied } : {};
+      if (invariants.failed) {
+        deps.git.discardPaths([...new Set([...inside, ...invariants.changedPaths])]);
+        recordAll(
+          applying,
+          {
+            kind: 'failed',
+            step: 'tree-invariants',
+            output: invariants.applied
+              .filter((o) => o.status !== 'already-consistent' && o.status !== 'reestablished')
+              .map(describeTreeInvariantOutcome)
+              .join('; '),
+          },
+          { ...dropped, ...invariantsDisclosure },
+        );
+        continue;
+      }
+      const committed = [...new Set([...inside, ...invariants.changedPaths])];
       deps.git.commitPaths(
-        inside,
+        committed,
         `fix(${first.class}): ${nameOrders(applying.map((o) => o.id))} (${decl.id} recipe)`,
       );
-      recordAll(applying, { kind: 'applied', changedFiles: inside }, dropped);
+      recordAll(
+        applying,
+        { kind: 'applied', changedFiles: committed },
+        { ...dropped, ...invariantsDisclosure },
+      );
     }
     if (open.length > 0 && outcome.kind === 'failed') {
       for (const o of open) {
@@ -390,6 +399,7 @@ export interface RecipePhaseOptions {
   readonly queryOsv?: OsvPackageQuery;
   readonly auditDepVulns?: (cwd: string) => Promise<readonly DepVulnFinding[] | null>;
   readonly blockSeverities?: ReadonlySet<FindingSeverity>;
+  readonly invariantStep?: TreeInvariantStep;
 }
 
 /**
@@ -466,6 +476,7 @@ export async function runRecipePhaseForTask(opts: RecipePhaseOptions): Promise<R
     ...(opts.queryOsv ? { queryOsv: opts.queryOsv } : {}),
     ...(opts.auditDepVulns ? { auditDepVulns: opts.auditDepVulns } : {}),
     ...(opts.blockSeverities ? { blockSeverities: opts.blockSeverities } : {}),
+    ...(opts.invariantStep ? { invariantStep: opts.invariantStep } : {}),
   });
   // The agent queue, in plan (value) order: agent-tier orders plus every
   // recipe order whose recipe did not APPLY — a refused/failed recipe order
@@ -475,21 +486,4 @@ export async function runRecipePhaseForTask(opts: RecipePhaseOptions): Promise<R
   );
   const agentOrders = selected.filter((o) => o.tier === 'agent' || !applied.has(o.id));
   return { ran: true, records, ...summaryBase, agentOrders };
-}
-
-/** Convenience projections for the frame's decision + ledger. */
-export function recipeCounts(summary: RecipePhaseSummary): {
-  applied: number;
-  refused: number;
-  failed: number;
-} {
-  let applied = 0;
-  let refused = 0;
-  let failed = 0;
-  for (const r of summary.records) {
-    if (r.outcome.kind === 'applied') applied += 1;
-    else if (r.outcome.kind === 'refused') refused += 1;
-    else failed += 1;
-  }
-  return { applied, refused, failed };
 }

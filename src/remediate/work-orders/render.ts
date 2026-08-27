@@ -8,6 +8,8 @@
  * em-dashes.
  */
 import { describeEntryLocation } from '../../gate/context';
+import type { TreeInvariant } from '../../languages/capabilities/tree-invariants';
+import { frameInvariantContractLines } from '../frame-invariants';
 import { SHARED_RULES } from '../tasks';
 import { RECIPE_REGISTRY } from './recipes-registry';
 import type { WorkOrder, WorkOrderFinding } from './types';
@@ -81,8 +83,15 @@ export function attributionSentence(order: WorkOrder): string {
   );
 }
 
+/** What the frame tells the agent it OWNS for this order (4.4.6): the
+ *  invariants the order's envelope can trip, rendered from the same
+ *  declarations the frame's step applies after the run. */
+export interface FrameContract {
+  readonly invariants: readonly TreeInvariant[];
+}
+
 /** The agent-facing prompt for one order. */
-export function renderWorkOrderPrompt(order: WorkOrder): string {
+export function renderWorkOrderPrompt(order: WorkOrder, frame?: FrameContract): string {
   const classSummary = isBuiltinWorkOrderClass(order.class)
     ? WORK_ORDER_CLASSES[order.class].summary
     : order.class;
@@ -121,6 +130,11 @@ export function renderWorkOrderPrompt(order: WorkOrder): string {
     );
   }
   for (const f of order.constraints.forbidden) lines.push(`- do not: ${f}`);
+  const contract = frameInvariantContractLines(frame?.invariants ?? []);
+  if (contract.length > 0) {
+    lines.push('');
+    lines.push(...contract);
+  }
   lines.push('');
   lines.push(
     `Done when: every id above is absent and no net-new finding appears inside the envelope. ` +

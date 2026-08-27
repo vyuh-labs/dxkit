@@ -8,6 +8,7 @@ import { execFileSync } from 'child_process';
 import { BOT_IDENTITY } from '../land-refresh';
 import { DXKIT_RUNTIME_ARTIFACT_PATHS, isRuntimeArtifactPath } from '../runtime-artifacts';
 import type { RemediateGit } from './run';
+import { realRecipeGit } from './recipes/git';
 
 /** Runtime paths as pathspecs for staged-restore (strip trailing slash). */
 const RUNTIME_PATHSPECS = DXKIT_RUNTIME_ARTIFACT_PATHS.map((p) => p.replace(/\/$/, ''));
@@ -132,5 +133,15 @@ export function realGit(cwd: string): RemediateGit {
         return { dropped: [], error: lines[lines.length - 1] ?? String(e) };
       }
     },
+    resetTo(head) {
+      git(['reset', '-q', '--hard', head]);
+    },
+    changedPaths(baseHead) {
+      return git(['diff', '--no-renames', '--name-only', baseHead, 'HEAD'])
+        .split('\n')
+        .filter(Boolean);
+    },
+    // The ONE path-scoped bot commit (the recipe phase's surface).
+    commitPaths: (paths, message) => realRecipeGit(cwd).commitPaths(paths, message),
   };
 }

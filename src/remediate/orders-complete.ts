@@ -11,6 +11,7 @@
 import { floorOrderDone } from '../loop/order-scope';
 import type {
   AgentEnvelope,
+  OrderDisposition,
   OrderRunRecord,
   OrdersPhaseSummary,
   RemediateResult,
@@ -49,6 +50,35 @@ export async function completeOrdersRun(
   const evidenceTail = lastTail ? { transcriptTail: lastTail } : {};
   const hasDiff = args.git.hasDiff(args.baseHead);
   const hasRecipeCommits = args.agentBase !== args.baseHead;
+  const droppedOrders = records.filter((r) => r.disposition?.kind === 'dropped');
+  const droppedRecipes = args.recipes.records.filter((r) => r.disposition?.kind === 'dropped');
+  if (!hasDiff && (droppedOrders.length > 0 || droppedRecipes.length > 0)) {
+    // Every order that committed work was DROPPED at its own verification
+    // (4.4.6): nothing lands, and the run's outcome is the dropped orders'
+    // dominant failure, named per order below. Never a no-op: work was
+    // tried and refused.
+    const steps = [...droppedRecipes, ...droppedOrders].map((r) => droppedStep(r.disposition));
+    const outcome = steps.includes('floor')
+      ? 'floor-red'
+      : steps.includes('install') || steps.includes('tree-invariants')
+        ? 'install-failed'
+        : 'guardrail-red';
+    return {
+      outcome,
+      task: args.taskId,
+      recipes: args.recipes,
+      orders: summary,
+      envelope,
+      floor: args.entryFloor,
+      ...evidenceTail,
+      ...(partial ? { partial } : {}),
+      note:
+        `every order that committed work was dropped at its own verification, so nothing ` +
+        `lands: ${describeDropped([...droppedRecipes, ...droppedOrders])}. The orders remain open.`,
+      baseHead: args.baseHead,
+      head: args.git.head(),
+    };
+  }
   if (!hasDiff) {
     const neverRanOnly =
       records.length > 0 &&
@@ -203,6 +233,10 @@ export async function completeOrdersRun(
       note: guardrailRedNote(guardrail, args.effectiveSalvage),
     };
   }
+  const droppedNote =
+    droppedOrders.length + droppedRecipes.length > 0
+      ? ` Dropped at their own verification (still open): ${describeDropped([...droppedRecipes, ...droppedOrders])}.`
+      : '';
   if (partial) {
     const salvage =
       args.effectiveSalvage === 'draft-pr'
@@ -211,8 +245,37 @@ export async function completeOrdersRun(
     return {
       outcome: 'budget-exhausted',
       ...common,
-      note: `a budget cap cut the order dispatches short — the diff is verified. ${salvage}`,
+      note: `a budget cap cut the order dispatches short; the diff is verified. ${salvage}${droppedNote}`,
+    };
+  }
+  if (droppedNote !== '') {
+    // Some orders verified and land; others were dropped, named (4.4.6).
+    // Non-clean by construction: a PR opens for the kept set, and the job
+    // stays red so the dropped orders are not read as done.
+    return {
+      outcome: 'partially-landed',
+      ...common,
+      note:
+        'the verified orders land; the run is not clean because some orders were dropped.' +
+        droppedNote,
     };
   }
   return { outcome: 'verified', ...common };
+}
+
+function droppedStep(d: OrderDisposition | undefined): string {
+  return d?.kind === 'dropped' ? d.step : 'verification';
+}
+
+/** `id (step: reason)` per dropped record, one phrasing for every note. */
+function describeDropped(
+  records: readonly { readonly orderId: string; readonly disposition?: OrderDisposition }[],
+): string {
+  return records
+    .map((r) =>
+      r.disposition?.kind === 'dropped'
+        ? `${r.orderId} (${r.disposition.step}: ${r.disposition.reason})`
+        : r.orderId,
+    )
+    .join('; ');
 }

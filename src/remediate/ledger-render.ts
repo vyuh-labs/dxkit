@@ -6,6 +6,8 @@
  */
 import { renderFloorVerification, renderGuardrailVerdict } from '../lanes/verification-render';
 import { describeInstall } from '../lanes/verify-tree';
+import { describeTreeInvariantOutcome, type TreeInvariantOutcome } from '../lanes/tree-invariants';
+import type { OrderDisposition } from './outcome';
 import { renderScoreHinge } from './score-hinge';
 import { recipeCounts, type RecipePhaseSummary } from './recipes/run-recipes';
 import type { OrdersPhaseSummary, RemediateResult } from './outcome';
@@ -62,6 +64,17 @@ function renderRecipeSection(recipes: RecipePhaseSummary): string[] {
         `  - discarded out-of-envelope change(s), disclosed: ${rec.droppedPaths.join(', ')}`,
       );
     }
+    lines.push(...renderInvariants(rec.invariants));
+    lines.push(...renderDisposition(rec.disposition));
+  }
+  if (recipes.groupVerification) {
+    const g = recipes.groupVerification;
+    lines.push(
+      g.kept
+        ? '- recipe group verified as one unit before the agent tier (install + floor); it lands'
+        : `- recipe group DROPPED before the agent tier at ${g.step}: ${g.reason} ` +
+            `(orders still open: ${g.droppedOrderIds.join(', ')})`,
+    );
   }
   for (const d of recipes.disclosures) lines.push(`- plan disclosure: ${d}`);
   lines.push(...renderPausedOrders(recipes));
@@ -81,6 +94,22 @@ function renderPausedOrders(recipes: RecipePhaseSummary): string[] {
   }
   lines.push(`- unpause: ${paused[0].unpause}`);
   return lines;
+}
+
+/** The frame-owned invariants an order tripped, one line each (4.4.6). */
+function renderInvariants(outcomes: readonly TreeInvariantOutcome[] | undefined): string[] {
+  if (!outcomes || outcomes.length === 0) return [];
+  return outcomes.map((o) => `  - frame invariant: ${describeTreeInvariantOutcome(o)}`);
+}
+
+/** Where the order's commits ended up (4.4.6): kept (lands) or dropped. */
+function renderDisposition(d: OrderDisposition | undefined): string[] {
+  if (!d) return [];
+  return [
+    d.kind === 'kept'
+      ? '  - landing: KEPT (verified on top of the previously verified head; lands)'
+      : `  - landing: DROPPED at ${d.step}, commits reverted, the order stays open: ${d.reason}`,
+  ];
 }
 
 /** The order-driven agent section: one entry per order — derived budget
@@ -118,6 +147,8 @@ function renderOrdersSection(orders: OrdersPhaseSummary): string[] {
               rec.droppedPaths.join(', ')
           : '  - envelope enforcement: every change stayed inside the order envelope',
       );
+      lines.push(...renderInvariants(rec.invariants));
+      lines.push(...renderDisposition(rec.disposition));
       lines.push(
         rec.doneAfterVerify
           ? `  - done (${rec.done.verifier} verifier, ${rec.done.absentIds} target id(s)): ` +
@@ -267,6 +298,13 @@ export function renderRemediateLedger(r: Omit<RemediateResult, 'ledger'>): strin
   }
 
   lines.push('### Verification', '');
+  if (r.outcome === 'partially-landed') {
+    lines.push(
+      'Per-order landing: the orders marked KEPT above verified and land together; the ' +
+        'orders marked DROPPED were reverted with the reason named and remain open.',
+      '',
+    );
+  }
   // The install line comes first: it is what CI's own install step will do
   // with this tree, verified on a clean checkout (4.4.5).
   const install = describeInstall(r.install);

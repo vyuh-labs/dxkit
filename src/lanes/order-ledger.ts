@@ -48,6 +48,12 @@ export type OrderRowOutcome =
   | 'guardrail-red'
   | 'floor-red'
   | 'install-failed'
+  /** A frame-owned invariant the order tripped could not be re-established
+   *  (4.4.6): the order was dropped at the frame's invariant step. */
+  | 'invariant-failed'
+  /** The order's own verification could not run (infrastructure, the step
+   *  named); dropped, but nothing was tried against the code: neutral. */
+  | 'unverifiable'
   | 'failed-recipe'
   | 'refused'
   | 'agent-failed'
@@ -106,6 +112,7 @@ export const ORDER_FAILURE_OUTCOMES: ReadonlySet<OrderRowOutcome> = new Set([
   'guardrail-red',
   'floor-red',
   'install-failed',
+  'invariant-failed',
   'failed-recipe',
 ]);
 

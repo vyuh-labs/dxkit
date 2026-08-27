@@ -9,7 +9,12 @@
 import type { CorrectnessFloorResult } from '../../analyzers/correctness/run';
 import type { RemediateGit, RemediateResult, RemediateRunOptions } from '../outcome';
 import type { RemediateTask } from '../tasks';
-import { installFailedNote, verificationDisclosures, verifyCommittedHead } from '../verify';
+import {
+  installFailedNote,
+  verificationDisclosures,
+  verifyCommittedHead,
+  verifyOrderHead,
+} from '../verify';
 import { recipeCounts, runRecipePhaseForTask, type RecipePhaseSummary } from './run-recipes';
 
 type Partial = Omit<RemediateResult, 'ledger' | 'dispatch' | 'resume'>;
@@ -86,7 +91,9 @@ export async function recipeTierStep(
   // dead-ends the run. The run completes here only when nothing is left.
   const orderDispatch = opts.config.maxOrdersPerRun > 0 && recipes.agentOrders !== undefined;
   if (orderDispatch) {
-    if ((recipes.agentOrders ?? []).length > 0) return { recipes };
+    if ((recipes.agentOrders ?? []).length > 0) {
+      return { recipes: await verifyRecipeGroup(opts, recipes, args) };
+    }
   } else if (recipes.selectedAgentTier > 0) {
     // No order queue (dispatch off, or a summary without a plan): the
     // pre-order-dispatch shape — a mixed plan continues on the legacy
@@ -103,6 +110,58 @@ export async function recipeTierStep(
     runFloor: args.runFloor,
   });
   return { recipes, done };
+}
+
+/**
+ * Per-order landing, the recipe half (4.4.6): when agent orders FOLLOW, the
+ * recipe group's combined commits are verified as one contiguous unit
+ * (install + floor; the guardrail arbitrates once over the landed head)
+ * BEFORE any agent spawns. Kept: the agent tier builds on the verified
+ * head. Dropped: the branch is reset to the base, every applied record is
+ * marked dropped with the reason, and the agent tier starts from the
+ * base, so a recipe group that cannot install is never blamed on the
+ * agent orders after it, and the agent orders are never discarded for it.
+ * A recipe-only run (nothing follows) keeps its single completion-time
+ * verification.
+ */
+async function verifyRecipeGroup(
+  opts: RemediateRunOptions,
+  recipes: RecipePhaseSummary,
+  args: {
+    readonly baseHead: string;
+    readonly git: RemediateGit;
+    readonly entryFloor: CorrectnessFloorResult;
+    readonly runFloor: () => CorrectnessFloorResult;
+  },
+): Promise<RecipePhaseSummary> {
+  const applied = recipes.records.filter((r) => r.outcome.kind === 'applied');
+  if (applied.length === 0 || !args.git.hasDiff(args.baseHead)) return recipes;
+  const head = args.git.head();
+  const verdict = await verifyOrderHead(opts, {
+    head,
+    baseHead: args.baseHead,
+    entryFloor: args.entryFloor,
+    runFloor: args.runFloor,
+  });
+  if (verdict.kept) {
+    return {
+      ...recipes,
+      groupVerification: { kept: true, head },
+      records: recipes.records.map((r) =>
+        r.outcome.kind === 'applied' ? { ...r, disposition: { kind: 'kept', head } } : r,
+      ),
+    };
+  }
+  args.git.resetTo(args.baseHead);
+  const droppedOrderIds = applied.map((r) => r.orderId);
+  const disposition = { kind: 'dropped', step: verdict.step, reason: verdict.reason } as const;
+  return {
+    ...recipes,
+    groupVerification: { kept: false, step: verdict.step, reason: verdict.reason, droppedOrderIds },
+    // A dropped recipe order stays OPEN for the next firing (its row records
+    // the drop, so the breaker sees it); this run's agent queue is unchanged.
+    records: recipes.records.map((r) => (r.outcome.kind === 'applied' ? { ...r, disposition } : r)),
+  };
 }
 
 export interface RecipeOnlyArgs {

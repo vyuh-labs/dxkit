@@ -30,6 +30,9 @@ export async function verifyCommittedHead(
     readonly baseHead: string;
     readonly entryFloor: CorrectnessFloorResult;
     readonly runFloor: () => CorrectnessFloorResult;
+    /** Per-order verification (4.4.6): install + floor for THIS order's
+     *  commits, the guardrail deferred to the one final pass. */
+    readonly deferGuardrail?: string;
   },
 ): Promise<{ verified: VerifyTreeResult; guardrail: GuardrailGateResult }> {
   const verified = await verifyTree({
@@ -45,6 +48,7 @@ export async function verifyCommittedHead(
     // The entry floor always ran: an absent base check is a check the
     // agent's change introduced, net-new (conservative).
     absentMeans: 'net-new',
+    ...(args.deferGuardrail !== undefined ? { deferGuardrail: args.deferGuardrail } : {}),
     onStep: (step) => {
       const phase = PHASE_OF[step];
       if (phase) opts.onPhase?.(phase);
@@ -67,6 +71,13 @@ export async function verifyCommittedHead(
  */
 function guardrailShapeFor(verified: VerifyTreeResult): GuardrailGateResult {
   if (verified.guardrail) return verified.guardrail;
+  if (verified.verdict === 'floor-verified') {
+    return {
+      verdict: `deferred (${verified.guardrailDeferred ?? 'to the final pass over the landed head'})`,
+      ran: false,
+      passesGate: false,
+    };
+  }
   if (verified.failure) {
     return {
       verdict:
@@ -173,4 +184,66 @@ export function installFailedNote(verified: VerifyTreeResult): string {
     (failed ? `\n\n${describeInstall(failed)}` : '') +
     (failed ? `\n\nInstall output:\n\`\`\`\n${failed.output}\n\`\`\`` : '')
   );
+}
+
+/** The guardrail-deferral reason every per-order verification carries. */
+export const PER_ORDER_GUARDRAIL_DEFERRED =
+  'per-order verification runs the install and the floor; the guardrail arbitrates once over ' +
+  'the landed head';
+
+/**
+ * The ONE per-order verdict projection (4.4.6): verify ONE order's commits
+ * (install + floor, guardrail deferred) and say whether they are KEPT or
+ * DROPPED with the step and reason named. Both consumers (the recipe
+ * group before the agent tier, each agent order) read it.
+ */
+export async function verifyOrderHead(
+  opts: RemediateRunOptions,
+  args: {
+    readonly head: string;
+    readonly baseHead: string;
+    readonly entryFloor: CorrectnessFloorResult;
+    readonly runFloor: () => CorrectnessFloorResult;
+  },
+): Promise<
+  | { readonly kept: true; readonly verified: VerifyTreeResult }
+  | {
+      readonly kept: false;
+      readonly step: 'install' | 'floor' | 'verification';
+      readonly reason: string;
+      readonly verified: VerifyTreeResult;
+    }
+> {
+  const { verified } = await verifyCommittedHead(opts, {
+    ...args,
+    deferGuardrail: PER_ORDER_GUARDRAIL_DEFERRED,
+  });
+  switch (verified.verdict) {
+    case 'floor-verified':
+      return { kept: true, verified };
+    case 'install-failed':
+      return { kept: false, step: 'install', reason: installFailedNote(verified), verified };
+    case 'floor-red': {
+      const failing = (verified.floorAttribution ?? [])
+        .filter((a) => a.attribution === 'net-new')
+        .map((a) => `${a.check.pack} ${a.check.label}`);
+      return {
+        kept: false,
+        step: 'floor',
+        reason:
+          'the correctness floor has NET-NEW failures after this order' +
+          (failing.length > 0 ? ` (${failing.join(', ')})` : ''),
+        verified,
+      };
+    }
+    default:
+      return {
+        kept: false,
+        step: 'verification',
+        reason: verified.failure
+          ? `verification failed at step '${verified.failure.step}': ${verified.failure.message}`
+          : `verification ended '${verified.verdict}' without a guardrail pass`,
+        verified,
+      };
+  }
 }

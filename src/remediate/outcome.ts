@@ -9,6 +9,8 @@ import type { CorrectnessFloorResult } from '../analyzers/correctness/run';
 import type { AttributedFloorFailure } from '../analyzers/correctness/attribution';
 import type { GuardrailGateResult } from '../lanes/verify';
 import type { FloorSkip, InstallOutcome, VerifyTreeSeams } from '../lanes/verify-tree';
+import type { TreeInvariantOutcome } from '../lanes/tree-invariants';
+import type { FrameInvariantSeams } from './frame-invariants';
 import type { AgentDriver } from './driver';
 import type { RemediateTask } from './tasks';
 import type { DispatchOverrides } from './dispatch';
@@ -28,6 +30,22 @@ export type ToolPolicyDisclosure =
       readonly cliRequirement: string;
     }
   | { readonly mechanism: 'none'; readonly reason: string };
+
+/**
+ * Where one order's commits ENDED UP (4.4.6, per-order landing): `kept`
+ * means the order's diff was verified on top of the previously verified
+ * head (install + floor; the guardrail arbitrates ONCE over the landed
+ * head) and is part of what lands; `dropped` means its commits were
+ * reverted at the named step with the reason, and the order stays open.
+ * The unit of work is the order, so the unit of landing is the order.
+ */
+export type OrderDisposition =
+  | { readonly kind: 'kept'; readonly head: string }
+  | {
+      readonly kind: 'dropped';
+      readonly step: 'tree-invariants' | 'install' | 'floor' | 'verification';
+      readonly reason: string;
+    };
 
 /** One order's dispatch record (the orders phase: one order per agent run). */
 export interface OrderRunRecord {
@@ -49,6 +67,12 @@ export interface OrderRunRecord {
   /** The order's done criterion, echoed for the ledger's per-order done
    *  line (closure is arbitrated by the one tree verification below). */
   readonly done: { readonly verifier: 'floor' | 'guardrail'; readonly absentIds: number };
+  /** The frame-owned invariants the order's diff tripped and what the
+   *  frame did about each (4.4.6), disclosed per order. */
+  readonly invariants?: readonly TreeInvariantOutcome[];
+  /** Kept (verified per order, lands) or dropped (reverted, reason named).
+   *  Absent on a record with no commits to place. */
+  readonly disposition?: OrderDisposition;
   /** For floor-verifier orders, what the FINAL verified floor says about
    *  the order's target findings, through the ONE `floorOrderDone`
    *  computation the Stop-gate also reads. `undecided` counts ids the
@@ -78,6 +102,7 @@ export interface OrdersPhaseSummary {
 
 export type RemediateOutcome =
   | 'verified' // diff produced, floor net-new-clean, guardrail PASSED — ready to land
+  | 'partially-landed' // some orders verified and land, others were DROPPED (named); non-clean, a PR opens for the kept set
   | 'no-op' // agent ran TO COMPLETION, no diff (nothing to fix)
   | 'recipes-refused' // recipe-only plan, every recipe refused/failed: nothing fixed, NOT clean
   | 'install-failed' // a clean checkout of the diff cannot be installed the way CI installs — never lands
@@ -224,6 +249,17 @@ export interface RemediateGit {
     baseHead: string,
     isAllowed: (path: string) => boolean,
   ): { readonly dropped: readonly string[]; readonly error?: string };
+  /** Move the branch back to `head` and discard everything after it (the
+   *  per-order DROP: an order whose commits did not verify is reverted
+   *  wholesale, the tree left clean at the previously verified head). */
+  resetTo(head: string): void;
+  /** Repo-relative paths the commits in base..HEAD changed (renames as
+   *  both sides): what an order's diff touched, for the frame's invariant
+   *  step. Throws when git cannot answer; the caller drops the order. */
+  changedPaths(baseHead: string): readonly string[];
+  /** Stage exactly these paths and commit them with the bot identity (the
+   *  frame's own commit after re-establishing an invariant). */
+  commitPaths(paths: readonly string[], message: string): void;
 }
 
 export interface RemediateRunOptions {
@@ -281,6 +317,9 @@ export interface RemediateRunOptions {
   /** Injected for tests: replaces the recipe phase (plan + execute the
    *  deterministic tier), the armInLoopGate seam pattern. */
   readonly runRecipePhase?: typeof runRecipePhaseForTask;
+  /** Injected for tests: the frame's tree-invariant step edges (4.4.6),
+   *  or the whole step. */
+  readonly frameInvariants?: FrameInvariantSeams;
 }
 
 /** The runner's observable phases, in order. */
@@ -289,6 +328,7 @@ export type RemediatePhase =
   | 'recipes'
   | 'agent'
   | 'sweep'
+  | 'frame-invariants'
   | 'verify-install'
   | 'verify-floor'
   | 'guardrail'
