@@ -101,7 +101,99 @@ describe('lockfile-sync floor check (typescript pack, npm)', () => {
     }
   });
 
-  it('a peer-conflict-only failure PASSES with the --legacy-peer-deps disclosure', () => {
+  /** Split exec: the bare dry-run and the dry-run under --legacy-peer-deps
+   *  answer differently (the live 4.4.6 defect shape: a pre-existing peer
+   *  conflict fails the primary before it ever validates the lock). */
+  function floorSplit(
+    dir: string,
+    primary: { code: number; output: string },
+    fallback: { code: number; output: string; available?: boolean },
+  ) {
+    const calls: string[] = [];
+    const r = runCorrectnessFloor({
+      cwd: dir,
+      changedFiles: [],
+      scope: 'full',
+      packs: [TS],
+      exec: (cmd) => {
+        calls.push([cmd.bin, ...cmd.args].join(' '));
+        if (cmd.bin !== 'npm' || cmd.args[0] !== 'ci' || !cmd.args.includes('--dry-run')) {
+          return { available: true, code: 0, output: '' };
+        }
+        return cmd.args.includes('--legacy-peer-deps')
+          ? { available: fallback.available ?? true, code: fallback.code, output: fallback.output }
+          : { available: true, code: primary.code, output: primary.output };
+      },
+    });
+    return { r, calls };
+  }
+
+  it('the live 4.4.6 shape: a tolerated peer conflict never masks drift — the fallback dry-run runs and its EUSAGE FAILS the check', () => {
+    const dir = tsRepo(files);
+    try {
+      const { r, calls } = floorSplit(
+        dir,
+        { code: 1, output: ERESOLVE },
+        { code: 1, output: EUSAGE },
+      );
+      const lock = r.checks.find((c) => c.label === LOCKFILE_SYNC_LABEL)!;
+      // The confirming dry-run under the fallback actually ran.
+      expect(calls.some((c) => c.includes('--legacy-peer-deps'))).toBe(true);
+      // Its EUSAGE is the verdict: the lock drifted; the check FAILS so the
+      // frame's invariant resyncs instead of reporting "already consistent".
+      expect(lock.status).toBe('fail');
+      expect(lock.output).toContain('Missing: left-pad');
+      expect(r.blocks).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('a peer conflict over an IN-SYNC lock passes on the fallback dry-run result, with the tolerance disclosed', () => {
+    const dir = tsRepo(files);
+    try {
+      const { r, calls } = floorSplit(dir, { code: 1, output: ERESOLVE }, { code: 0, output: '' });
+      const lock = r.checks.find((c) => c.label === LOCKFILE_SYNC_LABEL)!;
+      expect(calls.some((c) => c.includes('--legacy-peer-deps'))).toBe(true);
+      expect(lock.status).toBe('pass');
+      expect(lock.note).toContain('--legacy-peer-deps');
+      expect(r.blocks).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('a fallback dry-run that cannot run keeps the disclosed pass, backstop named, never a false block', () => {
+    const dir = tsRepo(files);
+    try {
+      const { r } = floorSplit(
+        dir,
+        { code: 1, output: ERESOLVE },
+        { code: 127, output: '', available: false },
+      );
+      const lock = r.checks.find((c) => c.label === LOCKFILE_SYNC_LABEL)!;
+      expect(lock.status).toBe('pass');
+      expect(lock.note).toContain('backstop');
+      expect(r.blocks).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('a further tolerated-class failure with the ladder exhausted keeps the disclosed pass (peer conflict on both runs)', () => {
+    const dir = tsRepo(files);
+    try {
+      const { r } = floorSplit(dir, { code: 1, output: ERESOLVE }, { code: 1, output: ERESOLVE });
+      const lock = r.checks.find((c) => c.label === LOCKFILE_SYNC_LABEL)!;
+      expect(lock.status).toBe('pass');
+      expect(lock.note).toContain('--legacy-peer-deps');
+      expect(r.blocks).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('a peer-conflict-only failure on both dry-runs PASSES with the --legacy-peer-deps disclosure', () => {
     const dir = tsRepo(files);
     try {
       const r = floorOn(dir, 1, ERESOLVE);

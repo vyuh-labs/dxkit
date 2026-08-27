@@ -265,9 +265,21 @@ describe('the derived lockfile-sync check', () => {
       '--no-audit',
       '--no-fund',
     ]);
-    expect(c.tolerated?.matches('npm ERR! code ERESOLVE')).toBe(true);
-    expect(c.tolerated?.matches('npm ERR! code EUSAGE not in sync')).toBe(false);
-    expect(c.tolerated?.disclosure).toContain('peer-conflict');
+    expect(c.tolerated).toHaveLength(1);
+    expect(c.tolerated?.[0].matches('npm ERR! code ERESOLVE')).toBe(true);
+    expect(c.tolerated?.[0].matches('npm ERR! code EUSAGE not in sync')).toBe(false);
+    expect(c.tolerated?.[0].disclosure).toContain('peer-conflict');
+    // The retry carries the CONFIRMING dry-run under the fallback's flags
+    // (4.4.6): the check judges on its result, never on the match alone.
+    expect(c.tolerated?.[0].command?.bin).toBe('npm');
+    expect(c.tolerated?.[0].command?.args).toEqual([
+      'ci',
+      '--dry-run',
+      '--ignore-scripts',
+      '--no-audit',
+      '--no-fund',
+      '--legacy-peer-deps',
+    ]);
   });
   it('npm: with the peer-conflict tolerance withdrawn, the dry-run tolerates nothing', () => {
     const c = lockfileCheckFromStrategy(NODE_STRATEGY_BY_PM.npm, {

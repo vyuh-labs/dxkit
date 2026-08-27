@@ -191,22 +191,37 @@ export type StructureCheckResult =
 export const LOCKFILE_SYNC_LABEL = 'lockfile-sync';
 
 /**
+ * One tolerated retry of the lockfile-sync check: when the primary dry-run
+ * fails with the shape `matches` recognizes (npm's peer conflict, which
+ * CI's install retries under `--legacy-peer-deps`), the check re-runs
+ * UNDER THE FALLBACK (`command`: the dry-run composed with the fallback's
+ * own flags) and judges on ITS result. A tolerated-class failure is never
+ * a verdict by itself (4.4.6): the live class was a pre-existing peer
+ * conflict masking real lockfile drift, because the pre-fix check passed
+ * on the match alone and the drift only surfaced once `--legacy-peer-deps`
+ * silenced the peer check. `command` is absent only when the fallback has
+ * no composable dry-run form (no `viaFlags`); the check then keeps the
+ * disclosed pass, with CI's real install as the backstop.
+ */
+export interface ToleratedCheckRetry {
+  readonly matches: (output: string) => boolean;
+  readonly disclosure: string;
+  readonly command?: CorrectnessCommand;
+}
+
+/**
  * A pack's answer to "would a frozen-lockfile install of this tree succeed?"
  * (4.4.5): a non-installing dry-run command, or a DISCLOSED skip for an
  * ecosystem whose package manager has no reliable dry-run. The command may
- * name a `tolerated` failure: an exit the check passes WITH a disclosure
- * because the frozen install's own fallback covers it (npm's peer conflict,
- * which CI retries under `--legacy-peer-deps`). A tolerated failure is never
- * silent: the runner attaches the disclosure to the passing check.
+ * carry `tolerated` retries, one per authorized install fallback: the
+ * executor walks them like the install executor walks its fallback ladder,
+ * and a tolerance is always disclosed, never silent.
  */
 export type LockfileCheck =
   | {
       readonly kind: 'command';
       readonly command: CorrectnessCommand;
-      readonly tolerated?: {
-        readonly matches: (output: string) => boolean;
-        readonly disclosure: string;
-      };
+      readonly tolerated?: readonly ToleratedCheckRetry[];
     }
   | { readonly kind: 'skipped'; readonly reason: string };
 
@@ -233,12 +248,24 @@ export function lockfileCheckFromStrategy(
     command: { label: LOCKFILE_SYNC_LABEL, bin: check.command.bin, args: check.command.args },
     ...(fallbacks.length > 0
       ? {
-          tolerated: {
-            matches: (output: string) => fallbacks.some((f) => f.matches(output)),
-            disclosure: fallbacks
-              .map((f) => `${f.when} only: ${f.disclosure}; CI's install fallback covers it`)
-              .join('; '),
-          },
+          // One retry per authorized fallback, its command the dry-run
+          // composed under the fallback's own flags (the same viaFlags
+          // composition the install executor's `composePlan` reads), so
+          // the check confirms sync THROUGH the tolerance instead of
+          // passing on the failure shape alone.
+          tolerated: fallbacks.map((f) => ({
+            matches: f.matches,
+            disclosure: `${f.when} only: ${f.disclosure}; CI's install fallback covers it`,
+            ...(f.viaFlags !== undefined
+              ? {
+                  command: {
+                    label: LOCKFILE_SYNC_LABEL,
+                    bin: check.command.bin,
+                    args: [...check.command.args, ...f.viaFlags],
+                  },
+                }
+              : {}),
+          })),
         }
       : {}),
   };

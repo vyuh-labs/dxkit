@@ -41,6 +41,18 @@ were discarded with a message that read as "the fallback is missing".
   never run. The CI shell chain keeps its unconditional retry, which is
   outcome-equivalent because every declared fallback only relaxes the one
   check its class names.
+- **A tolerated failure of the lockfile-sync check is confirmed, never
+  assumed.** On a tree whose pre-existing peer conflict is tolerated, the
+  bare `npm ci --dry-run` fails ERESOLVE before it ever validates the
+  lock, and the check used to pass on that match alone: real drift from
+  an agent's manifest edit read as "already consistent", the frame never
+  resynced it, and the orders died at the landing install. The check now
+  re-runs the dry-run under the authorized fallback's own flags and
+  judges on that result: pass means in sync (tolerance disclosed), drift
+  fails the check so the invariant resyncs, and only a further
+  tolerated-class failure with no retry left keeps the disclosed pass.
+  One definition for every consumer: the floor, the frame's invariant
+  step, and the lockfile-sync recipe's verify.
 - **Install attribution names its evidence.** The verification's base
   probe now records what the base did (installed, through which fallback,
   or failed with which classification). A failure with the identical
