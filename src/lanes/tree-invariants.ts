@@ -305,7 +305,15 @@ async function reestablishOne(
       ...dirt({ preDirtyOwned: inv.ownedPaths.filter((p) => pre.has(p)) }),
     };
   }
-  const run = runInstall(inv.reestablish, rootAbs, input.exec, input.tolerances);
+  // The invariant's Rule 20 requirement gates the spawn, exactly as the
+  // tree verification gates the strategy's own install.
+  const run = runInstall(
+    inv.reestablish,
+    rootAbs,
+    input.exec,
+    input.tolerances,
+    inv.execution !== undefined ? { execution: inv.execution } : undefined,
+  );
   if (run.status === 'infrastructure') {
     const t = touched();
     return {

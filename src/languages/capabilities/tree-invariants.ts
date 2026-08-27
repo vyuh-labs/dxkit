@@ -44,6 +44,7 @@ import * as path from 'path';
 import type { LockfileCheck } from './correctness';
 import { lockfileCheckFromStrategy } from './correctness';
 import type { InstallPlan, InstallStrategy } from './install-strategy';
+import type { ExecutionRequirement } from '../../execution';
 import { installCommandText } from './install-strategy';
 import type { ResolvedTolerances } from '../../install/tolerances';
 
@@ -76,6 +77,10 @@ export interface TreeInvariant {
    *  gives the frame no command (verify-only: a broken invariant then
    *  fails the order with that reason). */
   readonly reestablish: InstallPlan | null;
+  /** What the re-establishment NEEDS from the environment (Rule 20): the
+   *  executor gates the spawn on it, the same way the tree verification
+   *  gates the strategy's install. Absent = no declared requirement. */
+  readonly execution?: ExecutionRequirement;
   readonly verify: TreeInvariantCheck;
 }
 
@@ -166,6 +171,7 @@ export function dependencyTreeInvariant(args: {
         return dirOf(p) === root || lockfilePath !== null;
       }),
     reestablish: strategy.modes.resync ?? null,
+    execution: strategy.execution,
     verify:
       check === null
         ? {
