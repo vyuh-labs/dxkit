@@ -132,11 +132,26 @@ export function runLockfileCheck(
 
 /**
  * Execute an already-derived lockfile-sync check at `cwd`: the ONE
- * execution of the check shape, shared by the floor (above) and the frame's
- * tree-invariant step (`lanes/tree-invariants.ts`), so "the lockfile is in
- * sync" is judged by one policy wherever it is asked. A skip and an
- * unavailable binary are fail-open, disclosed; a tolerated failure passes
- * with its disclosure as `note`; any other non-zero exit fails.
+ * execution of the check shape, shared by the floor (above), the frame's
+ * tree-invariant step (`lanes/tree-invariants.ts`) and the lockfile-sync
+ * recipe's verify, so "the lockfile is in sync" is judged by one policy
+ * wherever it is asked. A skip and an unavailable binary are fail-open,
+ * disclosed; any non-tolerated non-zero exit fails.
+ *
+ * A tolerated-class failure of the primary is NEVER a verdict by itself
+ * (4.4.6). The live class: on a tree whose pre-existing peer conflict is
+ * tolerated, `npm ci --dry-run` fails ERESOLVE before it ever validates
+ * the lock, so the pre-fix pass-on-match reported "in sync" over a lock an
+ * agent's manifest edit had drifted, the frame's invariant never resynced
+ * it, and the orders died at the landing install. The executor now walks
+ * the tolerated retries like the install executor walks its fallback
+ * ladder: it re-runs the dry-run UNDER the fallback's flags and judges on
+ * THAT result. Pass = in sync, with the tolerance disclosed; drift = a
+ * real FAIL (so the invariant resyncs); a further tolerated-class failure
+ * with no retry left, or a retry with no composable command, keeps the
+ * disclosed pass with CI's real install as the backstop; a retry that
+ * cannot run (infrastructure) is a disclosed pass too, never a false
+ * block.
  */
 export function executeLockfileCheck(
   id: LanguageId,
@@ -155,27 +170,55 @@ export function executeLockfileCheck(
   }
   const cmd = check.command;
   const base = { pack: id, label: cmd.label, bin: cmd.bin, args: cmd.args };
-  const outcome = exec(cmd, cwd);
-  if (!outcome.available) {
+  let attempt = exec(cmd, cwd);
+  // Infrastructure on the PRIMARY: the check could not run at all.
+  if (!attempt.available) {
     return {
       ...base,
       status: 'skipped-unavailable',
-      ...(outcome.output ? { output: outcome.output } : {}),
+      ...(attempt.output ? { output: attempt.output } : {}),
     };
   }
-  if (outcome.timedOut) return { ...base, status: 'skipped-timeout' };
-  if (outcome.overflowed) return { ...base, status: 'skipped-overflow' };
-  if (outcome.code === 0) return { ...base, status: 'pass' };
-  if (check.tolerated && check.tolerated.matches(outcome.output)) {
-    return { ...base, status: 'pass', note: check.tolerated.disclosure };
+  if (attempt.timedOut) return { ...base, status: 'skipped-timeout' };
+  if (attempt.overflowed) return { ...base, status: 'skipped-overflow' };
+
+  const retries = check.tolerated ?? [];
+  const remaining = [...retries];
+  const notes: string[] = [];
+  const pass = (): CorrectnessCheckResult =>
+    notes.length > 0
+      ? { ...base, status: 'pass', note: notes.join('; ') }
+      : { ...base, status: 'pass' };
+  for (;;) {
+    if (attempt.code === 0) return pass();
+    const idx = remaining.findIndex((r) => r.matches(attempt.output));
+    if (idx === -1) {
+      // A further tolerated-class failure with the ladder exhausted keeps
+      // the disclosed pass (the pre-fix semantics, now the LAST resort).
+      if (notes.length > 0 && retries.some((r) => r.matches(attempt.output))) return pass();
+      return {
+        ...base,
+        status: 'fail',
+        output:
+          tail(attempt.output) +
+          '\nThe lockfile does not satisfy the manifest: a frozen install (what CI runs before ' +
+          'any gate) fails on this tree. Re-run the package manager install so the lockfile ' +
+          'records the manifest, and commit both.',
+      };
+    }
+    const [retry] = remaining.splice(idx, 1);
+    notes.push(retry.disclosure);
+    // No composable dry-run under this fallback: the disclosed pass, with
+    // CI's real install (which runs the actual fallback) as the backstop.
+    if (retry.command === undefined) return pass();
+    attempt = exec(retry.command, cwd);
+    if (!attempt.available || attempt.timedOut || attempt.overflowed) {
+      // The confirming dry-run could not run: fail-open, disclosed, never
+      // a false block; CI's install remains the backstop.
+      notes.push(
+        "the confirming dry-run under the fallback could not run; CI's install is the backstop",
+      );
+      return pass();
+    }
   }
-  return {
-    ...base,
-    status: 'fail',
-    output:
-      tail(outcome.output) +
-      '\nThe lockfile does not satisfy the manifest: a frozen install (what CI runs before ' +
-      'any gate) fails on this tree. Re-run the package manager install so the lockfile ' +
-      'records the manifest, and commit both.',
-  };
 }

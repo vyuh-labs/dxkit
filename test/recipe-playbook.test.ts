@@ -236,10 +236,12 @@ const mockPlaybookPack = {
     lockfileCheck: () => ({
       kind: 'command' as const,
       command: { label: 'lockfile-sync', bin: 'playbookc-mock', args: ['lock', '--dry-run'] },
-      tolerated: {
-        matches: (output: string) => output.includes('PLAYBOOK-PEER-ONLY'),
-        disclosure: 'playbook peer conflict tolerated',
-      },
+      tolerated: [
+        {
+          matches: (output: string) => output.includes('PLAYBOOK-PEER-ONLY'),
+          disclosure: 'playbook peer conflict tolerated',
+        },
+      ],
     }),
   },
   // Lint-GATE contribution (custom-check flagship). Distinctive bin/parse so the
