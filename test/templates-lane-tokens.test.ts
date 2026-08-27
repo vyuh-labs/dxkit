@@ -28,11 +28,13 @@ import {
   LANE_TOKEN_APP_ID_VARIABLE_NAME,
   LANE_TOKEN_APP_KEY_SECRET_NAME,
   LANE_TOKEN_CHAIN,
+  LANE_TOKEN_LAND_STEPS,
   LANE_TOKEN_PAT_SECRET_NAME,
   LANE_TOKEN_STEPS,
   LANE_TOKEN_SUBSTITUTIONS,
   LANE_TOKEN_TASK_STEPS,
 } from '../src/lanes/lane-token';
+import { DEFERRED_LANDING_ENV } from '../src/remediate/landing-record';
 import {
   INSTALL_DEPS_PLACEHOLDER,
   defaultResolvedTolerances,
@@ -70,6 +72,7 @@ const GH_SHELLING_COMMANDS = [
   'deps bump',
   'remediate configured',
   'remediate --task',
+  'remediate land',
 ];
 
 interface Step {
@@ -253,6 +256,21 @@ describe('workflow-template token discipline', () => {
     expect(parsed.jobs.j.steps[0].id).toBe('dxkit-app-token');
   });
 
+  it('the landing-mint block is well-formed and runs even after a failed task step', () => {
+    const doc = `jobs:\n  j:\n    steps:\n${LANE_TOKEN_LAND_STEPS}\n`;
+    expect(() => yaml.load(doc)).not.toThrow();
+    const parsed = yaml.load(doc) as {
+      jobs: { j: { steps: Array<Record<string, unknown>> } };
+    };
+    expect(parsed.jobs.j.steps).toHaveLength(1);
+    expect(parsed.jobs.j.steps[0].id).toBe('dxkit-app-token-land');
+    // !cancelled(): a salvage/draft record written by a FAILED task step
+    // must still get a fresh credential to land under, while an operator
+    // ABORT (cancellation) must not mint and push (always() would).
+    expect(String(parsed.jobs.j.steps[0].if)).toContain('!cancelled()');
+    expect(String(parsed.jobs.j.steps[0].if)).not.toContain('always()');
+  });
+
   it('SYNTHETIC INJECTION: the content-derived membership check bites', () => {
     // A hypothetical new lane that opens a PR with no chain — the exact
     // shape that drifted twice. If needsTokenChain stops seeing it, this
@@ -296,11 +314,11 @@ describe('workflow-template token discipline', () => {
     // agent spend, on every tier (not only the App).
     expect(content).toContain('persist-credentials: false');
     // A working credential right after checkout (setup-phase git needs —
-    // a private git-pinned dependency installs before the landing step),
-    // then the landing credential with the FRESH task token replacing it.
+    // a private git-pinned dependency installs before the task), then the
+    // task credential with the FRESH task token replacing it.
     expect(content).toContain('- name: Install the working credential');
     expect(content).toContain('DXKIT_LANE_TOKEN: __DXKIT_LANE_TOKEN__');
-    expect(content).toContain('- name: Install the landing credential');
+    expect(content).toContain('- name: Install the task credential');
     expect(content).toContain('DXKIT_LANE_TOKEN: __DXKIT_LANE_TOKEN_TASK__');
     const checkoutIdx = content.indexOf('persist-credentials: false');
     const workingIdx = content.indexOf('- name: Install the working credential');
@@ -314,8 +332,7 @@ describe('workflow-template token discipline', () => {
     expect(content).toContain('git ls-remote --heads origin');
     expect(content).toContain('expected exactly 1 auth header config');
     // The task step's gh credential prefers the fresh token (the _TASK
-    // placeholder), and the CLI learns the tier so it can clamp the wall
-    // clock to the token lifetime (disclosed, never silent).
+    // placeholder), and the CLI learns the tier for its disclosures.
     expect(content).toContain('GH_TOKEN: __DXKIT_LANE_TOKEN_TASK__');
     expect(content).toContain('DXKIT_TOKEN_MODE: __DXKIT_LANE_TOKEN_MODE__');
     // Ordering: agent-CLI install → re-mint → credential refresh → task, so
@@ -324,12 +341,49 @@ describe('workflow-template token discipline', () => {
     const rendered = renderForParse(content);
     const install = rendered.indexOf('Install the agent CLI');
     const remint = rendered.indexOf('id: dxkit-app-token-task');
-    const refresh = rendered.indexOf('- name: Install the landing credential');
+    const refresh = rendered.indexOf('- name: Install the task credential');
     const task = rendered.indexOf('Run task ${{ matrix.task }}');
     expect(install).toBeGreaterThan(-1);
     expect(remint).toBeGreaterThan(install);
     expect(refresh).toBeGreaterThan(remint);
     expect(task).toBeGreaterThan(refresh);
+  });
+
+  it('the remediate lane lands in two phases: deferred task, fresh-credential land step (4.4.7)', () => {
+    // The A1 class: the task's verify phases scale with repo size, so ANY
+    // token minted before the task can expire before the landing push.
+    // The task step must therefore defer every push (the env signal, ONE
+    // name shared with the CLI), and a post-task step must mint a fresh
+    // token and run `remediate land`, on success AND on task failure (a
+    // salvage draft record must still land), guarded on record existence.
+    const content = fs.readFileSync(path.join(WORKFLOWS, 'dxkit-remediate.yml'), 'utf8');
+    // The deferred-landing signal on the task step, named from the ONE
+    // constant the CLI reads.
+    expect(content).toContain(`${DEFERRED_LANDING_ENV}: '1'`);
+    // The landing mint + chain arrive via the one-definition placeholders,
+    // never hand-copied.
+    expect(content).toContain('__DXKIT_LANE_TOKEN_LAND_STEPS__');
+    expect(content).toContain('GH_TOKEN: __DXKIT_LANE_TOKEN_LAND__');
+    // The land step runs `remediate land`, is !cancelled()-guarded (a
+    // failed task's salvage record still lands; an operator abort does not
+    // push), and skips disclosed on no record.
+    expect(content).toContain('remediate land --task');
+    expect(content).toContain('no landing record for');
+    // Ordering over the RENDERED content: task step → landing mint →
+    // land step → attempt-diff collection (which must see the patched
+    // attempt record, so it stays AFTER the landing).
+    const rendered = renderForParse(content);
+    const task = rendered.indexOf('Run task ${{ matrix.task }}');
+    const landMint = rendered.indexOf('id: dxkit-app-token-land');
+    const landStep = rendered.indexOf('- name: Land the deferred work (fresh credential)');
+    const collect = rendered.indexOf('- name: Collect the attempt diff');
+    expect(task).toBeGreaterThan(-1);
+    expect(landMint).toBeGreaterThan(task);
+    expect(landStep).toBeGreaterThan(landMint);
+    expect(collect).toBeGreaterThan(landStep);
+    // The fresh mint prefers itself in the landing chain (delivery-time
+    // lifetime), then falls through the earlier tiers.
+    expect(rendered).toContain('steps.dxkit-app-token-land.outputs.token');
   });
 });
 
@@ -358,10 +412,11 @@ describe('lane token NAME discipline (one definition)', () => {
     expect(offenders, offenders.join('\n')).toEqual([]);
   });
 
-  it('the rendered remediate template gets the task re-mint from the one definition', () => {
+  it('the rendered remediate template gets the task re-mint and the landing mint from the one definition', () => {
     const content = fs.readFileSync(path.join(WORKFLOWS, 'dxkit-remediate.yml'), 'utf8');
     const rendered = renderForParse(content);
     expect(rendered).toContain(LANE_TOKEN_TASK_STEPS);
+    expect(rendered).toContain(LANE_TOKEN_LAND_STEPS);
     expect(rendered).toContain(`vars.${LANE_TOKEN_APP_ID_VARIABLE_NAME}`);
     expect(rendered).toContain(`secrets.${LANE_TOKEN_APP_KEY_SECRET_NAME}`);
   });

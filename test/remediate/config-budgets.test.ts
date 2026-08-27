@@ -236,4 +236,27 @@ describe('clampBudgetToTokenLifetime (the App-token 1h hard cap)', () => {
       expect(notes).toEqual([]);
     }
   });
+
+  it('deferred landing lifts the app-tier clamp (fresh delivery token) with the mode disclosed', () => {
+    // Two-phase landing (4.4.7): the landing step mints its own token, so
+    // the agent budget is decoupled from the credential lifetime and the
+    // clamp's stated reason is gone. The tier is still disclosed.
+    const { budget, notes } = clampBudgetToTokenLifetime(base, {
+      DXKIT_TOKEN_MODE: 'app',
+      DXKIT_DEFERRED_LANDING: '1',
+    });
+    expect(budget).toEqual(base);
+    expect(notes).toHaveLength(1);
+    expect(notes[0]).toContain('deferred');
+    expect(notes[0]).toContain('not clamped');
+  });
+
+  it('an older installed workflow (app tier, no deferred signal) keeps the clamp: inline landing still rides the task token', () => {
+    const { budget, notes } = clampBudgetToTokenLifetime(base, {
+      DXKIT_TOKEN_MODE: 'app',
+      DXKIT_DEFERRED_LANDING: '',
+    });
+    expect(budget.maxMinutes).toBe(APP_TOKEN_SAFE_MINUTES);
+    expect(notes[0]).toContain('vyuh-dxkit update');
+  });
 });

@@ -30,6 +30,8 @@ import { appendLaneEvent, LANE_LEDGER_SCHEMA_VERSION } from '../lanes/ledger';
 import { orderOutcomeRows, publishOrderRows, writeLocalOrderLedger } from './order-outcomes';
 import { remediateStamp } from './work-orders/breaker';
 import { currentHead, writeAttemptRecord, writeProvisionalRecord } from './attempt-record';
+import { deferredLandingRequested } from './landing-record';
+import { deferLanding, deferPublishRows } from './defer';
 
 // Attempt-record helpers live in `./attempt-record` (module-size split);
 // re-exported so consumers keep one import surface.
@@ -47,6 +49,10 @@ export interface TaskRun {
   readonly landingBlocked?: string;
   /** The landing ran (branch pushed, PR opened/updated). */
   readonly landed: boolean;
+  /** Two-phase landing (4.4.7): the pushes were DEFERRED to a landing
+   *  record for the workflow's fresh-credential `remediate land` step:
+   *  disclosed, never silent. */
+  readonly landingDeferred?: string;
   /** Truthful per-task success: verified/no-op, or a landed salvage draft. */
   readonly clean: boolean;
 }
@@ -58,7 +64,7 @@ export interface TaskRun {
  * workflow files is refused without the `workflows` permission), not only
  * where a push ruleset restricts paths.
  */
-function describeLandingFailure(err: unknown): string {
+export function describeLandingFailure(err: unknown): string {
   const e = err as { message?: string; stderr?: string | Buffer };
   const stderr = (e.stderr ?? '').toString().trim();
   const message = (e.message ?? String(err)).split('\n')[0];
@@ -103,6 +109,9 @@ export interface ExecutorSeams {
   /** Injected for tests: the order-outcome ledger writers (3F). */
   readonly writeOrderLedger?: typeof writeLocalOrderLedger;
   readonly publishOrderRows?: typeof publishOrderRows;
+  /** Injected for tests: the environment the deferred-landing signal is
+   *  read from (production reads process.env). */
+  readonly env?: Readonly<Record<string, string | undefined>>;
 }
 
 /** Executor extras beyond the positional contract (kept separate from the
@@ -253,10 +262,22 @@ export async function executeTask(
           stamp: remediateStamp(cwd),
         })
       : [];
+  // Two-phase landing (4.4.7): when the lane workflow signals deferred
+  // landing, this executor performs NO pushes: an App installation token
+  // is hard-capped at one hour and the verify phases scale with repo size,
+  // so every push moves to the workflow's post-task `remediate land` step,
+  // which runs under a FRESHLY minted token. Local/inline runs (no signal)
+  // keep the immediate landing below, through the same landRemediateHead.
+  const deferred = land === 'pr' && deferredLandingRequested(seams.env ?? process.env);
   // Non-landing durability: a frame-authored metadata commit on the
   // standing branch (the resume-marker channel) — without it, the circuit
-  // breaker is blind to exactly the failures it exists to remember.
+  // breaker is blind to exactly the failures it exists to remember. Under
+  // deferred landing the commit's PUSH rides the landing record instead.
   const publishRows = (): void => {
+    if (deferred) {
+      deferPublishRows(cwd, taskId, result.outcome, orderRows);
+      return;
+    }
     if (orderRows.length === 0) return;
     const pub = (seams.publishOrderRows ?? publishOrderRows)(cwd, taskId, orderRows);
     if (!pub.published && pub.note) logger.warn(`order ledger: ${pub.note}`);
@@ -322,6 +343,58 @@ export async function executeTask(
       : {}),
     ...(result.envelope ? { driver: result.envelope.driver } : {}),
   });
+  const prTitle =
+    `dxkit remediate: ${taskId}` +
+    (blockedSalvage
+      ? ' (blocked: guardrail-red — do not merge)'
+      : draftSalvage
+        ? ' (partial, budget-bounded)'
+        : partialLanding
+          ? ' (partial: some orders dropped, see the ledger)'
+          : '');
+  // The ONE lane PR-body assembler (#288): a generated, labeled
+  // diff-scoped narrative on top; the ledger VERBATIM below (the
+  // contractual record, never paraphrased). Fail-open to ledger-only.
+  // The narrative range is the ATTEMPT's own commits (baseHead..HEAD) —
+  // the lane advances the checked-out default branch, so a
+  // defaultBranch..HEAD range would be empty by construction.
+  const prBody = assembleLanePrBody({
+    cwd,
+    ledger: result.ledger,
+    base: result.baseHead ?? defaultBranch,
+  });
+  const draft = draftSalvage || blockedSalvage;
+
+  if (deferred) {
+    // Everything up to and including verification + PR-body assembly ran;
+    // the pushes now ride the landing record for the workflow's
+    // fresh-credential `remediate land` step (`./defer`).
+    const outcome = deferLanding(cwd, {
+      taskId,
+      result,
+      defaultBranch,
+      prTitle,
+      prBody,
+      draft,
+      ledgerPath,
+      orderRows,
+    });
+    if (!outcome.deferred) {
+      return finalizeTaskRun(cwd, taskId, {
+        result,
+        landed: false,
+        clean: false,
+        landingBlocked: outcome.landingBlocked,
+      });
+    }
+    return finalizeTaskRun(cwd, taskId, {
+      result,
+      landed: false,
+      clean: result.outcome === 'verified' || draftSalvage,
+      landingDeferred: outcome.landingDeferred,
+    });
+  }
+
   // The order-outcome rows ride the SAME landing commit (composed with any
   // unmerged standing-branch rows first, so a force-push never erases the
   // failure history a prior non-landing run recorded). Called even with no
@@ -341,27 +414,9 @@ export async function executeTask(
       cwd,
       taskId,
       defaultBranch,
-      prTitle:
-        `dxkit remediate: ${taskId}` +
-        (blockedSalvage
-          ? ' (blocked: guardrail-red — do not merge)'
-          : draftSalvage
-            ? ' (partial, budget-bounded)'
-            : partialLanding
-              ? ' (partial: some orders dropped, see the ledger)'
-              : ''),
-      // The ONE lane PR-body assembler (#288): a generated, labeled
-      // diff-scoped narrative on top; the ledger VERBATIM below (the
-      // contractual record, never paraphrased). Fail-open to ledger-only.
-      // The narrative range is the ATTEMPT's own commits (baseHead..HEAD) —
-      // the lane advances the checked-out default branch, so a
-      // defaultBranch..HEAD range would be empty by construction.
-      prBody: assembleLanePrBody({
-        cwd,
-        ledger: result.ledger,
-        base: result.baseHead ?? defaultBranch,
-      }),
-      draft: draftSalvage || blockedSalvage,
+      prTitle,
+      prBody,
+      draft,
       ledgerPath,
       ...(orderLedgerRel ? { orderLedgerPath: orderLedgerRel } : {}),
     });
@@ -400,6 +455,9 @@ function finalizeTaskRun(cwd: string, taskId: string, run: TaskRun): TaskRun {
   writeAttemptRecord(cwd, taskId, run);
   if (run.landingBlocked) {
     logger.warn(run.landingBlocked);
+  }
+  if (run.landingDeferred) {
+    logger.info(run.landingDeferred);
   }
   if (!run.clean) {
     // A non-clean outcome must be diagnosable from the run page: the agent

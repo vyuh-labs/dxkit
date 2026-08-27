@@ -7,44 +7,69 @@
  */
 
 import { LANE_TOKEN_PAT_SECRET_NAME } from '../lanes/lane-token';
+import { deferredLandingRequested } from './landing-record';
 import type { AgentDriver, AgentRunResult } from './driver';
 import type { RemediateBudget } from './config';
 
 /**
- * The minutes ceiling on the GitHub App token tier. An App INSTALLATION
- * token is hard-capped at ONE HOUR by GitHub with no longer-lived form,
- * and the lane's landing push authenticates with it — so the agent run
+ * The minutes ceiling on the GitHub App token tier WHEN the landing still
+ * rides the task step's own credential. An App INSTALLATION token is
+ * hard-capped at ONE HOUR by GitHub with no longer-lived form, so on an
+ * older installed workflow (task-time mint, inline landing) the agent run
  * plus verify plus landing must fit inside the hour or the landing 401s
- * AFTER the full agent spend (the late-delivery death class the
- * delivery-preconditions preflight exists to kill, resurfacing at the
- * credential layer). The workflow re-mints immediately before the task
- * step, so the window starts at agent launch; 45 minutes leaves the
- * verify + landing tail inside it. The PAT and workflow-token tiers are
- * long-lived and never clamped.
+ * AFTER the full agent spend. Under two-phase landing (4.4.7) the clamp's
+ * reason is GONE: the landing step mints its own fresh token, so the agent
+ * budget is decoupled from the credential lifetime (see the resolver
+ * below). The PAT and workflow-token tiers are long-lived and never clamped.
  */
 export const APP_TOKEN_SAFE_MINUTES = 45;
 
 /**
- * Clamp the wall-clock budget to the credential's lifetime, disclosed
- * like every other budget limitation — never silent. The tier arrives
- * via `DXKIT_TOKEN_MODE` (set by the lane workflow's token resolution;
- * absent on local runs, which use the developer's own ambient auth and
- * are never clamped).
+ * Resolve the wall-clock budget against the credential's lifetime,
+ * disclosed like every other budget limitation, never silent. The tier
+ * arrives via `DXKIT_TOKEN_MODE` (set by the lane workflow's token
+ * resolution; absent on local runs, which use the developer's own ambient
+ * auth and are never touched). Honest derivation per landing mode:
+ *
+ *   - deferred landing signaled (the current workflow template): NO clamp.
+ *     The landing pushes under a token minted fresh by its own step, and
+ *     the verify tail was never boundable by an agent clamp anyway (it
+ *     scales with repo size). The tier is still DISCLOSED. In-run git
+ *     fetches (a resume, a private git-pinned install) keep their own
+ *     fail-open disclosures and do not justify capping the agent.
+ *   - no deferred signal on the app tier (an older installed workflow that
+ *     still lands inline with the task-time token): the clamp keeps its
+ *     original reason and stays.
  */
 export function clampBudgetToTokenLifetime(
   budget: RemediateBudget,
   env: Readonly<Record<string, string | undefined>>,
 ): { budget: RemediateBudget; notes: readonly string[] } {
-  if (env.DXKIT_TOKEN_MODE !== 'app' || budget.maxMinutes <= APP_TOKEN_SAFE_MINUTES) {
+  if (env.DXKIT_TOKEN_MODE !== 'app') {
+    return { budget, notes: [] };
+  }
+  if (deferredLandingRequested(env)) {
+    return {
+      budget,
+      notes: [
+        'GitHub App token tier: the landing is deferred to a post-task workflow step that ' +
+          'mints a fresh installation token, so the agent budget is not clamped to the ' +
+          "token's one-hour lifetime.",
+      ],
+    };
+  }
+  if (budget.maxMinutes <= APP_TOKEN_SAFE_MINUTES) {
     return { budget, notes: [] };
   }
   return {
     budget: { ...budget, maxMinutes: APP_TOKEN_SAFE_MINUTES },
     notes: [
-      `maxMinutes ${budget.maxMinutes} clamped to ${APP_TOKEN_SAFE_MINUTES}: this lane pushes ` +
-        `with a GitHub App installation token, which GitHub hard-caps at one hour, and the ` +
-        `landing must fit inside it — a longer run would spend its full agent budget and then ` +
-        `fail to deliver. For longer runs use the ${LANE_TOKEN_PAT_SECRET_NAME} PAT tier or lower the budget.`,
+      `maxMinutes ${budget.maxMinutes} clamped to ${APP_TOKEN_SAFE_MINUTES}: this workflow ` +
+        `lands with a GitHub App installation token minted before the task, which GitHub ` +
+        `hard-caps at one hour, and the landing must fit inside it: a longer run would spend ` +
+        `its full agent budget and then fail to deliver. Run \`vyuh-dxkit update\` to install ` +
+        `the two-phase landing workflow (which lifts this clamp), use the ` +
+        `${LANE_TOKEN_PAT_SECRET_NAME} PAT tier, or lower the budget.`,
     ],
   };
 }

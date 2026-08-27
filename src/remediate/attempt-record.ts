@@ -100,6 +100,7 @@ export function taskRunJson(run: TaskRun): Record<string, unknown> {
     prUrl: run.prUrl ?? null,
     landRefused: run.landRefused ?? null,
     landingBlocked: run.landingBlocked ?? null,
+    landingDeferred: run.landingDeferred ?? null,
     landed: run.landed,
     // The commit range of the attempt — what the workflow's evidence step
     // format-patches into a run artifact when nothing landed.

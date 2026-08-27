@@ -38,6 +38,15 @@ export {
   type ConfiguredLoopResult,
 } from './configured-loop';
 export { executeTask, taskRunJson, type ExecutorSeams, type TaskRun } from './execute';
+// Phase two of two-phase landing (`remediate land`) lives in `./land-cli`;
+// re-exported so consumers keep one import surface.
+export {
+  landExitClean,
+  runRemediateLand,
+  runRemediateLandCli,
+  type LandCliSeams,
+  type RemediateLandOutcome,
+} from './land-cli';
 import { headCommit, resetHardTo, runConfiguredLoop } from './configured-loop';
 import { executeTask, taskRunJson, type TaskRun } from './execute';
 
@@ -58,6 +67,7 @@ function reportTaskRun(run: TaskRun, json: boolean): void {
   if (run.result.note) logger.info(run.result.note);
   if (run.landRefused) logger.warn(run.landRefused);
   if (run.landingBlocked) logger.warn(run.landingBlocked);
+  if (run.landingDeferred) logger.info(run.landingDeferred);
   if (run.prUrl) logger.success(`standing PR: ${run.prUrl}`);
   console.log(''); // slop-ok
   process.stdout.write(run.result.ledger + '\n');
@@ -178,6 +188,7 @@ export async function runRemediateConfigured(
 export function remediateUsage(): string {
   return (
     `usage: vyuh-dxkit remediate --task <${REMEDIATE_TASKS.map((t) => t.id).join('|')}> ` +
-    `[--land pr] [--dispatch-override] [--json] | remediate configured [--land pr] | remediate plan`
+    `[--land pr] [--dispatch-override] [--json] | remediate configured [--land pr] | ` +
+    `remediate plan | remediate land --task <t>`
   );
 }
