@@ -164,8 +164,8 @@ __DXKIT_LANE_TOKEN_STEPS__
 
       # Working credential for the SETUP phase: dependency install may need
       # authenticated git (a private git-pinned dependency), and the
-      # checkout persisted nothing. Same body as the landing install below;
-      # the landing step REPLACES this value with the fresh task-time token.
+      # checkout persisted nothing. Same body as the task-credential install
+      # below; that step REPLACES this value with the fresh task-time token.
       - name: Install the working credential
         env:
           DXKIT_LANE_TOKEN: __DXKIT_LANE_TOKEN__
@@ -221,23 +221,23 @@ __DXKIT_CI_RUNTIME_SETUP__
 
       # An App installation token is hard-capped at ONE HOUR by GitHub, and
       # the first mint happened before checkout + toolchain install — so a
-      # long agent budget could outlive it and 401 the LANDING push after
-      # the full agent spend. Re-mint here so the token's lifetime starts
-      # at agent launch, not at job start; the CLI additionally clamps the
-      # agent budget on this tier so agent + verify + landing fit inside
-      # the fresh token (disclosed in the ledger, never silent).
+      # long task could outlive it mid-run. Re-mint here so the WORKING
+      # credential's lifetime starts at agent launch, not at job start.
+      # The LANDING does not depend on this token at all: it is deferred to
+      # the post-task step below, which mints its own fresh token, so even
+      # a verify tail longer than an hour cannot expire the delivery.
 __DXKIT_LANE_TOKEN_TASK_STEPS__
 
-      # The ONE landing credential, every tier. The checkout persisted
-      # nothing (persist-credentials: false above), so this step is the
-      # only credential writer: it installs the tier-chain token (the
-      # fresh task-time App mint when configured, else the PAT, else the
-      # default token), asserts exactly one Authorization source exists —
-      # a duplicate makes GitHub 400 the landing push with "Duplicate
-      # header", the class that killed a full agent run — and PROVES the
-      # credential with an ls-remote. A broken landing credential fails
-      # HERE, at $0, before any agent spawns; never at delivery.
-      - name: Install the landing credential
+      # The task-phase working credential, every tier. The checkout
+      # persisted nothing (persist-credentials: false above), so the
+      # credential-install steps are the only writers: each installs the
+      # tier-chain token (the fresh task-time App mint when configured,
+      # else the PAT, else the default token), asserts exactly one
+      # Authorization source exists (a duplicate makes GitHub 400 every
+      # push with "Duplicate header", the class that killed a full agent
+      # run) and PROVES the credential with an ls-remote. A broken
+      # credential fails HERE, at $0, before any agent spawns.
+      - name: Install the task credential
         env:
           DXKIT_LANE_TOKEN: __DXKIT_LANE_TOKEN_TASK__
         run: |
@@ -247,11 +247,11 @@ __DXKIT_LANE_TOKEN_TASK_STEPS__
           git config --local http.https://github.com/.extraheader "AUTHORIZATION: basic $AUTH"
           COUNT=$(git config --get-all http.https://github.com/.extraheader | wc -l)
           if [ "$COUNT" != "1" ]; then
-            echo "::error title=landing credential::expected exactly 1 auth header config, found $COUNT (a duplicate would 400 the landing push)"
+            echo "::error title=task credential::expected exactly 1 auth header config, found $COUNT (a duplicate would 400 every push)"
             exit 1
           fi
           git ls-remote --heads origin >/dev/null
-          echo "landing credential verified (single auth header, ls-remote OK)"
+          echo "task credential verified (single auth header, ls-remote OK)"
 
       # ONE task per job (this matrix row's own checkout): the CLI verifies
       # inside the frame, opens the task's standing PR, writes the ledger to
@@ -262,9 +262,15 @@ __DXKIT_LANE_TOKEN_TASK_STEPS__
         env:
           GH_TOKEN: __DXKIT_LANE_TOKEN_TASK__
           # The tier the run resolved (mirrors the Disclose step): 'app'
-          # tells the CLI the credential is a one-hour installation token,
-          # so it clamps the agent budget to fit landing inside it.
+          # tells the CLI the credential is a one-hour installation token.
           DXKIT_TOKEN_MODE: __DXKIT_LANE_TOKEN_MODE__
+          # Two-phase landing: the task step performs NO pushes, it writes
+          # a landing record, and the post-task step below lands it under a
+          # freshly minted credential, so the task's duration (agent budget
+          # plus a verify tail that scales with repo size) can never expire
+          # the delivery credential. This also lifts the App-tier agent
+          # budget clamp (the CLI discloses the mode in the ledger).
+          DXKIT_DEFERRED_LANDING: '1'
           # Dispatch-campaign inputs, transported via ENV only (the
           # comment-defer pattern — free text never touches a shell line).
           # Blank on scheduled runs; the CLI clamps budget overrides to the
@@ -317,6 +323,47 @@ __DXKIT_REMEDIATE_CREDENTIAL_ENV__
             fi
           fi
           exit "$EXIT"
+
+      # Phase two of two-phase landing: the delivery credential is minted
+      # HERE, fresh, so its one-hour cap starts at delivery time; the task
+      # above may have run for hours without touching it. Guarded with
+      # always() because a salvage/draft record from a FAILED task step must
+      # still land (the run stays red; the evidence still delivers).
+__DXKIT_LANE_TOKEN_LAND_STEPS__
+
+      # Land what the task step deferred: install the fresh landing
+      # credential (same single-writer discipline as the credential steps
+      # above), then `remediate land` validates the landing record (HEAD
+      # must still be the verified head, it never pushes stale or foreign
+      # commits) and performs every deferred push: the standing branch +
+      # PR, or the order-outcome ledger rows of a non-landing run. One
+      # step, guarded on the record's existence: with no record there is
+      # nothing to deliver and the skip is disclosed, and the guard also
+      # keeps this always() step quiet on a job that died before checkout.
+      - name: Land the deferred work (fresh credential)
+        if: always()
+        env:
+          GH_TOKEN: __DXKIT_LANE_TOKEN_LAND__
+          DXKIT_LANE_TOKEN: __DXKIT_LANE_TOKEN_LAND__
+        run: |
+          REC=".dxkit/cache/remediate-landing-${{ matrix.task }}.json"
+          if [ ! -f "$REC" ]; then
+            echo "no landing record for '${{ matrix.task }}': nothing to land (the task deferred nothing)"
+            exit 0
+          fi
+          AUTH=$(printf 'x-access-token:%s' "$DXKIT_LANE_TOKEN" | base64 -w0)
+          git config --local --unset-all http.https://github.com/.extraheader || true
+          git config --global --unset-all http.https://github.com/.extraheader 2>/dev/null || true
+          git config --local http.https://github.com/.extraheader "AUTHORIZATION: basic $AUTH"
+          COUNT=$(git config --get-all http.https://github.com/.extraheader | wc -l)
+          if [ "$COUNT" != "1" ]; then
+            echo "::error title=landing credential::expected exactly 1 auth header config, found $COUNT (a duplicate would 400 the landing push)"
+            exit 1
+          fi
+          git ls-remote --heads origin >/dev/null
+          echo "landing credential verified (single auth header, ls-remote OK)"
+          if [ -x ./node_modules/.bin/vyuh-dxkit ]; then DXKIT=./node_modules/.bin/vyuh-dxkit; else DXKIT=vyuh-dxkit; fi
+          "$DXKIT" remediate land --task "${{ matrix.task }}"
 
       # A BLOCKED / failed attempt's diff must survive the ephemeral runner:
       # the runner writes a machine-readable attempt record; when nothing
