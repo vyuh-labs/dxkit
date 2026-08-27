@@ -480,6 +480,38 @@ function liveExec(repo: string, resyncFails: boolean): ReturnType<typeof fakeExe
   });
 }
 
+/** The live 4.4.6 defect estate: a PRE-EXISTING peer conflict fails the
+ *  bare dry-run (ERESOLVE) before it ever validates the lock; only the
+ *  dry-run under --legacy-peer-deps can see drift (EUSAGE on a
+ *  hand-edited lock). The pre-fix check passed on the ERESOLVE match
+ *  alone and reported "already consistent" over the drift. */
+function peerConflictExec(repo: string): ReturnType<typeof fakeExec> {
+  return fakeExec((cmd, execCwd) => {
+    if (cmd.bin !== 'npm') return undefined;
+    const lock = path.join(execCwd ?? repo, 'package-lock.json');
+    const content = fs.existsSync(lock) ? fs.readFileSync(lock, 'utf8') : '';
+    if (cmd.args[0] === 'ci' && cmd.args.includes('--dry-run')) {
+      if (!cmd.args.includes('--legacy-peer-deps')) {
+        return {
+          code: 1,
+          output: 'npm error code ERESOLVE\nnpm error ERESOLVE could not resolve peer react@^18',
+        };
+      }
+      return content.includes('HAND-EDITED')
+        ? {
+            code: 1,
+            output: 'npm error code EUSAGE\nnpm error Missing: lodash@4.17.21 from lock file',
+          }
+        : undefined;
+    }
+    if (cmd.args[0] === 'install') {
+      fs.writeFileSync(lock, TOOL_TRUTH);
+      return undefined;
+    }
+    return undefined;
+  });
+}
+
 describe('e2e d: the live shape, nine pins then a hand-edited lockfile', () => {
   it("the frame replaces the hand edit with the resync: pin and agent order both land, the lockfile is the tool's truth", async () => {
     const repo = estate({ '.dxkit/allowlist.json': TWO_DEFERRED_ALLOWLIST });
@@ -523,6 +555,47 @@ describe('e2e d: the live shape, nine pins then a hand-edited lockfile', () => {
     >;
     expect(manifest.overrides).toEqual({ 'js-yaml': '4.1.0', lodash: '4.17.21' });
     expect(r.ledger).toContain('RE-ESTABLISHED');
+  });
+
+  it('the live 4.4.6 defect shape: a tolerated peer conflict never masks drift — the invariant verify FAILS through the fallback dry-run, the resync repairs the lock, the order lands', async () => {
+    const repo = estate({ '.dxkit/allowlist.json': TWO_DEFERRED_ALLOWLIST });
+    const { driver, runs } = handEditingDriver();
+    const exec = peerConflictExec(repo);
+    const r = await runOnEstate({
+      repo,
+      taskId: 'fix-vulns',
+      driver,
+      scan: [scanFinding('4.1.0'), LODASH],
+      exec,
+      frameExec: exec,
+    });
+
+    expect(runs).toHaveLength(1);
+    // The confirming dry-run under the fallback RAN (the pre-fix executor
+    // never spawned it, and reported "already consistent" over the drift).
+    const dryRuns = exec.calls
+      .map((c) => [c.cmd.bin, ...c.cmd.args].join(' '))
+      .filter((c) => c.includes('--dry-run'));
+    expect(dryRuns.some((c) => c.includes('--legacy-peer-deps'))).toBe(true);
+    // The invariant saw the drift, resynced, and re-verified through the
+    // tolerance: the order is KEPT and the landed lock is the tool's.
+    const rec = r.orders?.records[0];
+    expect(rec?.invariants?.map((o) => [o.id, o.status])).toEqual([
+      ['lockfile-sync', 'reestablished'],
+    ]);
+    expect(rec?.disposition?.kind).toBe('kept');
+    expect(r.outcome).toBe('verified');
+    expect(git(repo, ['show', 'HEAD:package-lock.json'])).toContain('resynced');
+    expect(git(repo, ['show', 'HEAD:package-lock.json'])).not.toContain('HAND-EDITED');
+    expect(git(repo, ['log', '--oneline'])).toContain('re-establish lockfile-sync');
+    const manifest = JSON.parse(git(repo, ['show', 'HEAD:package.json'])) as Record<
+      string,
+      Record<string, string>
+    >;
+    expect(manifest.overrides).toEqual({ 'js-yaml': '4.1.0', lodash: '4.17.21' });
+    // The tolerance is disclosed on the re-verification, never silent.
+    expect(r.ledger).toContain('RE-ESTABLISHED');
+    expect(r.ledger).toContain('--legacy-peer-deps');
   });
 
   it('the resync cannot re-establish the tree: the pin lands, the agent order is dropped at tree-invariants, partially-landed', async () => {
