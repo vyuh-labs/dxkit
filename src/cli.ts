@@ -3176,8 +3176,27 @@ export async function run(argv: string[]): Promise<void> {
     }
 
     case 'remediate': {
-      const { runRemediate, runRemediatePlan, runRemediateConfigured, remediateUsage } =
-        await import('./remediate/cli');
+      const {
+        runRemediate,
+        runRemediatePlan,
+        runRemediateConfigured,
+        runRemediateLandCli,
+        remediateUsage,
+      } = await import('./remediate/cli');
+      if (positionals[1] === 'land') {
+        // Phase two of two-phase landing (lane plumbing, machine-invoked by
+        // the workflow's fresh-credential step after the task step): push
+        // what the deferred task run recorded. Executes nothing from the
+        // tree; it only replays validated recorded push/PR state.
+        const landTaskId = values.task as string | undefined;
+        if (!landTaskId) {
+          logger.fail(remediateUsage());
+          process.exitCode = 1;
+          break;
+        }
+        runRemediateLandCli(resolveRepoPath(positionals[2]), landTaskId);
+        break;
+      }
       if (positionals[1] === 'plan') {
         await runRemediatePlan(resolveRepoPath(positionals[2]), {
           json: !!values.json,
