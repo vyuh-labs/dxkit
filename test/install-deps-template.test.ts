@@ -3,7 +3,12 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import * as yaml from 'js-yaml';
-import { INSTALL_DEPS_PLACEHOLDER, renderInstallDependenciesShell } from '../src/package-manager';
+import {
+  INSTALL_DEPS_PLACEHOLDER,
+  defaultResolvedTolerances,
+  renderInstallDependenciesShell,
+} from '../src/install';
+import { installStrategyProviders, LANGUAGES } from '../src/languages';
 import { installCiGuardrails } from '../src/ship-installers';
 
 /**
@@ -84,7 +89,13 @@ describe('dependency-install block: one definition, rendered into every template
         'utf8',
       );
       expect(out).not.toContain(INSTALL_DEPS_PLACEHOLDER);
-      expect(out).toContain(renderInstallDependenciesShell('          '));
+      expect(out).toContain(
+        renderInstallDependenciesShell(
+          '          ',
+          installStrategyProviders(LANGUAGES).map((p) => p.provider),
+          defaultResolvedTolerances(),
+        ),
+      );
       // And it is still valid YAML with a real `run:` body.
       const parsed = yaml.load(out) as { jobs: Record<string, { steps: Array<{ run?: string }> }> };
       const runs = Object.values(parsed.jobs).flatMap((j) => j.steps.map((s) => s.run ?? ''));

@@ -71,6 +71,11 @@ import {
   dominantVocabulary,
 } from '../src/languages';
 import { runCorrectnessFloor } from '../src/analyzers/correctness/run';
+import { declareInstallStrategy } from '../src/languages/capabilities/install-strategy';
+import { activeInstallStrategies, installStrategyProviders } from '../src/languages';
+import { ciInstallVariants, renderInstallDependenciesShell } from '../src/install/shell';
+import { defaultResolvedTolerances } from '../src/install/tolerances';
+import { runDeclaredInstall } from '../src/lanes/verify-tree';
 import { lintGateSpecs } from '../src/analyzers/custom-checks/config';
 import { runCustomChecks } from '../src/analyzers/custom-checks/run';
 import { customCheckRecallInputs } from '../src/analyzers/custom-checks/gather';
@@ -288,6 +293,47 @@ const mockPlaybookPack = {
       weight: 'build' as const,
     }),
   },
+  // Install-strategy contribution (4.4.6). A DISTINCTIVE manager, primary
+  // and peer-conflict fallback (keyed on a distinctive lockfile) so the
+  // assertions below prove the declaration flows pack → registry → the ONE
+  // executor, the CI shell renderer and the tree verification, and that the
+  // executor honors the fallback in BOTH directions (fires on the declared
+  // shape under the default tolerances; never on another shape; never when
+  // the class is withdrawn).
+  installStrategy: declareInstallStrategy(
+    [
+      {
+        when: ['playbook.lock'],
+        strategy: {
+          manager: 'playbook-pm',
+          lockfile: 'playbook.lock',
+          modes: {
+            frozen: {
+              primary: { bin: 'playbook-pm-mock', args: ['install', '--frozen'] },
+              fallbacks: [
+                {
+                  command: { bin: 'playbook-pm-mock', args: ['install', '--frozen', '--peers-ok'] },
+                  when: 'peer-conflict' as const,
+                  matches: (output: string) => output.includes('PLAYBOOK-PEER-CONFLICT'),
+                  disclosure: 'playbook peer conflict tolerated',
+                  viaFlags: ['--peers-ok'],
+                },
+              ],
+            },
+            resync: { primary: { bin: 'playbook-pm-mock', args: ['install'] }, fallbacks: [] },
+          },
+          execution: {
+            hosts: ['any' as const],
+            toolchains: [],
+            needsBuild: false,
+            buildTarget: 'none' as const,
+            weight: 'cheap' as const,
+          },
+        },
+      },
+    ],
+    { ciDependencyInstall: true },
+  ),
   detect: vi.fn(() => false),
   tools: [],
   semgrepRulesets: [],
@@ -617,6 +663,78 @@ describe('recipe playbook — synthetic pack', () => {
     );
     expect(tol?.status).toBe('pass');
     expect(tol?.note).toBe('playbook peer conflict tolerated');
+  });
+
+  // 4.4.6: the install strategy is pack-declared and consumed by ONE
+  // executor, ONE shell renderer and the tree verification. The synthetic
+  // pack's distinctive strategy must reach all three, and the executor must
+  // honor its fallback in BOTH directions (fires on the declared shape;
+  // never on another; never when the class is withdrawn). Without the
+  // negative directions a blanket retry would pass this test.
+  it('the mock pack install strategy flows to the registry, the CI chain, and the verification executor (4.4.6)', () => {
+    const packs = [...LANGUAGES];
+    const providers = installStrategyProviders(packs);
+    expect(providers.map((p) => p.id)).toContain('playbook');
+    const shell = renderInstallDependenciesShell(
+      '',
+      providers.map((p) => p.provider),
+      defaultResolvedTolerances(),
+    );
+    expect(shell).toContain('[ -f playbook.lock ]');
+    expect(shell).toContain(
+      'playbook-pm-mock install --frozen || playbook-pm-mock install --frozen --peers-ok',
+    );
+    expect(
+      ciInstallVariants(providers.map((p) => p.provider)).some((v) =>
+        v.when.includes('playbook.lock'),
+      ),
+    ).toBe(true);
+
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-playbook-install-'));
+    try {
+      fs.writeFileSync(path.join(dir, 'playbook.lock'), '');
+      expect(activeInstallStrategies(packs, dir).map((s) => s.id)).toEqual(['playbook']);
+      const run = (output: string, tolerated: boolean) => {
+        const argvs: string[] = [];
+        const r = runDeclaredInstall(
+          dir,
+          (cmd) => {
+            argvs.push([cmd.bin, ...cmd.args].join(' '));
+            return cmd.args.includes('--peers-ok')
+              ? { available: true, code: 0, output: '' }
+              : { available: true, code: 1, output };
+          },
+          packs,
+          tolerated
+            ? defaultResolvedTolerances()
+            : { tolerated: new Set(), sources: new Map(), unknown: [], conflicts: [] },
+        );
+        return { argvs, r };
+      };
+      // Fires on the declared shape.
+      const fired = run('PLAYBOOK-PEER-CONFLICT', true);
+      expect(fired.argvs).toEqual([
+        'playbook-pm-mock install --frozen',
+        'playbook-pm-mock install --frozen --peers-ok',
+      ]);
+      expect(fired.r.status).toBe('installed');
+      if (fired.r.status === 'installed') {
+        expect(fired.r.steps[0].fallback?.when).toBe('peer-conflict');
+        expect(fired.r.steps[0].fallback?.reason).toBe('playbook peer conflict tolerated');
+      }
+      // Never on another shape: the primary is the reported failure.
+      const other = run('PLAYBOOK-SOMETHING-ELSE', true);
+      expect(other.argvs).toEqual(['playbook-pm-mock install --frozen']);
+      expect(other.r.status === 'failed' && other.r.classification).toBe('unclassified');
+      // Never when the class is withdrawn: reported with the remedy named.
+      const withdrawn = run('PLAYBOOK-PEER-CONFLICT', false);
+      expect(withdrawn.argvs).toEqual(['playbook-pm-mock install --frozen']);
+      expect(withdrawn.r.status === 'failed' && withdrawn.r.unauthorizedRemedy).toContain(
+        'dependencies.tolerate',
+      );
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   // custom-check flagship: the lint gate iterates `activeLintGateProviders`, so a

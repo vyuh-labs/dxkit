@@ -139,6 +139,15 @@ export const POLICY_PARAMS: readonly PolicyParamMeta[] = [
     anchor: 'dep-bump',
   },
   {
+    // A repo FACT, not a posture: which install deviations this repo's own
+    // install tolerates (the peer-conflict fallback). Read by the CI
+    // template render, the tree verification, the recipes and the floor
+    // through the one tolerance resolver; absent = the declared defaults.
+    path: 'dependencies.tolerate',
+    summary: 'install deviations the repo tolerates (replaces the default set)',
+    anchor: 'dependency-tolerances',
+  },
+  {
     // Same open shape as baseline.refreshCadence / remediate.schedule: named
     // cadences OR a cron. Absent = the lane's own Monday 07:00 UTC default.
     path: 'depBump.schedule',

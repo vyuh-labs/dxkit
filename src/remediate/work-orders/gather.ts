@@ -40,6 +40,7 @@ import * as path from 'path';
 import { runCorrectnessFloor, type CorrectnessFloorResult } from '../../analyzers/correctness/run';
 import { attributeFloorFailures } from '../../analyzers/correctness/attribution';
 import {
+  activeInstallStrategies,
   allDependencyManifestPatterns,
   detectActiveLanguages,
   matchesManifestPattern,
@@ -161,12 +162,12 @@ function readBaseline(
  *  exactly one active pack declares any. */
 export function installResolver(cwd: string, packs: readonly LanguageSupport[]): InstallFor {
   const byPack = new Map<string, { bin: string; args: readonly string[] }>();
-  for (const pack of packs) {
-    const cmd = pack.provision?.(cwd);
-    // The order carries the PRIMARY only: the pack's fallback (`a || b`) is
-    // the verification's disclosed retry, not a second command an agent may
-    // reach for.
-    if (cmd) byPack.set(pack.id, { bin: cmd.bin, args: cmd.args });
+  // The order carries the frozen PRIMARY only: a strategy's fallbacks are
+  // the verification's disclosed retries, not a second command an agent may
+  // reach for. One resolution (`activeInstallStrategies`) so the constraint
+  // an order states is the install the verification runs.
+  for (const { id, strategy } of activeInstallStrategies(packs, cwd)) {
+    byPack.set(id, strategy.modes.frozen.primary);
   }
   const single = byPack.size === 1 ? [...byPack.values()][0] : undefined;
   return (pack) => (pack !== undefined ? byPack.get(pack) : single);

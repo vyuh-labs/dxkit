@@ -298,9 +298,10 @@ describe('the verified frame (the agent is never trusted)', () => {
               ? {
                   status: 'failed',
                   pack: 'typescript',
-                  argv: ['npm', 'ci', '--legacy-peer-deps'],
+                  argv: ['npm', 'ci'],
                   output:
                     'npm ERR! code EUSAGE\nnpm ERR! package.json and package-lock.json are not in sync',
+                  classification: 'lockfile-drift',
                 }
               : { status: 'installed', steps: [{ pack: 'typescript', argv: ['npm', 'ci'] }] },
         },
@@ -325,6 +326,7 @@ describe('the verified frame (the agent is never trusted)', () => {
             pack: 'typescript',
             argv: ['npm', 'ci'],
             output: 'npm ERR! code EUSAGE',
+            classification: 'lockfile-drift',
           }),
         },
       }),

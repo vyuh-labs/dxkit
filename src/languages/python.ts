@@ -25,6 +25,7 @@ import type {
   ResolutionCheckResult,
 } from './capabilities/correctness';
 import type { ExecutionRequirement } from '../execution';
+import { declareInstallStrategy } from './capabilities/install-strategy';
 import type {
   CoverageResult,
   DepVulnFinding,
@@ -1730,6 +1731,67 @@ function detectPythonVersion(cwd: string): string | undefined {
   return undefined;
 }
 
+const PYTHON_INSTALL_EXECUTION: ExecutionRequirement = {
+  hosts: ['any'],
+  toolchains: ['python'],
+  needsBuild: false,
+  buildTarget: 'none',
+  weight: 'cheap',
+};
+
+const pythonInstallStrategy = declareInstallStrategy(
+  [
+    {
+      when: ['poetry.lock'],
+      strategy: {
+        manager: 'poetry',
+        lockfile: 'poetry.lock',
+        modes: { frozen: { primary: { bin: 'poetry', args: ['install'] }, fallbacks: [] } },
+        execution: PYTHON_INSTALL_EXECUTION,
+      },
+    },
+    {
+      when: ['uv.lock'],
+      strategy: {
+        manager: 'uv',
+        lockfile: 'uv.lock',
+        modes: {
+          frozen: { primary: { bin: 'uv', args: ['sync', '--locked'] }, fallbacks: [] },
+          resync: { primary: { bin: 'uv', args: ['sync'] }, fallbacks: [] },
+        },
+        execution: PYTHON_INSTALL_EXECUTION,
+      },
+    },
+    {
+      when: ['Pipfile.lock'],
+      strategy: {
+        manager: 'pipenv',
+        lockfile: 'Pipfile.lock',
+        modes: {
+          frozen: { primary: { bin: 'pipenv', args: ['install', '--deploy'] }, fallbacks: [] },
+          resync: { primary: { bin: 'pipenv', args: ['install'] }, fallbacks: [] },
+        },
+        execution: PYTHON_INSTALL_EXECUTION,
+      },
+    },
+    {
+      when: ['requirements.txt'],
+      strategy: {
+        manager: 'pip',
+        lockfile: null,
+        modes: {
+          frozen: {
+            primary: { bin: 'pip', args: ['install', '-r', 'requirements.txt'] },
+            fallbacks: [],
+          },
+        },
+        execution: PYTHON_INSTALL_EXECUTION,
+      },
+    },
+  ],
+  { ciDependencyInstall: false },
+);
+
 export const python: LanguageSupport = {
   id: 'python',
   displayName: 'Python',
@@ -1762,15 +1824,16 @@ export const python: LanguageSupport = {
   // env-var convention in Django/Flask configs.
   tlsBypassPatterns: ['verify[[:space:]]*=[[:space:]]*False', 'VERIFY_SSL.*[Ff]alse'],
 
-  provision(cwd) {
-    // The ecosystem's own provision step, keyed on the artifact present.
-    if (fs.existsSync(path.join(cwd, 'poetry.lock'))) return { bin: 'poetry', args: ['install'] };
-    if (fs.existsSync(path.join(cwd, 'uv.lock'))) return { bin: 'uv', args: ['sync'] };
-    if (fs.existsSync(path.join(cwd, 'Pipfile.lock'))) return { bin: 'pipenv', args: ['install'] };
-    if (fs.existsSync(path.join(cwd, 'requirements.txt')))
-      return { bin: 'pip', args: ['install', '-r', 'requirements.txt'] };
-    return null;
-  },
+  // How a python root installs (Rule 6): one variant per dependency
+  // artifact, in preference order. The frozen forms are the ones that
+  // REFUSE a stale lockfile (`uv sync --locked`, `pipenv install --deploy`,
+  // and `poetry install`, which aborts when pyproject moved ahead of
+  // poetry.lock); a resync is declared only where ONE command both
+  // rewrites the lockfile and installs (uv, pipenv). Poetry needs
+  // `poetry lock` first and plain requirements have no lockfile, so
+  // neither declares one. No ecosystem tolerance exists here: python
+  // resolvers have no peer-check analogue, so no fallbacks are declared.
+  installStrategy: pythonInstallStrategy,
 
   upgradeCommand(name, version) {
     return `pip install '${name}==${version}'`;

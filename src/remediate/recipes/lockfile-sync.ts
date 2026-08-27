@@ -11,7 +11,7 @@ import * as path from 'path';
 import { tail } from '../../analyzers/tools/bounded-exec';
 import { runSingleLockfileCheck } from '../../analyzers/correctness/single-checks';
 import type { WorkOrder } from '../work-orders/types';
-import { nodePmAt, owningManifestRoot, resyncInstallFor, runResyncInstall } from './shared';
+import { nodePmAt, nodeStrategyAt, owningManifestRoot, runResyncInstall } from './shared';
 import type { RecipeExecuteContext, RecipeOutcome } from './types';
 
 /** The pack that produced the order's floor finding. */
@@ -38,21 +38,24 @@ export async function executeLockfileSync(
     };
   }
   const rootAbs = path.join(ctx.cwd, rootDir);
+  const strategy = nodeStrategyAt(ctx.cwd, rootDir);
+  // The lockfile actually present (a shrinkwrap counts), from the same file
+  // presence the strategy keyed on.
   const lock = nodePmAt(ctx.cwd, rootDir);
-  if (lock === null) {
+  if (strategy === null || strategy.lockfile === null || lock === null) {
     return {
       kind: 'refused',
       reason: `no lockfile exists at ${rootDir || 'the repo root'}, so there is nothing to re-sync`,
     };
   }
 
-  const installFailure = runResyncInstall(resyncInstallFor(lock.pm), rootAbs, ctx.exec);
+  const installFailure = runResyncInstall(strategy, rootAbs, ctx);
   if (installFailure) return installFailure;
 
   // Verify with the pack's own frozen dry-run, the exact check that minted
   // the order. Only a real PASS confirms; a skip (yarn's declared no-dry-run,
   // a missing binary) means the recipe cannot claim the fix and says so.
-  const verify = runSingleLockfileCheck(rootAbs, pack, ctx.exec);
+  const verify = runSingleLockfileCheck(rootAbs, pack, ctx.exec, ctx.tolerances);
   if (verify === null) {
     return {
       kind: 'refused',

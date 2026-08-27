@@ -8,7 +8,13 @@
  */
 import type { CorrectnessFloorResult } from '../analyzers/correctness/run';
 import type { GuardrailGateResult } from '../lanes/verify';
-import { verifyTree, type VerifyTreeResult, type VerifyTreeStep } from '../lanes/verify-tree';
+import {
+  describeInstall,
+  verifyTree,
+  type VerifyTreeResult,
+  type VerifyTreeStep,
+} from '../lanes/verify-tree';
+import { resolveTolerances, toleranceWarnings } from '../install/tolerances';
 import type { RemediatePhase, RemediateRunOptions } from './outcome';
 
 const PHASE_OF: Partial<Record<VerifyTreeStep, RemediatePhase>> = {
@@ -31,6 +37,10 @@ export async function verifyCommittedHead(
     head: args.head,
     baseHead: args.baseHead,
     trust: opts.trust,
+    // Resolved ONCE at the lane's checkout root; the same set reaches the
+    // ledger's warnings below, so what gated and what is disclosed cannot
+    // diverge.
+    tolerances: resolveTolerances(opts.cwd),
     entryFloor: args.entryFloor,
     // The entry floor always ran: an absent base check is a check the
     // agent's change introduced, net-new (conservative).
@@ -85,19 +95,26 @@ function guardrailShapeFor(verified: VerifyTreeResult): GuardrailGateResult {
 export function verificationDisclosures(
   verified: VerifyTreeResult,
   guardrail: GuardrailGateResult,
+  cwd?: string,
 ): {
   floor?: VerifyTreeResult['floor'];
   floorAttribution?: VerifyTreeResult['floorAttribution'];
   floorSkipped?: VerifyTreeResult['floorSkipped'];
   install?: VerifyTreeResult['install'];
+  installToleranceWarnings?: readonly string[];
   changedFiles?: VerifyTreeResult['changedFiles'];
   guardrailVerdict: string;
 } {
+  // The tolerance-resolution warnings (unknown policy entries, a policy
+  // opt-out conflicting with observed repo config): the disclosure home the
+  // resolver promises. Same resolution the verification ran under.
+  const warnings = cwd !== undefined ? toleranceWarnings(resolveTolerances(cwd)) : [];
   return {
     ...(verified.floor ? { floor: verified.floor } : {}),
     ...(verified.floorAttribution ? { floorAttribution: verified.floorAttribution } : {}),
     ...(verified.floorSkipped ? { floorSkipped: verified.floorSkipped } : {}),
     ...(verified.install ? { install: verified.install } : {}),
+    ...(warnings.length > 0 ? { installToleranceWarnings: warnings } : {}),
     ...(verified.changedFiles ? { changedFiles: verified.changedFiles } : {}),
     guardrailVerdict: guardrail.verdict,
   };
@@ -140,11 +157,20 @@ export function guardrailRedNote(
  *  usual cause, and the install output as evidence. */
 export function installFailedNote(verified: VerifyTreeResult): string {
   const failed = verified.install?.status === 'failed' ? verified.install : undefined;
+  const cause =
+    failed?.classification === 'lockfile-drift'
+      ? 'the lockfile does not record the manifest (a manifest or lockfile edited without ' +
+        're-running the install)'
+      : failed?.unauthorizedRemedy
+        ? failed.unauthorizedRemedy
+        : 'the usual cause is a manifest edited without re-running the install so the lockfile ' +
+          'records it';
   return (
     "a clean checkout of the agent's commits cannot be installed the way CI installs it " +
-    `(\`${failed ? failed.argv.join(' ') : 'frozen install'}\` failed) — nothing lands. CI would ` +
-    'have died before any gate ran, so the draft would read "NOT gated"; the usual cause is a ' +
-    'manifest edited without re-running the install so the lockfile records it.' +
+    `(\`${failed ? failed.argv.join(' ') : 'frozen install'}\` failed` +
+    `${failed ? `, ${failed.classification}` : ''}) — nothing lands. CI would ` +
+    `have died before any gate ran, so the draft would read "NOT gated"; ${cause}.` +
+    (failed ? `\n\n${describeInstall(failed)}` : '') +
     (failed ? `\n\nInstall output:\n\`\`\`\n${failed.output}\n\`\`\`` : '')
   );
 }

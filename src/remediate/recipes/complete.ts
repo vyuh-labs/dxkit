@@ -154,7 +154,7 @@ export async function completeRecipeOnlyRun(
   const common = {
     task: args.taskId,
     recipes: args.recipes,
-    ...verificationDisclosures(verified, guardrail),
+    ...verificationDisclosures(verified, guardrail, opts.cwd),
     baseHead: args.baseHead,
     head: args.head,
   };

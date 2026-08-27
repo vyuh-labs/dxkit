@@ -25,6 +25,7 @@ stanzas).
 | `depBump.allowMajor`                | [#dep-bump](#dep-bump)                                   |
 | `depBump.enabled`                   | [#dep-bump](#dep-bump)                                   |
 | `depBump.schedule`                  | [#dep-bump](#dep-bump)                                   |
+| `dependencies.tolerate`             | [#dependency-tolerances](#dependency-tolerances)         |
 | `duplication.mode`                  | [#duplication-mode](#duplication-mode)                   |
 | `expiryNotice.enabled`              | [#expiry-notice](#expiry-notice)                         |
 | `extends`                           | [#policy-base](#policy-base)                             |
@@ -317,6 +318,38 @@ boring to merge.
 
 **Interactions.** What the bump lane cannot close (no fixed release,
 breaking-not-allowed) is exactly the [remediate lane's](#remediate) input.
+
+## Dependency tolerances
+
+**What it does.** Declares which deviations your repo's own dependency
+install tolerates. dxkit installs your tree in several places (the
+generated CI workflows before any gate, the remediate lane's verification
+of a candidate on a clean checkout, the deterministic recipes' lockfile
+resync, the floor's lockfile-sync check), all from one pack-declared
+strategy per ecosystem. A tolerance authorizes that strategy's declared
+fallback: for npm, `peer-conflict` allows `npm ci --legacy-peer-deps` when
+plain `npm ci` fails on a peer-dependency conflict the lockfile tree already
+records (the flag skips the peer check only; it never installs a different
+tree). The fallback fires only when the failure has exactly that shape; a
+lockfile that no longer records the manifest is reported against `npm ci`
+itself, with the cause named.
+
+**Default and why.** `peer-conflict` is tolerated by default, because a
+repo whose tree only resolves under `--legacy-peer-deps` would otherwise
+fail every generated workflow at its install step, before the guardrail
+runs. An `.npmrc` with `legacy-peer-deps=true` also authorizes it (the repo
+already installs that way).
+
+**Tuning.** `dependencies.tolerate` is a list that REPLACES the default
+set: `[]` withdraws the peer-conflict fallback (a strict repo that wants a
+peer conflict to fail its install), `["peer-conflict"]` keeps it explicit.
+Unknown entries are ignored and disclosed. Run `vyuh-dxkit update` after a
+change so the workflows re-render.
+
+**Interactions.** The remediate lane's verification reports which fallback
+fired, and when a failure is a withdrawn tolerance it names this knob as
+the remedy. A failure identical on the candidate and the base branch reads
+pre-existing, never as the change's fault.
 
 ## Expiry notice
 

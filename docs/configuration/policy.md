@@ -601,6 +601,22 @@ producer-classified major bumps (default false; majors are skipped-and-named
 so they stay a human decision). See
 [`vyuh-dxkit deps`](../commands/deps.md).
 
+## `dependencies` — how this repo installs its dependency tree
+
+```json
+"dependencies": { "tolerate": ["peer-conflict"] }
+```
+
+A repo fact, not a posture: the install deviations your own install
+tolerates. Every place dxkit installs your tree (the generated workflows,
+the remediate lane's verification, the recipes, the floor's lockfile-sync
+check) reads one pack-declared install strategy, and this list authorizes
+its declared fallbacks (`peer-conflict`: `npm ci --legacy-peer-deps` after a
+peer-conflict failure of `npm ci`). Absent, the default set applies
+(`peer-conflict` tolerated; an `.npmrc` with `legacy-peer-deps=true` counts
+as declaring it). `[]` withdraws it. See the
+[policy guide](policy-guide.md#dependency-tolerances).
+
 ## `graph.refresh` — code-graph refresh transport (CI performance)
 
 The code graph (`.dxkit/reports/graph.json`) backs `explore`, `context`, the

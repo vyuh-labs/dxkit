@@ -271,6 +271,10 @@ export function renderRemediateLedger(r: Omit<RemediateResult, 'ledger'>): strin
   // with this tree, verified on a clean checkout (4.4.5).
   const install = describeInstall(r.install);
   if (install) lines.push(install, '');
+  // Tolerance-resolution warnings (an unknown dependencies.tolerate entry, a
+  // policy opt-out conflicting with observed .npmrc config): disclosed here,
+  // beside the install they governed.
+  for (const w of r.installToleranceWarnings ?? []) lines.push(`Warning: ${w}`, '');
   lines.push(
     ...renderFloorVerification(
       r.floor,

@@ -87,6 +87,33 @@ describe('resolvePolicyRender', () => {
     expect(readFileSync(join(repo, REFRESH_YML), 'utf8')).toBe(before);
   });
 
+  // Item-7 (4.4.6): the CI install chain is rendered under the repo's
+  // tolerances at install/update time; the SAME parity surface that catches
+  // a cadence edit catches a dependencies.tolerate edit (policy render
+  // re-renders under the CURRENT tolerance inputs, .npmrc included), so a
+  // baked chain cannot silently fork from a later policy change.
+  it('a dependencies.tolerate edit without a re-render drifts the workflow install chain', () => {
+    installRefreshSurface();
+    const before = readFileSync(join(repo, REFRESH_YML), 'utf8');
+    expect(before).toContain('npm ci || npm ci --legacy-peer-deps');
+    writeFileSync(
+      join(repo, '.dxkit', 'policy.json'),
+      JSON.stringify({ baseline: { anchor: 'branch' }, dependencies: { tolerate: [] } }),
+    );
+    const out = resolvePolicyRender(repo, 'check');
+    expect(out.clean).toBe(false);
+    expect(out.drifted).toContain(REFRESH_YML);
+    // The withdrawn tolerance renders a chain with no unconditional retry.
+    expect(out.diffs.join('\n')).toContain('npm ci');
+    expect(readFileSync(join(repo, REFRESH_YML), 'utf8')).toBe(before);
+    // And --apply re-renders it: the fallback is gone from the chain.
+    const applied = resolvePolicyRender(repo, 'apply');
+    expect(applied.ok).toBe(true);
+    const after = readFileSync(join(repo, REFRESH_YML), 'utf8');
+    expect(after).not.toContain('npm ci || npm ci --legacy-peer-deps');
+    expect(after).toContain('npm ci');
+  });
+
   it('--apply is the one-command fix; the follow-up check is clean', () => {
     installRefreshSurface();
     writeFileSync(

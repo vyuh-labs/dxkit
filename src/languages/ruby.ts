@@ -21,6 +21,7 @@ import type {
   ResolutionCheckResult,
 } from './capabilities/correctness';
 import type { ExecutionRequirement } from '../execution';
+import { declareInstallStrategy } from './capabilities/install-strategy';
 import type {
   CoverageResult,
   ImportsResult,
@@ -1068,6 +1069,27 @@ function detectRubyVersion(cwd: string): string | undefined {
   return m ? m[2] : undefined;
 }
 
+const rubyInstallStrategy = declareInstallStrategy(
+  [
+    {
+      when: ['Gemfile.lock'],
+      strategy: {
+        manager: 'bundler',
+        lockfile: 'Gemfile.lock',
+        modes: { frozen: { primary: { bin: 'bundle', args: ['install'] }, fallbacks: [] } },
+        execution: {
+          hosts: ['any'],
+          toolchains: ['ruby'],
+          needsBuild: false,
+          buildTarget: 'none',
+          weight: 'cheap',
+        },
+      },
+    },
+  ],
+  { ciDependencyInstall: false },
+);
+
 export const ruby: LanguageSupport = {
   id: 'ruby',
   displayName: 'Ruby',
@@ -1099,10 +1121,12 @@ export const ruby: LanguageSupport = {
     'verify_mode[[:space:]]*=[[:space:]]*.*VERIFY_NONE',
   ],
 
-  provision(cwd) {
-    if (fs.existsSync(path.join(cwd, 'Gemfile.lock'))) return { bin: 'bundle', args: ['install'] };
-    return null;
-  },
+  // How a ruby root installs (Rule 6). `bundle install` honors Gemfile.lock
+  // and, under bundler's CI conventions (BUNDLE_FROZEN / deployment mode),
+  // refuses a stale one; bundler writes the lockfile through the same
+  // command, so there is no separate resync to declare. No ecosystem
+  // tolerance exists (no peer-check analogue), so no fallbacks.
+  installStrategy: rubyInstallStrategy,
 
   upgradeCommand(name, version) {
     return `# Edit Gemfile: \`gem '${name}', '${version}'\`, then \`bundle install\``;

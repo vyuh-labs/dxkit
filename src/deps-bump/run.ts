@@ -37,11 +37,18 @@ import {
 import { detectActiveLanguages } from '../languages';
 import {
   detectPackageManager,
-  isPeerConflictOnly,
   upgradeArgv,
   type DependencySection,
   type PackageManager,
 } from '../package-manager';
+import { NODE_STRATEGY_BY_PM } from '../languages/node-install';
+import {
+  composePlan,
+  describeInfrastructure,
+  describeUnauthorizedFallback,
+  runInstall,
+} from '../install/run';
+import { resolveTolerances, TOLERATE_POLICY_PATH } from '../install/tolerances';
 import { buildBumpPlan, type BumpPlan, type PlannedBump } from './plan';
 import { renderFloorVerification, renderGuardrailVerdict } from '../lanes/verification-render';
 import { appendLaneEvent, LANE_LEDGER_SCHEMA_VERSION } from '../lanes/ledger';
@@ -59,6 +66,8 @@ export interface AppliedBump extends PlannedBump {
   readonly applied: boolean;
   /** Tail of the package manager's output when the install failed. */
   readonly failure?: string;
+  /** The declared fallback that applied this bump (disclosed), when one ran. */
+  readonly note?: string;
 }
 
 export interface DepsBumpResult {
@@ -166,7 +175,7 @@ export function renderLedger(result: Omit<DepsBumpResult, 'ledger'>): string {
       lines.push(
         `| \`${b.parent}\` | ${from}**${b.toVersion}**${b.breaking ? ' (major)' : ''} | ` +
           `${SEVERITY_ICON[b.maxSeverity] ?? b.maxSeverity} | ${b.advisories.join(', ')} | ` +
-          `${b.applied ? 'yes' : `FAILED — ${b.failure ?? 'install error'}`} |`,
+          `${b.applied ? (b.note ? `yes (${b.note})` : 'yes') : `FAILED — ${b.failure ?? 'install error'}`} |`,
       );
     }
     lines.push('');
@@ -307,26 +316,45 @@ export async function runDepsBump(opts: DepsBumpOptions): Promise<DepsBumpResult
   // blocks (the loop Stop-gate's entry-snapshot doctrine, same comparator).
   const entryFloor = runFloor();
 
+  // The bump composes its own lock-writing primary (an upgrade argv), so it
+  // runs through the ONE executor over `composePlan`: the PM's declared
+  // resync fallbacks (their classes, classifiers, disclosures and the repo's
+  // authorization) re-based onto the bump argv, never a re-implemented
+  // ladder or a second "peer conflict" definition.
+  const tolerances = resolveTolerances(cwd);
+  const resyncPlan = NODE_STRATEGY_BY_PM[pm].modes.resync;
+  // The injected execBump seam predates the executor; adapt it (a bump run
+  // treats every non-ok as a completed failure, so infra flags stay unset).
+  const execAdapter = (cmd: { bin: string; args: readonly string[] }, _cwd: string) => {
+    const r = execBump([cmd.bin, ...cmd.args]);
+    return { available: true, code: r.ok ? 0 : 1, output: r.output };
+  };
   const applied: AppliedBump[] = [];
   for (const bump of plan.bumps) {
     const argv = upgradeArgv(pm, bump.parent, bump.toVersion, sectionFor(cwd, bump.parent));
-    let r = execBump(argv);
-    // A repo whose tree only resolves under --legacy-peer-deps (a peer
-    // conflict its own install already tolerates) must not fail the bump —
-    // the same fallback doctrine as every shipped `npm ci || npm ci
-    // --legacy-peer-deps` install step: the flag only skips the peer check
-    // that rejects the tree, it never fabricates a different resolution. The
-    // classifier is the one in package-manager.ts, shared with the lockfile-
-    // sync floor check, so "peer conflict" means the same thing everywhere.
-    if (!r.ok && pm === 'npm' && isPeerConflictOnly(r.output)) {
-      r = execBump([...argv, '--legacy-peer-deps']);
+    const primary = { bin: argv[0], args: argv.slice(1) };
+    const plan_ = resyncPlan ? composePlan(resyncPlan, primary) : { primary, fallbacks: [] };
+    const r = runInstall(plan_, cwd, execAdapter, tolerances);
+    // Single-line tails: these land in a markdown table cell.
+    const line = (text: string) => text.replace(/\s+/g, ' ').trim().slice(-300);
+    if (r.status === 'ok') {
+      applied.push({
+        ...bump,
+        applied: true,
+        ...(r.fallback ? { note: `${r.fallback.when} fallback: ${r.fallback.disclosure}` } : {}),
+      });
+      continue;
     }
-    applied.push({
-      ...bump,
-      applied: r.ok,
-      // Single-line tail: this lands in a markdown table cell.
-      ...(r.ok ? {} : { failure: r.output.slice(-300).replace(/\s+/g, ' ').trim() }),
-    });
+    const failure =
+      r.status === 'infrastructure'
+        ? line(describeInfrastructure(r))
+        : line(
+            `${r.classification}: ${r.output}` +
+              (describeUnauthorizedFallback(r, TOLERATE_POLICY_PATH) !== null
+                ? `; ${describeUnauthorizedFallback(r, TOLERATE_POLICY_PATH)}`
+                : ''),
+          );
+    applied.push({ ...bump, applied: false, failure });
   }
   const anyApplied = applied.some((b) => b.applied);
   if (!anyApplied) {

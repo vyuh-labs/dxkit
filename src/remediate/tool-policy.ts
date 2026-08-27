@@ -5,11 +5,12 @@
  *
  * Installs are the frame's job (recipes run them pre-checked, with the
  * lockfile re-synced), so the agent's own package-manager install commands
- * are denied. The command list derives from `src/package-manager.ts` (the
- * one home of package-manager vocabulary, Rule 2/5 discipline) — never a
- * hardcoded list here.
+ * are denied. The command list derives from the node pack's declared
+ * install strategy plus `src/package-manager.ts` (the one home of
+ * package-manager vocabulary, Rule 2/5 discipline) — never a hardcoded list
+ * here.
  */
-import { installCommandPrefixes } from '../package-manager';
+import { installCommandPrefixes } from '../languages/node-install';
 import type { AgentDriver } from './driver';
 import type { ToolPolicyDisclosure } from './outcome';
 

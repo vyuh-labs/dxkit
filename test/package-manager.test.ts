@@ -7,14 +7,12 @@ import {
   detectLockfile,
   addDevPrefix,
   addDevCommand,
-  provisionCommand,
   pmAwareDevInstall,
-  installCommandPrefixes,
-  provisionArgv,
   upgradeArgv,
   LOCKFILES,
   type PackageManager,
 } from '../src/package-manager';
+import { installCommandPrefixes, NODE_STRATEGY_BY_PM } from '../src/languages/node-install';
 
 describe('detectPackageManager', () => {
   let dir: string;
@@ -104,13 +102,6 @@ describe('command builders', () => {
     expect(addDevCommand('bun', 'x')).toBe('bun add -d x');
   });
 
-  it('provisionCommand phrases the lockfile install per PM', () => {
-    expect(provisionCommand('npm')).toBe('npm ci');
-    expect(provisionCommand('pnpm')).toBe('pnpm install');
-    expect(provisionCommand('yarn')).toBe('yarn install');
-    expect(provisionCommand('bun')).toBe('bun install');
-  });
-
   it('pmAwareDevInstall rewrites an npm-hardcoded string to the PM equivalent', () => {
     const cmd = 'npm install --save-dev "@vitest/coverage-v8@^4"';
     expect(pmAwareDevInstall(cmd, 'npm')).toBe(cmd); // no-op for npm
@@ -125,15 +116,18 @@ describe('command builders', () => {
     expect(addDevPrefix('pnpm')).toBe('pnpm add -D');
   });
 
-  it('installCommandPrefixes covers every PM, derived from the canonical builders', () => {
+  it('installCommandPrefixes covers every PM, derived from the declared strategies + builders', () => {
     const prefixes = installCommandPrefixes();
-    // Every PM the lockfile registry knows contributes its provision,
-    // add-dev, and upgrade command prefixes (one source of truth: this is
-    // what the remediate order runs deny, so a builder change flows here
-    // with no consumer edit).
+    // Every PM the lockfile registry knows contributes its frozen + resync
+    // install verbs (from the node install strategy), plus its add-dev and
+    // upgrade command prefixes (one source of truth: this is what the
+    // remediate order runs deny, so a declaration change flows here with no
+    // consumer edit).
     for (const pm of Object.keys(LOCKFILES) as PackageManager[]) {
-      const [pBin, pVerb] = provisionArgv(pm);
-      expect(prefixes).toContain(`${pBin} ${pVerb}`);
+      const frozen = NODE_STRATEGY_BY_PM[pm].modes.frozen.primary;
+      expect(prefixes).toContain(`${frozen.bin} ${frozen.args[0]}`);
+      const resync = NODE_STRATEGY_BY_PM[pm].modes.resync?.primary;
+      if (resync) expect(prefixes).toContain(`${resync.bin} ${resync.args[0]}`);
       const [aBin, aVerb] = addDevPrefix(pm).split(' ');
       expect(prefixes).toContain(`${aBin} ${aVerb}`);
       const [uBin, uVerb] = upgradeArgv(pm, 'x', '1.0.0', 'dependencies');
