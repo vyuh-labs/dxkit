@@ -1,7 +1,4 @@
 import { describe, it, expect } from 'vitest';
-import { mkdtempSync, writeFileSync, rmSync } from 'fs';
-import { join } from 'path';
-import { tmpdir } from 'os';
 import {
   describeInstall,
   runDeclaredInstall,
@@ -13,14 +10,17 @@ import {
 import type { CorrectnessFloorResult } from '../../src/analyzers/correctness/run';
 import type { AnalysisTrustContext } from '../../src/analysis-trust';
 import { renderFloorVerification } from '../../src/lanes/verification-render';
-import { getLanguage } from '../../src/languages';
-import type { LanguageSupport, ProvisionCommand } from '../../src/languages/types';
-import { frozenInstallFor } from '../../src/package-manager';
+import type { LanguageSupport } from '../../src/languages/types';
+import type {
+  InstallStrategy,
+  InstallStrategyProvider,
+} from '../../src/languages/capabilities/install-strategy';
+import { defaultResolvedTolerances, type ResolvedTolerances } from '../../src/install/tolerances';
 
 /**
  * The ONE tree verification (4.4.5): a clean worktree of the candidate, the
- * repo's frozen install, the diff-scoped floor attributed vs entry, the
- * guardrail. Every step is injected here so the COMPOSITION is what is
+ * repo's declared frozen install, the diff-scoped floor attributed vs entry,
+ * the guardrail. Every step is injected here so the COMPOSITION is what is
  * pinned: an install that fails is its own verdict and nothing downstream
  * runs; an infrastructure failure is a disclosed step failure, never a pass
  * and never a false block; and the floor sees the worktree + the real diff,
@@ -37,6 +37,13 @@ const RED: CorrectnessFloorResult = {
 const INSTALLED: InstallOutcome = {
   status: 'installed',
   steps: [{ pack: 'typescript', argv: ['npm', 'ci'] }],
+};
+const DRIFTED: InstallOutcome = {
+  status: 'failed',
+  pack: 'typescript',
+  argv: ['npm', 'ci'],
+  output: 'npm ERR! code EUSAGE',
+  classification: 'lockfile-drift',
 };
 
 function seams(over: Partial<VerifyTreeSeams> = {}): VerifyTreeSeams {
@@ -55,10 +62,7 @@ function seams(over: Partial<VerifyTreeSeams> = {}): VerifyTreeSeams {
 /** An install seam that fails on the CANDIDATE worktree only (the base
  *  probe, addressed by baseHead, installs clean). */
 function failsOnCandidate(output: string): (wt: string) => InstallOutcome {
-  return (wt) =>
-    wt.endsWith('head1111')
-      ? { status: 'failed', pack: 'typescript', argv: ['npm', 'ci', '--legacy-peer-deps'], output }
-      : INSTALLED;
+  return (wt) => (wt.endsWith('head1111') ? { ...DRIFTED, output } : INSTALLED);
 }
 
 function opts(over: Partial<VerifyTreeOptions> = {}): VerifyTreeOptions {
@@ -104,40 +108,73 @@ describe('verifyTree', () => {
     );
     expect(r.verdict).toBe('install-failed');
     expect(r.install?.status).toBe('failed');
-    expect(r.install?.status === 'failed' && r.install.preExisting).toBeFalsy();
+    if (r.install?.status === 'failed') {
+      expect(r.install.attribution).toBe('net-new');
+      // The probe's evidence travels with the verdict: the base installed.
+      expect(r.install.base?.status).toBe('installed');
+    }
     // The diff was computed before the install and survives into the result.
     expect(r.changedFiles).toEqual(['src/a.ts']);
     expect(floorRan).toBe(false);
     expect(guardrailRan).toBe(false);
-    expect(describeInstall(r.install)).toContain('FAILED on a clean checkout');
+    const line = describeInstall(r.install)!;
+    expect(line).toContain('FAILED on a clean checkout');
+    expect(line).toContain('lockfile-drift');
+    expect(line).toContain('The base installs');
   });
 
   // Finding-1 class: a lockfile already drifted at baseHead would fail the
-  // frozen install on EVERY run. The base probe attributes it: pre-existing
-  // debt is disclosed, never blamed, and verification proceeds.
-  it('a PRE-EXISTING install failure (base fails too) is disclosed and verification proceeds', async () => {
+  // frozen install on EVERY run. The base probe attributes it: an IDENTICAL
+  // classification on both sides is pre-existing debt, disclosed, never
+  // blamed, and verification proceeds.
+  it('a PRE-EXISTING install failure (base fails with the same classification) is disclosed and verification proceeds', async () => {
     const probed: string[] = [];
     const r = await verifyTree(
       opts({
         seams: seams({
           install: (wt) => {
             probed.push(wt);
-            return {
-              status: 'failed',
-              pack: 'typescript',
-              argv: ['npm', 'ci'],
-              output: 'npm ERR! code EUSAGE',
-            };
+            return DRIFTED;
           },
         }),
       }),
     );
     expect(probed).toEqual(['/wt/head1111', '/wt/base0000']);
     expect(r.verdict).toBe('verified');
-    expect(r.install?.status === 'failed' && r.install.preExisting).toBe(true);
+    if (r.install?.status === 'failed') {
+      expect(r.install.attribution).toBe('pre-existing');
+      expect(r.install.base).toEqual({
+        status: 'failed',
+        argv: ['npm', 'ci'],
+        classification: 'lockfile-drift',
+      });
+    }
     const line = describeInstall(r.install)!;
     expect(line).toContain('pre-existing');
     expect(line).toContain('not caused by this change');
+    expect(line).toContain('lockfile-drift on both sides');
+  });
+
+  // A base that fails for a DIFFERENT reason does not absolve the candidate:
+  // the candidate changed the failure, so it is attributed net-new with the
+  // base's own classification named as the evidence.
+  it('a base that fails DIFFERENTLY leaves the candidate failure net-new, with both classifications named', async () => {
+    const r = await verifyTree(
+      opts({
+        seams: seams({
+          install: (wt) =>
+            wt.endsWith('head1111')
+              ? DRIFTED
+              : { ...DRIFTED, output: 'ERESOLVE', classification: 'peer-conflict' },
+        }),
+      }),
+    );
+    expect(r.verdict).toBe('install-failed');
+    if (r.install?.status === 'failed') {
+      expect(r.install.attribution).toBe('net-new');
+      expect(r.install.base).toMatchObject({ status: 'failed', classification: 'peer-conflict' });
+    }
+    expect(describeInstall(r.install)).toContain('fails DIFFERENTLY');
   });
 
   // The unprovisioned-worktree class (4.4.5): with the install broken at the
@@ -152,12 +189,7 @@ describe('verifyTree', () => {
     const r = await verifyTree(
       opts({
         seams: seams({
-          install: () => ({
-            status: 'failed',
-            pack: 'typescript',
-            argv: ['npm', 'ci'],
-            output: 'npm ERR! code EUSAGE',
-          }),
+          install: () => DRIFTED,
           runFloor: () => {
             floorRan = true;
             return {
@@ -202,12 +234,7 @@ describe('verifyTree', () => {
     const r = await verifyTree(
       opts({
         seams: seams({
-          install: () => ({
-            status: 'failed',
-            pack: 'typescript',
-            argv: ['npm', 'ci'],
-            output: 'x',
-          }),
+          install: () => DRIFTED,
           runGuardrail: async () => ({ verdict: 'BLOCKED', ran: true, passesGate: false }),
         }),
       }),
@@ -224,12 +251,7 @@ describe('verifyTree', () => {
             if (o.ref === 'base0000') throw new Error('base ref unreachable');
             return fn(`/wt/${o.ref}`);
           },
-          install: () => ({
-            status: 'failed',
-            pack: 'typescript',
-            argv: ['npm', 'ci'],
-            output: 'EUSAGE',
-          }),
+          install: () => DRIFTED,
         }),
       }),
     );
@@ -267,7 +289,7 @@ describe('verifyTree', () => {
     expect(r.failure?.message).toContain('untrusted-content');
   });
 
-  it('the fallback install is disclosed, never silent', async () => {
+  it('the fallback install is disclosed, never silent, and the verdict proceeds normally', async () => {
     const r = await verifyTree(
       opts({
         seams: seams({
@@ -277,7 +299,11 @@ describe('verifyTree', () => {
               {
                 pack: 'typescript',
                 argv: ['npm', 'ci'],
-                fallback: { argv: ['npm', 'ci', '--legacy-peer-deps'], reason: 'peer conflict' },
+                fallback: {
+                  argv: ['npm', 'ci', '--legacy-peer-deps'],
+                  when: 'peer-conflict',
+                  reason: 'the tree only resolves under --legacy-peer-deps',
+                },
               },
             ],
           }),
@@ -285,8 +311,9 @@ describe('verifyTree', () => {
       }),
     );
     expect(r.verdict).toBe('verified');
+    expect(r.floor).toEqual(GREEN);
     expect(describeInstall(r.install)).toContain('`npm ci --legacy-peer-deps` succeeded');
-    expect(describeInstall(r.install)).toContain('peer conflict');
+    expect(describeInstall(r.install)).toContain('peer-conflict');
   });
 
   it('floor-red: a NET-NEW failure vs the entry floor blocks; the guardrail is not consulted', async () => {
@@ -460,16 +487,71 @@ describe('verifyTree', () => {
   });
 });
 
-/** A pack stub declaring (or not) a provision command; only the fields the
+/** A pack stub declaring (or not) an install strategy; only the fields the
  *  install runner reads. */
-function pack(id: string, provision: ProvisionCommand | null): LanguageSupport {
-  return { id, provision: () => provision } as unknown as LanguageSupport;
+function pack(id: string, strategy: InstallStrategy | null): LanguageSupport {
+  // A stub provider that applies at ANY dir (the fake worktree paths here do
+  // not exist on disk), never the file-keyed derivation.
+  const provider: InstallStrategyProvider | undefined = strategy
+    ? {
+        variants: () => [{ when: [], strategy }],
+        strategy: () => strategy,
+        ciDependencyInstall: false,
+      }
+    : undefined;
+  return { id, ...(provider ? { installStrategy: provider } : {}) } as unknown as LanguageSupport;
 }
 
-const NPM: ProvisionCommand = {
-  bin: 'npm',
-  args: ['ci'],
-  fallback: { bin: 'npm', args: ['ci', '--legacy-peer-deps'], reason: 'peer conflict' },
+const EXEC_ANY = {
+  hosts: ['any' as const],
+  toolchains: [],
+  needsBuild: false,
+  buildTarget: 'none' as const,
+  weight: 'cheap' as const,
+};
+
+/** An npm-shaped strategy with the peer-conflict fallback and a drift classifier. */
+const NPM: InstallStrategy = {
+  manager: 'npm',
+  lockfile: 'package-lock.json',
+  modes: {
+    frozen: {
+      primary: { bin: 'npm', args: ['ci'] },
+      fallbacks: [
+        {
+          command: { bin: 'npm', args: ['ci', '--legacy-peer-deps'] },
+          when: 'peer-conflict',
+          matches: (o) => /ERESOLVE/.test(o) && !/EUSAGE/.test(o),
+          disclosure: 'peer conflict',
+        },
+      ],
+      classifyFailure: (o) => (/EUSAGE/.test(o) ? 'lockfile-drift' : null),
+    },
+  },
+  execution: EXEC_ANY,
+};
+
+const BUNDLER: InstallStrategy = {
+  manager: 'bundler',
+  lockfile: 'Gemfile.lock',
+  modes: { frozen: { primary: { bin: 'bundle', args: ['install'] }, fallbacks: [] } },
+  execution: EXEC_ANY,
+};
+
+const PIP: InstallStrategy = {
+  manager: 'pip',
+  lockfile: null,
+  modes: {
+    frozen: { primary: { bin: 'pip', args: ['install', '-r', 'requirements.txt'] }, fallbacks: [] },
+  },
+  execution: EXEC_ANY,
+};
+
+const TOLERANT: ResolvedTolerances = defaultResolvedTolerances();
+const INTOLERANT: ResolvedTolerances = {
+  tolerated: new Set(),
+  sources: new Map(),
+  unknown: [],
 };
 
 describe('runDeclaredInstall', () => {
@@ -482,6 +564,7 @@ describe('runDeclaredInstall', () => {
         return { available: true, code: 0, output: '' };
       },
       [pack('typescript', NPM)],
+      TOLERANT,
     );
     expect(r).toEqual({
       status: 'installed',
@@ -490,7 +573,7 @@ describe('runDeclaredInstall', () => {
     expect(argvs).toEqual(['npm ci']);
   });
 
-  it('primary fails, fallback succeeds: installed with the fallback disclosed (the CI `a || b`)', () => {
+  it('primary fails with the tolerated shape, fallback succeeds: installed with the fallback disclosed (the CI `a || b`)', () => {
     const r = runDeclaredInstall(
       '/wt',
       (cmd) =>
@@ -498,42 +581,97 @@ describe('runDeclaredInstall', () => {
           ? { available: true, code: 0, output: '' }
           : { available: true, code: 1, output: 'npm ERR! code ERESOLVE' },
       [pack('typescript', NPM)],
+      TOLERANT,
     );
     expect(r.status).toBe('installed');
     if (r.status === 'installed') {
       expect(r.steps[0].fallback?.argv).toEqual(['npm', 'ci', '--legacy-peer-deps']);
+      expect(r.steps[0].fallback?.when).toBe('peer-conflict');
       expect(r.steps[0].fallback?.reason).toBe('peer conflict');
     }
   });
 
-  it('both fail: failed, both outputs kept, the pack named (the stale-lockfile class)', () => {
+  // The live shape (the class this unit closes): a hand-edited lockfile
+  // fails `npm ci` with EUSAGE. A blanket `a || b` ran the fallback into the
+  // same failure and named the FALLBACK as the failing command, which read
+  // as "the peer-conflict fallback is missing". The executor classifies the
+  // primary's failure first: no fallback answers lockfile drift, so the
+  // primary is the reported command and the fallback never runs.
+  it('a failure no fallback answers (the stale-lockfile class) is reported against the PRIMARY; the fallback never runs', () => {
+    const argvs: string[] = [];
     const r = runDeclaredInstall(
       '/wt',
-      () => ({
-        available: true,
-        code: 1,
-        output: 'npm ERR! code EUSAGE\nnpm ERR! package.json and package-lock.json are not in sync',
-      }),
+      (cmd) => {
+        argvs.push([cmd.bin, ...cmd.args].join(' '));
+        return {
+          available: true,
+          code: 1,
+          output:
+            'npm ERR! code EUSAGE\nnpm ERR! package.json and package-lock.json are not in sync',
+        };
+      },
       [pack('typescript', NPM)],
+      TOLERANT,
     );
+    expect(argvs).toEqual(['npm ci']);
     expect(r.status).toBe('failed');
     if (r.status === 'failed') {
       expect(r.pack).toBe('typescript');
-      expect(r.argv).toEqual(['npm', 'ci', '--legacy-peer-deps']);
+      expect(r.argv).toEqual(['npm', 'ci']);
+      expect(r.classification).toBe('lockfile-drift');
       expect(r.output).toContain('EUSAGE');
+      expect(r.output).not.toContain('--- fallback');
+    }
+  });
+
+  it('a tolerated shape whose class the repo does NOT authorize is a failure naming the remedy, no retry', () => {
+    const argvs: string[] = [];
+    const r = runDeclaredInstall(
+      '/wt',
+      (cmd) => {
+        argvs.push([cmd.bin, ...cmd.args].join(' '));
+        return { available: true, code: 1, output: 'npm ERR! code ERESOLVE' };
+      },
+      [pack('typescript', NPM)],
+      INTOLERANT,
+    );
+    expect(argvs).toEqual(['npm ci']);
+    expect(r.status).toBe('failed');
+    if (r.status === 'failed') {
+      expect(r.classification).toBe('peer-conflict');
+      expect(r.unauthorizedRemedy).toContain('dependencies.tolerate');
+      expect(describeInstall(r)).toContain('dependencies.tolerate');
+    }
+  });
+
+  it('both fail on a tolerated shape: failed against the fallback, both outputs kept', () => {
+    const r = runDeclaredInstall(
+      '/wt',
+      () => ({ available: true, code: 1, output: 'npm ERR! code ERESOLVE' }),
+      [pack('typescript', NPM)],
+      TOLERANT,
+    );
+    expect(r.status).toBe('failed');
+    if (r.status === 'failed') {
+      expect(r.argv).toEqual(['npm', 'ci', '--legacy-peer-deps']);
+      expect(r.classification).toBe('peer-conflict');
       expect(r.output).toContain('--- fallback');
     }
   });
 
-  it('a pack without a fallback fails on its primary alone', () => {
-    const r = runDeclaredInstall('/wt', () => ({ available: true, code: 1, output: 'boom' }), [
-      pack('ruby', { bin: 'bundle', args: ['install'] }),
-    ]);
+  it('a pack without a fallback fails on its primary alone, unclassified', () => {
+    const r = runDeclaredInstall(
+      '/wt',
+      () => ({ available: true, code: 1, output: 'boom' }),
+      [pack('ruby', BUNDLER)],
+      TOLERANT,
+    );
     expect(r).toEqual({
       status: 'failed',
       pack: 'ruby',
       argv: ['bundle', 'install'],
       output: 'boom',
+      classification: 'unclassified',
     });
   });
 
@@ -548,11 +686,8 @@ describe('runDeclaredInstall', () => {
         argvs.push([cmd.bin, ...cmd.args].join(' '));
         return { available: true, code: 0, output: '' };
       },
-      [
-        pack('python', { bin: 'pip', args: ['install', '-r', 'requirements.txt'] }),
-        pack('go', null),
-        pack('typescript', NPM),
-      ],
+      [pack('python', PIP), pack('go', null), pack('typescript', NPM)],
+      TOLERANT,
     );
     expect(argvs).toEqual(['pip install -r requirements.txt', 'npm ci']);
     expect(r).toEqual({
@@ -568,9 +703,22 @@ describe('runDeclaredInstall', () => {
 
   it('a package manager not on PATH throws (infrastructure, the caller discloses the step)', () => {
     expect(() =>
-      runDeclaredInstall('/wt', () => ({ available: false, code: -1, output: 'pnpm: not found' }), [
-        pack('typescript', { bin: 'pnpm', args: ['install', '--frozen-lockfile'] }),
-      ]),
+      runDeclaredInstall(
+        '/wt',
+        () => ({ available: false, code: -1, output: 'pnpm: not found' }),
+        [
+          pack('typescript', {
+            ...NPM,
+            modes: {
+              frozen: {
+                primary: { bin: 'pnpm', args: ['install', '--frozen-lockfile'] },
+                fallbacks: [],
+              },
+            },
+          }),
+        ],
+        TOLERANT,
+      ),
     ).toThrow(/pnpm is not available/);
   });
 
@@ -579,9 +727,12 @@ describe('runDeclaredInstall', () => {
   // error step in verifyTree), never "CI cannot install this tree".
   it('a timed-out primary install throws as infrastructure, never install-failed', () => {
     expect(() =>
-      runDeclaredInstall('/wt', () => ({ available: true, timedOut: true, code: -1, output: '' }), [
-        pack('typescript', NPM),
-      ]),
+      runDeclaredInstall(
+        '/wt',
+        () => ({ available: true, timedOut: true, code: -1, output: '' }),
+        [pack('typescript', NPM)],
+        TOLERANT,
+      ),
     ).toThrow(/timed out: infrastructure, not a verdict on the tree/);
   });
 
@@ -594,8 +745,9 @@ describe('runDeclaredInstall', () => {
             ? { available: true, timedOut: true, code: -1, output: '' }
             : { available: true, code: 1, output: 'npm ERR! code ERESOLVE' },
         [pack('typescript', NPM)],
+        TOLERANT,
       ),
-    ).toThrow(/fallback \(`npm ci --legacy-peer-deps`\) timed out/);
+    ).toThrow(/`npm ci --legacy-peer-deps` timed out/);
   });
 
   it('an overflowed capture is the same infrastructure shape', () => {
@@ -604,6 +756,7 @@ describe('runDeclaredInstall', () => {
         '/wt',
         () => ({ available: true, overflowed: true, code: 1, output: 'x' }),
         [pack('typescript', NPM)],
+        TOLERANT,
       ),
     ).toThrow(/overflowed the capture buffer/);
   });
@@ -625,8 +778,8 @@ describe('runDeclaredInstall', () => {
     expect(r.failure?.message).toContain('timed out');
   });
 
-  // A pack with no `provision` (4.4.6 fills the remaining packs) is a
-  // DISCLOSED skip: nothing runs, nothing is claimed, the packs are named.
+  // A pack with no install strategy is a DISCLOSED skip: nothing runs,
+  // nothing is claimed, the packs are named.
   it('no declaring pack: a disclosed no-provision-declared outcome, no command runs', () => {
     let ran = false;
     const r = runDeclaredInstall(
@@ -636,71 +789,12 @@ describe('runDeclaredInstall', () => {
         return { available: true, code: 0, output: '' };
       },
       [{ id: 'go' } as unknown as LanguageSupport, pack('rust', null)],
+      TOLERANT,
     );
     expect(r).toEqual({ status: 'no-provision-declared', packs: ['go', 'rust'] });
     expect(ran).toBe(false);
     expect(describeInstall(r)).toContain('no active pack declares an install');
     expect(describeInstall(r)).toContain('go, rust');
     expect(describeInstall(r)).toContain('unprovisioned');
-  });
-});
-
-/**
- * Parity (Rule 2.30): the install the lane VERIFIES with and the install a
- * work order is HANDED are one declaration. The node pack's provision is the
- * CI template's frozen install table, fallback included, on every lockfile
- * shape; a lockfile-less package.json gets CI's own `npm install`, and no
- * package.json means the pack declares nothing.
- */
-describe('the pack provision IS the frozen install (parity)', () => {
-  function repo(files: string[]): string {
-    const dir = mkdtempSync(join(tmpdir(), 'dxkit-vt-'));
-    for (const f of files) writeFileSync(join(dir, f), '{}');
-    return dir;
-  }
-  const ts = getLanguage('typescript')!;
-
-  for (const lock of ['package-lock.json', 'pnpm-lock.yaml', 'yarn.lock', 'bun.lock', null]) {
-    it(`typescript.provision == frozenInstallFor (${lock ?? 'no lockfile'})`, () => {
-      const dir = repo(['package.json', ...(lock ? [lock] : [])]);
-      try {
-        const frozen = frozenInstallFor(dir)!;
-        const declared = ts.provision!(dir)!;
-        expect([declared.bin, ...declared.args]).toEqual(frozen.argv);
-        if (frozen.fallback) {
-          expect([declared.fallback!.bin, ...declared.fallback!.args]).toEqual(
-            frozen.fallback.argv,
-          );
-          expect(declared.fallback!.reason).toBe(frozen.fallback.reason);
-        } else {
-          expect(declared.fallback).toBeUndefined();
-        }
-        // and the runner executes exactly that argv on the worktree
-        const argvs: string[] = [];
-        runDeclaredInstall(
-          dir,
-          (cmd) => {
-            argvs.push([cmd.bin, ...cmd.args].join(' '));
-            return { available: true, code: 0, output: '' };
-          },
-          [ts],
-        );
-        expect(argvs).toEqual([frozen.argv.join(' ')]);
-      } finally {
-        rmSync(dir, { recursive: true, force: true });
-      }
-    });
-  }
-
-  it('no package.json: the pack declares nothing and the runner discloses it', () => {
-    const dir = repo([]);
-    try {
-      expect(frozenInstallFor(dir)).toBeNull();
-      expect(ts.provision!(dir)).toBeNull();
-      const r = runDeclaredInstall(dir, () => ({ available: true, code: 0, output: '' }), [ts]);
-      expect(r).toEqual({ status: 'no-provision-declared', packs: ['typescript'] });
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
   });
 });

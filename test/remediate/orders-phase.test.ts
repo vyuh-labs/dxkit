@@ -27,7 +27,7 @@ import type { RecipePhaseSummary } from '../../src/remediate/recipes/run-recipes
 import { makeOrder } from './recipes/helpers';
 import type { WorkOrder } from '../../src/remediate/work-orders/types';
 import { orderRunDisallowedTools } from '../../src/remediate/tool-policy';
-import { installCommandPrefixes } from '../../src/package-manager';
+import { installCommandPrefixes } from '../../src/languages/node-install';
 import { ORDER_TOKEN_ENV, readOrderScope } from '../../src/loop/order-scope';
 
 const GREEN_FLOOR: CorrectnessFloorResult = { ran: true, checks: [], blocks: false };
