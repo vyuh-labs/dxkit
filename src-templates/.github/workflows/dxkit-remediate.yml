@@ -327,8 +327,9 @@ __DXKIT_REMEDIATE_CREDENTIAL_ENV__
       # Phase two of two-phase landing: the delivery credential is minted
       # HERE, fresh, so its one-hour cap starts at delivery time; the task
       # above may have run for hours without touching it. Guarded with
-      # always() because a salvage/draft record from a FAILED task step must
-      # still land (the run stays red; the evidence still delivers).
+      # !cancelled() because a salvage/draft record from a FAILED task step
+      # must still land (the run stays red; the evidence still delivers),
+      # while an operator ABORT must not keep minting and pushing.
 __DXKIT_LANE_TOKEN_LAND_STEPS__
 
       # Land what the task step deferred: install the fresh landing
@@ -339,9 +340,14 @@ __DXKIT_LANE_TOKEN_LAND_STEPS__
       # PR, or the order-outcome ledger rows of a non-landing run. One
       # step, guarded on the record's existence: with no record there is
       # nothing to deliver and the skip is disclosed, and the guard also
-      # keeps this always() step quiet on a job that died before checkout.
+      # keeps this post-failure step quiet on a job that died before
+      # checkout. Credential note: if the fresh mint FAILED, that mint step
+      # already reddened the job, but this step still runs and the token
+      # chain silently falls back to the earlier task/job mints or the PAT,
+      # which may be stale by then; a stale fallback fails the push with
+      # its own disclosed error rather than skipping the attempt.
       - name: Land the deferred work (fresh credential)
-        if: always()
+        if: ${{ !cancelled() }}
         env:
           GH_TOKEN: __DXKIT_LANE_TOKEN_LAND__
           DXKIT_LANE_TOKEN: __DXKIT_LANE_TOKEN_LAND__

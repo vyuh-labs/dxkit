@@ -120,13 +120,15 @@ export const LANE_TOKEN_TASK_STEPS = `      - name: Re-mint the lane token befor
  * verify phases scale with repo size and can outlive ANY token minted
  * before the task, so the landing step mints its own: the token's hour
  * starts at delivery time. Runs even after a failed task step (a salvage
- * draft record must still land), hence the always() guard alongside the
- * App-tier condition. Rendered from the same name constants; the template
+ * draft record must still land) but NOT on an operator abort, hence the
+ * !cancelled() guard alongside the App-tier condition (always() would
+ * also fire on a CANCELLED run and push after an abort). Rendered from
+ * the same name constants; the template
  * carries the __DXKIT_LANE_TOKEN_LAND_STEPS__ placeholder.
  */
 export const LANE_TOKEN_LAND_STEPS = `      - name: Mint the landing token (App tier, fresh for delivery)
         id: dxkit-app-token-land
-        if: \${{ always() && vars.${LANE_TOKEN_APP_ID_VARIABLE_NAME} != '' }}
+        if: \${{ !cancelled() && vars.${LANE_TOKEN_APP_ID_VARIABLE_NAME} != '' }}
         uses: actions/create-github-app-token@v2
         with:
           app-id: \${{ vars.${LANE_TOKEN_APP_ID_VARIABLE_NAME} }}

@@ -264,9 +264,11 @@ describe('workflow-template token discipline', () => {
     };
     expect(parsed.jobs.j.steps).toHaveLength(1);
     expect(parsed.jobs.j.steps[0].id).toBe('dxkit-app-token-land');
-    // always(): a salvage/draft record written by a FAILED task step must
-    // still get a fresh credential to land under.
-    expect(String(parsed.jobs.j.steps[0].if)).toContain('always()');
+    // !cancelled(): a salvage/draft record written by a FAILED task step
+    // must still get a fresh credential to land under, while an operator
+    // ABORT (cancellation) must not mint and push (always() would).
+    expect(String(parsed.jobs.j.steps[0].if)).toContain('!cancelled()');
+    expect(String(parsed.jobs.j.steps[0].if)).not.toContain('always()');
   });
 
   it('SYNTHETIC INJECTION: the content-derived membership check bites', () => {
@@ -362,8 +364,9 @@ describe('workflow-template token discipline', () => {
     // never hand-copied.
     expect(content).toContain('__DXKIT_LANE_TOKEN_LAND_STEPS__');
     expect(content).toContain('GH_TOKEN: __DXKIT_LANE_TOKEN_LAND__');
-    // The land step runs `remediate land`, is always()-guarded (a failed
-    // task's salvage record still lands), and skips disclosed on no record.
+    // The land step runs `remediate land`, is !cancelled()-guarded (a
+    // failed task's salvage record still lands; an operator abort does not
+    // push), and skips disclosed on no record.
     expect(content).toContain('remediate land --task');
     expect(content).toContain('no landing record for');
     // Ordering over the RENDERED content: task step → landing mint →

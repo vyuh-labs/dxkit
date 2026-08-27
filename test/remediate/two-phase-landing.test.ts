@@ -19,6 +19,7 @@
  *     a tampered record is refused before any spawn.
  */
 import { describe, it, expect, afterEach } from 'vitest';
+import { execFileSync } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -26,6 +27,7 @@ import { executeTask, runRemediateLand, type ExecutorSeams } from '../../src/rem
 import { DEFAULT_REMEDIATE_BUDGET, type RemediateConfig } from '../../src/remediate/config';
 import type { RemediateResult } from '../../src/remediate/run';
 import {
+  clearLandingRecord,
   DEFERRED_LANDING_ENV,
   LANDING_RECORD_SCHEMA,
   landingRecordPath,
@@ -42,6 +44,27 @@ function tempRepo(): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-2phase-'));
   dirs.push(dir);
   return dir;
+}
+
+/** Run git in a fixture repo, trimmed stdout. */
+function git(cwd: string, args: readonly string[]): string {
+  return execFileSync('git', [...args], {
+    cwd,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  }).trim();
+}
+
+/** A real single-commit git repo (the head-advance proof needs real git). */
+function gitRepo(): string {
+  const cwd = tempRepo();
+  git(cwd, ['init', '-q']);
+  git(cwd, ['config', 'user.email', 'test@example.invalid']);
+  git(cwd, ['config', 'user.name', 'test']);
+  fs.writeFileSync(path.join(cwd, 'a.txt'), 'a', 'utf8');
+  git(cwd, ['add', 'a.txt']);
+  git(cwd, ['commit', '-qm', 'base']);
+  return cwd;
 }
 
 function config(salvage: RemediateConfig['salvage'] = 'discard'): RemediateConfig {
@@ -199,6 +222,19 @@ describe('landing record: write / read / validate', () => {
   it('refuses an invalid requested task id before touching the filesystem', () => {
     const read = readLandingRecord(tempRepo(), '../evil');
     expect(read && 'error' in read).toBe(true);
+  });
+
+  it('the WRITE side applies the same task-id guard: an invalid id never shapes a path', () => {
+    const cwd = tempRepo();
+    expect(() => writeLandingRecord(cwd, validLandRecord({ task: '../evil' }))).toThrow(
+      /invalid task id/,
+    );
+    // clear with an invalid id is a no-op, never a path build.
+    writeLandingRecord(cwd, validLandRecord());
+    clearLandingRecord(cwd, '../evil');
+    expect(fs.existsSync(path.join(cwd, landingRecordPath('write-docs')))).toBe(true);
+    clearLandingRecord(cwd, 'write-docs');
+    expect(fs.existsSync(path.join(cwd, landingRecordPath('write-docs')))).toBe(false);
   });
 });
 
@@ -414,15 +450,23 @@ describe('remediate land (phase two)', () => {
     expect(out.outcome).toBe('invalid-record');
   });
 
-  it('a failed push is disclosed, keeps the record for retry, and advances the expected head past its own bookkeeping commit', () => {
+  it('a failed push publishes the recorded rows through the metadata channel anyway (the breaker still sees the run), disclosed', () => {
+    // Inline parity: execute.ts calls publishRows() inside its landHead
+    // catch, and the A1 failure classes are exactly the runs whose rows
+    // the breaker most needs. The deferred path must do the same.
     const cwd = tempRepo();
-    writeLandingRecord(cwd, validLandRecord());
-    // First head read validates; after the throw the observed head has the
-    // lander's ledger commit on top (the lander commits before it pushes).
-    const heads = ['bbbb2222', 'dddd4444'];
+    const rows = [
+      { task: 'write-docs', orderId: 'o1' } as unknown as LandingRecord['orderRows'][number],
+    ];
+    writeLandingRecord(cwd, validLandRecord({ orderRows: rows }));
+    let publishedRows: unknown[] | undefined;
     const out = runRemediateLand(cwd, 'write-docs', {
-      head: () => heads.shift() ?? 'dddd4444',
+      head: () => 'bbbb2222',
       writeOrderLedger: () => null,
+      publishRows: (_cwd, _task, r) => {
+        publishedRows = [...r];
+        return { published: true };
+      },
       landHead: () => {
         throw Object.assign(new Error('git push exited 1'), {
           stderr: 'remote: error: GH013: Repository rule violations found',
@@ -430,13 +474,93 @@ describe('remediate land (phase two)', () => {
       },
     });
     expect(out.outcome).toBe('landing-failed');
+    expect(publishedRows).toHaveLength(1);
     expect('error' in out && out.error).toContain('GH013');
-    expect('error' in out && out.error).toContain('retry');
+    expect('error' in out && out.error).toContain('circuit breaker sees this run');
+    // Failure direction: the fallback itself failing is also disclosed.
+    const cwd2 = tempRepo();
+    writeLandingRecord(cwd2, validLandRecord({ orderRows: rows }));
+    const out2 = runRemediateLand(cwd2, 'write-docs', {
+      head: () => 'bbbb2222',
+      writeOrderLedger: () => null,
+      publishRows: () => ({ published: false, note: 'metadata push refused' }),
+      landHead: () => {
+        throw new Error('git push exited 1');
+      },
+    });
+    expect(out2.outcome).toBe('landing-failed');
+    expect('error' in out2 && out2.error).toContain('also could not be recorded');
+    expect('error' in out2 && out2.error).toContain('metadata push refused');
+  });
+
+  it('a failed push advances the expected head ONLY over its own bookkeeping commit (git-proven), and a retry then lands', () => {
+    const cwd = gitRepo();
+    const headA = git(cwd, ['rev-parse', 'HEAD']);
+    const ledgerRel = '.dxkit/lanes/remediate-write-docs.jsonl';
+    writeLandingRecord(cwd, validLandRecord({ head: headA, ledgerPath: ledgerRel }));
+    let attempts = 0;
+    const seamsUsed = {
+      writeOrderLedger: () => null,
+      landHead: () => {
+        attempts += 1;
+        if (attempts === 1) {
+          // The real lander commits its bookkeeping BEFORE the push: one
+          // commit atop the verified head touching only the ledger path.
+          fs.mkdirSync(path.join(cwd, path.dirname(ledgerRel)), { recursive: true });
+          fs.writeFileSync(path.join(cwd, ledgerRel), '{}\n', 'utf8');
+          git(cwd, ['add', ledgerRel]);
+          git(cwd, ['commit', '-qm', 'chore: ledger', '--', ledgerRel]);
+          throw Object.assign(new Error('git push exited 1'), {
+            stderr: 'remote: error: GH013: Repository rule violations found',
+          });
+        }
+        return { outcome: 'pr-opened' as const, mode: 'pr' as const, prUrl: 'https://x/pr/1' };
+      },
+    };
+    const out = runRemediateLand(cwd, 'write-docs', seamsUsed);
+    expect(out.outcome).toBe('landing-failed');
+    const headB = git(cwd, ['rev-parse', 'HEAD']);
     const kept = readRecordFile(cwd);
-    expect(kept.head).toBe('dddd4444');
+    expect(kept.head).toBe(headB);
     expect(kept.headAdvancedNote).toContain('bookkeeping commit');
-    // The attempt record carries the disclosed failure.
-    // (written best-effort only when an attempt record exists)
+    // The retry validates against the advanced head and lands.
+    const retry = runRemediateLand(cwd, 'write-docs', seamsUsed);
+    expect(retry.outcome).toBe('landed');
+  });
+
+  it('a FOREIGN commit never advances the expected head: the record stays put and the retry refuses as stale', () => {
+    const cwd = gitRepo();
+    const headA = git(cwd, ['rev-parse', 'HEAD']);
+    writeLandingRecord(
+      cwd,
+      validLandRecord({ head: headA, ledgerPath: '.dxkit/lanes/remediate-write-docs.jsonl' }),
+    );
+    const seamsUsed = {
+      writeOrderLedger: () => null,
+      landHead: () => {
+        // A commit touching a SOURCE file: not this step's bookkeeping.
+        fs.writeFileSync(path.join(cwd, 'evil.ts'), 'x', 'utf8');
+        git(cwd, ['add', 'evil.ts']);
+        git(cwd, ['commit', '-qm', 'foreign', '--', 'evil.ts']);
+        throw new Error('git push exited 1');
+      },
+    };
+    const out = runRemediateLand(cwd, 'write-docs', seamsUsed);
+    expect(out.outcome).toBe('landing-failed');
+    const kept = readRecordFile(cwd);
+    expect(kept.head).toBe(headA); // unchanged: the delta is not provably ours
+    expect(kept.headAdvancedNote).toBeUndefined();
+    // The retry refuses: HEAD is the foreign commit, not the verified head.
+    let pushed = false;
+    const retry = runRemediateLand(cwd, 'write-docs', {
+      writeOrderLedger: () => null,
+      landHead: () => {
+        pushed = true;
+        return { outcome: 'pr-opened', mode: 'pr' };
+      },
+    });
+    expect(pushed).toBe(false);
+    expect(retry.outcome).toBe('stale-head');
   });
 
   it('publish-rows records push the metadata commit and clear; a publish failure keeps the record (warn, not a lane failure)', async () => {

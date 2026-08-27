@@ -27,6 +27,7 @@
  * (`readLandingRecord`); the standing-branch name is recomputed from the
  * task id, never trusted from disk.
  */
+import { execFileSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as logger from '../logger';
@@ -47,6 +48,41 @@ export interface LandCliSeams {
   readonly publishRows?: typeof publishOrderRows;
   readonly writeOrderLedger?: typeof writeLocalOrderLedger;
   readonly head?: (cwd: string) => string | null;
+}
+
+const HEX_SHA_RE = /^[0-9a-f]{7,64}$/;
+
+/**
+ * Is `observed` exactly ONE commit atop `expected`, touching ONLY the
+ * lander's own bookkeeping paths (the delivery + order ledgers)? Pure git
+ * reads, biased toward false: any doubt (unreadable parent, a merge, an
+ * empty or out-of-scope diff) answers no, and the retry then refuses as
+ * stale, which is the honest outcome for a head this step cannot prove it
+ * authored itself.
+ */
+function isOwnBookkeepingCommit(
+  cwd: string,
+  observed: string,
+  expected: string,
+  allowedPaths: readonly string[],
+): boolean {
+  if (allowedPaths.length === 0) return false;
+  if (!HEX_SHA_RE.test(observed) || !HEX_SHA_RE.test(expected)) return false;
+  const read = (args: readonly string[]): string =>
+    execFileSync('git', [...args], {
+      cwd,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }).trim();
+  try {
+    if (read(['rev-parse', `${observed}^`]) !== read(['rev-parse', expected])) return false;
+    const files = read(['diff-tree', '--no-commit-id', '--name-only', '-r', observed])
+      .split('\n')
+      .filter(Boolean);
+    return files.length > 0 && files.every((f) => allowedPaths.includes(f));
+  } catch {
+    return false;
+  }
 }
 
 export type RemediateLandOutcome =
@@ -110,11 +146,18 @@ export function runRemediateLand(
   if (record.action === 'publish-rows') {
     const pub = (seams.publishRows ?? publishOrderRows)(cwd, taskId, record.orderRows);
     if (!pub.published) {
+      // Honest phrasing for the common (ephemeral-runner) case: the rows
+      // are lost for this run and the next run's plan re-derives from the
+      // repo state; the job summary remains the evidence. The record is
+      // kept only because on a persistent checkout it makes a manual
+      // retry possible.
       return {
         outcome: 'rows-publish-failed',
         note:
-          `${pub.note ?? 'order-outcome rows could not be published'}. The record is kept at ` +
-          `${landingRecordPath(taskId)}; re-run \`remediate land --task ${taskId}\` to retry.`,
+          `${pub.note ?? 'order-outcome rows could not be published'}. The circuit breaker ` +
+          `will not see this run: the rows are lost with this runner (the job summary remains ` +
+          `the evidence, and the next run's plan re-derives from the repo state). The record ` +
+          `is kept at ${landingRecordPath(taskId)} in case this checkout persists for a retry.`,
       };
     }
     clearLandingRecord(cwd, taskId);
@@ -162,31 +205,53 @@ export function runRemediateLand(
     clearLandingRecord(cwd, taskId);
     return { outcome: 'landed', ...(landResult.prUrl ? { prUrl: landResult.prUrl } : {}) };
   } catch (err) {
+    const failure = describeLandingFailure(err);
+    // Inline parity (the executor's landHead catch calls publishRows): a
+    // refused landing must not blind the circuit breaker, so this run's
+    // recorded rows still try the metadata-commit channel. Disclosed
+    // either way; the A1 failure classes are exactly the runs whose rows
+    // the breaker most needs.
+    let rowsDisclosure = '';
+    if (record.orderRows.length > 0) {
+      const pub = (seams.publishRows ?? publishOrderRows)(cwd, taskId, record.orderRows);
+      rowsDisclosure = pub.published
+        ? '\nThe order-outcome rows were still recorded on the standing branch (the metadata ' +
+          'channel), so the circuit breaker sees this run.'
+        : `\nThe order-outcome rows also could not be recorded` +
+          `${pub.note ? ` (${pub.note})` : ''}; the job summary remains the evidence.`;
+    }
     // The lander commits its bookkeeping (delivery + order ledgers) BEFORE
     // the push, so a push failure can leave HEAD one dxkit-authored commit
-    // past the recorded head. Advance the record to the head we observed
-    // ourselves (disclosed), so a retry is not falsely refused as stale.
+    // past the recorded head. Advance the record ONLY when git proves the
+    // delta is that bookkeeping commit: exactly one commit atop the
+    // recorded head, touching nothing beyond the ledger paths this step
+    // itself handed the lander. Anything else leaves the record unchanged,
+    // so the retry refuses as stale instead of blessing a foreign commit.
     const observed = (seams.head ?? currentHead)(cwd);
-    const failure = describeLandingFailure(err);
-    if (observed !== null && observed !== record.head) {
-      const advanced: LandingRecord = {
-        ...record,
-        head: observed,
-        headAdvancedNote:
-          'a prior land attempt created its bookkeeping commit before the push failed; the ' +
-          'expected head was advanced to the observed post-commit head for retry',
-      };
-      try {
-        writeLandingRecord(cwd, advanced);
-      } catch {
-        // retry convenience only; the failure below is the real disclosure
+    if (observed !== null && observed !== record.head && record.head !== null) {
+      const allowedPaths = [record.ledgerPath, orderLedgerRel].filter(
+        (p): p is string => typeof p === 'string' && p.length > 0,
+      );
+      if (isOwnBookkeepingCommit(cwd, observed, record.head, allowedPaths)) {
+        const advanced: LandingRecord = {
+          ...record,
+          head: observed,
+          headAdvancedNote:
+            'a prior land attempt created its bookkeeping commit before the push failed; the ' +
+            'expected head was advanced to the verified post-commit head for retry',
+        };
+        try {
+          writeLandingRecord(cwd, advanced);
+        } catch {
+          // retry convenience only; the failure below is the real disclosure
+        }
       }
     }
     patchAttemptRecord(cwd, taskId, { landingBlocked: failure });
     return {
       outcome: 'landing-failed',
       error:
-        `${failure}\nThe landing record is kept at ${landingRecordPath(taskId)}; ` +
+        `${failure}${rowsDisclosure}\nThe landing record is kept at ${landingRecordPath(taskId)}; ` +
         `re-run \`remediate land --task ${taskId}\` to retry once the cause is fixed.`,
     };
   }

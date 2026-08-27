@@ -93,10 +93,15 @@ export function landingRecordPath(taskId: string): string {
   return `.dxkit/cache/remediate-landing-${taskId}.json`;
 }
 
-/** Write the record (the executor's deferred exit). Throws on I/O failure:
- *  a record that failed to write means the work would never land, so the
- *  caller discloses it as a landing failure, never a silent success. */
+/** Write the record (the executor's deferred exit). Throws on I/O failure
+ *  or an invalid task id (the id shapes the file path, so the write side
+ *  applies the SAME guard the read side does; defense in depth): a record
+ *  that failed to write means the work would never land, so the caller
+ *  discloses it as a landing failure, never a silent success. */
 export function writeLandingRecord(cwd: string, record: LandingRecord): string {
+  if (!TASK_ID_RE.test(record.task)) {
+    throw new Error(`invalid task id '${record.task}': expected lowercase letters/digits/dashes`);
+  }
   const rel = landingRecordPath(record.task);
   const abs = path.join(cwd, rel);
   fs.mkdirSync(path.dirname(abs), { recursive: true });
@@ -106,8 +111,10 @@ export function writeLandingRecord(cwd: string, record: LandingRecord): string {
 
 /** Remove the record (after a successful landing, or when a deferred run
  *  ends with nothing to deliver). Best-effort: the record is runtime
- *  state, and a leftover no-op record is disclosed, not harmful. */
+ *  state, and a leftover no-op record is disclosed, not harmful. An
+ *  invalid task id (same guard as the read/write sides) removes nothing. */
 export function clearLandingRecord(cwd: string, taskId: string): void {
+  if (!TASK_ID_RE.test(taskId)) return;
   try {
     fs.rmSync(path.join(cwd, landingRecordPath(taskId)), { force: true });
   } catch {
