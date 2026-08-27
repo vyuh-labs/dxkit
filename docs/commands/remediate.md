@@ -239,12 +239,22 @@ token through one chain, best tier first:
    to the app's own bot identity, so a maintainer can approve them. A
    configured-but-broken app fails the mint step loudly rather than
    silently degrading a tier. One lifetime fact to know: GitHub caps an
-   installation token at **one hour**, so the remediate lane re-mints
-   immediately before the task step (the hour starts at agent launch,
-   not at job start) and clamps the agent's wall-clock budget to 45
-   minutes on this tier — disclosed in the run's envelope — so the
-   landing push always fits inside the token. Runs that need a longer
-   wall clock should use the PAT tier.
+   installation token at **one hour**, and the remediate task (agent
+   budget plus a verify tail that scales with repo size) can outlive
+   any token minted before it. The workflow therefore lands in TWO
+   PHASES: the task step performs no pushes and instead writes a
+   landing record, and a post-task step mints a fresh token and runs
+   `remediate land`, validating that the checkout's HEAD is still the
+   verified head the record expects (a mismatch refuses with the remedy
+   named; stale or foreign commits are never pushed) before pushing the
+   standing branch, opening/updating the PR, and recording the
+   order-outcome ledger. The step runs even after a failed task, so a
+   salvage draft still lands, and it is idempotent (a re-run with no
+   record is a disclosed no-op). Because the delivery credential is
+   minted at delivery time, the agent budget is no longer clamped to
+   the token lifetime (older installed workflows that still land inline
+   keep the 45-minute clamp until `vyuh-dxkit update` refreshes them;
+   the ledger names the remedy).
 2. **`DXKIT_BOT_TOKEN`** (a PAT with repo scope): works today,
    attributed to the PAT's owner (who then cannot approve the lane's
    PRs), and expires on the PAT's schedule.

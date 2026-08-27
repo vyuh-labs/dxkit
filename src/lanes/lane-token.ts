@@ -57,8 +57,9 @@ export const LANE_TOKEN_CHAIN_TASK =
   `\${{ steps.dxkit-app-token-task.outputs.token || steps.dxkit-app-token.outputs.token || ` +
   `secrets.${LANE_TOKEN_PAT_SECRET_NAME} || github.token }}`;
 
-/** The resolved tier, as an env value the CLI can branch on ('app' clamps
- *  the agent wall clock to the installation token's lifetime). */
+/** The resolved tier, as an env value the CLI can branch on ('app' means a
+ *  one-hour installation token; under inline landing the CLI clamps the
+ *  agent wall clock to it, under deferred landing it only discloses). */
 export const LANE_TOKEN_MODE_EXPR =
   `\${{ vars.${LANE_TOKEN_APP_ID_VARIABLE_NAME} != '' && 'app' || ` +
   `(secrets.${LANE_TOKEN_PAT_SECRET_NAME} != '' && 'pat' || 'workflow') }}`;
@@ -115,6 +116,33 @@ export const LANE_TOKEN_TASK_STEPS = `      - name: Re-mint the lane token befor
           private-key: \${{ secrets.${LANE_TOKEN_APP_KEY_SECRET_NAME} }}`;
 
 /**
+ * The landing-time mint (two-phase landing, 4.4.7): the remediate task's
+ * verify phases scale with repo size and can outlive ANY token minted
+ * before the task, so the landing step mints its own: the token's hour
+ * starts at delivery time. Runs even after a failed task step (a salvage
+ * draft record must still land) but NOT on an operator abort, hence the
+ * !cancelled() guard alongside the App-tier condition (always() would
+ * also fire on a CANCELLED run and push after an abort). Rendered from
+ * the same name constants; the template
+ * carries the __DXKIT_LANE_TOKEN_LAND_STEPS__ placeholder.
+ */
+export const LANE_TOKEN_LAND_STEPS = `      - name: Mint the landing token (App tier, fresh for delivery)
+        id: dxkit-app-token-land
+        if: \${{ !cancelled() && vars.${LANE_TOKEN_APP_ID_VARIABLE_NAME} != '' }}
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: \${{ vars.${LANE_TOKEN_APP_ID_VARIABLE_NAME} }}
+          private-key: \${{ secrets.${LANE_TOKEN_APP_KEY_SECRET_NAME} }}`;
+
+/**
+ * The landing step's chain: the fresh delivery-time mint first, then the
+ * earlier mints, then the long-lived tiers.
+ */
+export const LANE_TOKEN_CHAIN_LAND =
+  `\${{ steps.dxkit-app-token-land.outputs.token || steps.dxkit-app-token-task.outputs.token || ` +
+  `steps.dxkit-app-token.outputs.token || secrets.${LANE_TOKEN_PAT_SECRET_NAME} || github.token }}`;
+
+/**
  * The substitution map the ONE workflow writer applies to EVERY template,
  * unconditionally — a callsite cannot forget it, and a template without
  * the placeholders is untouched (split/join no-op). Order matters only in
@@ -124,8 +152,10 @@ export const LANE_TOKEN_TASK_STEPS = `      - name: Re-mint the lane token befor
  */
 export const LANE_TOKEN_SUBSTITUTIONS: Readonly<Record<string, string>> = {
   __DXKIT_LANE_TOKEN_TASK_STEPS__: LANE_TOKEN_TASK_STEPS,
+  __DXKIT_LANE_TOKEN_LAND_STEPS__: LANE_TOKEN_LAND_STEPS,
   __DXKIT_LANE_TOKEN_STEPS__: LANE_TOKEN_STEPS,
   __DXKIT_LANE_TOKEN_TASK__: LANE_TOKEN_CHAIN_TASK,
+  __DXKIT_LANE_TOKEN_LAND__: LANE_TOKEN_CHAIN_LAND,
   __DXKIT_LANE_TOKEN_MODE__: LANE_TOKEN_MODE_EXPR,
   __DXKIT_LANE_TOKEN__: LANE_TOKEN_CHAIN,
 };
