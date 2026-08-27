@@ -79,18 +79,26 @@ were discarded with a message that read as "the fallback is missing".
   of landing is the order. Each agent order's commits are verified
   (install + floor) on top of the previously verified head; a recipe
   group that precedes agent orders is verified as one unit first. An
-  order whose verification fails is dropped (its commits reverted, the
-  reason recorded) and the run lands the verified prefix. The guardrail
-  still arbitrates once, over the landed head. A run with kept and
-  dropped orders completes `partially-landed`: not clean, a PR opens
-  for the kept set, the dropped orders are named as still open. The
-  order ledger records each dropped order under the step that dropped
-  it (`invariant-failed`, `install-failed`, `floor-red`), so the circuit
-  breaker counts the dropped orders' classes, not the run as a whole.
+  order whose verification fails is dropped (its commits reverted; a
+  recipe group's drop reverts only the group's own committed paths, so
+  a user's pre-existing uncommitted edits are untouched) and the run
+  lands the verified prefix. Verification INFRASTRUCTURE failure is a
+  third disposition, `unverifiable`: the commits stay on the branch,
+  nothing lands, and the run completes `verification-unavailable`
+  (salvageable, never destroyed). The guardrail still arbitrates once,
+  over the landed head, and a blocked salvage draft requires a
+  guardrail that actually ran. A run with kept and dropped orders
+  completes `partially-landed`: not clean, a PR opens for the kept set,
+  the dropped orders are named as still open. The order ledger records
+  each dropped order under the step that dropped it
+  (`invariant-failed`, `install-failed`, `floor-red`), an unverifiable
+  order as neutral, and a kept order whose driver reported failure as
+  `partial-kept` (neutral), so the circuit breaker counts the dropped
+  orders' classes, not the run as a whole.
 
 `vyuh-dxkit update` re-renders the workflows from the strategy (the
 rendered chain is unchanged for a repo on the defaults). No baseline or
-wire-format changes; the order ledger gains two row outcomes, read
+wire-format changes; the order ledger gains four row outcomes, read
 additively.
 
 ## [4.4.5] - 2026-08-26

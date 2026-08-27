@@ -109,6 +109,11 @@ the failures age out of the 60-day history window.
   the kept set); others were dropped at their own verification, with the
   step and reason per order in the ledger, and stay open. Not clean by
   design: the dropped orders must not read as done.
+- `verification-unavailable`: per-order verification infrastructure
+  failed (a worktree or disk problem, not a verdict on the code). All
+  committed work stays on the local branch, nothing was reset and
+  nothing lands; the run is red and the branch is left for inspection
+  or resume.
 - `recipes-refused`: a recipe-only plan where every recipe refused or
   failed and nothing was fixed. Non-clean by design: the orders remain
   open, and the per-order reasons are in the ledger.

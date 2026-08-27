@@ -76,7 +76,11 @@ Inside each task run, the frame works the plan in two tiers:
   and the run lands the verified prefix; the guardrail arbitrates once
   over the landed head. Kept plus dropped orders is the
   `partially-landed` outcome: not clean, a PR for the kept set, the
-  dropped orders named as still open.
+  dropped orders named as still open. Pre-existing lockfile drift at the
+  order base is disclosed, never blamed on the order and never rewritten
+  inside its PR; and a verification that could not run at all
+  (infrastructure) keeps the commits on the branch and completes
+  `verification-unavailable` instead of destroying or landing anything.
 
 Every order's outcome is recorded in the lane's order ledger
 (`.dxkit/lanes/<lane>-<task>.orders.jsonl`): rows ride a landed PR's own
