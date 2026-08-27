@@ -43,7 +43,16 @@ export type OrderDisposition =
   | { readonly kind: 'kept'; readonly head: string }
   | {
       readonly kind: 'dropped';
-      readonly step: 'tree-invariants' | 'install' | 'floor' | 'verification';
+      readonly step: 'tree-invariants' | 'install' | 'floor';
+      readonly reason: string;
+    }
+  | {
+      /** Verification INFRASTRUCTURE failed (a worktree, a disk, a throw):
+       *  the commits STAY on the branch (not landed, not reset — real work
+       *  is never destroyed by a transient failure), the run completes
+       *  `verification-unavailable`, and the branch is left for
+       *  inspection or resume. */
+      readonly kind: 'unverifiable';
       readonly reason: string;
     };
 
@@ -70,6 +79,9 @@ export interface OrderRunRecord {
   /** The frame-owned invariants the order's diff tripped and what the
    *  frame did about each (4.4.6), disclosed per order. */
   readonly invariants?: readonly TreeInvariantOutcome[];
+  /** Collector/step disclosures for this order (a changed manifest under
+   *  no resolvable root, an unanswerable base probe). */
+  readonly invariantDisclosures?: readonly string[];
   /** Kept (verified per order, lands) or dropped (reverted, reason named).
    *  Absent on a record with no commits to place. */
   readonly disposition?: OrderDisposition;
@@ -103,6 +115,7 @@ export interface OrdersPhaseSummary {
 export type RemediateOutcome =
   | 'verified' // diff produced, floor net-new-clean, guardrail PASSED — ready to land
   | 'partially-landed' // some orders verified and land, others were DROPPED (named); non-clean, a PR opens for the kept set
+  | 'verification-unavailable' // per-order verification infrastructure failed; committed work KEPT on the branch, nothing lands
   | 'no-op' // agent ran TO COMPLETION, no diff (nothing to fix)
   | 'recipes-refused' // recipe-only plan, every recipe refused/failed: nothing fixed, NOT clean
   | 'install-failed' // a clean checkout of the diff cannot be installed the way CI installs — never lands
@@ -183,6 +196,16 @@ export interface RemediateResult {
   /** Which files the candidate changed vs the base (the floor's diff scope). */
   readonly changedFiles?: readonly string[];
   readonly guardrailVerdict?: string;
+  /** Did the guardrail actually RUN (vs a verdict it could not reach)?
+   *  The executor's blocked-salvage decision requires a RAN verdict; a
+   *  guardrail that never ran must not produce a draft claiming a block. */
+  readonly guardrailRan?: boolean;
+  /** The legacy task path's frame-invariant outcomes (the order paths
+   *  carry them per record instead) — rendered in the ledger. */
+  readonly frameInvariants?: {
+    readonly applied: readonly TreeInvariantOutcome[];
+    readonly disclosures: readonly string[];
+  };
   /** Score-hinge evidence (tasks that declare one): the entry vs post-agent
    *  dimension scores the land decision was made on. Present on success AND
    *  failure — the ledger shows the delta either way. */
@@ -260,6 +283,15 @@ export interface RemediateGit {
   /** Stage exactly these paths and commit them with the bot identity (the
    *  frame's own commit after re-establishing an invariant). */
   commitPaths(paths: readonly string[], message: string): void;
+  /** Remove exactly these paths WHERE UNTRACKED (a path-scoped clean,
+   *  never a blanket one): the drop path's cleanup for files the frame's
+   *  own step created; tracked content is `resetTo`'s job. */
+  cleanPaths(paths: readonly string[]): void;
+  /** Move the branch back to `baseHead` and restore exactly `paths` to
+   *  their base state, leaving every OTHER uncommitted change (a user's
+   *  pre-existing dirt) untouched — the targeted revert for a recipe
+   *  group's own commits. Never a hard reset over a dirty tree. */
+  revertPaths(baseHead: string, paths: readonly string[]): void;
 }
 
 export interface RemediateRunOptions {

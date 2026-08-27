@@ -92,7 +92,28 @@ export async function recipeTierStep(
   const orderDispatch = opts.config.maxOrdersPerRun > 0 && recipes.agentOrders !== undefined;
   if (orderDispatch) {
     if ((recipes.agentOrders ?? []).length > 0) {
-      return { recipes: await verifyRecipeGroup(opts, recipes, args) };
+      const verified = await verifyRecipeGroup(opts, recipes, args);
+      if (verified.groupVerification?.kind === 'unverifiable') {
+        // The base the agent orders would build on cannot be verified:
+        // spend nothing, keep the commits, disclose, and stop here.
+        return {
+          recipes: verified,
+          done: {
+            outcome: 'verification-unavailable',
+            task: args.task.id,
+            recipes: verified,
+            floor: args.entryFloor,
+            note:
+              'the recipe group could not be verified (verification infrastructure failed: ' +
+              `${verified.groupVerification.reason}); its commits stay on the branch, nothing ` +
+              'lands, and no agent order was dispatched ($0). The branch is left for ' +
+              'inspection or resume.',
+            baseHead: args.baseHead,
+            head: args.git.head(),
+          },
+        };
+      }
+      return { recipes: verified };
     }
   } else if (recipes.selectedAgentTier > 0) {
     // No order queue (dispatch off, or a summary without a plan): the
@@ -117,12 +138,13 @@ export async function recipeTierStep(
  * recipe group's combined commits are verified as one contiguous unit
  * (install + floor; the guardrail arbitrates once over the landed head)
  * BEFORE any agent spawns. Kept: the agent tier builds on the verified
- * head. Dropped: the branch is reset to the base, every applied record is
- * marked dropped with the reason, and the agent tier starts from the
- * base, so a recipe group that cannot install is never blamed on the
- * agent orders after it, and the agent orders are never discarded for it.
- * A recipe-only run (nothing follows) keeps its single completion-time
- * verification.
+ * head. Dropped: the group's own committed paths are reverted (a targeted
+ * revert, never a hard reset — a user's pre-existing uncommitted edits are
+ * untouched), every applied record is marked dropped with the reason, and
+ * the agent tier starts from the base. Unverifiable (infrastructure): the
+ * commits stay, nothing lands, and the run completes
+ * `verification-unavailable` before any agent spawns. A recipe-only run
+ * (nothing follows) keeps its single completion-time verification.
  */
 async function verifyRecipeGroup(
   opts: RemediateRunOptions,
@@ -143,25 +165,53 @@ async function verifyRecipeGroup(
     entryFloor: args.entryFloor,
     runFloor: args.runFloor,
   });
-  if (verdict.kept) {
-    return {
-      ...recipes,
-      groupVerification: { kept: true, head },
-      records: recipes.records.map((r) =>
-        r.outcome.kind === 'applied' ? { ...r, disposition: { kind: 'kept', head } } : r,
-      ),
-    };
+  switch (verdict.kind) {
+    case 'kept':
+      return {
+        ...recipes,
+        groupVerification: { kind: 'kept', head },
+        records: recipes.records.map((r) =>
+          r.outcome.kind === 'applied' ? { ...r, disposition: { kind: 'kept', head } } : r,
+        ),
+      };
+    case 'unverifiable':
+      // Infrastructure, not a verdict: the group's commits stay on the
+      // branch (never destroyed by a transient failure); the caller
+      // completes the run `verification-unavailable` before any agent
+      // order spends anything.
+      return {
+        ...recipes,
+        groupVerification: { kind: 'unverifiable', reason: verdict.reason },
+      };
+    case 'dropped': {
+      // Targeted revert (review fix 2): restore exactly the paths the
+      // group's own commits changed, leaving a user's pre-existing
+      // uncommitted edits untouched. Never a hard reset over a dirty tree.
+      const groupPaths = [
+        ...new Set(
+          applied.flatMap((r) => (r.outcome.kind === 'applied' ? r.outcome.changedFiles : [])),
+        ),
+      ];
+      const droppedOrderIds = applied.map((r) => r.orderId);
+      const disposition = { kind: 'dropped', step: verdict.step, reason: verdict.reason } as const;
+      args.git.revertPaths(args.baseHead, groupPaths);
+      return {
+        ...recipes,
+        groupVerification: {
+          kind: 'dropped',
+          step: verdict.step,
+          reason: verdict.reason,
+          droppedOrderIds,
+        },
+        // A dropped recipe order stays OPEN for the next firing (its row
+        // records the drop, so the breaker sees it); this run's agent
+        // queue is unchanged.
+        records: recipes.records.map((r) =>
+          r.outcome.kind === 'applied' ? { ...r, disposition } : r,
+        ),
+      };
+    }
   }
-  args.git.resetTo(args.baseHead);
-  const droppedOrderIds = applied.map((r) => r.orderId);
-  const disposition = { kind: 'dropped', step: verdict.step, reason: verdict.reason } as const;
-  return {
-    ...recipes,
-    groupVerification: { kept: false, step: verdict.step, reason: verdict.reason, droppedOrderIds },
-    // A dropped recipe order stays OPEN for the next firing (its row records
-    // the drop, so the breaker sees it); this run's agent queue is unchanged.
-    records: recipes.records.map((r) => (r.outcome.kind === 'applied' ? { ...r, disposition } : r)),
-  };
 }
 
 export interface RecipeOnlyArgs {

@@ -143,5 +143,29 @@ export function realGit(cwd: string): RemediateGit {
     },
     // The ONE path-scoped bot commit (the recipe phase's surface).
     commitPaths: (paths, message) => realRecipeGit(cwd).commitPaths(paths, message),
+    cleanPaths(paths) {
+      // Path-scoped: `git clean` with explicit pathspecs removes only the
+      // UNTRACKED files among them — never a blanket clean of the tree.
+      if (paths.length === 0) return;
+      git(['clean', '-f', '-q', '--', ...paths]);
+    },
+    revertPaths(baseHead, paths) {
+      // Targeted revert of the branch's own commits: move the branch back
+      // (soft, so the working tree and any user dirt stay untouched), then
+      // restore exactly the named paths to their base state. A path
+      // tracked at the base returns to base content; one absent at the
+      // base is removed. Everything else in the tree is left alone.
+      git(['reset', '-q', '--soft', baseHead]);
+      const baseTracked = new Set(
+        git(['ls-tree', '-r', '--name-only', baseHead]).split('\n').filter(Boolean),
+      );
+      for (const p of paths) {
+        if (baseTracked.has(p)) {
+          git(['checkout', baseHead, '--', p]);
+        } else {
+          git(['rm', '-f', '-q', '--ignore-unmatch', '--', p]);
+        }
+      }
+    },
   };
 }

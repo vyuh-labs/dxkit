@@ -384,7 +384,34 @@ export async function runOrdersPhase(
       records.push(record);
       continue;
     }
-    records.push(await placeOrder(opts, args, { order, orderBase, record, invariantStep }));
+    const placement = await placeOrder(opts, args, { order, orderBase, record, invariantStep });
+    records.push(placement.record);
+    if (placement.fatal) {
+      // The drop's own cleanup failed: the tree state is unknown. Stop
+      // dispatching; the kept orders' records and ledger still render.
+      const fatal = placement.fatal;
+      terminal = (summary, envelope) => ({
+        outcome: 'sweep-failed',
+        task: args.taskId,
+        recipes: args.recipes,
+        orders: summary,
+        envelope,
+        floor: args.entryFloor,
+        ...(lastTail ? { transcriptTail: lastTail } : {}),
+        ...(partial ? { partial } : {}),
+        note: fatal,
+        baseHead: args.baseHead,
+        head: args.git.head(),
+      });
+      continue;
+    }
+    if (placement.record.disposition?.kind === 'unverifiable') {
+      // Per-order verification infrastructure is unavailable: dispatching
+      // further orders would stack unverifiable work. Stop, disclosed.
+      stopReason =
+        'per-order verification infrastructure is unavailable ' +
+        `(order ${order.id}: ${placement.record.disposition.reason}); later orders were not dispatched`;
+    }
   }
 
   const summary: OrdersPhaseSummary = {

@@ -115,6 +115,7 @@ export function verificationDisclosures(
   installToleranceWarnings?: readonly string[];
   changedFiles?: VerifyTreeResult['changedFiles'];
   guardrailVerdict: string;
+  guardrailRan: boolean;
 } {
   // The tolerance-resolution warnings (unknown policy entries, a policy
   // opt-out conflicting with observed repo config): the disclosure home the
@@ -128,6 +129,7 @@ export function verificationDisclosures(
     ...(warnings.length > 0 ? { installToleranceWarnings: warnings } : {}),
     ...(verified.changedFiles ? { changedFiles: verified.changedFiles } : {}),
     guardrailVerdict: guardrail.verdict,
+    guardrailRan: guardrail.ran,
   };
 }
 
@@ -191,11 +193,26 @@ export const PER_ORDER_GUARDRAIL_DEFERRED =
   'per-order verification runs the install and the floor; the guardrail arbitrates once over ' +
   'the landed head';
 
+/** How one order's verification came out: KEPT (verified, lands), DROPPED
+ *  (a real verdict against the tree: the commits are reverted, the order
+ *  stays open), or UNVERIFIABLE (verification INFRASTRUCTURE failed: the
+ *  commits STAY on the branch, nothing lands, the run completes
+ *  `verification-unavailable`). Infrastructure is never a verdict on the
+ *  work, so it must never destroy it. */
+export type OrderHeadVerdict =
+  | { readonly kind: 'kept'; readonly verified: VerifyTreeResult }
+  | {
+      readonly kind: 'dropped';
+      readonly step: 'install' | 'floor';
+      readonly reason: string;
+      readonly verified: VerifyTreeResult;
+    }
+  | { readonly kind: 'unverifiable'; readonly reason: string; readonly verified: VerifyTreeResult };
+
 /**
  * The ONE per-order verdict projection (4.4.6): verify ONE order's commits
- * (install + floor, guardrail deferred) and say whether they are KEPT or
- * DROPPED with the step and reason named. Both consumers (the recipe
- * group before the agent tier, each agent order) read it.
+ * (install + floor, guardrail deferred) and place them. Both consumers
+ * (the recipe group before the agent tier, each agent order) read it.
  */
 export async function verifyOrderHead(
   opts: RemediateRunOptions,
@@ -205,30 +222,22 @@ export async function verifyOrderHead(
     readonly entryFloor: CorrectnessFloorResult;
     readonly runFloor: () => CorrectnessFloorResult;
   },
-): Promise<
-  | { readonly kept: true; readonly verified: VerifyTreeResult }
-  | {
-      readonly kept: false;
-      readonly step: 'install' | 'floor' | 'verification';
-      readonly reason: string;
-      readonly verified: VerifyTreeResult;
-    }
-> {
+): Promise<OrderHeadVerdict> {
   const { verified } = await verifyCommittedHead(opts, {
     ...args,
     deferGuardrail: PER_ORDER_GUARDRAIL_DEFERRED,
   });
   switch (verified.verdict) {
     case 'floor-verified':
-      return { kept: true, verified };
+      return { kind: 'kept', verified };
     case 'install-failed':
-      return { kept: false, step: 'install', reason: installFailedNote(verified), verified };
+      return { kind: 'dropped', step: 'install', reason: installFailedNote(verified), verified };
     case 'floor-red': {
       const failing = (verified.floorAttribution ?? [])
         .filter((a) => a.attribution === 'net-new')
         .map((a) => `${a.check.pack} ${a.check.label}`);
       return {
-        kept: false,
+        kind: 'dropped',
         step: 'floor',
         reason:
           'the correctness floor has NET-NEW failures after this order' +
@@ -237,12 +246,14 @@ export async function verifyOrderHead(
       };
     }
     default:
+      // 'error' and 'skipped-untrusted': verification itself could not run.
+      // A transient worktree or disk failure says NOTHING about the work,
+      // so the commits are preserved, never reset (fix 1 of the review).
       return {
-        kept: false,
-        step: 'verification',
+        kind: 'unverifiable',
         reason: verified.failure
-          ? `verification failed at step '${verified.failure.step}': ${verified.failure.message}`
-          : `verification ended '${verified.verdict}' without a guardrail pass`,
+          ? `verification infrastructure failed at step '${verified.failure.step}': ${verified.failure.message}`
+          : `verification ended '${verified.verdict}' without reaching a verdict on the tree`,
         verified,
       };
   }

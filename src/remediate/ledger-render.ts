@@ -65,15 +65,20 @@ function renderRecipeSection(recipes: RecipePhaseSummary): string[] {
       );
     }
     lines.push(...renderInvariants(rec.invariants));
+    lines.push(...renderInvariantDisclosures(rec.invariantDisclosures));
     lines.push(...renderDisposition(rec.disposition));
   }
   if (recipes.groupVerification) {
     const g = recipes.groupVerification;
     lines.push(
-      g.kept
+      g.kind === 'kept'
         ? '- recipe group verified as one unit before the agent tier (install + floor); it lands'
-        : `- recipe group DROPPED before the agent tier at ${g.step}: ${g.reason} ` +
-            `(orders still open: ${g.droppedOrderIds.join(', ')})`,
+        : g.kind === 'dropped'
+          ? `- recipe group DROPPED before the agent tier at ${g.step}: ${g.reason} ` +
+            `(its own committed paths were reverted, other changes untouched; orders still ` +
+            `open: ${g.droppedOrderIds.join(', ')})`
+          : `- recipe group UNVERIFIABLE (verification infrastructure failed: ${g.reason}); ` +
+            'its commits stay on the branch, nothing lands',
     );
   }
   for (const d of recipes.disclosures) lines.push(`- plan disclosure: ${d}`);
@@ -102,13 +107,23 @@ function renderInvariants(outcomes: readonly TreeInvariantOutcome[] | undefined)
   return outcomes.map((o) => `  - frame invariant: ${describeTreeInvariantOutcome(o)}`);
 }
 
-/** Where the order's commits ended up (4.4.6): kept (lands) or dropped. */
+/** Collector/step disclosures for one order's invariant step. */
+function renderInvariantDisclosures(disclosures: readonly string[] | undefined): string[] {
+  if (!disclosures || disclosures.length === 0) return [];
+  return disclosures.map((d) => `  - frame invariant disclosure: ${d}`);
+}
+
+/** Where the order's commits ended up (4.4.6): kept, dropped, or
+ *  unverifiable (infrastructure; commits preserved, nothing lands). */
 function renderDisposition(d: OrderDisposition | undefined): string[] {
   if (!d) return [];
   return [
     d.kind === 'kept'
       ? '  - landing: KEPT (verified on top of the previously verified head; lands)'
-      : `  - landing: DROPPED at ${d.step}, commits reverted, the order stays open: ${d.reason}`,
+      : d.kind === 'dropped'
+        ? `  - landing: DROPPED at ${d.step}, commits reverted, the order stays open: ${d.reason}`
+        : `  - landing: UNVERIFIABLE (verification infrastructure failed: ${d.reason}); ` +
+          'the commits stay on the branch, nothing lands',
   ];
 }
 
@@ -148,6 +163,7 @@ function renderOrdersSection(orders: OrdersPhaseSummary): string[] {
           : '  - envelope enforcement: every change stayed inside the order envelope',
       );
       lines.push(...renderInvariants(rec.invariants));
+      lines.push(...renderInvariantDisclosures(rec.invariantDisclosures));
       lines.push(...renderDisposition(rec.disposition));
       lines.push(
         rec.doneAfterVerify
@@ -298,6 +314,25 @@ export function renderRemediateLedger(r: Omit<RemediateResult, 'ledger'>): strin
   }
 
   lines.push('### Verification', '');
+  if (r.frameInvariants) {
+    for (const o of r.frameInvariants.applied) {
+      lines.push(`- frame invariant: ${describeTreeInvariantOutcome(o)}`);
+    }
+    for (const d of r.frameInvariants.disclosures) {
+      lines.push(`- frame invariant disclosure: ${d}`);
+    }
+    if (r.frameInvariants.applied.length > 0 || r.frameInvariants.disclosures.length > 0) {
+      lines.push('');
+    }
+  }
+  if (r.outcome === 'verification-unavailable') {
+    lines.push(
+      'Verification infrastructure failed: no verdict was reached on the tree. All committed ' +
+        'work stays on the local branch (nothing was reset and nothing lands); the branch is ' +
+        'left for inspection or resume.',
+      '',
+    );
+  }
   if (r.outcome === 'partially-landed') {
     lines.push(
       'Per-order landing: the orders marked KEPT above verified and land together; the ' +

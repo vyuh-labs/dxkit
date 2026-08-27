@@ -77,6 +77,10 @@ function committedVerdict(outcome: RemediateOutcome): OrderRowOutcome {
     // dropped ones carry their own row through `droppedVerdict`).
     case 'partially-landed':
       return 'verified';
+    // Verification infrastructure failed: nothing was certified either
+    // way. Neutral for the breaker (nothing was tried against the code).
+    case 'verification-unavailable':
+      return 'unverifiable';
     case 'budget-exhausted':
       return 'budget-exhausted-verified';
     case 'guardrail-red':
@@ -115,8 +119,6 @@ function droppedVerdict(d: Extract<OrderDisposition, { kind: 'dropped' }>): Orde
       return 'install-failed';
     case 'floor':
       return 'floor-red';
-    case 'verification':
-      return 'unverifiable';
   }
 }
 
@@ -127,6 +129,7 @@ function placedVerdict(
   outcome: RemediateOutcome,
 ): OrderRowOutcome {
   if (disposition?.kind === 'dropped') return droppedVerdict(disposition);
+  if (disposition?.kind === 'unverifiable') return 'unverifiable';
   return committedVerdict(outcome);
 }
 
@@ -202,11 +205,19 @@ export function orderOutcomeRows(
           ? 'not-dispatched'
           : rec.outcome === 'failed' && rec.disposition === undefined
             ? 'agent-failed'
-            : placedVerdict(rec.disposition, result.outcome);
+            : rec.outcome === 'failed' && rec.disposition?.kind === 'kept'
+              ? // The commits verified and land, but the DRIVER reported the
+                // run failed: real progress, not a success — a distinct
+                // NEUTRAL row so the breaker's streak neither resets nor
+                // grows on it (review fix 9).
+                'partial-kept'
+              : placedVerdict(rec.disposition, result.outcome);
     const detail =
       rec.disposition?.kind === 'dropped'
         ? `${rec.disposition.step}: ${rec.disposition.reason}`
-        : rec.detail;
+        : rec.disposition?.kind === 'unverifiable'
+          ? `unverifiable: ${rec.disposition.reason}`
+          : rec.detail;
     byOrder.set(rec.orderId, {
       ...base,
       orderId: rec.orderId,

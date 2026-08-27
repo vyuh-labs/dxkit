@@ -52,17 +52,42 @@ export async function completeOrdersRun(
   const hasRecipeCommits = args.agentBase !== args.baseHead;
   const droppedOrders = records.filter((r) => r.disposition?.kind === 'dropped');
   const droppedRecipes = args.recipes.records.filter((r) => r.disposition?.kind === 'dropped');
+  const unverifiable = records.filter((r) => r.disposition?.kind === 'unverifiable');
+  if (unverifiable.length > 0) {
+    // Verification infrastructure failed (review fixes 1 and 5): the
+    // committed work STAYS on the branch (kept prefix included), nothing
+    // lands, and the outcome says verification was unavailable rather than
+    // claiming any verdict a gate never reached. No landing eligibility,
+    // no salvage draft, no final verification attempt (the same
+    // infrastructure would be asked again).
+    return {
+      outcome: 'verification-unavailable',
+      task: args.taskId,
+      recipes: args.recipes,
+      orders: summary,
+      envelope,
+      floor: args.entryFloor,
+      ...evidenceTail,
+      ...(partial ? { partial } : {}),
+      note:
+        'per-order verification infrastructure failed, so this run cannot certify any of its ' +
+        `work: ${unverifiable.map((r) => `${r.orderId} (${(r.disposition as { reason: string }).reason})`).join('; ')}. ` +
+        'All committed work stays on the local branch (nothing was reset and nothing lands); ' +
+        'the branch is left for inspection or resume, and the orders remain open.',
+      baseHead: args.baseHead,
+      head: args.git.head(),
+    };
+  }
   if (!hasDiff && (droppedOrders.length > 0 || droppedRecipes.length > 0)) {
     // Every order that committed work was DROPPED at its own verification
     // (4.4.6): nothing lands, and the run's outcome is the dropped orders'
     // dominant failure, named per order below. Never a no-op: work was
     // tried and refused.
     const steps = [...droppedRecipes, ...droppedOrders].map((r) => droppedStep(r.disposition));
-    const outcome = steps.includes('floor')
-      ? 'floor-red'
-      : steps.includes('install') || steps.includes('tree-invariants')
-        ? 'install-failed'
-        : 'guardrail-red';
+    // Every drop step is a REAL verdict against the tree (infrastructure
+    // routes to `verification-unavailable` above, never here): floor
+    // failures dominate, everything else is an install-shaped break.
+    const outcome = steps.includes('floor') ? 'floor-red' : 'install-failed';
     return {
       outcome,
       task: args.taskId,
@@ -275,7 +300,9 @@ function describeDropped(
     .map((r) =>
       r.disposition?.kind === 'dropped'
         ? `${r.orderId} (${r.disposition.step}: ${r.disposition.reason})`
-        : r.orderId,
+        : r.disposition?.kind === 'unverifiable'
+          ? `${r.orderId} (unverifiable: ${r.disposition.reason})`
+          : r.orderId,
     )
     .join('; ');
 }

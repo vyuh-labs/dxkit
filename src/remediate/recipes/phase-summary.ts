@@ -17,6 +17,8 @@ export interface RecipeOrderRecord {
   readonly outcome: RecipeOutcome;
   /** Out-of-envelope paths the enforcement discarded (disclosed). */
   readonly droppedPaths?: readonly string[];
+  /** Collector/step disclosures for this order's invariant step. */
+  readonly invariantDisclosures?: readonly string[];
   /** The frame-owned invariants the recipe's diff tripped and what the
    *  frame did about each (4.4.6), disclosed per order. */
   readonly invariants?: readonly TreeInvariantOutcome[];
@@ -31,12 +33,19 @@ export interface RecipeOrderRecord {
  *  as a unit, with the step and reason named. Absent when no agent order
  *  followed (a recipe-only run is verified once, at completion). */
 export type RecipeGroupVerification =
-  | { readonly kept: true; readonly head: string }
+  | { readonly kind: 'kept'; readonly head: string }
   | {
-      readonly kept: false;
-      readonly step: 'install' | 'floor' | 'verification';
+      readonly kind: 'dropped';
+      readonly step: 'install' | 'floor';
       readonly reason: string;
       readonly droppedOrderIds: readonly string[];
+    }
+  | {
+      /** Verification INFRASTRUCTURE failed: the group's commits STAY on
+       *  the branch (not landed, not reverted); the run completes
+       *  `verification-unavailable` before any agent order dispatches. */
+      readonly kind: 'unverifiable';
+      readonly reason: string;
     };
 
 /** One order the circuit breaker paused — planned, selected by this task,
