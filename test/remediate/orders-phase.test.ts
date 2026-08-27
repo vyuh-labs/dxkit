@@ -68,14 +68,17 @@ interface GitScript {
 
 function fakeGit(script: GitScript = {}): RemediateGit & {
   enforceCalls: Array<{ base: string; allowed: (p: string) => boolean }>;
+  resets: string[];
 } {
   let commits = 0;
   const g = {
     enforceCalls: [] as Array<{ base: string; allowed: (p: string) => boolean }>,
+    resets: [] as string[],
     head: () => `head${commits}`,
     sweepLeftovers: () => script.sweepError,
     scrubRuntimeArtifacts: () => [] as string[],
-    hasDiff: () => (script.diffAfterRuns ?? true) && commits > 0,
+    hasDiff: (base: string) =>
+      (script.diffAfterRuns ?? true) && commits > 0 && base !== `head${commits}`,
     enforceEnvelope: (base: string, allowed: (p: string) => boolean) => {
       g.enforceCalls.push({ base, allowed });
       commits += 1; // each dispatch that reaches enforcement counts as work
@@ -83,6 +86,13 @@ function fakeGit(script: GitScript = {}): RemediateGit & {
       const dropped = (script.outside ?? []).filter((p) => !allowed(p));
       return { dropped };
     },
+    // Per-order landing surface (4.4.6): a drop moves the head back.
+    resetTo: (head: string) => {
+      g.resets.push(head);
+      commits = Number(head.replace('head', ''));
+    },
+    changedPaths: () => ['src/a.ts'],
+    commitPaths: () => {},
   };
   return g;
 }

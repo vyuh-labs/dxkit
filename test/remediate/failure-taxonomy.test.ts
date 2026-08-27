@@ -185,6 +185,9 @@ function fakeGit(opts: { diff?: boolean } = {}): RemediateGit {
     sweepLeftovers: () => undefined,
     scrubRuntimeArtifacts: () => [],
     enforceEnvelope: () => ({ dropped: [] }),
+    resetTo: () => {},
+    changedPaths: () => [],
+    commitPaths: () => {},
     hasDiff: () => !!opts.diff,
   };
 }

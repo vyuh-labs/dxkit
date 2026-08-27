@@ -22,6 +22,9 @@ function fakeGit(diff: boolean): RemediateGit {
     sweepLeftovers: () => undefined,
     scrubRuntimeArtifacts: () => [],
     enforceEnvelope: () => ({ dropped: [] }),
+    resetTo: () => {},
+    changedPaths: () => [],
+    commitPaths: () => {},
     hasDiff: () => diff,
   };
 }
@@ -108,6 +111,9 @@ function recipeCommitGit(diffs: Record<string, boolean>): RemediateGit {
     sweepLeftovers: () => undefined,
     scrubRuntimeArtifacts: () => [],
     enforceEnvelope: () => ({ dropped: [] }),
+    resetTo: () => {},
+    changedPaths: () => [],
+    commitPaths: () => {},
     hasDiff: (base: string) => diffs[base] ?? false,
   };
 }
