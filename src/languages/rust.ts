@@ -1,3 +1,4 @@
+import { NO_TREE_INVARIANTS } from './capabilities/tree-invariants';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -1173,6 +1174,7 @@ export const rust: LanguageSupport = {
     }),
   },
 
+  treeInvariants: NO_TREE_INVARIANTS,
   correctness: rustCorrectnessProvider,
   lintGate: rustLintGateProvider,
 

@@ -1,3 +1,4 @@
+import { NO_TREE_INVARIANTS } from './capabilities/tree-invariants';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -2028,6 +2029,7 @@ export const csharp: LanguageSupport = {
   // CodeQL `csharp` extractor needs a build; Snyk Code supports C#.
   deepSast: { codeqlLanguage: 'csharp', snykCode: true, execution: csharpBuildExecution },
 
+  treeInvariants: NO_TREE_INVARIANTS,
   correctness: csharpCorrectnessProvider,
   lintGate: csharpLintGateProvider,
 

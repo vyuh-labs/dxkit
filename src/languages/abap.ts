@@ -26,6 +26,7 @@
  * `affectedTests` builder stays null forever, not as a TODO.
  */
 
+import { NO_TREE_INVARIANTS } from './capabilities/tree-invariants';
 import { fileExists } from '../analyzers/tools/runner';
 import { walkPaths } from '../analyzers/tools/walk-paths';
 import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
@@ -155,6 +156,7 @@ export const abap: LanguageSupport = {
       'dxkit deliberately does not parse (the adopted-tool boundary, docs/decisions/abap-tooling.md)',
   },
 
+  treeInvariants: NO_TREE_INVARIANTS,
   correctness: {
     // abaplint is a registry TOOL running on dxkit's own Node runtime —
     // no ambient toolchain, no build, any host (Rule 20).

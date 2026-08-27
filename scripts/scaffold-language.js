@@ -419,6 +419,7 @@ if (!/^[a-z][a-z0-9]*$/.test(id)) {
 // ─── 1. Pack stub: src/languages/<id>.ts ────────────────────────────────────
 
 const PACK_TEMPLATE = `import { fileExists } from '../analyzers/tools/runner';
+import { NO_TREE_INVARIANTS } from './capabilities/tree-invariants';
 import type { LanguageSupport } from './types';
 
 // TODO(${id}): implement detection logic — return true when this is a
@@ -681,6 +682,16 @@ export const ${id}: LanguageSupport = {
   //
   // A fallback answers exactly ONE registered ToleranceClass with a pure,
   // false-negative-biased classifier; never a blanket retry.
+
+  // REQUIRED(${id}): frame-owned tree invariants (4.4.6), the tree properties
+  // the remediate frame owns for this ecosystem BEYOND its dependency tree
+  // (formatting, generated artifacts, a lock sync the install strategy does
+  // not model). The dependency invariant is DERIVED from installStrategy by
+  // the collector, never declared here. NO_TREE_INVARIANTS is the declared
+  // "nothing further" answer; to declare one, return a TreeInvariant with
+  // appliesWhen(changedPaths), ownedPaths, a reestablish InstallPlan (or
+  // null) and a verify check (see src/languages/capabilities/tree-invariants.ts).
+  treeInvariants: NO_TREE_INVARIANTS,
 
   // Lint-GATE provider (custom-check flagship): the linter command that gates
   // NET-NEW lint findings, plus a regex mapping its output to per-location

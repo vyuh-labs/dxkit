@@ -1,3 +1,4 @@
+import { NO_TREE_INVARIANTS } from './capabilities/tree-invariants';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -1212,6 +1213,7 @@ export const go: LanguageSupport = {
     execution: () => GO_BUILD_EXECUTION,
   },
 
+  treeInvariants: NO_TREE_INVARIANTS,
   correctness: goCorrectnessProvider,
   lintGate: goLintGateProvider,
 

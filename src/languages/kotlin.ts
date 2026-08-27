@@ -1,3 +1,4 @@
+import { NO_TREE_INVARIANTS } from './capabilities/tree-invariants';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -803,6 +804,7 @@ export const kotlin: LanguageSupport = {
     execution: jvmBuildExecution,
   },
 
+  treeInvariants: NO_TREE_INVARIANTS,
   correctness: kotlinCorrectnessProvider,
   lintGate: kotlinLintGateProvider,
 

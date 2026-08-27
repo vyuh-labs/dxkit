@@ -1,3 +1,4 @@
+import { join } from 'path';
 import type { DetectedStack } from '../types';
 import type {
   ArchitecturalShape,
@@ -12,6 +13,8 @@ import type { CorrectnessProvider } from './capabilities/correctness';
 import type { LintGateProvider } from './capabilities/lint-gate';
 import type { InstallStrategy, InstallStrategyProvider } from './capabilities/install-strategy';
 import type { CapabilityRequirement } from '../execution';
+import type { ResolvedTolerances } from '../install/tolerances';
+import { dependencyTreeInvariant, type TreeInvariant } from './capabilities/tree-invariants';
 import { UNIVERSAL_TEST_DIR_PATTERNS } from './test-dir-patterns';
 import { csharp } from './csharp';
 import { go } from './go';
@@ -935,6 +938,56 @@ export function activeInstallStrategies(
   for (const { id, provider } of installStrategyProviders(packs)) {
     const strategy = provider.strategy(dir);
     if (strategy !== null) out.push({ id, strategy });
+  }
+  return out;
+}
+
+/**
+ * The frame-owned tree invariants that could apply to `candidatePaths`
+ * (4.4.6, Rule 6): for every active pack, the DEPENDENCY invariant derived
+ * from its install strategy at each dependency root the candidate paths
+ * name (the repo root, plus the directory of every changed manifest or
+ * lockfile), then the pack's own declared invariants. ONE collector, read
+ * by the frame step that re-establishes them and the prompt renderer that
+ * states the contract, so the two cannot name different sets. Pure and
+ * repo-intrinsic; each invariant still gates itself through `appliesWhen`.
+ */
+export function collectTreeInvariants(
+  packs: readonly LanguageSupport[],
+  cwd: string,
+  candidatePaths: readonly string[],
+  tolerances: ResolvedTolerances,
+): TreeInvariant[] {
+  const out: TreeInvariant[] = [];
+  const roots = new Set<string>(['']);
+  for (const p of candidatePaths) {
+    if (dependencyManifestFilesIn([p], packs).length > 0) {
+      const slash = p.lastIndexOf('/');
+      roots.add(slash === -1 ? '' : p.slice(0, slash));
+    }
+  }
+  for (const pack of packs) {
+    const patterns = allDependencyManifestPatterns([pack]);
+    for (const root of roots) {
+      for (const { id, strategy } of activeInstallStrategies(
+        [pack],
+        root === '' ? cwd : join(cwd, root),
+      )) {
+        out.push(
+          dependencyTreeInvariant({
+            pack: id,
+            root,
+            strategy,
+            manifestPatterns: patterns,
+            matchesManifest: matchesManifestPattern,
+            tolerances,
+          }),
+        );
+      }
+    }
+    // Foreign objects cast into the registry by a test may lack the field;
+    // every real pack declares it (compile-time required, contract-pinned).
+    out.push(...(pack.treeInvariants?.invariants(cwd, candidatePaths) ?? []));
   }
   return out;
 }

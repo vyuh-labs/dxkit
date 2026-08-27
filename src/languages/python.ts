@@ -1,3 +1,4 @@
+import { NO_TREE_INVARIANTS } from './capabilities/tree-invariants';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -2056,6 +2057,7 @@ export const python: LanguageSupport = {
     }),
   },
 
+  treeInvariants: NO_TREE_INVARIANTS,
   correctness: pyCorrectnessProvider,
   lintGate: pyLintGateProvider,
 
