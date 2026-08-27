@@ -181,6 +181,27 @@ ${path}` keys, which discards catch-all structure — so it did exact membership
   dispatch primitive (`gatherDepVulnsWithAvailability`) so reports and the
   gate audit the same lockfile set — the shipped bug: root-only auditing
   read a nested sub-project's critical vuln as CLEAN.
+- how a repository PROVISIONS its dependency tree, and which deviations it
+  TOLERATES → the pack-declared `installStrategy`
+  (`src/languages/capabilities/install-strategy.ts`; the node table is
+  `src/languages/node-install.ts`): one strategy per dependency root with a
+  frozen and a resync mode, each a primary plus fallbacks that answer exactly
+  one registered `ToleranceClass` through a pack-declared classifier. ONE
+  executor (`src/install/run.ts:runInstall`) walks the ladder, ONE renderer
+  (`src/install/shell.ts`) emits the CI chain from the same variants, ONE
+  resolver (`src/install/tolerances.ts`) decides which classes THIS repo
+  authorizes (`dependencies.tolerate`, observed repo config, the class's
+  declared default). Every installer routes through it: the workflow
+  templates, verifyTree's candidate AND base installs, the recipes' resync,
+  the dep-bump retry (`viaFlags`), the floor's lockfile-sync tolerance
+  (`lockfileCheckFromStrategy`) and a work order's install constraint. The
+  shipped class (4.4.6): three lossy projections (a shell chain, a
+  primary-only `provision()`, a resync table) each carried their own
+  peer-conflict retry; the lane's blanket `a || b` named the FALLBACK as the
+  failing command on a hand-edited lockfile. Never an inline
+  `--legacy-peer-deps` or an `isPeerConflictOnly` call in a consumer; pinned
+  by the parity net `test/install/parity.test.ts` (template == executor ==
+  floor per variant and tolerance class).
 - the set of optional SHIP surfaces dxkit installs (CI workflows, git hooks,
   the devcontainer, the loop pack, the dxkit devDependency, the ignore files) →
   `MANAGED_SHIP_SURFACES` in `src/managed-artifacts.ts`. These are NOT recorded

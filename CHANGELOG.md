@@ -5,6 +5,61 @@ All notable changes to `@vyuhlabs/dxkit` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.4.6] - 2026-08-27
+
+One structural fix from the first remediate run on a real estate whose
+default branch carries a peer conflict its own install tolerates. The
+lane's verification installed a candidate with a blanket `a || b` retry,
+so a hand-edited lockfile failed `npm ci` and then failed
+`npm ci --legacy-peer-deps` the same way, and the ledger named the
+fallback as the failing command. Nine correctly applied override pins
+were discarded with a message that read as "the fallback is missing".
+
+### Changed
+
+- **One install strategy per ecosystem, declared by the language pack.**
+  "How does this repository provision its dependency tree, and which
+  deviations does it tolerate" was three lossy projections (the CI
+  templates' shell chain, the packs' primary-only provision command, the
+  recipes' lock-writing resync table), each with its own copy of the
+  peer-conflict retry. It is now one pack-declared capability
+  (`installStrategy`: frozen and resync modes, each a primary plus
+  fallbacks that answer exactly one tolerance class, plus the
+  lockfile-sync check), consumed through one executor, one shell
+  renderer and one tolerance resolver. The generated workflows' install
+  chain, the remediate verification's candidate and base installs, the
+  recipes' resync, the dep-bump lane's retry, the floor's lockfile-sync
+  tolerance and a work order's install constraint all read it. A parity
+  test pins template == executor == floor per package manager and
+  tolerance class. TypeScript (npm, pnpm, yarn, bun), Python (poetry, uv,
+  pipenv, pip), Ruby and PHP declare strategies; the remaining packs carry
+  declared exemptions.
+- **A fallback fires only on the failure it answers.** The executor
+  classifies a failed primary against the pack's declared classifiers
+  before retrying, so a lockfile that no longer records the manifest is
+  reported against the primary as `lockfile-drift`, with the fallback
+  never run. The CI shell chain keeps its unconditional retry, which is
+  outcome-equivalent because every declared fallback only relaxes the one
+  check its class names.
+- **Install attribution names its evidence.** The verification's base
+  probe now records what the base did (installed, through which fallback,
+  or failed with which classification). A failure with the identical
+  classification at the base is pre-existing; a base that installs, or
+  fails differently, makes the candidate's failure net-new, and the
+  ledger says which.
+
+### Added
+
+- **`dependencies.tolerate`** in `.dxkit/policy.json`: the install
+  deviations the repo authorizes (today `peer-conflict`; default on, and
+  an `.npmrc` with `legacy-peer-deps=true` authorizes it as well). `[]`
+  withdraws the fallback; a withdrawn tolerance that would have answered
+  a failure is named as the remedy. Documented in the policy guide.
+
+`vyuh-dxkit update` re-renders the workflows from the strategy (the
+rendered chain is unchanged for a repo on the defaults). No baseline or
+wire-format changes.
+
 ## [4.4.5] - 2026-08-26
 
 The remediation rethink. Twenty-seven live agent-lane runs on a real

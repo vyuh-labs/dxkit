@@ -659,6 +659,29 @@ export const ${id}: LanguageSupport = {
     },
   },
 
+  // OPTIONAL(${id}): install strategy (4.4.6) — how this ecosystem provisions a
+  // dependency root and which deviations it TOLERATES, declared ONCE and read by
+  // the CI templates (the install chain), the tree verification (frozen mode),
+  // the recipe tier (resync mode), the floor (the lockfile-sync check) and the
+  // work orders (the primary command). See src/languages/node-install.ts for the
+  // worked example (npm/pnpm/yarn/bun with the peer-conflict fallback) and
+  // python.ts for a fallback-free multi-manager one. The scaffold leaves it
+  // DORMANT: a pack without one carries a DECLARED exemption with a reason in
+  // test/languages-contract.test.ts (INSTALL_STRATEGY_EXEMPT) — add yours there
+  // now, or declare the strategy:
+  //
+  //   installStrategy: declareInstallStrategy(
+  //     [{ when: ['${id}.lock'], strategy: {
+  //          manager: '${id}-pm', lockfile: '${id}.lock',
+  //          modes: { frozen: { primary: { bin: '${id}-pm', args: ['install', '--frozen'] }, fallbacks: [] } },
+  //          execution: { hosts: ['any'], toolchains: ['${id}'], needsBuild: false, buildTarget: 'none', weight: 'cheap' },
+  //     } }],
+  //     { ciDependencyInstall: false },
+  //   ),
+  //
+  // A fallback answers exactly ONE registered ToleranceClass with a pure,
+  // false-negative-biased classifier; never a blanket retry.
+
   // Lint-GATE provider (custom-check flagship): the linter command that gates
   // NET-NEW lint findings, plus a regex mapping its output to per-location
   // findings. Every pack declares this slot (the contract test forces it). This
