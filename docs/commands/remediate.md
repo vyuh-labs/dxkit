@@ -109,6 +109,41 @@ campaigns (below) and can never be scheduled from policy.
   spend when the driver cannot enforce cost mid-run, so an unclamped turn
   override would be a back door around the ceiling.
 
+## Frame-owned invariants and per-order landing
+
+The frame reserves some tree responsibilities to itself and forbids the
+agent from performing them: installing dependencies, keeping the
+lockfile consistent with the manifest, and whatever else a language pack
+declares (`treeInvariants`; the dependency invariant is derived from the
+pack's install strategy). Each order prompt names the invariants its
+envelope can trip, with the contract spelled out: do not edit the
+lockfile or run installs, change the manifest and stop, the frame runs
+the resync and re-checks it after you finish.
+
+After every agent order and every recipe group, before verification,
+the frame re-runs each invariant the order's diff tripped: a manifest
+change re-runs the pack's resync and the lockfile-sync check, and the
+result is committed as the frame's own, so a hand edit to a lockfile is
+replaced by the tool's truth. The outcome is disclosed per order in the
+ledger: already consistent, re-established (with the files rewritten),
+or could not be re-established, in which case the order fails at that
+step with the reason named.
+
+Landing is per order. Each agent order's commits are verified (install
+and floor) on top of the previously verified head; a recipe group that
+precedes agent orders is verified as one unit first. An order whose
+verification fails is dropped: its commits are reverted, the reason is
+recorded, and the next order dispatches from the verified head. The
+guardrail arbitrates once, over the landed head. A run with kept and
+dropped orders completes `partially-landed`: the job is not clean, a PR
+opens for the kept orders, and the dropped orders are named in the
+ledger as still open. The order ledger records each dropped order under
+the step that dropped it (`invariant-failed`, `install-failed`,
+`floor-red`), so the circuit breaker counts the dropped orders' classes,
+never the run as a whole. Cost note: per-order verification pays one
+clean worktree and install per agent order; orders are few and bounded
+by `remediate.maxOrdersPerRun`.
+
 ## Salvage and resume
 
 `remediate.salvage` defaults to `auto`: the decision follows each task's

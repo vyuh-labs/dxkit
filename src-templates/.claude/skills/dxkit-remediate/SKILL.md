@@ -76,6 +76,16 @@ with disclosure). A refused or failed recipe order falls through to the
 agent tier in the same run; when nothing lands for such orders the outcome
 is `recipes-refused`, never a green no-op.
 
+The frame owns the dependency tree (and whatever else a language pack
+declares as a frame-owned invariant): each order prompt tells the agent not
+to edit the lockfile or run installs, and after every agent order and
+recipe group the frame re-runs the pack's resync and lockfile-sync check
+before verifying the order, replacing a hand-edited lockfile with the
+tool's truth or failing the order at that step, named. Landing is per
+order: each order's commits are verified on top of the previously verified
+head, a failing order is dropped with its reason, the verified prefix
+lands, and the guardrail arbitrates once over the landed head.
+
 Every order's outcome is recorded in the lane order ledger
 (`.dxkit/lanes/<lane>-<task>.orders.jsonl`). The circuit breaker
 (`remediate.pauseAfterFailures`, default 2) pauses a class whose recent
@@ -95,6 +105,10 @@ the failures age out of the 60-day history window.
 - `no-op` — the agent ran and committed nothing; the job summary says so.
   A no-op can also mean every selected order is paused by the circuit
   breaker (the note names the classes and the unpause conditions; $0).
+- `partially-landed`: some orders verified and land (a PR is open for
+  the kept set); others were dropped at their own verification, with the
+  step and reason per order in the ledger, and stay open. Not clean by
+  design: the dropped orders must not read as done.
 - `recipes-refused`: a recipe-only plan where every recipe refused or
   failed and nothing was fixed. Non-clean by design: the orders remain
   open, and the per-order reasons are in the ledger.

@@ -56,9 +56,42 @@ were discarded with a message that read as "the fallback is missing".
   withdraws the fallback; a withdrawn tolerance that would have answered
   a failure is named as the remedy. Documented in the policy guide.
 
+- **The frame re-establishes what it owns.** The frame denied the agent
+  every install command and then trusted the tree it left as coherent.
+  An agent with no other way to change a version hand-edited the
+  lockfile; the frozen install correctly refused it, and the only
+  remedy was to discard the run. Every language pack now declares its
+  frame-owned tree invariants (`treeInvariants`, required; the
+  dependency invariant is derived from the pack's install strategy: the
+  resync mode re-establishes it, the sync check verifies it, the
+  lockfile is the owned path). After every agent order and every recipe
+  group, before verification, the frame re-runs each invariant the
+  order's diff tripped and commits the result as its own, so a hand
+  edit to a lockfile is replaced by the tool's truth. An invariant that
+  cannot be re-established fails that order at that step, named. The
+  outcome is disclosed per order: already consistent, re-established,
+  or could not be re-established.
+- **The agent is told the contract.** Each order prompt names the
+  invariants its envelope can trip, rendered from the same declarations
+  the frame applies: which files not to edit, what to change instead,
+  and what the frame runs after the agent finishes.
+- **Landing is per order.** The unit of work is the order, so the unit
+  of landing is the order. Each agent order's commits are verified
+  (install + floor) on top of the previously verified head; a recipe
+  group that precedes agent orders is verified as one unit first. An
+  order whose verification fails is dropped (its commits reverted, the
+  reason recorded) and the run lands the verified prefix. The guardrail
+  still arbitrates once, over the landed head. A run with kept and
+  dropped orders completes `partially-landed`: not clean, a PR opens
+  for the kept set, the dropped orders are named as still open. The
+  order ledger records each dropped order under the step that dropped
+  it (`invariant-failed`, `install-failed`, `floor-red`), so the circuit
+  breaker counts the dropped orders' classes, not the run as a whole.
+
 `vyuh-dxkit update` re-renders the workflows from the strategy (the
 rendered chain is unchanged for a repo on the defaults). No baseline or
-wire-format changes.
+wire-format changes; the order ledger gains two row outcomes, read
+additively.
 
 ## [4.4.5] - 2026-08-26
 
