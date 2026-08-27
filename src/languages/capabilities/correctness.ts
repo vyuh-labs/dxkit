@@ -15,6 +15,7 @@
  * (`src/analyzers/correctness/`) executes them; it never hardcodes a per-language
  * command (Rule 6).
  */
+import type { ResolvedTolerances } from '../../install/tolerances';
 
 /** The scope the floor is running at — a fast surface (hook / Stop-gate) runs
  *  the affected subset; CI runs the full suite. Packs whose ecosystem has no
@@ -28,6 +29,15 @@ export interface CorrectnessContext {
    *  `full` rather than skip. */
   readonly changedFiles: readonly string[];
   readonly scope: CorrectnessScope;
+  /**
+   * The repo's install tolerances, resolved ONCE at the REPO ROOT by the
+   * runner and threaded here — `ctx.cwd` is rewritten per nested dependency
+   * root by the lockfile-sync dispatch, where no policy file lives, so a
+   * pack that re-resolved from `ctx.cwd` would silently lose the root's
+   * policy. A pack falls back to resolving at `ctx.cwd` only when a direct
+   * caller did not thread the set (then cwd IS the root).
+   */
+  readonly tolerances?: ResolvedTolerances;
 }
 
 /** A command a correctness check runs. `bin` is resolved on PATH by the runner;
@@ -200,7 +210,42 @@ export type LockfileCheck =
     }
   | { readonly kind: 'skipped'; readonly reason: string };
 
+/**
+ * The ONE derivation of a pack's lockfile-sync check from its install
+ * strategy: the strategy's declared sync check, tolerating exactly the
+ * failure classes whose FROZEN fallback the repo authorizes (the same
+ * classifier the install executor gates on, so the check and the install
+ * cannot disagree on what a tolerated failure looks like). Null when the
+ * ecosystem has no sync concept; a disclosed skip passes through.
+ */
+export function lockfileCheckFromStrategy(
+  strategy: InstallStrategy,
+  tolerances: ResolvedTolerances,
+): LockfileCheck | null {
+  const check = strategy.syncCheck;
+  if (check === undefined) return null;
+  if (check.kind === 'skipped') return check;
+  const fallbacks = strategy.modes.frozen.fallbacks.filter(
+    (f) => check.tolerates.includes(f.when) && tolerances.tolerated.has(f.when),
+  );
+  return {
+    kind: 'command',
+    command: { label: LOCKFILE_SYNC_LABEL, bin: check.command.bin, args: check.command.args },
+    ...(fallbacks.length > 0
+      ? {
+          tolerated: {
+            matches: (output: string) => fallbacks.some((f) => f.matches(output)),
+            disclosure: fallbacks
+              .map((f) => `${f.when} only: ${f.disclosure}; CI's install fallback covers it`)
+              .join('; '),
+          },
+        }
+      : {}),
+  };
+}
+
 import type { ExecutionRequirement } from '../../execution';
+import type { InstallStrategy } from './install-strategy';
 
 /**
  * A pack's correctness-floor provider. Both methods are pure command builders —

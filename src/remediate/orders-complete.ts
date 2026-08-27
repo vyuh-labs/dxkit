@@ -175,7 +175,7 @@ export async function completeOrdersRun(
     recipes: args.recipes,
     orders: finalSummary,
     envelope,
-    ...verificationDisclosures(verified, guardrail),
+    ...verificationDisclosures(verified, guardrail, opts.cwd),
     baseHead: args.baseHead,
     head,
     ...evidenceTail,

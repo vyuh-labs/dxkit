@@ -1,9 +1,9 @@
 /**
  * The seams this unit routed through ONE entry point each (Rule 2.30):
  * the import-resolution check carries structured `{ specifier, file }` pairs;
- * `provisionArgv` and `provisionCommand` agree; `floorDebtToBaseChecks` is
+ * the pack install strategies are the one install declaration; `floorDebtToBaseChecks` is
  * the one envelope projection; `activeDeferredEntries` is what both `debt`
- * and the planner read; the typescript pack declares `provision`.
+ * and the planner read.
  */
 import { describe, it, expect } from 'vitest';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
@@ -15,7 +15,6 @@ import {
 } from '../../../src/analyzers/correctness/run';
 import type { LanguageSupport } from '../../../src/languages/types';
 import { getLanguage } from '../../../src/languages';
-import { provisionArgv, provisionCommand, type PackageManager } from '../../../src/package-manager';
 import { floorDebtToBaseChecks } from '../../../src/baseline/floor-debt';
 import { activeDeferredEntries, type AllowlistFile } from '../../../src/allowlist/file';
 import { buildDebtReport } from '../../../src/debt-cli';
@@ -55,31 +54,26 @@ describe('import-resolution check carries structured unresolved pairs', () => {
   });
 });
 
-describe('provisionArgv is the one provision command', () => {
-  for (const pm of ['npm', 'pnpm', 'yarn', 'bun'] as PackageManager[]) {
-    it(`${pm}: the display command is the argv joined`, () => {
-      expect(provisionCommand(pm)).toBe(provisionArgv(pm).join(' '));
-      expect(provisionArgv(pm)[0]).toBe(pm);
-    });
-  }
-
-  // The provision IS the frozen install CI renders (one definition, 4.4.5):
+describe('the pack install strategies are the one install declaration', () => {
+  // The strategy IS the frozen install CI renders (one definition):
   // lockfile-exact where a lockfile exists, CI's own `npm install` (with its
   // legacy-peer-deps fallback) where none does, null only without a
-  // package.json. Full parity with `frozenInstallFor` is pinned in
-  // test/lanes/verify-tree.test.ts.
+  // package.json. Full parity with the rendered CI chain and the executor
+  // is pinned in test/install/parity.test.ts.
   it('the typescript pack declares the frozen install from the repo lockfile, null without a package.json', () => {
     const dir = mkdtempSync(join(tmpdir(), 'dxkit-provision-'));
+    const ts = getLanguage('typescript')!.installStrategy!;
     try {
-      expect(getLanguage('typescript')!.provision!(dir)).toBeNull();
+      expect(ts.strategy(dir)).toBeNull();
       writeFileSync(join(dir, 'package.json'), '{}');
-      expect(getLanguage('typescript')!.provision!(dir)).toMatchObject({
+      const unlocked = ts.strategy(dir)!;
+      expect(unlocked.modes.frozen.primary).toEqual({ bin: 'npm', args: ['install'] });
+      expect(unlocked.modes.frozen.fallbacks[0].command).toEqual({
         bin: 'npm',
-        args: ['install'],
-        fallback: { bin: 'npm', args: ['install', '--legacy-peer-deps'] },
+        args: ['install', '--legacy-peer-deps'],
       });
       writeFileSync(join(dir, 'pnpm-lock.yaml'), '');
-      expect(getLanguage('typescript')!.provision!(dir)).toEqual({
+      expect(ts.strategy(dir)!.modes.frozen.primary).toEqual({
         bin: 'pnpm',
         args: ['install', '--frozen-lockfile'],
       });
@@ -88,23 +82,22 @@ describe('provisionArgv is the one provision command', () => {
     }
   });
 
-  it('the interpreted packs declare their own ecosystem provision commands (never npm)', () => {
+  it('the interpreted packs declare their own ecosystem installs (never npm)', () => {
     const dir = mkdtempSync(join(tmpdir(), 'dxkit-provision-eco-'));
+    const frozen = (id: 'python' | 'ruby' | 'php') =>
+      getLanguage(id)!.installStrategy!.strategy(dir)?.modes.frozen.primary ?? null;
     try {
-      expect(getLanguage('python')!.provision!(dir)).toBeNull();
+      expect(frozen('python')).toBeNull();
       writeFileSync(join(dir, 'requirements.txt'), '');
-      expect(getLanguage('python')!.provision!(dir)).toEqual({
-        bin: 'pip',
-        args: ['install', '-r', 'requirements.txt'],
-      });
+      expect(frozen('python')).toEqual({ bin: 'pip', args: ['install', '-r', 'requirements.txt'] });
       writeFileSync(join(dir, 'poetry.lock'), '');
-      expect(getLanguage('python')!.provision!(dir)).toEqual({ bin: 'poetry', args: ['install'] });
-      expect(getLanguage('ruby')!.provision!(dir)).toBeNull();
+      expect(frozen('python')).toEqual({ bin: 'poetry', args: ['install'] });
+      expect(frozen('ruby')).toBeNull();
       writeFileSync(join(dir, 'Gemfile.lock'), '');
-      expect(getLanguage('ruby')!.provision!(dir)).toEqual({ bin: 'bundle', args: ['install'] });
-      expect(getLanguage('php')!.provision!(dir)).toBeNull();
+      expect(frozen('ruby')).toEqual({ bin: 'bundle', args: ['install'] });
+      expect(frozen('php')).toBeNull();
       writeFileSync(join(dir, 'composer.lock'), '');
-      expect(getLanguage('php')!.provision!(dir)).toEqual({ bin: 'composer', args: ['install'] });
+      expect(frozen('php')).toEqual({ bin: 'composer', args: ['install'] });
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

@@ -17,20 +17,30 @@ import { getLanguage } from '../../languages';
 import type { LanguageId } from '../../languages/types';
 import type { CommandExec } from '../tools/bounded-exec';
 import { runLockfileCheck } from './lockfile-check';
+import type { ResolvedTolerances } from '../../install/tolerances';
 import { runResolutionCheck } from './pure-checks';
 import type { CorrectnessCheckResult } from './run';
 
 const FULL_CTX = { changedFiles: [] as const, scope: 'full' as const };
 
-/** Run ONE pack's lockfile-sync check (the frozen dry-run) for `cwd`. */
+/** Run ONE pack's lockfile-sync check (the frozen dry-run) for `cwd`.
+ *  `tolerances` is the REPO-ROOT resolved set (the recipes thread their
+ *  phase context's) — `cwd` here may be a nested dependency root with no
+ *  policy of its own. */
 export function runSingleLockfileCheck(
   cwd: string,
   packId: string,
   exec: CommandExec,
+  tolerances?: ResolvedTolerances,
 ): CorrectnessCheckResult | null {
   const provider = getLanguage(packId as LanguageId)?.correctness;
   if (!provider?.lockfileCheck) return null;
-  return runLockfileCheck(packId as LanguageId, provider, { cwd, ...FULL_CTX }, exec);
+  return runLockfileCheck(
+    packId as LanguageId,
+    provider,
+    { cwd, ...FULL_CTX, ...(tolerances ? { tolerances } : {}) },
+    exec,
+  );
 }
 
 /** Run ONE pack's import-resolution check for `cwd` (pure computation). */

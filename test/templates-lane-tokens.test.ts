@@ -33,7 +33,12 @@ import {
   LANE_TOKEN_SUBSTITUTIONS,
   LANE_TOKEN_TASK_STEPS,
 } from '../src/lanes/lane-token';
-import { INSTALL_DEPS_PLACEHOLDER, renderInstallDependenciesShell } from '../src/package-manager';
+import {
+  INSTALL_DEPS_PLACEHOLDER,
+  defaultResolvedTolerances,
+  renderInstallDependenciesShell,
+} from '../src/install';
+import { installStrategyProviders, LANGUAGES } from '../src/languages';
 
 const WORKFLOWS = path.join(__dirname, '..', 'src-templates', '.github', 'workflows');
 
@@ -134,9 +139,13 @@ function renderForParse(content: string): string {
   }
   // The dependency-install block renders unconditionally too (4.4.5), so the
   // parse below sees the real multi-line shell body at the `run: |` indent.
-  out = out
-    .split(`          ${INSTALL_DEPS_PLACEHOLDER}`)
-    .join(renderInstallDependenciesShell('          '));
+  out = out.split(`          ${INSTALL_DEPS_PLACEHOLDER}`).join(
+    renderInstallDependenciesShell(
+      '          ',
+      installStrategyProviders(LANGUAGES).map((p) => p.provider),
+      defaultResolvedTolerances(),
+    ),
+  );
   // Whole-line placeholders (multi-line slots: runtime setup, fragment jobs)
   // vanish; inline placeholders become inert identifiers.
   out = out.replace(/^__DXKIT_[A-Z_]+__$/gm, '');

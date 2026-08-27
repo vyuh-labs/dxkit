@@ -21,7 +21,7 @@ import * as readline from 'readline/promises';
 import { dxkitCli } from './self-invocation';
 import { stdin, stdout } from 'process';
 import { detect } from './detect';
-import { detectPackageManager, provisionCommand } from './package-manager';
+import { nodeProvisionHint } from './languages/node-install';
 import * as logger from './logger';
 import {
   TOOL_DEFS,
@@ -162,7 +162,7 @@ function showStatus(targetPath: string): ToolStatus[] {
     const globalMissing = missing.filter((s) => s.requirement.installScope !== 'project-local');
 
     if (projectLocalMissing.length > 0) {
-      const provision = provisionCommand(detectPackageManager(targetPath));
+      const provision = nodeProvisionHint(targetPath);
       logger.dim(
         `${projectLocalMissing.length} project-local tool${projectLocalMissing.length === 1 ? '' : 's'} (${projectLocalMissing.map((s) => s.name).join(', ')}) — run \`${provision}\` in this repo to provision them from package.json devDependencies.`,
       );

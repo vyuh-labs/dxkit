@@ -6,6 +6,7 @@ import { LANGUAGES, getLanguage, detectActiveLanguages } from '../src/languages'
 import type { LanguageId, LanguageSupport } from '../src/languages';
 import { TOOL_DEFS } from '../src/analyzers/tools/tool-registry';
 import { TOOLCHAIN_DEFS } from '../src/execution';
+import { TOLERANCE_CLASSES } from '../src/languages/capabilities/install-strategy';
 import { grammarShape } from '../src/ast/grammar-shape';
 import { modelShapeForGrammar } from '../src/ast/grammar-model-shape';
 
@@ -82,6 +83,26 @@ const RECALL_VERSION_EXEMPT: Readonly<Record<string, string>> = {
  * the wrong mechanism when the ecosystem's canonical container story is a
  * base image; declaring a bogus feature would break container builds.
  */
+/**
+ * Packs that deliberately declare NO install strategy (4.4.6): dxkit cannot
+ * honestly name "install this repo's dependencies" for the ecosystem
+ * without a build target or a project-specific tool the pack does not
+ * resolve. A reason, never an omission; drop the entry when the pack gains
+ * a strategy.
+ */
+const INSTALL_STRATEGY_EXEMPT: Readonly<Record<string, string>> = {
+  go: 'go modules provision on demand (`go build` / `go test` download what go.sum records); there is no separate install step to declare, and the floor commands carry the toolchain.',
+  rust: 'cargo provisions on demand (`cargo build` / `cargo test` resolve Cargo.lock); there is no separate install step to declare.',
+  csharp:
+    'the restore is a build-target decision (`dotnet restore <solution>`), and the pack derives the target and host per repo through its correctness floor (Rule 20); a root-level install declaration would guess a solution.',
+  kotlin:
+    'Gradle/Maven resolve dependencies inside the build; the shared JVM floor (jvm-build.ts) owns the build-system dispatch, and no separate install step exists to declare.',
+  java: 'Gradle/Maven resolve dependencies inside the build; the shared JVM floor (jvm-build.ts) owns the build-system dispatch, and no separate install step exists to declare.',
+  swift:
+    'SwiftPM resolves inside `swift build` and Xcode resolves per scheme (a configured target); no root-level install command is honest without the target.',
+  abap: 'ABAP packages live in the SAP system, not a dependency root on disk; there is nothing dxkit could install.',
+};
+
 const DEVCONTAINER_FEATURE_EXEMPT: Readonly<Record<string, string>> = {
   swift:
     'no swift feature exists in ghcr.io/devcontainers or the community registry (450 features ' +
@@ -552,6 +573,101 @@ describe.each(LANGUAGES as LanguageSupport[])('language contract: $id', (lang) =
   // gates (the dpl-studio class). This block makes the declaration total,
   // well-formed, repo-intrinsic, and non-divergent from doctor's toolchain
   // probe (the cliBinaries parity — two projections of one concept, Rule 2.30).
+  // The install-strategy capability (4.4.6): a pack declares how its
+  // ecosystem provisions a dependency root and which deviations it
+  // tolerates, or carries a DECLARED exemption with a reason. Declarations
+  // are pure, total, deterministic and machine-independent (the Rule 20 /
+  // Rule 19 discipline), every fallback answers a registered tolerance
+  // class, and the file-keyed pick agrees with the variant list.
+  describe('install strategy', () => {
+    it('declares an install strategy, or a declared exemption with a reason', () => {
+      const exemption = INSTALL_STRATEGY_EXEMPT[lang.id];
+      if (lang.installStrategy) {
+        expect(
+          exemption,
+          `${lang.id} declares installStrategy AND an exemption; drop the exemption`,
+        ).toBeUndefined();
+        return;
+      }
+      expect(
+        exemption,
+        `${lang.id}: declare installStrategy, or add an INSTALL_STRATEGY_EXEMPT entry saying why not`,
+      ).toBeDefined();
+      expect(exemption!.length).toBeGreaterThan(20);
+    });
+
+    it('every variant is well-formed: a keyed selector, a frozen plan, registered tolerance classes, a valid requirement', () => {
+      if (!lang.installStrategy) return;
+      const variants = lang.installStrategy.variants();
+      expect(variants.length, `${lang.id}: at least one variant`).toBeGreaterThan(0);
+      for (const v of variants) {
+        expect(v.when.length, `${lang.id}: a variant keys on at least one file`).toBeGreaterThan(0);
+        const s = v.strategy;
+        expect(s.manager.length).toBeGreaterThan(0);
+        for (const plan of Object.values(s.modes)) {
+          expect(plan.primary.bin.length).toBeGreaterThan(0);
+          for (const fb of plan.fallbacks) {
+            expect(Object.keys(TOLERANCE_CLASSES), `${lang.id}: tolerance class`).toContain(
+              fb.when,
+            );
+            expect(fb.disclosure.length).toBeGreaterThan(0);
+            // A classifier is TOTAL and biased to false negatives: garbage and
+            // an empty output never read as the tolerated shape.
+            expect(fb.matches('')).toBe(false);
+            expect(fb.matches(' ￿ garbage')).toBe(false);
+            if (fb.viaFlags) {
+              expect(fb.command.args).toEqual([...plan.primary.args, ...fb.viaFlags]);
+            }
+          }
+        }
+        if (s.syncCheck?.kind === 'command') {
+          for (const cls of s.syncCheck.tolerates) {
+            expect(
+              s.modes.frozen.fallbacks.map((f) => f.when),
+              `${lang.id}: a sync check may only tolerate a class the frozen install falls back on`,
+            ).toContain(cls);
+          }
+        }
+        for (const t of s.execution.toolchains) {
+          expect(Object.keys(TOOLCHAIN_DEFS), `${lang.id}: toolchain '${t}'`).toContain(t);
+        }
+      }
+    });
+
+    it('strategy(dir) is the file-keyed pick over variants(): pure, total, deterministic, machine-independent', () => {
+      if (!lang.installStrategy) return;
+      const provider = lang.installStrategy;
+      const empty = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-install-contract-'));
+      try {
+        expect(
+          provider.strategy(empty),
+          `${lang.id}: nothing to install in an empty dir`,
+        ).toBeNull();
+        expect(() => provider.strategy('/nonexistent/dxkit-contract')).not.toThrow();
+        for (const v of provider.variants()) {
+          const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-install-variant-'));
+          try {
+            for (const f of v.when) fs.writeFileSync(path.join(dir, f), '');
+            // package.json accompanies every node lockfile in a real root.
+            if (!fs.existsSync(path.join(dir, 'package.json'))) {
+              fs.writeFileSync(path.join(dir, 'package.json'), '{}');
+            }
+            const picked = provider.strategy(dir);
+            expect(picked, `${lang.id}: ${v.when.join('|')} selects a strategy`).not.toBeNull();
+            expect(provider.strategy(dir)).toEqual(picked);
+            const serialized = JSON.stringify(picked);
+            expect(serialized).not.toContain(os.homedir());
+            expect(serialized).not.toContain(dir);
+          } finally {
+            fs.rmSync(dir, { recursive: true, force: true });
+          }
+        }
+      } finally {
+        fs.rmSync(empty, { recursive: true, force: true });
+      }
+    });
+  });
+
   describe('execution requirements (Rule 20)', () => {
     /** Every (capability, requirement) pair this pack declares at `cwd`. */
     function declaredRequirements(cwd: string): Array<{ capability: string; req: unknown }> {

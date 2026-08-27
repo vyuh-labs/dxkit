@@ -24,8 +24,8 @@ import {
   gatherOsvScannerDepVulnsResult,
   mergeMaliciousOsvFindings,
 } from '../analyzers/tools/osv-scanner-deps';
-import { detectLockfile, frozenInstallFor } from '../package-manager';
-import { lockfileSyncCheck } from '../package-manager-lockfile';
+import { detectLockfile } from '../package-manager';
+import { nodeInstallStrategy } from './node-install';
 import { fileExists, run, runJSON } from '../analyzers/tools/runner';
 import { walkPaths } from '../analyzers/tools/walk-paths';
 import { installedNodeMajor, readRepoFile, repoFileExists } from './version-detect';
@@ -41,7 +41,7 @@ import type {
   RunTestsOutcome,
 } from './capabilities/provider';
 import {
-  LOCKFILE_SYNC_LABEL,
+  lockfileCheckFromStrategy,
   type CorrectnessCommand,
   type CorrectnessContext,
   type CorrectnessProvider,
@@ -49,6 +49,7 @@ import {
   type ResolutionCheckResult,
 } from './capabilities/correctness';
 import type { ExecutionRequirement } from '../execution';
+import { resolveTolerances } from '../install/tolerances';
 import { projectPathIdentity } from './capabilities/correctness';
 import type {
   CoverageResult,
@@ -2226,16 +2227,16 @@ const tsCorrectnessProvider: CorrectnessProvider = {
   // No lockfile → nothing to keep in sync → null. A PM with no reliable
   // dry-run (yarn) is a disclosed skip, never a silent one.
   lockfileCheck(ctx: CorrectnessContext): LockfileCheck | null {
-    const lock = detectLockfile(ctx.cwd);
-    if (lock === null) return null;
-    const check = lockfileSyncCheck(lock.pm);
-    if (check.kind === 'skipped') return check;
-    const [bin, ...args] = check.argv;
-    return {
-      kind: 'command',
-      command: { label: LOCKFILE_SYNC_LABEL, bin, args },
-      ...(check.tolerated ? { tolerated: check.tolerated } : {}),
-    };
+    // The strategy's own sync check, tolerating exactly the failures whose
+    // fallback the repo authorizes for the frozen install: the check and the
+    // install read one declaration, so "peer conflict" cannot mean two
+    // things (`lockfileCheckFromStrategy` is the one derivation). The
+    // tolerances are the runner-threaded REPO-ROOT set (ctx.cwd is a nested
+    // dependency root in the per-root dispatch, where no policy lives);
+    // resolving at ctx.cwd is only the direct-caller fallback.
+    const strategy = nodeInstallStrategy.strategy(ctx.cwd);
+    if (strategy === null || strategy.lockfile === null) return null;
+    return lockfileCheckFromStrategy(strategy, ctx.tolerances ?? resolveTolerances(ctx.cwd));
   },
 
   syntaxCheck(ctx: CorrectnessContext): CorrectnessCommand | null {
@@ -2897,19 +2898,11 @@ export const typescript: LanguageSupport = {
     return `npm install ${name}@${version}`;
   },
 
-  provision(cwd) {
-    // The frozen install CI renders for this tree (`frozenInstallFor`, the
-    // ONE install table): the lockfile-appropriate manager with the fallback
-    // CI mirrors. Null only when there is no package.json at all. A
-    // lockfile-less repo gets CI's own `npm install` rather than nothing, so
-    // the verification and the order agree with the workflow.
-    const plan = frozenInstallFor(cwd);
-    if (plan === null) return null;
-    const [bin, ...args] = plan.argv;
-    if (!plan.fallback) return { bin, args };
-    const [fbin, ...fargs] = plan.fallback.argv;
-    return { bin, args, fallback: { bin: fbin, args: fargs, reason: plan.fallback.reason } };
-  },
+  // How a node root installs and what it tolerates: the ONE declaration the
+  // CI chain, the tree verification, the recipes' resync, the floor's
+  // lockfile-sync check and a work order's constraint all read
+  // (`./node-install.ts`).
+  installStrategy: nodeInstallStrategy,
 
   // Path conventions span both backend Node frameworks (Express,
   // Loopback, NestJS, Fastify — controllers/services/repositories)

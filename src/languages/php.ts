@@ -11,6 +11,7 @@ import { walkPaths } from '../analyzers/tools/walk-paths';
 import { UNIVERSAL_TEST_DIR_PATTERNS } from './test-dir-patterns';
 import { walkSourceFiles } from '../analyzers/tools/walk-source-files';
 import type { ExecutionRequirement } from '../execution';
+import { declareInstallStrategy } from './capabilities/install-strategy';
 import type {
   CapabilityProvider,
   DepVulnGatherOptions,
@@ -672,6 +673,27 @@ function detectPhpVersion(cwd: string): string | undefined {
 
 // ─── The pack ───────────────────────────────────────────────────────────────
 
+const phpInstallStrategy = declareInstallStrategy(
+  [
+    {
+      when: ['composer.lock'],
+      strategy: {
+        manager: 'composer',
+        lockfile: 'composer.lock',
+        modes: { frozen: { primary: { bin: 'composer', args: ['install'] }, fallbacks: [] } },
+        execution: {
+          hosts: ['any'],
+          toolchains: ['php'],
+          needsBuild: false,
+          buildTarget: 'none',
+          weight: 'cheap',
+        },
+      },
+    },
+  ],
+  { ciDependencyInstall: false },
+);
+
 export const php: LanguageSupport = {
   id: 'php',
   displayName: 'PHP',
@@ -700,11 +722,12 @@ export const php: LanguageSupport = {
     '[\'"]verify_peer[\'"][[:space:]]*=>[[:space:]]*(false|FALSE)',
   ],
 
-  provision(cwd) {
-    if (fs.existsSync(path.join(cwd, 'composer.lock')))
-      return { bin: 'composer', args: ['install'] };
-    return null;
-  },
+  // How a php root installs (Rule 6). `composer install` installs exactly
+  // composer.lock; a stale lock is a warning composer proceeds past, and
+  // rewriting it is `composer update`, a full re-resolution no recipe
+  // should run unasked, so no resync is declared. No ecosystem tolerance
+  // exists, so no fallbacks.
+  installStrategy: phpInstallStrategy,
 
   upgradeCommand(name, version) {
     return `composer require ${name}:^${version}`;

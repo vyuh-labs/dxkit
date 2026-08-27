@@ -24,10 +24,10 @@ import type { WorkOrder } from '../work-orders/types';
 import type { DepAdvisoryEvidence } from '../work-orders/types';
 import {
   nodePmAt,
+  nodeStrategyAt,
   osvBlockTier,
   owningManifestRoot,
   pickPinVersion,
-  resyncInstallFor,
   runResyncInstall,
 } from './shared';
 import type { RecipeExecuteContext, RecipeOutcome } from './types';
@@ -152,7 +152,13 @@ export async function executeOverridePin(
   const edit = writeNpmOverride(rootAbs, pkg, pin);
   if (edit.refused) return { kind: 'refused', reason: edit.refused };
 
-  const installFailure = runResyncInstall(resyncInstallFor(lock.pm), rootAbs, ctx.exec);
+  // The same lockfile presence `nodePmAt` read selects the strategy, so the
+  // resync is the declared one for the manager that owns this root.
+  const strategy = nodeStrategyAt(ctx.cwd, rootDir);
+  if (strategy === null) {
+    return { kind: 'refused', reason: 'no node install strategy applies at this root' };
+  }
+  const installFailure = runResyncInstall(strategy, rootAbs, ctx);
   if (installFailure) return installFailure;
 
   // Verify: the ONE dep-audit dispatch, then "the order's package audits

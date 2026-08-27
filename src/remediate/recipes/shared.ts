@@ -8,13 +8,18 @@
  * the OSV pre-checks.
  */
 import * as path from 'path';
-import { tail, type CommandExec, type CommandOutcome } from '../../analyzers/tools/bounded-exec';
+import { tail, type CommandOutcome } from '../../analyzers/tools/bounded-exec';
 import { classifyOsvSeverity, type OsvVuln } from '../../analyzers/tools/osv';
 import type { FindingSeverity } from '../../baseline/types';
 import { detectLockfile } from '../../package-manager';
-import { resyncInstallFor, type ResyncInstall } from '../../package-manager-lockfile';
+import { nodeInstallStrategy } from '../../languages/node-install';
+import {
+  installCommandText,
+  type InstallStrategy,
+} from '../../languages/capabilities/install-strategy';
+import { describeInfrastructure, runInstall } from '../../install/run';
 import type { WorkOrder } from '../work-orders/types';
-import type { RecipeOutcome } from './types';
+import type { RecipeExecuteContext, RecipeOutcome } from './types';
 
 /**
  * A strict npm package-name shape (name, or @scope/name): lowercase-biased
@@ -150,42 +155,48 @@ export function nodePmAt(cwd: string, rootDir: string): ReturnType<typeof detect
   return detectLockfile(path.join(cwd, rootDir));
 }
 
+/** The node install strategy that applies at `rootDir` (repo-relative;
+ *  '' = repo root), from the same file presence `nodePmAt` reads. */
+export function nodeStrategyAt(cwd: string, rootDir: string): InstallStrategy | null {
+  return nodeInstallStrategy.strategy(path.join(cwd, rootDir));
+}
+
 /**
- * Run the lock-writing install at a root, honoring the declared fallback
- * doctrine (the PM table's `fallback.matches` names the one failure shape
- * the fallback answers, never a blanket retry). Returns null on success, or
- * a `failed` outcome naming the step. Infrastructure (missing binary,
+ * Run a strategy's lock-writing RESYNC at a root through the ONE install
+ * executor (the declared fallback ladder under the repo's authorized
+ * tolerances, never a blanket retry). Returns null on success, or a
+ * `failed` outcome naming the step. Infrastructure (missing binary,
  * timeout, capture overflow) is a failure of THIS recipe run, named; the
- * order simply stays open for the agent tier.
+ * order simply stays open for the agent tier. A strategy with no resync
+ * mode is a named failure too: the recipe cannot rewrite what the
+ * ecosystem gives it no command for.
  */
 export function runResyncInstall(
-  plan: ResyncInstall,
+  strategy: InstallStrategy,
   rootAbs: string,
-  exec: CommandExec,
+  ctx: Pick<RecipeExecuteContext, 'exec' | 'tolerances'>,
 ): Extract<RecipeOutcome, { kind: 'failed' }> | null {
-  const attempt = (argv: readonly string[]) => {
-    const [bin, ...args] = argv;
-    return exec({ bin, args }, rootAbs);
-  };
-  const primary = attempt(plan.argv);
-  const primaryFailure = execStepFailure('install', plan.argv.join(' '), primary);
-  if (primaryFailure === null) return null;
-  if (primary.available && !primary.timedOut && !primary.overflowed && plan.fallback) {
-    // The declared fallback runs ONLY on the failure shape it answers
-    // (`fallback.matches`, from the one PM table), never as a blanket retry.
-    if (plan.fallback.matches(primary.output)) {
-      const fb = attempt(plan.fallback.argv);
-      if (execStepFailure('install', plan.fallback.argv.join(' '), fb) === null) return null;
+  const plan = strategy.modes.resync;
+  if (plan === undefined) {
+    return {
+      kind: 'failed',
+      step: 'install',
+      output: `the ${strategy.manager} install strategy declares no lock-writing resync`,
+    };
+  }
+  const r = runInstall(plan, rootAbs, ctx.exec, ctx.tolerances, {
+    execution: strategy.execution,
+  });
+  switch (r.status) {
+    case 'ok':
+      return null;
+    case 'infrastructure':
+      return { kind: 'failed', step: 'install', output: describeInfrastructure(r) };
+    case 'failed':
       return {
         kind: 'failed',
         step: 'install',
-        output: tail(
-          `${primary.output}\n--- fallback (${plan.fallback.argv.join(' ')}) ---\n${fb.output}`,
-        ),
+        output: tail(`${installCommandText(r.command)}: ${r.output || 'non-zero exit'}`),
       };
-    }
   }
-  return primaryFailure;
 }
-
-export { resyncInstallFor };

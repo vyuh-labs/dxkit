@@ -211,7 +211,7 @@ describe('lockfile-sync floor check (typescript pack, npm)', () => {
     try {
       const lock = floorOn(dir, 0, '').checks.find((c) => c.label === LOCKFILE_SYNC_LABEL)!;
       expect(lock.status).toBe('skipped-unavailable');
-      expect(lock.output).toContain('immutable');
+      expect(lock.output).toContain('frozen yarn install');
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

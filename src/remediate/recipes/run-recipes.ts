@@ -25,6 +25,7 @@
  * the playbook test injects a synthetic recipe, the Rule 6 discipline).
  */
 import { makeCommandExec, tail, type CommandExec } from '../../analyzers/tools/bounded-exec';
+import { resolveTolerances, type ResolvedTolerances } from '../../install/tolerances';
 import { gatherDepVulnsWithAvailability } from '../../analyzers/security/gather';
 import { queryOsvPackage, type OsvPackageQuery, type OsvVuln } from '../../analyzers/tools/osv';
 import type { AnalysisTrustContext } from '../../analysis-trust';
@@ -110,6 +111,8 @@ export interface RunRecipeOrdersDeps {
   readonly trust: AnalysisTrustContext;
   readonly git: RecipeGit;
   readonly exec: CommandExec;
+  /** Injected for tests; defaults to the repo-root resolution. */
+  readonly tolerances?: ResolvedTolerances;
   readonly registry?: readonly RecipeDeclaration[];
   readonly queryOsv?: OsvPackageQuery;
   readonly auditDepVulns?: (cwd: string) => Promise<readonly DepVulnFinding[] | null>;
@@ -199,6 +202,8 @@ export async function runRecipeOrders(
   const registry = deps.registry ?? RECIPE_REGISTRY;
   const queryOsv = cachedOsvQuery(deps.queryOsv ?? queryOsvPackage);
   const blockSeverities = deps.blockSeverities ?? effectiveBlockSeverities(deps.cwd);
+  // The repo-root tolerance set, resolved ONCE for the whole phase.
+  const tolerances = deps.tolerances ?? resolveTolerances(deps.cwd);
   const records: RecipeOrderRecord[] = [];
   const recordAll = (
     group: readonly WorkOrder[],
@@ -277,6 +282,7 @@ export async function runRecipeOrders(
         cwd: deps.cwd,
         trust: deps.trust,
         exec: deps.exec,
+        tolerances,
         queryOsv,
         blockSeverities,
         auditDepVulns: deps.auditDepVulns ?? defaultAudit,

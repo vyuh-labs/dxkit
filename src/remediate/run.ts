@@ -413,7 +413,7 @@ export async function runRemediateTask(opts: RemediateRunOptions): Promise<Remed
     task: task.id,
     ...recipesDisclosure,
     envelope,
-    ...verificationDisclosures(verified, guardrail),
+    ...verificationDisclosures(verified, guardrail, opts.cwd),
     baseHead,
     head,
     ...evidenceTail,

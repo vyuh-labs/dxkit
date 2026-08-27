@@ -22,6 +22,8 @@ import { EXTERNAL_SNAPSHOT_STALE_DAYS, snapshotAgeDays } from './ingest/engine-f
 import { diagnoseFlow, type FlowDiagnosis } from './analyzers/flow/diagnose';
 import { gatherRecommendations, type CommandRecommendation } from './discovery/commands';
 import { trustedLocalContext } from './analysis-trust';
+import { npmrcDeclaresLegacyPeerDeps } from './languages/node-install';
+import { resolveTolerances, toleranceWarnings } from './install/tolerances';
 import {
   makeGhApiProbe,
   probeDeliveryPreconditions,
@@ -420,28 +422,6 @@ function readToolsStatus(cwd: string): { found: false } | { found: true; failed:
     return { found: true, failed };
   } catch {
     return { found: true, failed: [] };
-  }
-}
-
-/**
- * Detect whether the package.json install would hit a peer-dep ERESOLVE
- * that requires `legacy-peer-deps=true` in `.npmrc`. We don't run
- * `npm install --dry-run` here (too slow, hits the network). Instead we
- * read the persistence sentinel: if `.npmrc` already has the entry,
- * we're good. If it's missing AND the host has a package.json (i.e.
- * Node project), flag it as "potentially needed" — informational only.
- *
- * The fix command is idempotent so spuriously suggesting it on a
- * package without peer-dep conflicts is harmless.
- */
-function npmrcHasLegacyPeerDeps(cwd: string): boolean {
-  const npmrcPath = path.join(cwd, '.npmrc');
-  if (!fs.existsSync(npmrcPath)) return false;
-  try {
-    const lines = fs.readFileSync(npmrcPath, 'utf-8').split('\n');
-    return lines.some((l) => l.trim() === 'legacy-peer-deps=true');
-  } catch {
-    return false;
   }
 }
 
@@ -950,12 +930,16 @@ function runOperationalChecks(cwd: string, hasManifest: boolean): CheckResult[] 
   // it's NEEDED without a dry-run install.
   const isNodeProject = fs.existsSync(path.join(cwd, 'package.json'));
   if (isNodeProject) {
-    const hasEntry = npmrcHasLegacyPeerDeps(cwd);
-    // Only emit the check if the entry is missing — saves clutter on
-    // the common case where the customer doesn't have peer-dep
-    // conflicts. (Idempotent fix means a false-positive flag is
-    // harmless if the customer follows it.)
-    if (!hasEntry) {
+    // The ONE probe + the ONE resolver (Rule 2): doctor reads the same
+    // tolerance resolution every install consumer does, so it never
+    // recommends persisting a tolerance the repo's policy has withdrawn.
+    const tolerances = resolveTolerances(cwd);
+    const hasEntry = npmrcDeclaresLegacyPeerDeps(cwd);
+    // Only emit the check if the entry is missing AND the repo tolerates
+    // peer conflicts — saves clutter on the common case, and stays silent
+    // where dependencies.tolerate explicitly opted out. (Idempotent fix
+    // means a false-positive flag is harmless if the customer follows it.)
+    if (!hasEntry && tolerances.tolerated.has('peer-conflict')) {
       checks.push({
         label: '.npmrc legacy-peer-deps persistence',
         ok: false,
@@ -966,6 +950,18 @@ function runOperationalChecks(cwd: string, hasManifest: boolean): CheckResult[] 
           command: 'echo "legacy-peer-deps=true" >> .npmrc',
           skill: 'dxkit-fix',
         },
+      });
+    }
+    // Tolerance-resolution warnings (an unknown dependencies.tolerate entry,
+    // a policy opt-out conflicting with observed .npmrc config): the doctor
+    // half of the resolver's disclosure homes.
+    for (const warning of toleranceWarnings(tolerances)) {
+      checks.push({
+        label: 'install tolerances (dependencies.tolerate)',
+        ok: false,
+        advisory: true,
+        tier: 'operational',
+        fix: { hint: warning, skill: 'dxkit-config' },
       });
     }
   }

@@ -10,6 +10,7 @@ import type {
 } from './types';
 import type { CorrectnessProvider } from './capabilities/correctness';
 import type { LintGateProvider } from './capabilities/lint-gate';
+import type { InstallStrategy, InstallStrategyProvider } from './capabilities/install-strategy';
 import type { CapabilityRequirement } from '../execution';
 import { UNIVERSAL_TEST_DIR_PATTERNS } from './test-dir-patterns';
 import { csharp } from './csharp';
@@ -902,6 +903,38 @@ export function collectExecutionRequirements(
         requirement: lang.deepSast.execution(cwd),
       });
     }
+  }
+  return out;
+}
+
+/**
+ * Active packs that declare an install strategy (Rule 6): the providers the
+ * CI shell renderer chains and the tree verification iterates. A pack
+ * without one simply does not appear (its exemption is declared in the
+ * contract test, never silent here).
+ */
+export function installStrategyProviders(
+  packs: readonly LanguageSupport[],
+): { id: LanguageId; provider: InstallStrategyProvider }[] {
+  return packs
+    .filter((p) => p.installStrategy !== undefined)
+    .map((p) => ({ id: p.id, provider: p.installStrategy as InstallStrategyProvider }));
+}
+
+/**
+ * The strategies that APPLY at a dependency root: every declaring pack whose
+ * `strategy(dir)` finds something to install there, in registry order. The
+ * ONE resolution every installer (verification, recipes, work orders, the
+ * hint text) reads, so no consumer picks a manager on its own.
+ */
+export function activeInstallStrategies(
+  packs: readonly LanguageSupport[],
+  dir: string,
+): { id: LanguageId; strategy: InstallStrategy }[] {
+  const out: { id: LanguageId; strategy: InstallStrategy }[] = [];
+  for (const { id, provider } of installStrategyProviders(packs)) {
+    const strategy = provider.strategy(dir);
+    if (strategy !== null) out.push({ id, strategy });
   }
   return out;
 }
