@@ -9,6 +9,7 @@ import type {
 import type { CoverageResult, ImportsResult, TestFrameworkResult } from './capabilities/types';
 import type { CorrectnessProvider } from './capabilities/correctness';
 import type { LintGateProvider } from './capabilities/lint-gate';
+import type { InstallStrategyProvider } from './capabilities/install-strategy';
 
 // `LanguageId` lives in `src/types.ts` (where `DetectedStack.languages`
 // references it) to avoid circular imports. Re-exported here for
@@ -218,19 +219,7 @@ import type { FileRouteSupport, HttpFlowSupport, ModelSchemaSupport } from '@vyu
 
 export type { FileRouteSupport, HttpFlowSupport, ModelSchemaSupport };
 
-/** A pack's declared install of its dependency tree (see
- *  `LanguageSupport.provision`): the primary argv as `bin` + `args`, and the
- *  fallback CI runs when the primary fails (`a || b`), with the reason the
- *  fallback exists so a verification that took it can say why. */
-export interface ProvisionCommand {
-  readonly bin: string;
-  readonly args: readonly string[];
-  readonly fallback?: {
-    readonly bin: string;
-    readonly args: readonly string[];
-    readonly reason: string;
-  };
-}
+export type { InstallStrategyProvider } from './capabilities/install-strategy';
 
 /**
  * Everything dxkit needs to know about a language lives in one implementation
@@ -436,18 +425,17 @@ export interface LanguageSupport {
   upgradeCommand?(name: string, version: string): string | null;
 
   /**
-   * OPTIONAL: the command that (re)provisions this ecosystem's dependency
-   * tree from its manifest + lockfile in `cwd` (`npm ci`, `pnpm install
-   * --frozen-lockfile`), with the fallback CI runs when the primary fails.
-   * The ONE definition of "install this repo": the remediation frame hands
-   * it to a work order (the agent never installs itself) AND the tree
-   * verification (`lanes/verify-tree.ts`) runs it on the clean worktree, so
-   * the install a PR is verified with is the install its order was given.
-   * Returns null when the pack cannot name one for this repo; a consumer
-   * then discloses "no install command" rather than guessing another
-   * ecosystem's tool.
+   * OPTIONAL: how this ecosystem provisions a dependency root and which
+   * deviations it tolerates (`capabilities/install-strategy.ts`), the ONE
+   * definition of "install this repo": the CI templates render their
+   * install chain from it, the tree verification (`lanes/verify-tree.ts`)
+   * runs its frozen mode on the clean worktree, the recipe tier runs its
+   * resync mode, the floor runs its lockfile-sync check, and a work order
+   * is handed its primary command. A pack whose ecosystem dxkit cannot
+   * install for the user carries a declared exemption in
+   * `test/languages-contract.test.ts`, never a silent omission.
    */
-  provision?(cwd: string): ProvisionCommand | null;
+  readonly installStrategy?: InstallStrategyProvider;
 
   /**
    * Per-stack architectural vocabulary + path conventions. Drives the

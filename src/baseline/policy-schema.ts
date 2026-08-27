@@ -20,6 +20,7 @@
  */
 import { POLICY_GUIDE_URL, paramMetaFor } from './policy-metadata';
 import { knownTaskIds } from '../remediate/tasks';
+import { policyTolerances } from '../languages/capabilities/install-strategy';
 
 type Schema = Record<string, unknown>;
 
@@ -284,6 +285,16 @@ export function buildPolicySchema(version: string): Schema {
           schedule: stringProp('depBump.schedule'),
         },
         'Scheduled deterministic dependency-bump PRs.',
+      ),
+      dependencies: obj(
+        {
+          tolerate: {
+            type: 'array',
+            items: { type: 'string', enum: [...policyTolerances()] },
+            description: desc('dependencies.tolerate'),
+          },
+        },
+        'How this repo installs its dependency tree: the deviations its own install tolerates.',
       ),
       expiryNotice: obj(
         {

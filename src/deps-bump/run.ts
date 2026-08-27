@@ -37,11 +37,12 @@ import {
 import { detectActiveLanguages } from '../languages';
 import {
   detectPackageManager,
-  isPeerConflictOnly,
   upgradeArgv,
   type DependencySection,
   type PackageManager,
 } from '../package-manager';
+import { NODE_STRATEGY_BY_PM } from '../languages/node-install';
+import { resolveTolerances } from '../install/tolerances';
 import { buildBumpPlan, type BumpPlan, type PlannedBump } from './plan';
 import { renderFloorVerification, renderGuardrailVerdict } from '../lanes/verification-render';
 import { appendLaneEvent, LANE_LEDGER_SCHEMA_VERSION } from '../lanes/ledger';
@@ -307,19 +308,21 @@ export async function runDepsBump(opts: DepsBumpOptions): Promise<DepsBumpResult
   // blocks (the loop Stop-gate's entry-snapshot doctrine, same comparator).
   const entryFloor = runFloor();
 
+  // The bump composes its own lock-writing primary (an upgrade argv), so it
+  // applies the PM's declared resync doctrine through `viaFlags`: the same
+  // fallback classes, classifiers and authorization the frozen install, the
+  // recipes and the floor read, never a second "peer conflict" definition.
+  const tolerances = resolveTolerances(cwd);
+  const composable = (NODE_STRATEGY_BY_PM[pm].modes.resync?.fallbacks ?? []).filter(
+    (f) => f.viaFlags !== undefined && tolerances.tolerated.has(f.when),
+  );
   const applied: AppliedBump[] = [];
   for (const bump of plan.bumps) {
     const argv = upgradeArgv(pm, bump.parent, bump.toVersion, sectionFor(cwd, bump.parent));
     let r = execBump(argv);
-    // A repo whose tree only resolves under --legacy-peer-deps (a peer
-    // conflict its own install already tolerates) must not fail the bump —
-    // the same fallback doctrine as every shipped `npm ci || npm ci
-    // --legacy-peer-deps` install step: the flag only skips the peer check
-    // that rejects the tree, it never fabricates a different resolution. The
-    // classifier is the one in package-manager.ts, shared with the lockfile-
-    // sync floor check, so "peer conflict" means the same thing everywhere.
-    if (!r.ok && pm === 'npm' && isPeerConflictOnly(r.output)) {
-      r = execBump([...argv, '--legacy-peer-deps']);
+    if (!r.ok) {
+      const fallback = composable.find((f) => f.matches(r.output));
+      if (fallback) r = execBump([...argv, ...(fallback.viaFlags ?? [])]);
     }
     applied.push({
       ...bump,

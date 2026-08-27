@@ -8,7 +8,12 @@
  */
 import type { CorrectnessFloorResult } from '../analyzers/correctness/run';
 import type { GuardrailGateResult } from '../lanes/verify';
-import { verifyTree, type VerifyTreeResult, type VerifyTreeStep } from '../lanes/verify-tree';
+import {
+  describeInstall,
+  verifyTree,
+  type VerifyTreeResult,
+  type VerifyTreeStep,
+} from '../lanes/verify-tree';
 import type { RemediatePhase, RemediateRunOptions } from './outcome';
 
 const PHASE_OF: Partial<Record<VerifyTreeStep, RemediatePhase>> = {
@@ -140,11 +145,20 @@ export function guardrailRedNote(
  *  usual cause, and the install output as evidence. */
 export function installFailedNote(verified: VerifyTreeResult): string {
   const failed = verified.install?.status === 'failed' ? verified.install : undefined;
+  const cause =
+    failed?.classification === 'lockfile-drift'
+      ? 'the lockfile does not record the manifest (a manifest or lockfile edited without ' +
+        're-running the install)'
+      : failed?.unauthorizedRemedy
+        ? failed.unauthorizedRemedy
+        : 'the usual cause is a manifest edited without re-running the install so the lockfile ' +
+          'records it';
   return (
     "a clean checkout of the agent's commits cannot be installed the way CI installs it " +
-    `(\`${failed ? failed.argv.join(' ') : 'frozen install'}\` failed) — nothing lands. CI would ` +
-    'have died before any gate ran, so the draft would read "NOT gated"; the usual cause is a ' +
-    'manifest edited without re-running the install so the lockfile records it.' +
+    `(\`${failed ? failed.argv.join(' ') : 'frozen install'}\` failed` +
+    `${failed ? `, ${failed.classification}` : ''}) — nothing lands. CI would ` +
+    `have died before any gate ran, so the draft would read "NOT gated"; ${cause}.` +
+    (failed ? `\n\n${describeInstall(failed)}` : '') +
     (failed ? `\n\nInstall output:\n\`\`\`\n${failed.output}\n\`\`\`` : '')
   );
 }

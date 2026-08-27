@@ -200,7 +200,43 @@ export type LockfileCheck =
     }
   | { readonly kind: 'skipped'; readonly reason: string };
 
+/**
+ * The ONE derivation of a pack's lockfile-sync check from its install
+ * strategy: the strategy's declared sync check, tolerating exactly the
+ * failure classes whose FROZEN fallback the repo authorizes (the same
+ * classifier the install executor gates on, so the check and the install
+ * cannot disagree on what a tolerated failure looks like). Null when the
+ * ecosystem has no sync concept; a disclosed skip passes through.
+ */
+export function lockfileCheckFromStrategy(
+  strategy: InstallStrategy,
+  tolerances: ResolvedTolerances,
+): LockfileCheck | null {
+  const check = strategy.syncCheck;
+  if (check === undefined) return null;
+  if (check.kind === 'skipped') return check;
+  const fallbacks = strategy.modes.frozen.fallbacks.filter(
+    (f) => check.tolerates.includes(f.when) && tolerances.tolerated.has(f.when),
+  );
+  return {
+    kind: 'command',
+    command: { label: LOCKFILE_SYNC_LABEL, bin: check.command.bin, args: check.command.args },
+    ...(fallbacks.length > 0
+      ? {
+          tolerated: {
+            matches: (output: string) => fallbacks.some((f) => f.matches(output)),
+            disclosure: fallbacks
+              .map((f) => `${f.when} only: ${f.disclosure}; CI's install fallback covers it`)
+              .join('; '),
+          },
+        }
+      : {}),
+  };
+}
+
 import type { ExecutionRequirement } from '../../execution';
+import type { InstallStrategy } from './install-strategy';
+import type { ResolvedTolerances } from '../../install/tolerances';
 
 /**
  * A pack's correctness-floor provider. Both methods are pure command builders —
