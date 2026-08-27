@@ -8,12 +8,15 @@
  * writer substitutes this block.
  *
  * A declared fallback renders as `primary || fallback` when its tolerance
- * class is authorized for the repo the workflow is written for. Shell
- * cannot evaluate a classifier, so the retry is unconditional there; that
- * is OUTCOME-equivalent because every declared fallback only relaxes the
- * one check its class names and can never succeed where the primary failed
- * for another reason. The in-process executor gates on the classifier so
- * its ledger names the primary on an unrelated failure.
+ * class is authorized for the repo the workflow is written for; a fallback
+ * carrying a `shellGuard` renders as `primary || { guard && fallback; }`.
+ * Shell cannot evaluate a classifier, so the retry is otherwise
+ * unconditional; that is OUTCOME-equivalent because a declared fallback
+ * only relaxes the one check its class names and can never succeed where
+ * the primary failed for another reason (the guard exists exactly where a
+ * manager variant breaks that property: yarn classic silently ignoring
+ * berry's flag). The in-process executor gates on the classifier so its
+ * ledger names the primary on an unrelated failure.
  */
 import {
   installCommandText,
@@ -38,16 +41,19 @@ export function ciInstallVariants(
   return providers.filter((p) => p.ciDependencyInstall).flatMap((p) => p.variants());
 }
 
-/** The `primary || fallback` line for one variant under the repo's
- *  tolerances (the shell projection of the executor's ladder). */
+/** The `primary || fallback...` line for one variant under the repo's
+ *  tolerances (the shell projection of the executor's ladder). EVERY
+ *  authorized fallback is chained, in declared order, so the shell is never
+ *  a lossy first-fallback projection of the ladder. */
 export function renderInstallLine(v: InstallVariant, tolerances: ResolvedTolerances): string {
   const frozen = v.strategy.modes.frozen;
-  const fallback = frozen.fallbacks.find((f) => tolerances.tolerated.has(f.when));
-  // yarn classic rejects `--immutable` with a noisy error before the
-  // fallback runs; silence a primary whose fallback answers a flag spelling.
-  const quiet = fallback?.when === 'unsupported-flag' ? ' 2>/dev/null' : '';
-  const primary = installCommandText(frozen.primary) + quiet;
-  return fallback ? `${primary} || ${installCommandText(fallback.command)}` : primary;
+  const fallbacks = frozen.fallbacks.filter((f) => tolerances.tolerated.has(f.when));
+  const segments = fallbacks.map((f) =>
+    f.shellGuard
+      ? `{ ${f.shellGuard} && ${installCommandText(f.command)}; }`
+      : installCommandText(f.command),
+  );
+  return [installCommandText(frozen.primary), ...segments].join(' || ');
 }
 
 /**

@@ -4,6 +4,7 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import {
   classifyInstallFailure,
+  composePlan,
   describeInfrastructure,
   describeUnauthorizedFallback,
   runInstall,
@@ -12,6 +13,7 @@ import {
   defaultResolvedTolerances,
   describeTolerances,
   resolveTolerances,
+  toleranceWarnings,
   type ResolvedTolerances,
 } from '../../src/install/tolerances';
 import {
@@ -52,7 +54,12 @@ const PLAN: InstallPlan = {
 };
 
 const ALL: ResolvedTolerances = defaultResolvedTolerances();
-const NONE: ResolvedTolerances = { tolerated: new Set(), sources: new Map(), unknown: [] };
+const NONE: ResolvedTolerances = {
+  tolerated: new Set(),
+  sources: new Map(),
+  unknown: [],
+  conflicts: [],
+};
 
 function scripted(script: (argv: readonly string[]) => Partial<ReturnType<CommandExec>>): {
   exec: CommandExec;
@@ -133,15 +140,92 @@ describe('runInstall', () => {
     }
   });
 
-  it('both fail: reported against the fallback, both outputs kept', () => {
+  it('both fail with the SAME class: reported against the fallback, both outputs kept, no history field', () => {
     const { exec } = scripted(() => ({ code: 1, output: 'PEER still' }));
     const r = runInstall(PLAN, '/repo', exec, ALL);
     expect(r.status).toBe('failed');
     if (r.status === 'failed') {
       expect(r.command.args).toContain('--tolerate-peers');
+      expect(r.classification).toBe('peer-conflict');
+      expect(r.primaryClassification).toBeUndefined();
       expect(r.output).toContain('--- fallback');
       expect(r.attempts).toHaveLength(2);
     }
+  });
+
+  // Item-3 class: the fallback ran and failed DIFFERENTLY (the peer conflict
+  // it answered gave way to another break). The result classifies the FINAL
+  // failing output — attribution compares what actually stopped the install
+  // — and keeps the primary's class as disclosed history.
+  it('a fallback that fails with a DIFFERENT class re-classifies the final output and keeps the primary class as history', () => {
+    const { exec } = scripted((argv) =>
+      argv.includes('--tolerate-peers')
+        ? { code: 1, output: 'DRIFT after retry' }
+        : { code: 1, output: 'PEER' },
+    );
+    const r = runInstall(PLAN, '/repo', exec, ALL);
+    expect(r.status).toBe('failed');
+    if (r.status === 'failed') {
+      expect(r.command.args).toContain('--tolerate-peers');
+      expect(r.classification).toBe('lockfile-drift');
+      expect(r.primaryClassification).toBe('peer-conflict');
+    }
+  });
+
+  // Rule 20 fold-in: the strategy's declared execution requirement gates the
+  // spawn — an unmet environment is infrastructure decided BEFORE anything
+  // runs, never an install verdict.
+  it('an unmet execution requirement is environment infrastructure, decided before any spawn', () => {
+    const { exec, argvs } = scripted(() => ({}));
+    const r = runInstall(PLAN, '/repo', exec, ALL, {
+      execution: {
+        hosts: ['windows'],
+        toolchains: [],
+        needsBuild: false,
+        buildTarget: 'none',
+        weight: 'cheap',
+      },
+      env: { host: 'linux', hasToolchain: () => true },
+    });
+    expect(argvs).toEqual([]);
+    expect(r.status).toBe('infrastructure');
+    if (r.status === 'infrastructure') {
+      expect(r.reason).toBe('environment');
+      expect(describeInfrastructure(r)).toContain('cannot run in this environment');
+    }
+    // Met requirement: the plan executes normally.
+    const met = runInstall(PLAN, '/repo', exec, ALL, {
+      execution: {
+        hosts: ['any'],
+        toolchains: [],
+        needsBuild: false,
+        buildTarget: 'none',
+        weight: 'cheap',
+      },
+      env: { host: 'linux', hasToolchain: () => true },
+    });
+    expect(met.status).toBe('ok');
+  });
+
+  // Item-10: composePlan re-bases the COMPOSABLE fallbacks (viaFlags) onto a
+  // caller-built primary, so the dep-bump lane inherits the one ladder.
+  it('composePlan: composable fallbacks re-base onto the custom primary; non-composable ones drop', () => {
+    const custom = { bin: 'pm', args: ['add', 'pkg@1.2.3'] };
+    const composed = composePlan(PLAN, custom);
+    expect(composed.primary).toEqual(custom);
+    expect(composed.fallbacks).toHaveLength(1);
+    expect(composed.fallbacks[0].when).toBe('peer-conflict');
+    expect(composed.fallbacks[0].command).toEqual({
+      bin: 'pm',
+      args: ['add', 'pkg@1.2.3', '--tolerate-peers'],
+    });
+    expect(composed.classifyFailure).toBe(PLAN.classifyFailure);
+    const { exec, argvs } = scripted((argv) =>
+      argv.includes('--tolerate-peers') ? {} : { code: 1, output: 'PEER' },
+    );
+    const r = runInstall(composed, '/repo', exec, ALL);
+    expect(argvs).toEqual(['pm add pkg@1.2.3', 'pm add pkg@1.2.3 --tolerate-peers']);
+    expect(r.status === 'ok' && r.fallback?.when).toBe('peer-conflict');
   });
 
   it('infrastructure on the primary or the fallback is its own outcome, never a failure verdict', () => {
@@ -249,15 +333,58 @@ describe('resolveTolerances', () => {
     }
   });
 
-  it('an observed .npmrc legacy-peer-deps=true authorizes peer-conflict even when policy withdrew it (repo-config source)', () => {
+  it('an observed .npmrc legacy-peer-deps=true authorizes peer-conflict when policy says NOTHING (repo-config source)', () => {
     const dir = repo({
-      '.npmrc': 'registry=https://registry.npmjs.org/\nlegacy-peer-deps=true\n',
-      '.dxkit/policy.json': JSON.stringify({ dependencies: { tolerate: [] } }),
+      '.npmrc': 'registry=https://registry.npmjs.org/\nlegacy-peer-deps = true\n',
     });
     try {
       const t = resolveTolerances(dir);
       expect(t.tolerated.has('peer-conflict')).toBe(true);
       expect(t.sources.get('peer-conflict')).toBe('repo-config');
+      expect(t.conflicts).toEqual([]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // Item-8 precedence: an EXPLICIT policy opt-out is a decision the observed
+  // config cannot silently override; the disagreement is disclosed.
+  it('an explicit tolerate: [] beats an observed .npmrc declaration, with the conflict disclosed', () => {
+    const dir = repo({
+      '.npmrc': 'legacy-peer-deps=true\n',
+      '.dxkit/policy.json': JSON.stringify({ dependencies: { tolerate: [] } }),
+    });
+    try {
+      const t = resolveTolerances(dir);
+      expect(t.tolerated.has('peer-conflict')).toBe(false);
+      expect(t.conflicts).toHaveLength(1);
+      expect(t.conflicts[0]).toContain('.npmrc legacy-peer-deps=true');
+      expect(t.conflicts[0]).toContain('policy opt-out stands');
+      expect(toleranceWarnings(t)).toEqual(t.conflicts);
+      expect(describeTolerances(t)).toContain('policy opt-out stands');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // Item-9: the accepted set IS the schema enum's list (policyTolerances):
+  // an intrinsic class in policy is not a policy decision and is disclosed.
+  it('an intrinsic class named in policy reads as a non-settable entry, disclosed through toleranceWarnings', () => {
+    const dir = repo({
+      '.dxkit/policy.json': JSON.stringify({
+        dependencies: { tolerate: ['peer-conflict', 'unsupported-flag'] },
+      }),
+    });
+    try {
+      const t = resolveTolerances(dir);
+      expect(t.tolerated.has('peer-conflict')).toBe(true);
+      // Intrinsic classes still apply — they are just not POLICY entries.
+      expect(t.tolerated.has('unsupported-flag')).toBe(true);
+      expect(t.unknown).toEqual(['unsupported-flag']);
+      const warnings = toleranceWarnings(t);
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0]).toContain('not a policy-settable');
+      expect(warnings[0]).toContain('settable: peer-conflict');
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

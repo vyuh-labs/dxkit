@@ -3137,11 +3137,13 @@ export async function run(argv: string[]): Promise<void> {
       // extra wrinkle when a release-age policy pinned dxkit — see the skill.
       if (opts.removeDevDependency && result.reverted.includes('package.json')) {
         const { detectPackageManager } = await import('./package-manager');
-        const { nodeProvisionHint } = await import('./languages/node-install');
+        const { nodeResyncHint } = await import('./languages/node-install');
         const pm = detectPackageManager(targetPath);
         logger.info('');
+        // The lock-WRITING resync form: the frozen install would refuse the
+        // just-edited package.json instead of recording the removal.
         logger.info(
-          `package.json changed — run \`${nodeProvisionHint(targetPath)}\` to prune @vyuhlabs/dxkit from your lockfile.`,
+          `package.json changed — run \`${nodeResyncHint(targetPath)}\` to prune @vyuhlabs/dxkit from your lockfile.`,
         );
         if (pm === 'pnpm') {
           logger.dim(

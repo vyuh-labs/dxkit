@@ -121,19 +121,32 @@ export type InstallOutcome =
       /** The last command that ran (the primary, or the fallback that also failed). */
       readonly argv: readonly string[];
       readonly output: string;
-      /** The pack's classification of the failure (`peer-conflict`,
-       *  `lockfile-drift`, `unclassified`, ...). */
+      /** The pack's classification of the FINAL failing output
+       *  (`peer-conflict`, `lockfile-drift`, `unclassified`, ...). */
       readonly classification: InstallFailureClass;
+      /** The PRIMARY's classification, when a fallback ran and failed with
+       *  a different class (both disclosed). */
+      readonly primaryClassification?: InstallFailureClass;
       /** Present when a declared fallback would have answered the failure
        *  but the repo does not authorize its class: the remedy, named. */
       readonly unauthorizedRemedy?: string;
-      /** The base probe, once it ran, and the attribution it decided:
-       *  `pre-existing` when the base fails with the IDENTICAL
-       *  classification (the break predates the candidate; disclosed,
-       *  never blamed, verification proceeds without the floor, see
-       *  `FloorSkip`); `net-new` otherwise. */
+      /** The base probe, once it ran, and the attribution it decided.
+       *
+       *  The equality rule, for NAMED classes: the classifiers are
+       *  shape-specific (`peer-conflict` = the peer check rejected a
+       *  recorded tree; `lockfile-drift` = the lockfile does not record the
+       *  manifest), so the same named class on both sides is the same
+       *  break: `pre-existing`, disclosed, never blamed, and verification
+       *  proceeds without the floor (see `FloorSkip`). DIFFERENT named
+       *  classes mean the change altered how the install fails — the base's
+       *  break did not survive into the candidate, so the candidate's
+       *  failure is `net-new` with both classes disclosed. `unclassified`
+       *  names NO shape, so two unclassified failures cannot be verified
+       *  identical: `undetermined` — treated like pre-existing operationally
+       *  (a base that cannot install is not the change's fault either way;
+       *  the guardrail still arbitrates) but never ASSERTED pre-existing. */
       readonly base?: BaseInstallProbe;
-      readonly attribution?: 'net-new' | 'pre-existing';
+      readonly attribution?: 'net-new' | 'pre-existing' | 'undetermined';
     }
   /** No active pack declares an install for this tree (a pack without an
    *  install strategy, or a repo with nothing to provision from): nothing
@@ -213,6 +226,11 @@ export interface VerifyTreeOptions {
    *  `attributeFloorFailures`); the remediate lane, whose entry floor always
    *  ran, passes `'net-new'`. */
   readonly absentMeans: 'net-new' | 'unattributed';
+  /** The repo's install tolerances, resolved ONCE (at the lane's checkout
+   *  root) and applied to BOTH the candidate and the base install, so the
+   *  two sides of the attribution probe can never run under different
+   *  authorizations. Default: `resolveTolerances(opts.cwd)`. */
+  readonly tolerances?: ResolvedTolerances;
   /** Per-command budget for the install + floor commands (ms). */
   readonly timeoutMs?: number;
   /** Progress hook, called as each step begins (the lane's heartbeat). */
@@ -258,7 +276,12 @@ export function runDeclaredInstall(
   const steps: InstallStep[] = [];
   for (const { id, strategy } of strategies) {
     const plan = strategy.modes.frozen;
-    const r = runInstall(plan, worktreePath, exec, tolerances);
+    // The strategy's Rule 20 requirement gates the spawn: an environment
+    // that cannot run this install is infrastructure (a disclosed error
+    // step), never an install verdict.
+    const r = runInstall(plan, worktreePath, exec, tolerances, {
+      execution: strategy.execution,
+    });
     const argvOf = (c: { bin: string; args: readonly string[] }) => [c.bin, ...c.args];
     switch (r.status) {
       case 'infrastructure':
@@ -286,6 +309,9 @@ export function runDeclaredInstall(
           argv: argvOf(r.command),
           output: r.output,
           classification: r.classification,
+          ...(r.primaryClassification !== undefined
+            ? { primaryClassification: r.primaryClassification }
+            : {}),
           ...(remedy !== null ? { unauthorizedRemedy: remedy } : {}),
         };
       }
@@ -325,8 +351,13 @@ export async function verifyTree(opts: VerifyTreeOptions): Promise<VerifyTreeRes
   }
   const seams = opts.seams ?? {};
   const exec = makeCommandExec(opts.timeoutMs);
+  // Resolved ONCE, at the lane's checkout root (where the committed policy
+  // and .npmrc live), for both sides of the attribution probe.
+  const tolerances = opts.tolerances ?? resolveTolerances(opts.cwd);
   const worktree = seams.worktree ?? withRefWorktree;
-  const install = seams.install ?? ((wt: string) => runDeclaredInstall(wt, exec));
+  const install =
+    seams.install ??
+    ((wt: string) => runDeclaredInstall(wt, exec, detectActiveLanguages(wt), tolerances));
   const changed = seams.changedFiles ?? computeChangedFiles;
   const runFloor =
     seams.runFloor ??
@@ -379,10 +410,19 @@ export async function verifyTree(opts: VerifyTreeOptions): Promise<VerifyTreeRes
           install(bwt),
         );
         const base = probeOf(baseOutcome);
-        const preExisting =
+        // See `InstallOutcome.attribution` for the equality rule: identical
+        // NAMED classes = pre-existing; both unclassified = undetermined
+        // (never verified identical, never blamed); anything else = net-new.
+        const sameClass =
           base.status === 'failed' && base.classification === installed.classification;
-        installed = { ...installed, base, attribution: preExisting ? 'pre-existing' : 'net-new' };
-        if (preExisting) {
+        const attribution =
+          sameClass && installed.classification === 'unclassified'
+            ? 'undetermined'
+            : sameClass
+              ? 'pre-existing'
+              : 'net-new';
+        installed = { ...installed, base, attribution };
+        if (attribution !== 'net-new') {
           // Neither tree can be provisioned, so neither side of the floor
           // can be observed: a run here would report the MISSING TOOLCHAIN
           // ("tsc: not found", exit 127) as failures the entry floor never

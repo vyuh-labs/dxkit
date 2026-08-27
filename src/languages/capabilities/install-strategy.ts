@@ -130,6 +130,16 @@ export interface InstallFallback {
   readonly matches: (output: string) => boolean;
   readonly disclosure: string;
   readonly viaFlags?: readonly string[];
+  /**
+   * A shell condition that must hold before the RENDERED chain may retry
+   * with this fallback (`primary || { guard && fallback; }`). Required
+   * whenever the blanket shell retry would not be outcome-equivalent to the
+   * classifier-gated executor: the worked example is yarn, where classic
+   * silently ignores berry's `--immutable` and would run a lock-WRITING
+   * install if the chain retried unguarded. The in-process executor never
+   * reads this; its classifier is the gate.
+   */
+  readonly shellGuard?: string;
 }
 
 /** One mode's ladder: the primary, then the declared fallbacks in order. */

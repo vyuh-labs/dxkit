@@ -707,7 +707,7 @@ describe('recipe playbook — synthetic pack', () => {
           packs,
           tolerated
             ? defaultResolvedTolerances()
-            : { tolerated: new Set(), sources: new Map(), unknown: [] },
+            : { tolerated: new Set(), sources: new Map(), unknown: [], conflicts: [] },
         );
         return { argvs, r };
       };

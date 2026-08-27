@@ -55,7 +55,7 @@ export async function executeLockfileSync(
   // Verify with the pack's own frozen dry-run, the exact check that minted
   // the order. Only a real PASS confirms; a skip (yarn's declared no-dry-run,
   // a missing binary) means the recipe cannot claim the fix and says so.
-  const verify = runSingleLockfileCheck(rootAbs, pack, ctx.exec);
+  const verify = runSingleLockfileCheck(rootAbs, pack, ctx.exec, ctx.tolerances);
   if (verify === null) {
     return {
       kind: 'refused',

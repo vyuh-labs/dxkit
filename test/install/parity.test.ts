@@ -35,14 +35,24 @@ import { NODE_STRATEGY_BY_PM } from '../../src/languages/node-install';
 const TS = getLanguage('typescript')!;
 const PROVIDERS = installStrategyProviders(LANGUAGES).map((p) => p.provider);
 const DEFAULTS = defaultResolvedTolerances();
-const NONE: ResolvedTolerances = { tolerated: new Set(), sources: new Map(), unknown: [] };
+const NONE: ResolvedTolerances = {
+  tolerated: new Set(),
+  sources: new Map(),
+  unknown: [],
+  conflicts: [],
+};
 
 const text = installCommandText;
 
-/** The shell projection of a plan under `t`: what `a || b` would execute
- *  when `a` fails (the shell cannot classify, so `b` is unconditional). */
+/** The shell projection of a plan under `t`: what the rendered chain would
+ *  execute when the previous segment fails. A `{ guard && cmd; }` segment
+ *  unwraps to its command — the guard is the shell's stand-in for the
+ *  classifier where a manager variant would otherwise mis-accept the
+ *  fallback (yarn classic silently accepting berry's flag). */
 function shellSequence(v: InstallVariant, t: ResolvedTolerances): string[] {
-  return renderInstallLine(v, t).replace(' 2>/dev/null', '').split(' || ');
+  return renderInstallLine(v, t)
+    .split(' || ')
+    .map((seg) => seg.replace(/^\{ .* && /, '').replace(/; \}$/, ''));
 }
 
 /** What the executor runs when the primary fails with `output`. */
@@ -112,7 +122,9 @@ describe('template == executor == verifier, per variant', () => {
       // authorization (a withdrawn class renders no `|| b` AND runs no `b`).
       it(`${label}: the ${fb.when} fallback fires identically in the shell and the executor`, () => {
         const shape =
-          fb.when === 'peer-conflict' ? 'npm ERR! code ERESOLVE' : 'error: unknown option';
+          fb.when === 'peer-conflict'
+            ? 'npm ERR! code ERESOLVE'
+            : 'Unknown Syntax Error: Unsupported option name ("--frozen-lockfile").';
         expect(fb.matches(shape)).toBe(true);
         expect(shellSequence(v, DEFAULTS)).toEqual(executorSequence(s, shape, DEFAULTS));
         expect(shellSequence(v, DEFAULTS)).toEqual([
@@ -146,7 +158,10 @@ describe('template == executor == verifier, per variant', () => {
                   : { available: true, code: 0, output: '' },
             }).checks.find((c) => c.label === LOCKFILE_SYNC_LABEL)!;
           for (const fb of s.modes.frozen.fallbacks) {
-            const shape = fb.when === 'peer-conflict' ? 'npm ERR! code ERESOLVE' : 'unknown option';
+            const shape =
+              fb.when === 'peer-conflict'
+                ? 'npm ERR! code ERESOLVE'
+                : 'Unknown Syntax Error: Unsupported option name.';
             const check = floorOn(shape);
             const executorRetried = executorSequence(s, shape, DEFAULTS).length === 2;
             expect(check.status === 'pass', `${label}: tolerated iff the executor retries`).toBe(
@@ -167,10 +182,12 @@ describe('template == executor == verifier, per variant', () => {
     }
   }
 
-  it('every declared fallback of every registered pack is outcome-equivalent under a blanket shell retry (relaxes one check only)', () => {
-    // The shell retries unconditionally; that is sound only while every
-    // fallback is "the primary with one check relaxed" (viaFlags, or a flag
-    // respelling for an older manager) and never a different command.
+  it('every declared fallback is a one-check relaxation of its primary, or carries a shell guard (blanket-retry soundness)', () => {
+    // The shell retries on ANY primary failure; that is sound only while a
+    // fallback either relaxes exactly one check of the SAME command
+    // (viaFlags) or carries a shellGuard confining the retry to the manager
+    // variant the classifier identifies (yarn: classic would silently
+    // accept berry's flag UN-frozen, so the retry is berry-gated).
     for (const p of PROVIDERS) {
       for (const v of p.variants()) {
         for (const mode of Object.values(v.strategy.modes)) {
@@ -182,10 +199,19 @@ describe('template == executor == verifier, per variant', () => {
             expect(fb.command.args[0], `${v.strategy.manager}: fallback keeps the verb`).toBe(
               primary.args[0],
             );
+            expect(
+              fb.viaFlags !== undefined || fb.shellGuard !== undefined,
+              `${v.strategy.manager}: a respelled fallback needs a shellGuard`,
+            ).toBe(true);
           }
         }
       }
     }
+    // And the yarn guard renders into the chain (the executor never reads
+    // it; its classifier is the gate — pinned above).
+    const yarn = TS.installStrategy!.variants().find((v) => v.when.includes('yarn.lock'))!;
+    expect(renderInstallLine(yarn, DEFAULTS)).toContain('|| { yarn --version');
+    expect(renderInstallLine(yarn, DEFAULTS)).toContain('&& yarn install --immutable; }');
   });
 
   it('the per-PM table and the file-keyed variants are one declaration', () => {

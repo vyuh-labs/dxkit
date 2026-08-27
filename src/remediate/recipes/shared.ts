@@ -18,7 +18,6 @@ import {
   type InstallStrategy,
 } from '../../languages/capabilities/install-strategy';
 import { describeInfrastructure, runInstall } from '../../install/run';
-import { resolveTolerances } from '../../install/tolerances';
 import type { WorkOrder } from '../work-orders/types';
 import type { RecipeExecuteContext, RecipeOutcome } from './types';
 
@@ -175,7 +174,7 @@ export function nodeStrategyAt(cwd: string, rootDir: string): InstallStrategy | 
 export function runResyncInstall(
   strategy: InstallStrategy,
   rootAbs: string,
-  ctx: Pick<RecipeExecuteContext, 'cwd' | 'exec'>,
+  ctx: Pick<RecipeExecuteContext, 'exec' | 'tolerances'>,
 ): Extract<RecipeOutcome, { kind: 'failed' }> | null {
   const plan = strategy.modes.resync;
   if (plan === undefined) {
@@ -185,7 +184,9 @@ export function runResyncInstall(
       output: `the ${strategy.manager} install strategy declares no lock-writing resync`,
     };
   }
-  const r = runInstall(plan, rootAbs, ctx.exec, resolveTolerances(ctx.cwd));
+  const r = runInstall(plan, rootAbs, ctx.exec, ctx.tolerances, {
+    execution: strategy.execution,
+  });
   switch (r.status) {
     case 'ok':
       return null;

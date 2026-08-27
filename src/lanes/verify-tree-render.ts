@@ -22,6 +22,12 @@ export function describeInstall(install: InstallOutcome | undefined): string | n
     case 'failed': {
       const cmd = `\`${install.argv.join(' ')}\``;
       const remedy = install.unauthorizedRemedy ? ` ${install.unauthorizedRemedy}.` : '';
+      // The FINAL failing class leads; when a fallback ran and failed with a
+      // different class than the primary, both are disclosed.
+      const classes =
+        install.primaryClassification !== undefined
+          ? `${install.classification}; the primary failed as ${install.primaryClassification}`
+          : install.classification;
       if (install.attribution === 'pre-existing') {
         return (
           `Install: ${cmd} fails on a clean checkout of the BASE too (${install.classification} ` +
@@ -30,9 +36,19 @@ export function describeInstall(install: InstallOutcome | undefined): string | n
           remedy
         );
       }
+      if (install.attribution === 'undetermined') {
+        return (
+          `Install: ${cmd} fails on a clean checkout, and the BASE's install fails too, but ` +
+          'neither failure has a shape the pack classifiers recognize, so dxkit cannot verify ' +
+          'they are the same break: UNDETERMINED, disclosed (never asserted pre-existing, ' +
+          'never blamed on the change). Verification proceeds without the floor; repair the ' +
+          "default branch's install to restore attribution." +
+          remedy
+        );
+      }
       const evidence = describeBaseProbe(install.base);
       return (
-        `Install: ${cmd} FAILED on a clean checkout (${install.classification}; CI cannot ` +
+        `Install: ${cmd} FAILED on a clean checkout (${classes}; CI cannot ` +
         `install this tree).${evidence ? ` ${evidence}.` : ''}${remedy}`
       );
     }

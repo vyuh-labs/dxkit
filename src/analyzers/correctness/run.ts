@@ -23,6 +23,7 @@ import {
 import type { LanguageId, LanguageSupport } from '../../languages/types';
 import type { CorrectnessScope } from '../../languages/capabilities/correctness';
 import { runLockfileCheckAcrossRoots } from './lockfile-check';
+import { resolveTolerances, type ResolvedTolerances } from '../../install/tolerances';
 import { parseFailuresSafely, runResolutionCheck, runStructureCheck } from './pure-checks';
 export { IMPORT_RESOLUTION_LABEL, UNRESOLVED_REMEDY } from './pure-checks';
 import {
@@ -159,6 +160,10 @@ export interface CorrectnessFloorOptions {
   readonly exec?: CommandExec;
   /** Injected for tests; defaults to the real local host + toolchain probes. */
   readonly env?: ExecutionEnvironment;
+  /** The repo's install tolerances, resolved ONCE at the repo root (default:
+   *  `resolveTolerances(opts.cwd)`); threaded into every pack context so a
+   *  nested-root lockfile check still honors the ROOT policy. */
+  readonly tolerances?: ResolvedTolerances;
 }
 
 /**
@@ -191,7 +196,12 @@ export function runCorrectnessFloor(opts: CorrectnessFloorOptions): CorrectnessF
         files: dependencyManifestFilesIn(changedFiles, opts.packs),
       } as const)
     : undefined;
-  const ctx = { cwd: opts.cwd, changedFiles, scope };
+  // Resolved ONCE at the repo root and THREADED (Rule 2.30): the per-root
+  // lockfile dispatch rewrites ctx.cwd to nested dependency roots, where no
+  // policy file lives, so a per-cwd re-resolution would silently drop the
+  // root's dependencies.tolerate answer.
+  const tolerances = opts.tolerances ?? resolveTolerances(opts.cwd);
+  const ctx = { cwd: opts.cwd, changedFiles, scope, tolerances };
   const checks: CorrectnessCheckResult[] = [];
 
   for (const { id, provider } of activeCorrectnessProviders(opts.packs)) {

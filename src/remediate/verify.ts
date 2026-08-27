@@ -14,6 +14,7 @@ import {
   type VerifyTreeResult,
   type VerifyTreeStep,
 } from '../lanes/verify-tree';
+import { resolveTolerances, toleranceWarnings } from '../install/tolerances';
 import type { RemediatePhase, RemediateRunOptions } from './outcome';
 
 const PHASE_OF: Partial<Record<VerifyTreeStep, RemediatePhase>> = {
@@ -36,6 +37,10 @@ export async function verifyCommittedHead(
     head: args.head,
     baseHead: args.baseHead,
     trust: opts.trust,
+    // Resolved ONCE at the lane's checkout root; the same set reaches the
+    // ledger's warnings below, so what gated and what is disclosed cannot
+    // diverge.
+    tolerances: resolveTolerances(opts.cwd),
     entryFloor: args.entryFloor,
     // The entry floor always ran: an absent base check is a check the
     // agent's change introduced, net-new (conservative).
@@ -90,19 +95,26 @@ function guardrailShapeFor(verified: VerifyTreeResult): GuardrailGateResult {
 export function verificationDisclosures(
   verified: VerifyTreeResult,
   guardrail: GuardrailGateResult,
+  cwd?: string,
 ): {
   floor?: VerifyTreeResult['floor'];
   floorAttribution?: VerifyTreeResult['floorAttribution'];
   floorSkipped?: VerifyTreeResult['floorSkipped'];
   install?: VerifyTreeResult['install'];
+  installToleranceWarnings?: readonly string[];
   changedFiles?: VerifyTreeResult['changedFiles'];
   guardrailVerdict: string;
 } {
+  // The tolerance-resolution warnings (unknown policy entries, a policy
+  // opt-out conflicting with observed repo config): the disclosure home the
+  // resolver promises. Same resolution the verification ran under.
+  const warnings = cwd !== undefined ? toleranceWarnings(resolveTolerances(cwd)) : [];
   return {
     ...(verified.floor ? { floor: verified.floor } : {}),
     ...(verified.floorAttribution ? { floorAttribution: verified.floorAttribution } : {}),
     ...(verified.floorSkipped ? { floorSkipped: verified.floorSkipped } : {}),
     ...(verified.install ? { install: verified.install } : {}),
+    ...(warnings.length > 0 ? { installToleranceWarnings: warnings } : {}),
     ...(verified.changedFiles ? { changedFiles: verified.changedFiles } : {}),
     guardrailVerdict: guardrail.verdict,
   };

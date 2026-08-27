@@ -20,6 +20,15 @@
  *     decides how to disclose it (the bounded-exec fail-open doctrine).
  */
 import { tail, type CommandExec, type CommandOutcome } from '../analyzers/tools/bounded-exec';
+// exec-requirement-ok: the executor is a declared Rule 20 consumer — it gates
+// every install spawn on the strategy's execution requirement.
+import {
+  currentEnvironment,
+  describeUnmetRequirement,
+  unmetRequirement,
+  type ExecutionEnvironment,
+  type ExecutionRequirement,
+} from '../execution';
 import {
   installCommandText,
   type InstallCommand,
@@ -59,10 +68,16 @@ export type InstallRunResult =
       /** The last command that ran (the primary, or the fallback that also failed). */
       readonly command: InstallCommand;
       readonly output: string;
-      /** The class of the PRIMARY's failure per the pack's classifiers. A
-       *  class whose fallback was NOT authorized is still named, so the
-       *  disclosure can say "a peer conflict the repo does not tolerate". */
+      /** The class of the FINAL failing output per the pack's classifiers
+       *  (when a fallback ran and also failed, the fallback's own failure is
+       *  re-classified — the two runs can fail differently, and attribution
+       *  compares what actually stopped the install). A class whose fallback
+       *  was NOT authorized is still named, so the disclosure can say "a
+       *  peer conflict the repo does not tolerate". */
       readonly classification: InstallFailureClass;
+      /** The PRIMARY's classification, kept as history when a fallback ran
+       *  and failed with a different class (both disclosed). */
+      readonly primaryClassification?: InstallFailureClass;
       /** The declared fallback that would have answered this failure but is
        *  not authorized for the repo, when that is the case. */
       readonly unauthorized?: InstallFallback;
@@ -71,7 +86,9 @@ export type InstallRunResult =
   | {
       readonly status: 'infrastructure';
       readonly command: InstallCommand;
-      readonly reason: 'unavailable' | 'timed-out' | 'overflowed';
+      /** `environment`: the strategy's declared execution requirement is
+       *  unmet here (Rule 20) — decided BEFORE any spawn. */
+      readonly reason: 'unavailable' | 'timed-out' | 'overflowed' | 'environment';
       readonly output: string;
       readonly attempts: readonly InstallAttempt[];
     };
@@ -103,20 +120,42 @@ export function classifyInstallFailure(
   return { classification: plan.classifyFailure?.(output) ?? 'unclassified', fallback: null };
 }
 
+/** Optional executor gates: the strategy's Rule 20 execution requirement
+ *  (checked against `env` — the real host by default — BEFORE any spawn),
+ *  injected for tests. */
+export interface RunInstallOptions {
+  readonly execution?: ExecutionRequirement;
+  readonly env?: ExecutionEnvironment;
+}
+
 /**
- * Run one plan at `cwd`. The primary first; on a real (ran-to-completion)
- * failure, the ONE declared fallback whose class the repo tolerates and
- * whose classifier recognizes the output; on a fallback failure, the
- * fallback's own output is the evidence (with the primary's kept in
- * `attempts`).
+ * Run one plan at `cwd`. The declared execution requirement first (an unmet
+ * environment is infrastructure, decided before any spawn); then the
+ * primary; on a real (ran-to-completion) failure, the ONE declared fallback
+ * whose class the repo tolerates and whose classifier recognizes the
+ * output; on a fallback failure, the fallback's own output is re-classified
+ * and is the evidence (with the primary's attempt and classification kept).
  */
 export function runInstall(
   plan: InstallPlan,
   cwd: string,
   exec: CommandExec,
   tolerances: ResolvedTolerances,
+  opts?: RunInstallOptions,
 ): InstallRunResult {
   const attempts: InstallAttempt[] = [];
+  if (opts?.execution) {
+    const unmet = unmetRequirement(opts.execution, opts.env ?? currentEnvironment());
+    if (unmet) {
+      return {
+        status: 'infrastructure',
+        command: plan.primary,
+        reason: 'environment',
+        output: describeUnmetRequirement(unmet),
+        attempts,
+      };
+    }
+  }
   const run = (command: InstallCommand): CommandOutcome => {
     const r = exec({ bin: command.bin, args: command.args }, cwd);
     attempts.push({ command, code: r.code, output: r.output });
@@ -159,14 +198,40 @@ export function runInstall(
       attempts,
     };
   }
+  // The fallback ran and ALSO failed: classify what actually stopped the
+  // install (the two runs can fail differently — e.g. the peer conflict the
+  // fallback answered gives way to a registry error), keep the primary's
+  // class as history, and disclose both when they differ.
+  const final = classifyInstallFailure(plan, second.output).classification;
   return {
     status: 'failed',
     command: fallback.command,
     output: tail(
       `${primary.output}\n--- fallback (${installCommandText(fallback.command)}) ---\n${second.output}`,
     ),
-    classification,
+    classification: final,
+    ...(final !== classification ? { primaryClassification: classification } : {}),
     attempts,
+  };
+}
+
+/**
+ * Re-base a plan's COMPOSABLE fallbacks (those declaring `viaFlags`) onto a
+ * caller-built primary — the one helper for a consumer that composes its own
+ * lock-writing argv (the dep-bump lane's `<pm> add pkg@ver`) yet must apply
+ * the SAME declared fallback doctrine, classifiers and disclosures, never a
+ * re-implemented ladder.
+ */
+export function composePlan(base: InstallPlan, primary: InstallCommand): InstallPlan {
+  return {
+    primary,
+    fallbacks: base.fallbacks
+      .filter((f) => f.viaFlags !== undefined)
+      .map((f) => ({
+        ...f,
+        command: { bin: primary.bin, args: [...primary.args, ...(f.viaFlags ?? [])] },
+      })),
+    ...(base.classifyFailure ? { classifyFailure: base.classifyFailure } : {}),
   };
 }
 
@@ -184,6 +249,8 @@ export function describeInfrastructure(
       return `\`${what}\` timed out: infrastructure, not a verdict on the tree`;
     case 'overflowed':
       return `\`${what}\` overflowed the capture buffer: infrastructure, not a verdict on the tree`;
+    case 'environment':
+      return `\`${what}\` cannot run in this environment: ${r.output}`;
   }
 }
 

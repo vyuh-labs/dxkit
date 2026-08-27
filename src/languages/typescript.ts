@@ -2230,10 +2230,13 @@ const tsCorrectnessProvider: CorrectnessProvider = {
     // The strategy's own sync check, tolerating exactly the failures whose
     // fallback the repo authorizes for the frozen install: the check and the
     // install read one declaration, so "peer conflict" cannot mean two
-    // things (`lockfileCheckFromStrategy` is the one derivation).
+    // things (`lockfileCheckFromStrategy` is the one derivation). The
+    // tolerances are the runner-threaded REPO-ROOT set (ctx.cwd is a nested
+    // dependency root in the per-root dispatch, where no policy lives);
+    // resolving at ctx.cwd is only the direct-caller fallback.
     const strategy = nodeInstallStrategy.strategy(ctx.cwd);
     if (strategy === null || strategy.lockfile === null) return null;
-    return lockfileCheckFromStrategy(strategy, resolveTolerances(ctx.cwd));
+    return lockfileCheckFromStrategy(strategy, ctx.tolerances ?? resolveTolerances(ctx.cwd));
   },
 
   syntaxCheck(ctx: CorrectnessContext): CorrectnessCommand | null {

@@ -9,6 +9,7 @@ import * as os from 'os';
 import * as path from 'path';
 import type { CommandOutcome, RunnableCommand } from '../../../src/analyzers/tools/bounded-exec';
 import { newAdvisoryBlockSeverities } from '../../../src/baseline/policy-sections';
+import { defaultResolvedTolerances } from '../../../src/install/tolerances';
 import { trustedLocalContext } from '../../../src/analysis-trust';
 import type { DepVulnFinding } from '../../../src/languages/capabilities/types';
 import type { RecipeExecuteContext } from '../../../src/remediate/recipes/types';
@@ -59,6 +60,7 @@ export function makeCtx(
   return {
     cwd,
     trust: trustedLocalContext(),
+    tolerances: defaultResolvedTolerances(),
     queryOsv: async () => [],
     // The default policy tier through the ONE normalizer (crit + high).
     blockSeverities: newAdvisoryBlockSeverities({}),

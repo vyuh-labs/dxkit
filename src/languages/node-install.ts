@@ -13,20 +13,36 @@
  *   - `npm ci` installs the LOCKFILE's tree; `--legacy-peer-deps` only skips
  *     the peer check that rejects it, never fabricating a different
  *     resolution (falling back to a re-resolving `npm install` would).
- *   - yarn classic (v1) rejects berry's `--immutable` / `--no-immutable`
- *     with commander's "unknown option"; the fallbacks spell the same
- *     install the classic way. A berry immutable failure ("the lockfile
- *     would have been modified") is a REAL failure and never matches.
+ *   - yarn's frozen primary is the CLASSIC spelling (`--frozen-lockfile`):
+ *     classic (v1) honors it, while it silently IGNORES berry's
+ *     `--immutable` (verified on 1.22.22: exit 0, lockfile rewritten), so
+ *     an `--immutable` primary would not be frozen at all on classic and
+ *     its fallback could never fire (classic emits no rejection). Berry 2
+ *     still accepts `--frozen-lockfile` as a deprecated alias; berry 3+
+ *     rejects it LOUDLY (clipanion's "Unsupported option name"), and THAT
+ *     rejection routes to the `--immutable` fallback. A berry immutable
+ *     failure ("the lockfile would have been modified") is a REAL failure
+ *     and never matches the fallback classifier.
  *   - The CI-default trap: pnpm and yarn berry flip to frozen whenever CI is
  *     set, exactly where the scheduled lanes run, so the resync commands
- *     carry the explicit mutable flag.
+ *     carry the explicit mutable flag. Classic ignores `--no-immutable`
+ *     (unknown flags are ignored) and plain-installs, which is already
+ *     lock-writing, so the one resync primary holds on both yarns.
  *   - Lockfile-sync checks: npm's `ci --dry-run` validates sync (EUSAGE)
  *     before building the tree; bun's frozen dry-run refuses a lockfile that
  *     would change; pnpm and yarn have no non-writing check that holds
  *     across versions, so both are DISCLOSED skips with CI's frozen install
  *     as the backstop.
  */
-import { addDevPrefix, LOCKFILES, upgradeArgv, type PackageManager } from '../package-manager';
+import { existsSync, readFileSync } from 'fs';
+import { join } from 'path';
+import {
+  addDevPrefix,
+  detectPackageManager,
+  LOCKFILES,
+  upgradeArgv,
+  type PackageManager,
+} from '../package-manager';
 import {
   installCommandText,
   strategyFromVariants,
@@ -56,9 +72,15 @@ export function isLockfileDrift(output: string): boolean {
   return /EUSAGE|not in sync|Missing: .* from lock file|does not satisfy/.test(output);
 }
 
-/** yarn classic (v1) rejecting a berry-only flag. */
-export function isYarnClassicFlagRejection(output: string): boolean {
-  return /unknown (option|flag)|not a valid option|invalid option|--no-immutable/i.test(output);
+/**
+ * yarn berry (3+) rejecting the classic `--frozen-lockfile` spelling:
+ * clipanion's "Unknown Syntax Error: Unsupported option name". Deliberately
+ * narrow: berry's REAL immutable failure (YN0028 "the lockfile would have
+ * been modified") must never match, and classic never emits a rejection at
+ * all (it ignores unknown flags).
+ */
+export function isYarnBerryFlagRejection(output: string): boolean {
+  return /unsupported option name|unknown syntax error|unsupported option/i.test(output);
 }
 
 /** The failure label the executor reports for npm's lockfile drift. */
@@ -110,36 +132,37 @@ const YARN: InstallStrategy = {
   manager: 'yarn',
   lockfile: 'yarn.lock',
   modes: {
+    // Classic-safe primary: classic honors --frozen-lockfile and silently
+    // IGNORES --immutable (so --immutable-first would not be frozen there);
+    // berry 3+ rejects the classic flag loudly, which is exactly the shape
+    // the --immutable fallback answers. Berry 2 accepts it as a deprecated
+    // alias and never needs the fallback.
     frozen: {
-      primary: { bin: 'yarn', args: ['install', '--immutable'] },
+      primary: { bin: 'yarn', args: ['install', '--frozen-lockfile'] },
       fallbacks: [
         {
-          command: { bin: 'yarn', args: ['install', '--frozen-lockfile'] },
+          command: { bin: 'yarn', args: ['install', '--immutable'] },
           when: 'unsupported-flag',
-          matches: isYarnClassicFlagRejection,
-          disclosure: 'yarn classic (v1) spells the immutable install --frozen-lockfile',
+          matches: isYarnBerryFlagRejection,
+          disclosure: 'yarn berry (3+) spells the frozen install --immutable',
+          // The blanket shell retry needs a guard here: yarn CLASSIC would
+          // silently ignore --immutable and run a lock-WRITING install, so
+          // an unguarded `a || b` would un-freeze the chain exactly where
+          // the primary failed for a real reason. Berry-only, by version.
+          shellGuard: 'yarn --version 2>/dev/null | grep -qv "^1\\."',
         },
       ],
     },
-    resync: {
-      primary: { bin: 'yarn', args: ['install', '--no-immutable'] },
-      fallbacks: [
-        {
-          command: { bin: 'yarn', args: ['install'] },
-          when: 'unsupported-flag',
-          matches: isYarnClassicFlagRejection,
-          disclosure:
-            'yarn classic (v1) does not know --no-immutable; its plain install already ' +
-            'writes the lockfile',
-        },
-      ],
-    },
+    // One primary for both yarns: berry honors --no-immutable (the
+    // CI-default trap needs the explicit mutable flag); classic ignores the
+    // unknown flag and plain-installs, which already writes the lockfile.
+    resync: { primary: { bin: 'yarn', args: ['install', '--no-immutable'] }, fallbacks: [] },
   },
   syncCheck: {
     kind: 'skipped',
     reason:
       'yarn has no non-installing frozen-lockfile check that holds across classic and ' +
-      "berry; CI's `yarn install --immutable` is the backstop",
+      "berry; CI's frozen yarn install is the backstop",
   },
   execution: NODE_EXECUTION,
 };
@@ -234,12 +257,57 @@ export const nodeInstallStrategy: InstallStrategyProvider = {
   ciDependencyInstall: true,
 };
 
-/** The frozen install a human is pointed at for the node root at `cwd`
- *  (the "run this to provision project-local tools" hint): the strategy's
- *  frozen primary, or npm's lockfile-less install when no root is there. */
+/**
+ * The frozen install a human is pointed at for the node root at `cwd` (the
+ * "run this to provision project-local tools" hint): the strategy's frozen
+ * primary where a lockfile decides. When none does, the corepack
+ * `packageManager` field still names the repo's manager, through the ONE
+ * detector (`detectPackageManager`), so a lockfile-less pnpm repo is told
+ * `pnpm install`, never a fabricating `npm install`.
+ */
 export function nodeProvisionHint(cwd: string): string {
-  const strategy = nodeInstallStrategy.strategy(cwd) ?? NPM_UNLOCKED;
-  return installCommandText(strategy.modes.frozen.primary);
+  const strategy = nodeInstallStrategy.strategy(cwd);
+  if (strategy !== null && strategy.lockfile !== null) {
+    return installCommandText(strategy.modes.frozen.primary);
+  }
+  const pm = detectPackageManager(cwd);
+  return pm === 'npm' ? 'npm install' : `${pm} install`;
+}
+
+/** The lock-WRITING install a human is pointed at after a manifest edit
+ *  (the uninstall prune hint): the resync primary, which re-resolves and
+ *  records the edit; the frozen primary would refuse the just-edited
+ *  manifest. Same manager resolution as `nodeProvisionHint`. */
+export function nodeResyncHint(cwd: string): string {
+  const strategy = nodeInstallStrategy.strategy(cwd);
+  if (strategy !== null && strategy.lockfile !== null && strategy.modes.resync) {
+    return installCommandText(strategy.modes.resync.primary);
+  }
+  const pm = detectPackageManager(cwd);
+  return installCommandText(NODE_STRATEGY_BY_PM[pm].modes.resync!.primary);
+}
+
+/**
+ * Does the repo's `.npmrc` declare `legacy-peer-deps=true` (the repo itself
+ * opting npm into the peer-conflict tolerance)? The ONE probe (doctor and
+ * the tolerance resolver both read it — Rule 2), ini-tolerant: npm accepts
+ * spaces around `=` and inline whitespace.
+ */
+export function npmrcDeclaresLegacyPeerDeps(cwd: string): boolean {
+  const npmrc = join(cwd, '.npmrc');
+  if (!existsSync(npmrc)) return false;
+  try {
+    return readFileSync(npmrc, 'utf8')
+      .split('\n')
+      .some((line) => {
+        const [key, ...rest] = line.split('=');
+        return (
+          key !== undefined && key.trim() === 'legacy-peer-deps' && rest.join('=').trim() === 'true'
+        );
+      });
+  } catch {
+    return false;
+  }
 }
 
 /**

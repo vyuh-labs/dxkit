@@ -24,6 +24,7 @@
  */
 import type { AnalysisTrustContext } from '../../analysis-trust';
 import type { CommandExec } from '../../analyzers/tools/bounded-exec';
+import type { ResolvedTolerances } from '../../install/tolerances';
 import type { FindingSeverity } from '../../baseline/types';
 import type { DepVulnFinding } from '../../languages/capabilities/types';
 import type { OsvPackageQuery } from '../../analyzers/tools/osv';
@@ -72,6 +73,11 @@ export interface RecipeExecuteContext {
   /** The ONE bounded spawn primitive: every install / linter / registry
    *  probe a recipe runs goes through this. */
   readonly exec: CommandExec;
+  /** The repo's install tolerances, resolved ONCE at the repo root by the
+   *  phase runner and threaded to every consumer (the resync ladder, the
+   *  frozen dry-run verify) — a nested dependency root has no policy of its
+   *  own, so a per-root re-resolution would drop the root's answer. */
+  readonly tolerances: ResolvedTolerances;
   /** OSV query-by-package (the $0 pre-check). Defaults to the real client
    *  wrapped in a per-run cache; injected in tests. `null` results are
    *  DISCLOSED, never read as clean. */

@@ -152,6 +152,9 @@ export interface RemediateResult {
   /** How the declared install of the candidate went on a CLEAN checkout
    *  (4.4.5): the ledger says what CI's install step will do. */
   readonly install?: InstallOutcome;
+  /** Tolerance-resolution disclosures (unknown dependencies.tolerate
+   *  entries, policy-vs-observed conflicts), rendered as ledger warnings. */
+  readonly installToleranceWarnings?: readonly string[];
   /** Which files the candidate changed vs the base (the floor's diff scope). */
   readonly changedFiles?: readonly string[];
   readonly guardrailVerdict?: string;

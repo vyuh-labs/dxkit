@@ -15,6 +15,7 @@
  * (`src/analyzers/correctness/`) executes them; it never hardcodes a per-language
  * command (Rule 6).
  */
+import type { ResolvedTolerances } from '../../install/tolerances';
 
 /** The scope the floor is running at — a fast surface (hook / Stop-gate) runs
  *  the affected subset; CI runs the full suite. Packs whose ecosystem has no
@@ -28,6 +29,15 @@ export interface CorrectnessContext {
    *  `full` rather than skip. */
   readonly changedFiles: readonly string[];
   readonly scope: CorrectnessScope;
+  /**
+   * The repo's install tolerances, resolved ONCE at the REPO ROOT by the
+   * runner and threaded here — `ctx.cwd` is rewritten per nested dependency
+   * root by the lockfile-sync dispatch, where no policy file lives, so a
+   * pack that re-resolved from `ctx.cwd` would silently lose the root's
+   * policy. A pack falls back to resolving at `ctx.cwd` only when a direct
+   * caller did not thread the set (then cwd IS the root).
+   */
+  readonly tolerances?: ResolvedTolerances;
 }
 
 /** A command a correctness check runs. `bin` is resolved on PATH by the runner;
@@ -236,7 +246,6 @@ export function lockfileCheckFromStrategy(
 
 import type { ExecutionRequirement } from '../../execution';
 import type { InstallStrategy } from './install-strategy';
-import type { ResolvedTolerances } from '../../install/tolerances';
 
 /**
  * A pack's correctness-floor provider. Both methods are pure command builders —

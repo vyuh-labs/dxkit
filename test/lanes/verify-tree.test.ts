@@ -155,6 +155,39 @@ describe('verifyTree', () => {
     expect(line).toContain('lockfile-drift on both sides');
   });
 
+  // Item-6 class: `unclassified` names NO failure shape, so two unclassified
+  // failures cannot be verified identical. The attribution is UNDETERMINED:
+  // treated like pre-existing operationally (the base cannot install either,
+  // so the change is not blamed and the guardrail still arbitrates) but
+  // never ASSERTED pre-existing.
+  it('both sides unclassified: attribution is undetermined, disclosed; never asserted pre-existing, never blamed', async () => {
+    const UNCLASSIFIED: InstallOutcome = {
+      status: 'failed',
+      pack: 'ruby',
+      argv: ['bundle', 'install'],
+      output: 'some registry error',
+      classification: 'unclassified',
+    };
+    const r = await verifyTree(
+      opts({
+        seams: seams({
+          install: (wt) =>
+            wt.endsWith('head1111')
+              ? UNCLASSIFIED
+              : { ...UNCLASSIFIED, output: 'a different unrecognized error' },
+        }),
+      }),
+    );
+    expect(r.verdict).toBe('verified');
+    expect(r.floorSkipped?.reason).toBe('unprovisioned');
+    if (r.install?.status === 'failed') {
+      expect(r.install.attribution).toBe('undetermined');
+    }
+    const line = describeInstall(r.install)!;
+    expect(line).toContain('UNDETERMINED');
+    expect(line).not.toContain('pre-existing (not caused by this change)');
+  });
+
   // A base that fails for a DIFFERENT reason does not absolve the candidate:
   // the candidate changed the failure, so it is attributed net-new with the
   // base's own classification named as the evidence.
@@ -552,6 +585,7 @@ const INTOLERANT: ResolvedTolerances = {
   tolerated: new Set(),
   sources: new Map(),
   unknown: [],
+  conflicts: [],
 };
 
 describe('runDeclaredInstall', () => {
