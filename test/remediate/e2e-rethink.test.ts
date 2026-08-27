@@ -29,7 +29,14 @@
  *      injected history rows (fast), and once through the real persistence
  *      seam, where two failing runs write real JSONL ledger rows (the
  *      order-outcomes path the executor uses) and the third run's breaker
- *      reads them back with matching environment stamps.
+ *      reads them back with matching environment stamps;
+ *   d. the LIVE SHAPE (4.4.6): a recipe pin applies, then an agent order
+ *      edits the manifest AND hand-edits the lockfile. The frame's
+ *      invariant step replaces the hand edit with the pack's own resync
+ *      (the order lands, the lockfile is the tool's truth), or, when the
+ *      resync cannot re-establish the tree, drops THAT order with the
+ *      reason while the pin still lands (`partially-landed`, the rows
+ *      naming the dropped order's step).
  */
 import { describe, it, expect, afterEach } from 'vitest';
 import { execFileSync } from 'child_process';
@@ -208,6 +215,9 @@ interface EstateRun {
   readonly gather?: Partial<GatherWorkOrderOptions>;
   readonly explicitDispatch?: boolean;
   readonly exec?: ReturnType<typeof fakeExec>;
+  /** The exec the frame's invariant step uses after an AGENT order
+   *  (defaults to the same fake as the recipe tier). */
+  readonly frameExec?: ReturnType<typeof fakeExec>;
 }
 
 /** Drive `runRemediateTask` through the REAL recipe phase (real planner,
@@ -235,6 +245,9 @@ async function runOnEstate(o: EstateRun): Promise<RemediateResult> {
     },
     armInLoopGate: () => ({ mode: 'backstop-only' as const, reason: 'test' }),
     ...(o.explicitDispatch ? { explicitDispatch: true } : {}),
+    // The frame's invariant step runs the REAL collector over the real
+    // node pack on the estate; only the package manager is faked.
+    frameInvariants: { packs: TS_PACKS, exec: (o.frameExec ?? exec).exec },
     runRecipePhase: (phase: RecipePhaseOptions) =>
       runRecipePhaseForTask({
         ...phase,
@@ -390,6 +403,185 @@ describe('e2e b: an agent-tier order is dispatched scoped and enforced', () => {
       Record<string, string>
     >;
     expect(manifest.overrides?.['js-yaml']).toBe('4.1.0');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// d. The live shape: pins land, a hand-edited lockfile is repaired or dropped
+// ---------------------------------------------------------------------------
+
+const HAND_EDIT = '{"lockfileVersion":3,"HAND-EDITED":true}\n';
+const TOOL_TRUTH = '{"lockfileVersion":3,"resynced":true}\n';
+
+/** A second deferred advisory with NO fixed version, so its order tiers
+ *  agent while the js-yaml one tiers recipe: one run, both tiers. */
+const TWO_DEFERRED_ALLOWLIST = JSON.stringify({
+  ...(JSON.parse(DEFERRED_ALLOWLIST) as { entries: unknown[] }),
+  entries: [
+    ...(JSON.parse(DEFERRED_ALLOWLIST) as { entries: unknown[] }).entries,
+    {
+      fingerprint: 'dead000033334444',
+      kind: 'dep-vuln',
+      category: 'deferred',
+      reason: 'lane will fix',
+      addedBy: 't',
+      addedAt: '2026-08-01',
+      expiresAt: '2026-09-15',
+    },
+  ],
+});
+
+const LODASH: DepVulnFinding = {
+  id: 'GHSA-2',
+  package: 'lodash',
+  installedVersion: '4.17.20',
+  tool: 'osv-scanner',
+  packId: 'typescript',
+  severity: 'high',
+  reachable: true,
+  fingerprint: 'dead000033334444',
+};
+
+/** The agent of the live run: it pins lodash in the manifest and, with
+ *  installs denied, hand-edits the lockfile to "update" it. */
+function handEditingDriver(): ReturnType<typeof stubDriver> {
+  return stubDriver((opts) => {
+    const manifestPath = path.join(opts.cwd, 'package.json');
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8')) as Record<string, unknown>;
+    manifest.overrides = { ...(manifest.overrides as object), lodash: '4.17.21' };
+    fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
+    fs.writeFileSync(path.join(opts.cwd, 'package-lock.json'), HAND_EDIT);
+    return { turns: 4, costUsd: 0.3 };
+  });
+}
+
+/** The package manager of the live run: the frozen dry-run refuses a
+ *  hand-edited lockfile; the resync rewrites it to the tool's truth (or,
+ *  when `resyncFails`, cannot resolve the manifest at all). */
+function liveExec(repo: string, resyncFails: boolean): ReturnType<typeof fakeExec> {
+  return fakeExec((cmd, execCwd) => {
+    if (cmd.bin !== 'npm') return undefined;
+    const lock = path.join(execCwd ?? repo, 'package-lock.json');
+    const content = fs.existsSync(lock) ? fs.readFileSync(lock, 'utf8') : '';
+    if (cmd.args[0] === 'ci' && cmd.args.includes('--dry-run')) {
+      return content.includes('HAND-EDITED')
+        ? {
+            code: 1,
+            output: 'npm error code EUSAGE\nnpm error Missing: lodash@4.17.21 from lock file',
+          }
+        : undefined;
+    }
+    if (cmd.args[0] === 'install') {
+      if (resyncFails) return { code: 1, output: 'npm error code E404 lodash@4.17.21 not found' };
+      fs.writeFileSync(lock, TOOL_TRUTH);
+      return undefined;
+    }
+    return undefined;
+  });
+}
+
+describe('e2e d: the live shape, nine pins then a hand-edited lockfile', () => {
+  it("the frame replaces the hand edit with the resync: pin and agent order both land, the lockfile is the tool's truth", async () => {
+    const repo = estate({ '.dxkit/allowlist.json': TWO_DEFERRED_ALLOWLIST });
+    const { driver, runs } = handEditingDriver();
+    const exec = liveExec(repo, false);
+    const r = await runOnEstate({
+      repo,
+      taskId: 'fix-vulns',
+      driver,
+      scan: [scanFinding('4.1.0'), LODASH],
+      exec,
+      frameExec: exec,
+    });
+
+    expect(runs).toHaveLength(1);
+    // R2: the agent was told the contract in the order prompt.
+    expect(runs[0].prompt).toContain('do not edit package-lock.json or run installs');
+    expect(runs[0].prompt).toContain('change package.json and stop');
+    // The recipe pin applied and was verified as a group before the agent.
+    expect(r.recipes?.records.map((rec) => [rec.orderId, rec.outcome.kind])).toEqual([
+      ['dep-advisory:js-yaml', 'applied'],
+    ]);
+    expect(r.recipes?.groupVerification?.kind).toBe('kept');
+    // R1: the invariant step re-established lockfile-sync after the agent.
+    const rec = r.orders?.records[0];
+    expect(rec?.invariants?.map((o) => [o.id, o.status])).toEqual([
+      ['lockfile-sync', 'reestablished'],
+    ]);
+    expect(rec?.disposition?.kind).toBe('kept');
+    expect(exec.calls.map((c) => [c.cmd.bin, ...c.cmd.args].join(' '))).toContain(
+      'npm install --no-audit --no-fund',
+    );
+    expect(r.outcome).toBe('verified');
+    // The landed lockfile is the tool's, not the agent's hand edit.
+    expect(git(repo, ['show', 'HEAD:package-lock.json'])).toContain('resynced');
+    expect(git(repo, ['show', 'HEAD:package-lock.json'])).not.toContain('HAND-EDITED');
+    expect(git(repo, ['log', '--oneline'])).toContain('re-establish lockfile-sync');
+    const manifest = JSON.parse(git(repo, ['show', 'HEAD:package.json'])) as Record<
+      string,
+      Record<string, string>
+    >;
+    expect(manifest.overrides).toEqual({ 'js-yaml': '4.1.0', lodash: '4.17.21' });
+    expect(r.ledger).toContain('RE-ESTABLISHED');
+  });
+
+  it('the resync cannot re-establish the tree: the pin lands, the agent order is dropped at tree-invariants, partially-landed', async () => {
+    const repo = estate({ '.dxkit/allowlist.json': TWO_DEFERRED_ALLOWLIST });
+    const { driver, runs } = handEditingDriver();
+    // The recipe tier's own install must still succeed (the pin resyncs
+    // itself); only the agent order's re-establishment fails.
+    let agentPhase = false;
+    const recipeExec = liveExec(repo, false);
+    const frameExec = fakeExec((cmd, execCwd) => {
+      if (!agentPhase) return recipeExec.exec(cmd, execCwd);
+      return liveExec(repo, true).exec(cmd, execCwd);
+    });
+    const r = await runOnEstate({
+      repo,
+      taskId: 'fix-vulns',
+      driver: {
+        ...driver,
+        run: async (opts) => {
+          agentPhase = true;
+          return driver.run(opts);
+        },
+      },
+      scan: [scanFinding('4.1.0'), LODASH],
+      exec: recipeExec,
+      frameExec,
+    });
+
+    expect(runs).toHaveLength(1);
+    expect(r.outcome).toBe('partially-landed');
+    expect(r.recipes?.records[0].disposition?.kind).toBe('kept');
+    const rec = r.orders?.records[0];
+    expect(rec?.disposition).toEqual({
+      kind: 'dropped',
+      step: 'tree-invariants',
+      reason: expect.stringContaining('E404'),
+    });
+    expect(rec?.invariants?.[0]?.status).toBe('could-not-reestablish');
+    // The landed head carries the pin and NOT the agent's manifest edit or
+    // its hand-edited lockfile.
+    const manifest = JSON.parse(git(repo, ['show', 'HEAD:package.json'])) as Record<
+      string,
+      Record<string, string>
+    >;
+    expect(manifest.overrides).toEqual({ 'js-yaml': '4.1.0' });
+    expect(git(repo, ['show', 'HEAD:package-lock.json'])).not.toContain('HAND-EDITED');
+    expect(git(repo, ['status', '--porcelain'])).toBe('');
+    // The ledger names the dropped order as still open; the rows count its
+    // class on the invariant step, and the pin's class on the landing.
+    expect(r.ledger).toContain('DROPPED at tree-invariants');
+    expect(r.note).toContain('dep-advisory:lodash');
+    const rows = orderOutcomeRows(r, 'fix-vulns', {
+      timestamp: '2026-08-27T00:00:00Z',
+      stamp: remediateStamp(repo),
+    });
+    expect(rows.map((row) => [row.orderId, row.outcome])).toEqual([
+      ['dep-advisory:js-yaml', 'verified'],
+      ['dep-advisory:lodash', 'invariant-failed'],
+    ]);
   });
 });
 

@@ -10,6 +10,7 @@ import {
   LOCKFILE_SYNC_LABEL,
   type CorrectnessContext,
   type CorrectnessProvider,
+  type LockfileCheck,
 } from '../../languages/capabilities/correctness';
 import { discoverPackDepRoots } from '../security/nested-dep-roots';
 import { tail, type CommandExec } from '../tools/bounded-exec';
@@ -126,6 +127,23 @@ export function runLockfileCheck(
     };
   }
   if (check === null) return null;
+  return executeLockfileCheck(id, check, ctx.cwd, exec);
+}
+
+/**
+ * Execute an already-derived lockfile-sync check at `cwd`: the ONE
+ * execution of the check shape, shared by the floor (above) and the frame's
+ * tree-invariant step (`lanes/tree-invariants.ts`), so "the lockfile is in
+ * sync" is judged by one policy wherever it is asked. A skip and an
+ * unavailable binary are fail-open, disclosed; a tolerated failure passes
+ * with its disclosure as `note`; any other non-zero exit fails.
+ */
+export function executeLockfileCheck(
+  id: LanguageId,
+  check: LockfileCheck,
+  cwd: string,
+  exec: CommandExec,
+): CorrectnessCheckResult {
   if (check.kind === 'skipped') {
     return {
       pack: id,
@@ -137,7 +155,7 @@ export function runLockfileCheck(
   }
   const cmd = check.command;
   const base = { pack: id, label: cmd.label, bin: cmd.bin, args: cmd.args };
-  const outcome = exec(cmd, ctx.cwd);
+  const outcome = exec(cmd, cwd);
   if (!outcome.available) {
     return {
       ...base,

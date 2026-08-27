@@ -43,6 +43,11 @@ function fakeGit(opts: { diff?: boolean; sweepError?: string } = {}): RemediateG
     sweepLeftovers: () => opts.sweepError,
     scrubRuntimeArtifacts: () => [],
     enforceEnvelope: () => ({ dropped: [] }),
+    resetTo: () => {},
+    changedPaths: () => [],
+    commitPaths: () => {},
+    cleanPaths: () => {},
+    revertPaths: () => {},
     hasDiff: () => {
       if (opts.diff) head = 'head1111';
       return !!opts.diff;
@@ -184,6 +189,11 @@ describe('refusal + infra arms (each truthful and distinct)', () => {
       },
       scrubRuntimeArtifacts: () => [],
       enforceEnvelope: () => ({ dropped: [] }),
+      resetTo: () => {},
+      changedPaths: () => [],
+      commitPaths: () => {},
+      cleanPaths: () => {},
+      revertPaths: () => {},
       hasDiff: () => false,
     };
     const driver = fakeDriver({ completed: false, neverRan: { reason: 'exit 143' } });
@@ -726,6 +736,7 @@ describe('WP5: fast-exit, phases, cap accounting, blocked evidence', () => {
       'recipes',
       'agent',
       'sweep',
+      'frame-invariants',
       'verify-install',
       'verify-floor',
       'guardrail',

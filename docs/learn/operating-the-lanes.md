@@ -64,10 +64,30 @@ Inside each task run, the frame works the plan in two tiers:
   the done command), a budget derived from the order, and envelope
   enforcement at the sweep, up to `remediate.maxOrdersPerRun` per firing.
 
+- **Frame-owned invariants**: what the frame reserves to itself (the
+  dependency install, the lockfile matching the manifest, anything else
+  the language pack declares) is stated in the order prompt and
+  re-established by the frame after every agent order and recipe group,
+  before verification. A hand-edited lockfile is replaced by the pack's
+  own resync; an invariant the frame cannot re-establish fails that
+  order at that step, named.
+- **Per-order landing**: each order's commits are verified on top of the
+  previously verified head. A failing order is dropped with its reason
+  and the run lands the verified prefix; the guardrail arbitrates once
+  over the landed head. Kept plus dropped orders is the
+  `partially-landed` outcome: not clean, a PR for the kept set, the
+  dropped orders named as still open. Pre-existing lockfile drift at the
+  order base is disclosed, never blamed on the order and never rewritten
+  inside its PR; and a verification that could not run at all
+  (infrastructure) keeps the commits on the branch and completes
+  `verification-unavailable` instead of destroying or landing anything.
+
 Every order's outcome is recorded in the lane's order ledger
 (`.dxkit/lanes/<lane>-<task>.orders.jsonl`): rows ride a landed PR's own
 diff, and a run that lands nothing pushes its rows as a metadata commit on
 the task's standing branch, so the memory survives the ephemeral runner.
+A dropped order records the step that dropped it, so the breaker counts
+that order's class, never the whole run.
 
 **The circuit breaker** (`remediate.pauseAfterFailures`, default 2) reads
 that ledger: a class whose last N counted FIRINGS are failures
@@ -142,6 +162,10 @@ Read the task's job summary first — it names the outcome. The shapes:
   required; the next scheduled run retries from a clean tree, and after
   `remediate.pauseAfterFailures` consecutive failures the class is paused
   instead of retried (see the circuit breaker above).
+- **`partially-landed`**: some orders verified and landed (a PR is
+  open for them); the others were dropped at their own verification
+  with the reason in the job summary, and stay open for the next firing.
+  The job is red so the dropped orders are not read as done.
 - **`recipes-refused`**: every order the task selected was recipe-tier,
   every recipe refused or failed, and the agent tier landed nothing for
   them. The orders remain open and the per-order reasons are in the job

@@ -1,3 +1,4 @@
+import { NO_TREE_INVARIANTS } from './capabilities/tree-invariants';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -736,6 +737,7 @@ export const java: LanguageSupport = {
   // CodeQL `java` extractor needs a build; Snyk Code supports Java.
   deepSast: { codeqlLanguage: 'java', snykCode: true, execution: jvmBuildExecution },
 
+  treeInvariants: NO_TREE_INVARIANTS,
   correctness: javaCorrectnessProvider,
   // Lint gate: DORMANT. Java linters (checkstyle/PMD/SpotBugs) run via the build
   // tool with varied, non-line-oriented output (XML/SARIF), so no stable text

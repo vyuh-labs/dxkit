@@ -8,6 +8,7 @@ import type {
 } from './capabilities/provider';
 import type { CoverageResult, ImportsResult, TestFrameworkResult } from './capabilities/types';
 import type { CorrectnessProvider } from './capabilities/correctness';
+import type { TreeInvariantProvider } from './capabilities/tree-invariants';
 import type { LintGateProvider } from './capabilities/lint-gate';
 import type { InstallStrategyProvider } from './capabilities/install-strategy';
 
@@ -436,6 +437,17 @@ export interface LanguageSupport {
    * `test/languages-contract.test.ts`, never a silent omission.
    */
   readonly installStrategy?: InstallStrategyProvider;
+
+  /**
+   * REQUIRED: the tree properties the remediate frame OWNS for this
+   * ecosystem beyond its dependency tree (`capabilities/tree-invariants.ts`):
+   * formatting, generated artifacts, a lock sync the install strategy does
+   * not model. The dependency invariant is DERIVED from `installStrategy`
+   * by the collector (`collectTreeInvariants`), never re-declared here.
+   * `NO_TREE_INVARIANTS` is the declared "nothing further" answer; a pack
+   * that omits the field fails to compile.
+   */
+  readonly treeInvariants: TreeInvariantProvider;
 
   /**
    * Per-stack architectural vocabulary + path conventions. Drives the

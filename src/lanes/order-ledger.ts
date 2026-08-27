@@ -48,11 +48,21 @@ export type OrderRowOutcome =
   | 'guardrail-red'
   | 'floor-red'
   | 'install-failed'
+  /** A frame-owned invariant the order tripped could not be re-established
+   *  (4.4.6): the order was dropped at the frame's invariant step. */
+  | 'invariant-failed'
+  /** The order's own verification could not run (infrastructure, the step
+   *  named); dropped, but nothing was tried against the code: neutral. */
+  | 'unverifiable'
   | 'failed-recipe'
   | 'refused'
   | 'agent-failed'
   | 'never-ran'
   | 'not-dispatched'
+  /** The order's commits verified and land, but the DRIVER reported the
+   *  run as failed (4.4.6): real progress, not a success — neutral for
+   *  the breaker (neither counts nor resets a streak). */
+  | 'partial-kept'
   | 'sweep-failed'
   | 'no-op'
   | 'paused'
@@ -106,6 +116,7 @@ export const ORDER_FAILURE_OUTCOMES: ReadonlySet<OrderRowOutcome> = new Set([
   'guardrail-red',
   'floor-red',
   'install-failed',
+  'invariant-failed',
   'failed-recipe',
 ]);
 

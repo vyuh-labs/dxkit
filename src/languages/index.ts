@@ -1,3 +1,4 @@
+import { join } from 'path';
 import type { DetectedStack } from '../types';
 import type {
   ArchitecturalShape,
@@ -12,6 +13,9 @@ import type { CorrectnessProvider } from './capabilities/correctness';
 import type { LintGateProvider } from './capabilities/lint-gate';
 import type { InstallStrategy, InstallStrategyProvider } from './capabilities/install-strategy';
 import type { CapabilityRequirement } from '../execution';
+import type { ResolvedTolerances } from '../install/tolerances';
+import { dependencyTreeInvariant, type TreeInvariant } from './capabilities/tree-invariants';
+import { discoverPackDepRoots } from '../analyzers/security/nested-dep-roots';
 import { UNIVERSAL_TEST_DIR_PATTERNS } from './test-dir-patterns';
 import { csharp } from './csharp';
 import { go } from './go';
@@ -937,4 +941,76 @@ export function activeInstallStrategies(
     if (strategy !== null) out.push({ id, strategy });
   }
   return out;
+}
+
+/** What the ONE invariant collector answers: the invariants, plus the
+ *  disclosures for changed manifests NO invariant covers. */
+export interface CollectedTreeInvariants {
+  readonly invariants: readonly TreeInvariant[];
+  readonly disclosures: readonly string[];
+}
+
+/**
+ * The frame-owned tree invariants that could apply to `candidatePaths`
+ * (4.4.6, Rule 6): for every active pack, the DEPENDENCY invariant derived
+ * from its install strategy at each OWNING dependency root, then the
+ * pack's own declared invariants. The roots are lockfile-anchored, the
+ * same derivation the dep audit reads (`discoverPackDepRoots`, Rule 2.30):
+ * the repo root plus every nested directory holding one of the pack's own
+ * lockfiles. A manifest under a workspace resolves to the workspace root's
+ * strategy through `appliesWhen`; a changed manifest in a directory with
+ * neither its own lockfile nor a lockfile-anchored parent gets NO
+ * invariant, and the collector DISCLOSES it instead of guessing an
+ * install there (the pre-fix shape minted a lock-writing `npm install`
+ * inside a lockfile-less workspace member). ONE collector, read by the
+ * frame step that re-establishes and the prompt renderer that states the
+ * contract, so the two cannot name different sets. Pure and
+ * repo-intrinsic; each invariant still gates itself through `appliesWhen`.
+ */
+export function collectTreeInvariants(
+  packs: readonly LanguageSupport[],
+  cwd: string,
+  candidatePaths: readonly string[],
+  tolerances: ResolvedTolerances,
+): CollectedTreeInvariants {
+  const invariants: TreeInvariant[] = [];
+  for (const pack of packs) {
+    const provider = pack.installStrategy;
+    if (provider !== undefined) {
+      const patterns = allDependencyManifestPatterns([pack]);
+      const discovery = discoverPackDepRoots(cwd, pack);
+      const active = ['', ...discovery.roots].filter(
+        (root) => provider.strategy(root === '' ? cwd : join(cwd, root)) !== null,
+      );
+      for (const root of active) {
+        const strategy = provider.strategy(root === '' ? cwd : join(cwd, root));
+        if (strategy === null) continue;
+        invariants.push(
+          dependencyTreeInvariant({
+            pack: pack.id,
+            root,
+            strategy,
+            manifestPatterns: patterns,
+            matchesManifest: matchesManifestPattern,
+            tolerances,
+            otherRoots: active,
+          }),
+        );
+      }
+    }
+    // Foreign objects cast into the registry by a test may lack the field;
+    // every real pack declares it (compile-time required, contract-pinned).
+    invariants.push(...(pack.treeInvariants?.invariants(cwd, candidatePaths) ?? []));
+  }
+  const disclosures: string[] = [];
+  for (const m of dependencyManifestFilesIn(candidatePaths, packs)) {
+    if (!invariants.some((inv) => inv.appliesWhen([m]))) {
+      disclosures.push(
+        `changed dependency manifest ${m} is under no resolvable dependency root (no ` +
+          'lockfile of its own and no lockfile-anchored parent); the frame re-establishes ' +
+          'nothing there',
+      );
+    }
+  }
+  return { invariants, disclosures };
 }

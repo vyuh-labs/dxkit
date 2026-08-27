@@ -1,3 +1,4 @@
+import { NO_TREE_INVARIANTS } from './capabilities/tree-invariants';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -724,6 +725,7 @@ export const swift: LanguageSupport = {
   // iOS codebase leans on, so caller counts are indicative, not exhaustive.
   callGraphReliability: 'partial',
 
+  treeInvariants: NO_TREE_INVARIANTS,
   correctness: swiftCorrectnessProvider,
   lintGate: swiftLintGateProvider,
 

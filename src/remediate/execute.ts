@@ -269,8 +269,17 @@ export async function executeTask(
   // ephemeral runner and the next run can RESUME from them (guardrail-red
   // was the outcome where the most valuable partial work died). Only a
   // RAN-and-blocked verdict qualifies; an unrunnable guardrail never pushes.
-  const blockedSalvage = result.outcome === 'guardrail-red' && salvage === 'draft-pr';
-  const landEligible = result.outcome === 'verified' || draftSalvage || blockedSalvage;
+  // Only a guardrail that actually RAN and blocked earns a red draft: an
+  // unrunnable verification must never produce a draft PR claiming a
+  // guardrail block that never happened (review fix 5).
+  const blockedSalvage =
+    result.outcome === 'guardrail-red' && salvage === 'draft-pr' && result.guardrailRan === true;
+  // Per-order landing (4.4.6): the kept orders of a partially-landed run
+  // are verified work and land as a normal PR; the run stays non-clean so
+  // the dropped orders (named in the ledger) are never read as done.
+  const partialLanding = result.outcome === 'partially-landed';
+  const landEligible =
+    result.outcome === 'verified' || partialLanding || draftSalvage || blockedSalvage;
   if (land !== 'pr' || !landEligible) {
     publishRows();
     return finalizeTaskRun(cwd, taskId, {
@@ -305,7 +314,7 @@ export async function executeTask(
     lane: 'remediate',
     task: taskId,
     outcome: 'landed',
-    ...(draftSalvage || blockedSalvage ? { partial: true } : {}),
+    ...(draftSalvage || blockedSalvage || partialLanding ? { partial: true } : {}),
     ...(blockedSalvage ? { blocked: true } : {}),
     ...(result.envelope?.costUsd !== undefined ? { costUsd: result.envelope.costUsd } : {}),
     ...(result.envelope?.resolvedModelId
@@ -338,7 +347,9 @@ export async function executeTask(
           ? ' (blocked: guardrail-red — do not merge)'
           : draftSalvage
             ? ' (partial, budget-bounded)'
-            : ''),
+            : partialLanding
+              ? ' (partial: some orders dropped, see the ledger)'
+              : ''),
       // The ONE lane PR-body assembler (#288): a generated, labeled
       // diff-scoped narrative on top; the ledger VERBATIM below (the
       // contractual record, never paraphrased). Fail-open to ledger-only.
