@@ -15,6 +15,10 @@ export interface RecipeOrderRecord {
   readonly class: string;
   readonly recipe: string;
   readonly outcome: RecipeOutcome;
+  /** Packages the order's findings name (dep-advisory evidence), recorded
+   *  by the executor so guardrail-red containment can attribute a red on
+   *  a recipe-pinned package to the GROUP on direct evidence (4.4.7). */
+  readonly packages?: readonly string[];
   /** Out-of-envelope paths the enforcement discarded (disclosed). */
   readonly droppedPaths?: readonly string[];
   /** Collector/step disclosures for this order's invariant step. */

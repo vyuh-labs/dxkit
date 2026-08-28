@@ -9,8 +9,12 @@
  *     reverted, the remainder re-verifies green and lands as
  *     `partially-landed`; the ledger, containment disclosure, and breaker
  *     rows name the dropped order on its own failure;
- *   - ambiguity: a driver-failed order is preferred over verified ones;
- *     ambiguity among verified orders REFUSES;
+ *   - evidence strength: direct evidence (package naming, committed-diff
+ *     touch) outranks circumstantial overlap (envelope containment, the
+ *     manifest heuristic), so a repo-wide-envelope order can never absorb
+ *     another order's finding; within one tier a driver-failed order is
+ *     preferred over verified ones; ambiguity among verified orders
+ *     REFUSES;
  *   - refusal: a finding attributing to NO order refuses; a red that
  *     survives the bounded rounds refuses and restores the branch; a red
  *     with no attributable findings (a refusal-tier verdict) refuses; a
@@ -332,6 +336,50 @@ describe('guardrail-red containment: contained red lands the remainder', () => {
   });
 });
 
+describe('guardrail-red containment: evidence strength outranks the driver tiebreak', () => {
+  it("a repo-wide-envelope driver-failed floor order does NOT absorb a finding another order's diff touches", async () => {
+    // Order e carries the explicit repo-wide envelope (a whole-build floor
+    // order) AND its driver failed, so pre-tiering it overlapped every
+    // located finding and the driver tiebreak blamed it. Order f is
+    // verified and its committed diff touches the finding's file: the
+    // direct evidence must win in round 1.
+    const git = fakeGit({
+      'head0..head1': ['src/util.ts'],
+      'head1..head2': ['src/f.ts'],
+    });
+    const finding = {
+      kind: 'custom-check',
+      description: '[custom-check] lint · src/f.ts:3 — added (no-prior-match)',
+      file: 'src/f.ts',
+    };
+    const r = await runWith({
+      orders: [floorOrder('floor-failure:e', '*'), floorOrder('floor-failure:f', 'src/')],
+      git,
+      driver: scriptedDriver([
+        { completed: false, failure: { reason: 'agent exited nonzero' } },
+        {},
+      ]),
+      guardrails: [red([finding]), GREEN],
+    });
+    expect(r.outcome).toBe('partially-landed');
+    const recs = r.orders?.records ?? [];
+    // The driver-failed repo-wide order is KEPT; the diff-touching order is
+    // the attributed drop.
+    expect(recs[0].orderId).toBe('floor-failure:e');
+    expect(recs[0].disposition?.kind).toBe('kept');
+    expect(recs[1].orderId).toBe('floor-failure:f');
+    expect(recs[1].disposition).toEqual({
+      kind: 'dropped',
+      step: 'guardrail',
+      reason: expect.stringContaining('src/f.ts'),
+    });
+    expect(r.containment?.rounds).toBe(1);
+    expect(r.containment?.dropped?.[0].orderIds).toEqual(['floor-failure:f']);
+    expect(r.containment?.dropped?.[0].evidence).toContain('committed diff touches src/f.ts');
+    expect(git.reverts.map((x) => [x.from, x.to])).toEqual([['head1', 'head2']]);
+  });
+});
+
 describe('guardrail-red containment: an unattributable red refuses honestly', () => {
   it('a finding overlapping no kept order refuses containment, keeps guardrail-red, and reverts nothing', async () => {
     const git = fakeGit();
@@ -568,6 +616,63 @@ describe('guardrail-red containment: the recipe group is one unit', () => {
   });
 });
 
+describe('guardrail-red containment: a red on a recipe-pinned package blames the GROUP, not a driver-failed agent order', () => {
+  it('the group unit carries the packages its applied orders pinned, so the package tier attributes to it', async () => {
+    const git = fakeGit({
+      'head0..head1': ['package.json', 'package-lock.json'],
+      'head1..head2': ['package.json', 'package-lock.json'],
+    });
+    const appliedRecord = {
+      orderId: 'dep-advisory:left-pad',
+      class: 'dep-advisory',
+      recipe: 'override-pin',
+      outcome: { kind: 'applied' as const, changedFiles: ['package.json'] },
+      packages: ['left-pad'],
+    };
+    // The red names the package the RECIPE pinned; the driver-failed agent
+    // order for another package also touched the manifests, so pre-fix the
+    // package tier could never match the group and the driver tiebreak
+    // blamed the innocent agent order.
+    const finding = {
+      kind: 'dep-vuln',
+      description: '[dep-vuln] left-pad@1.0.0 · GHSA-test — added (no-prior-match)',
+      package: 'left-pad',
+    };
+    const r = await runWith({
+      orders: [depOrder('tmp')],
+      git,
+      driver: scriptedDriver([{ completed: false, failure: { reason: 'agent exited nonzero' } }]),
+      guardrails: [red([finding]), GREEN],
+      recipePhase: () => {
+        git.commit(); // the recipe tier committed the pin: head0 -> head1
+        return summary([depOrder('tmp')], {
+          ran: true,
+          selectedRecipeTier: 1,
+          records: [appliedRecord],
+        });
+      },
+    });
+    expect(r.outcome).toBe('partially-landed');
+    expect(r.recipes?.groupVerification).toEqual({
+      kind: 'dropped',
+      step: 'guardrail',
+      reason: expect.stringContaining('left-pad'),
+      droppedOrderIds: ['dep-advisory:left-pad'],
+    });
+    // The driver-failed agent order is KEPT: the package evidence names the
+    // group, so no tiebreak ever ran against the innocent order.
+    expect(r.orders?.records[0].disposition?.kind).toBe('kept');
+    expect(r.containment?.dropped?.[0]).toEqual(
+      expect.objectContaining({
+        unit: 'recipe-group',
+        orderIds: ['dep-advisory:left-pad'],
+        evidence: expect.stringContaining('names package left-pad'),
+      }),
+    );
+    expect(git.reverts.map((x) => [x.from, x.to])).toEqual([['head0', 'head1']]);
+  });
+});
+
 describe('driver-failure hygiene: verification is the evidence, first in line for attribution', () => {
   it('a driver-failed order that survives per-order verification is KEPT and disclosed in the ledger', async () => {
     const git = fakeGit();
@@ -589,6 +694,98 @@ describe('driver-failure hygiene: verification is the evidence, first in line fo
     expect(rows[0].outcome).toBe('partial-kept');
   });
 });
+
+describe('a failed branch restore is disclosed and suppresses the salvage draft', () => {
+  it('a refusal whose restore throws sets restoreFailed and says the branch stays local', async () => {
+    // Round 1 attributes and reverts; the re-run stays red on a finding
+    // no remaining order overlaps, so containment refuses AFTER mutating
+    // the branch, and the restore itself throws.
+    const git = fakeGit({
+      'head0..head1': ['src/a.ts'],
+      'head1..head2': ['package.json', 'package-lock.json'],
+    });
+    git.resetTo = () => {
+      throw new Error('reset refused by the filesystem');
+    };
+    const tmpFinding = {
+      kind: 'dep-vuln',
+      description: '[dep-vuln] tmp@0.2.6 · GHSA-test — added (no-prior-match)',
+      package: 'tmp',
+    };
+    const strayFinding = {
+      kind: 'secret',
+      description: '[secret] docs/readme.md:1 — added (no-prior-match)',
+      file: 'docs/readme.md',
+    };
+    const r = await runWith({
+      orders: [floorOrder('floor-failure:a', 'src/'), depOrder('tmp')],
+      git,
+      guardrails: [red([tmpFinding]), red([strayFinding])],
+    });
+    expect(r.outcome).toBe('guardrail-red');
+    expect(r.containment?.restoreFailed).toBe(true);
+    expect(r.containment?.refused).toContain('restoring the branch');
+    expect(r.containment?.refused).toContain('left as-is for inspection');
+  });
+
+  it('executor: a guardrail-red refusal with a CLEAN restore still pushes the blocked salvage draft', async () => {
+    const cwd = tmpCwd();
+    let pushed = 0;
+    const run = await executeTask(cwd, config(), 'fix-vulns', 'pr', {
+      runTask: async () => refusedRedResult(false),
+      branch: () => 'main',
+      defaultBranch: () => 'main',
+      landHead: () => {
+        pushed += 1;
+        return { outcome: 'pr-opened' as const, mode: 'pr' as const, prUrl: 'x' };
+      },
+      probeDelivery: () => ({ probes: [], anyBlocked: false, unverifiable: false }),
+      writeOrderLedger: () => null,
+      publishOrderRows: () => ({ published: true }),
+    });
+    expect(pushed).toBe(1);
+    expect(run.landed).toBe(true);
+    expect(run.clean).toBe(false);
+  });
+
+  it('executor: a guardrail-red refusal whose restore FAILED never pushes (HEAD is a tree no verification saw)', async () => {
+    const cwd = tmpCwd();
+    let pushed = 0;
+    const run = await executeTask(cwd, config(), 'fix-vulns', 'pr', {
+      runTask: async () => refusedRedResult(true),
+      branch: () => 'main',
+      defaultBranch: () => 'main',
+      landHead: () => {
+        pushed += 1;
+        return { outcome: 'pr-opened' as const, mode: 'pr' as const, prUrl: 'x' };
+      },
+      probeDelivery: () => ({ probes: [], anyBlocked: false, unverifiable: false }),
+      writeOrderLedger: () => null,
+      publishOrderRows: () => ({ published: true }),
+    });
+    expect(pushed).toBe(0);
+    expect(run.landed).toBe(false);
+  });
+});
+
+/** A guardrail-red refusal result for the executor's salvage decision. */
+function refusedRedResult(restoreFailed: boolean): RemediateResult {
+  return {
+    outcome: 'guardrail-red',
+    task: 'fix-vulns',
+    ledger: 'THE VERIFICATION LEDGER',
+    baseHead: 'aaaa1111',
+    head: 'bbbb2222',
+    guardrailRan: true,
+    containment: {
+      maxRounds: MAX_CONTAINMENT_ROUNDS,
+      rounds: 1,
+      dropped: [],
+      refused: 'the remainder no longer verifies after the unwind',
+      ...(restoreFailed ? { restoreFailed: true as const } : {}),
+    },
+  };
+}
 
 describe('composition with the deferred landing record (two-phase landing)', () => {
   it('a contained run under the lane env writes ONE landing record for the green subset, no push attempted', async () => {
@@ -729,7 +926,7 @@ describe('the pure attribution ladder', () => {
     expect(res.kind).toBe('ambiguous');
   });
 
-  it('overlap evidence covers diff, envelope, and manifest directions and refuses coordinates it lacks', () => {
+  it('overlap evidence covers diff, envelope, and manifest directions with their tiers, and refuses coordinates it lacks', () => {
     const u = unit({
       orderIds: ['o'],
       diffPaths: ['src/a.ts'],
@@ -737,15 +934,60 @@ describe('the pure attribution ladder', () => {
     });
     expect(
       overlapEvidence({ kind: 'code', description: 'f', file: 'src/a.ts' }, u, noManifest),
-    ).toContain('committed diff touches');
+    ).toEqual({
+      tier: 1,
+      evidence: expect.stringContaining('committed diff touches'),
+    });
     expect(
       overlapEvidence({ kind: 'code', description: 'f', file: 'src/b.ts' }, u, noManifest),
-    ).toContain('inside the order envelope');
+    ).toEqual({
+      tier: 2,
+      evidence: expect.stringContaining('inside the order envelope'),
+    });
     expect(
       overlapEvidence({ kind: 'code', description: 'f', file: 'docs/x.md' }, u, noManifest),
     ).toBeNull();
     // A finding with neither file nor package can never be attributed.
     expect(overlapEvidence({ kind: 'paired-change', description: 'f' }, u, noManifest)).toBeNull();
+    // Package naming is direct; the manifest heuristic is circumstantial.
+    const dep = unit({
+      orderIds: ['d'],
+      packages: new Set(['tmp']),
+      diffPaths: ['package-lock.json'],
+    });
+    const isManifest = (x: string) => x === 'package-lock.json';
+    expect(
+      overlapEvidence({ kind: 'dep-vuln', description: 'f', package: 'tmp' }, dep, isManifest)
+        ?.tier,
+    ).toBe(1);
+    expect(
+      overlapEvidence({ kind: 'dep-vuln', description: 'f', package: 'left-pad' }, dep, isManifest)
+        ?.tier,
+    ).toBe(2);
+  });
+
+  it('tier-1 diff evidence beats a repo-wide-envelope driver-failed candidate (a tiebreak never beats evidence)', () => {
+    const repoWide = unit({
+      orderIds: ['floor-failure:whole-build'],
+      diffPaths: ['src/util.ts'],
+      envelope: { paths: ['*'], manifests: false },
+      driverFailed: true,
+    });
+    const toucher = unit({
+      orderIds: ['floor-failure:f'],
+      diffPaths: ['src/f.ts'],
+      envelope: { paths: ['src/'], manifests: false },
+    });
+    const res = attributeFinding(
+      { kind: 'custom-check', description: 'f', file: 'src/f.ts' },
+      [repoWide, toucher],
+      noManifest,
+    );
+    expect(res).toEqual({
+      kind: 'attributed',
+      unit: toucher,
+      evidence: expect.stringContaining('direct evidence outranked'),
+    });
   });
 
   it('buildKeptUnits refuses a chain that does not close on the verified head', () => {

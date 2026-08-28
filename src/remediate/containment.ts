@@ -41,23 +41,47 @@
  * plain guardrail-red path (salvage draft of the full attempt, negative
  * constraints for the next run) sees exactly the tree it always saw.
  */
-import type { BlockingFinding, GuardrailGateResult } from '../lanes/verify';
+import type { GuardrailGateResult } from '../lanes/verify';
 import type { VerifyTreeResult } from '../lanes/verify-tree';
 import { detectActiveLanguages, dependencyManifestFilesIn } from '../languages';
-import { pathInEnvelope } from './recipes/envelope';
 import type { RecipePhaseSummary } from './recipes/run-recipes';
 import { verifyCommittedHead } from './verify';
-import type { CorrectnessFloorResult } from '../analyzers/correctness/run';
 import type {
   ContainedDrop,
   GuardrailContainment,
   OrderRunRecord,
-  RemediateGit,
   RemediateRunOptions,
 } from './outcome';
-import type { WorkOrder, WorkOrderEnvelope } from './work-orders/types';
+import {
+  attributeFinding,
+  buildKeptUnits,
+  type ContainmentArgs,
+  type KeptUnit,
+} from './containment-attribution';
 
-/** The bound on unwind rounds: small and disclosed, never open-ended. */
+// The attribution half lives in `./containment-attribution` (module-size
+// split); re-exported so consumers keep one import surface.
+export {
+  attributeFinding,
+  buildKeptUnits,
+  overlapEvidence,
+  type ContainmentArgs,
+  type FindingAttribution,
+  type KeptUnit,
+  type OverlapEvidence,
+} from './containment-attribution';
+
+/**
+ * The bound on unwind rounds: small and disclosed, never open-ended. A
+ * known consequence of the per-round reverts: two kept units sharing
+ * lockfile hunks will usually CONFLICT on the round-2 revert of the
+ * second unit (round 1 already rewrote the shared hunks), and that
+ * conflict refuses containment honestly, a bounded refusal rather than a
+ * mangled tree. A future refinement could attribute ALL blocking findings
+ * first and drop every attributed unit in a single round across tiers,
+ * avoiding the sequential-revert conflict; deliberately not implemented
+ * here.
+ */
 export const MAX_CONTAINMENT_ROUNDS = 2;
 
 /** Cap on blocking-finding descriptions carried per dropped unit. */
@@ -83,42 +107,6 @@ export function manifestPathProbe(
   };
 }
 
-/** One kept unit of the landed head: a kept agent order, or the kept
- *  recipe group as a whole (the 4.4.6 drop granularity). */
-export interface KeptUnit {
-  readonly unit: 'agent-order' | 'recipe-group';
-  readonly orderIds: readonly string[];
-  /** The unit's commit range on the branch (`from..to`). */
-  readonly from: string;
-  readonly to: string;
-  /** Repo-relative paths the unit's commits changed. */
-  readonly diffPaths: readonly string[];
-  /** The order's envelope (agent orders; the recipe group attributes on
-   *  its committed diff alone). */
-  readonly envelope?: WorkOrderEnvelope;
-  /** Packages the order's findings name (dep-advisory evidence). */
-  readonly packages: ReadonlySet<string>;
-  /** The driver reported this order's run failed or was cut short; its
-   *  committed partial verified, but it is first in line for attribution. */
-  readonly driverFailed: boolean;
-}
-
-export interface ContainmentArgs {
-  readonly git: RemediateGit;
-  readonly baseHead: string;
-  /** HEAD after the recipe tier (the chain sanity check needs it). */
-  readonly agentBase: string;
-  readonly entryFloor: CorrectnessFloorResult;
-  readonly runFloor: () => CorrectnessFloorResult;
-  readonly recipes: RecipePhaseSummary;
-  readonly records: readonly OrderRunRecord[];
-  /** The dispatched work orders, by id (envelope + package evidence). */
-  readonly ordersById: ReadonlyMap<string, WorkOrder>;
-  /** The red final-guardrail result being contained. */
-  readonly guardrail: GuardrailGateResult;
-  readonly isManifestPath: (p: string) => boolean;
-}
-
 export type ContainmentOutcome =
   | {
       readonly kind: 'contained';
@@ -135,147 +123,6 @@ export type ContainmentOutcome =
       readonly head: string;
     }
   | { readonly kind: 'refused'; readonly containment: GuardrailContainment };
-
-/** Overlap evidence between one blocking finding and one kept unit, or
- *  null when they do not overlap. */
-export function overlapEvidence(
-  f: BlockingFinding,
-  u: KeptUnit,
-  isManifestPath: (p: string) => boolean,
-): string | null {
-  if (f.package !== undefined && u.packages.has(f.package)) {
-    return `the order names package ${f.package}`;
-  }
-  if (f.file !== undefined) {
-    if (u.diffPaths.includes(f.file)) return `the committed diff touches ${f.file}`;
-    if (u.envelope && pathInEnvelope(f.file, u.envelope)) {
-      return `${f.file} is inside the order envelope`;
-    }
-    return null;
-  }
-  if (f.package !== undefined) {
-    // A package-shaped finding with no file: any unit that changed the
-    // dependency graph is a candidate (a pin can pull a transitive
-    // advisory in), narrowed below by the package-name and driver tiers.
-    if (u.diffPaths.some(isManifestPath)) return 'the committed diff touches a dependency manifest';
-    if (u.envelope?.manifests === true) return 'the order envelope allows manifest changes';
-    return null;
-  }
-  return null;
-}
-
-export type FindingAttribution =
-  | { readonly kind: 'attributed'; readonly unit: KeptUnit; readonly evidence: string }
-  | { readonly kind: 'ambiguous'; readonly units: readonly KeptUnit[] }
-  | { readonly kind: 'unattributed' };
-
-/**
- * Attribute ONE blocking finding to ONE kept unit, or say why it cannot be
- * (Rule 19). Narrowing ladder on ambiguity: the unit(s) naming the
- * finding's package first, then a driver-failed unit over verified ones.
- */
-export function attributeFinding(
-  f: BlockingFinding,
-  units: readonly KeptUnit[],
-  isManifestPath: (p: string) => boolean,
-): FindingAttribution {
-  const candidates = units
-    .map((u) => ({ u, evidence: overlapEvidence(f, u, isManifestPath) }))
-    .filter((c): c is { u: KeptUnit; evidence: string } => c.evidence !== null);
-  if (candidates.length === 0) return { kind: 'unattributed' };
-  let pool = candidates;
-  const notes: string[] = [];
-  const pkg = f.package;
-  if (pool.length > 1 && pkg !== undefined) {
-    const named = pool.filter((c) => c.u.packages.has(pkg));
-    if (named.length > 0 && named.length < pool.length) {
-      pool = named;
-      notes.push(`narrowed to the order(s) naming package ${pkg}`);
-    }
-  }
-  if (pool.length > 1) {
-    const failed = pool.filter((c) => c.u.driverFailed);
-    if (failed.length > 0 && failed.length < pool.length) {
-      pool = failed;
-      notes.push('driver-failed order preferred over verified ones (the ambiguity tiebreak)');
-    }
-  }
-  if (pool.length === 1) {
-    return {
-      kind: 'attributed',
-      unit: pool[0].u,
-      evidence: [pool[0].evidence, ...notes].join('; '),
-    };
-  }
-  return { kind: 'ambiguous', units: pool.map((c) => c.u) };
-}
-
-function packagesOf(order: WorkOrder): ReadonlySet<string> {
-  const out = new Set<string>();
-  for (const f of order.findings) {
-    if (f.evidence.type === 'dep-vuln') out.add(f.evidence.package);
-  }
-  return out;
-}
-
-/**
- * Reconstruct the kept units' commit ranges from the chained kept
- * dispositions (each drop reset to the previously verified head, so the
- * kept heads chain from `baseHead` to the verified head). A chain that
- * does not close is a string (the refusal reason): containment never
- * reverts ranges it cannot trust.
- */
-export function buildKeptUnits(c: ContainmentArgs): KeptUnit[] | string {
-  const units: KeptUnit[] = [];
-  let prev = c.baseHead;
-  const gv = c.recipes.groupVerification;
-  if (gv?.kind === 'kept') {
-    const appliedIds = c.recipes.records
-      .filter((r) => r.outcome.kind === 'applied')
-      .map((r) => r.orderId);
-    units.push({
-      unit: 'recipe-group',
-      orderIds: appliedIds,
-      from: prev,
-      to: gv.head,
-      diffPaths: c.git.changedPaths(prev, gv.head),
-      packages: new Set(),
-      driverFailed: false,
-    });
-    prev = gv.head;
-  } else if (gv === undefined && c.agentBase !== c.baseHead) {
-    return (
-      'recipe commits exist without a per-group verification record, so the per-order ' +
-      'commit ranges cannot be reconstructed'
-    );
-  }
-  for (const rec of c.records) {
-    if (rec.disposition?.kind !== 'kept') continue;
-    const order = c.ordersById.get(rec.orderId);
-    if (!order) {
-      return `no work order is in scope for kept record ${rec.orderId}, so its range cannot be attributed`;
-    }
-    units.push({
-      unit: 'agent-order',
-      orderIds: [rec.orderId],
-      from: prev,
-      to: rec.disposition.head,
-      diffPaths: c.git.changedPaths(prev, rec.disposition.head),
-      envelope: order.envelope,
-      packages: packagesOf(order),
-      driverFailed: rec.outcome === 'failed' || rec.outcome === 'partial',
-    });
-    prev = rec.disposition.head;
-  }
-  const head = c.git.head();
-  if (prev !== head) {
-    return (
-      `the kept orders' commit chain ends at ${prev} but the verified head is ${head}, ` +
-      'so the per-order ranges cannot be trusted'
-    );
-  }
-  return units;
-}
 
 function containmentReason(blocking: readonly string[], round: number): string {
   const shown = blocking.slice(0, DROP_EVIDENCE_CAP);
@@ -302,10 +149,12 @@ export async function containGuardrailRed(
 
   const refuse = (reason: string): ContainmentOutcome => {
     let restoreNote = '';
+    let restoreFailed = false;
     if (c.git.head() !== originalHead) {
       try {
         c.git.resetTo(originalHead);
       } catch (err) {
+        restoreFailed = true;
         restoreNote =
           `; restoring the branch to ${originalHead} also failed ` +
           `(${err instanceof Error ? err.message.split('\n')[0] : String(err)}), the branch ` +
@@ -319,6 +168,7 @@ export async function containGuardrailRed(
         rounds: roundsRun,
         dropped: [],
         refused: reason + restoreNote,
+        ...(restoreFailed ? { restoreFailed: true } : {}),
       },
     };
   };

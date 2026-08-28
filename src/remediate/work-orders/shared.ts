@@ -187,6 +187,17 @@ export function undispatch(
   if (findings.length > 0) into.push({ reason, findings });
 }
 
+/** The packages a finding set names (dep-advisory evidence): the ONE
+ *  projection both the recipe executor (recording what an applied order
+ *  pinned) and the guardrail-red containment's package tier read. */
+export function packagesNamedBy(findings: readonly WorkOrderFinding[]): string[] {
+  const out = new Set<string>();
+  for (const f of findings) {
+    if (f.evidence.type === 'dep-vuln') out.add(f.evidence.package);
+  }
+  return [...out].sort(byteOrder);
+}
+
 /** A finding carrying only an identity (no class, or nothing to join). */
 export function identityOnly(
   kind: string,

@@ -152,6 +152,11 @@ export interface GuardrailContainment {
   /** Present when containment was attempted and REFUSED, with the reason;
    *  the run then completes guardrail-red exactly as before this feature. */
   readonly refused?: string;
+  /** True when the refusal's branch RESTORE itself failed: HEAD is then a
+   *  half-unwound tree no verification ever saw, so the executor must not
+   *  push it as a salvage draft; the branch stays local for inspection
+   *  (the refusal note says so). */
+  readonly restoreFailed?: true;
 }
 
 export type RemediateOutcome =

@@ -30,7 +30,7 @@ import type { CorrectnessFloorResult } from '../../../src/analyzers/correctness/
 import { budgetForTask, resolveRemediateConfig } from '../../../src/remediate/config';
 import { deriveBudget } from '../../../src/remediate/work-orders/shared';
 import { trustedLocalContext, untrustedContentContext } from '../../../src/analysis-trust';
-import { fakeExec, lintFinding, makeOrder, tempRepo } from './helpers';
+import { advisoryFinding, fakeExec, lintFinding, makeOrder, tempRepo } from './helpers';
 
 describe('envelope containment', () => {
   it('speaks the planner language: explicit repo-wide marker, directory prefix, exact file', () => {
@@ -142,6 +142,48 @@ describe('runRecipeOrders', () => {
         message: 'fix(synthetic-class): synthetic-class:unit (synthetic-fixer recipe)',
       },
     ]);
+  });
+
+  it("an applied record carries the packages the order's findings name (the containment package tier reads them)", async () => {
+    const git = fakeGit();
+    const { exec } = fakeExec();
+    const depOrder = makeOrder({
+      id: 'dep-advisory:tmp',
+      class: 'dep-advisory',
+      recipe: 'synthetic-fixer',
+      envelope: { paths: ['package.json'], manifests: true },
+      findings: [advisoryFinding('f1', 'tmp', 'GHSA-test', '0.2.4')],
+    });
+    const registry = [
+      syntheticRecipe(async () => {
+        git.dirty.push('package.json');
+        return { kind: 'applied' as const, changedFiles: ['package.json'] };
+      }),
+    ];
+    const records = await runRecipeOrders([depOrder], {
+      cwd: '/x',
+      trust: trustedLocalContext(),
+      git,
+      exec,
+      registry,
+    });
+    expect(records[0].outcome.kind).toBe('applied');
+    expect(records[0].packages).toEqual(['tmp']);
+    // An order naming no package records none (the field stays absent).
+    const git2 = fakeGit();
+    const plain = await runRecipeOrders([syntheticOrder], {
+      cwd: '/x',
+      trust: trustedLocalContext(),
+      git: git2,
+      exec,
+      registry: [
+        syntheticRecipe(async () => {
+          git2.dirty.push('fixed.txt');
+          return { kind: 'applied' as const, changedFiles: ['fixed.txt'] };
+        }),
+      ],
+    });
+    expect(plain[0].packages).toBeUndefined();
   });
 
   it('an UNTRUSTED tree refuses every order before any execute runs (disclosed, nothing spawns)', async () => {
