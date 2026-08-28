@@ -1,4 +1,5 @@
 import { NO_TREE_INVARIANTS } from './capabilities/tree-invariants';
+import { plannedRemediationSupport } from './capabilities/remediation';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -739,6 +740,7 @@ export const java: LanguageSupport = {
   deepSast: { codeqlLanguage: 'java', snykCode: true, execution: jvmBuildExecution },
 
   treeInvariants: NO_TREE_INVARIANTS,
+  remediation: plannedRemediationSupport('java'),
   correctness: javaCorrectnessProvider,
   // Lint gate: DORMANT. Java linters (checkstyle/PMD/SpotBugs) run via the build
   // tool with varied, non-line-oriented output (XML/SARIF), so no stable text

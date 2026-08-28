@@ -1,4 +1,5 @@
 import { NO_TREE_INVARIANTS } from './capabilities/tree-invariants';
+import { plannedRemediationSupport } from './capabilities/remediation';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -2031,6 +2032,7 @@ export const csharp: LanguageSupport = {
   deepSast: { codeqlLanguage: 'csharp', snykCode: true, execution: csharpBuildExecution },
 
   treeInvariants: NO_TREE_INVARIANTS,
+  remediation: plannedRemediationSupport('dotnet'),
   correctness: csharpCorrectnessProvider,
   lintGate: csharpLintGateProvider,
 

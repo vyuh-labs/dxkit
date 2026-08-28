@@ -1,4 +1,5 @@
 import { NO_TREE_INVARIANTS } from './capabilities/tree-invariants';
+import { plannedRemediationSupport } from './capabilities/remediation';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -1176,6 +1177,7 @@ export const rust: LanguageSupport = {
   },
 
   treeInvariants: NO_TREE_INVARIANTS,
+  remediation: plannedRemediationSupport('rust'),
   correctness: rustCorrectnessProvider,
   lintGate: rustLintGateProvider,
 

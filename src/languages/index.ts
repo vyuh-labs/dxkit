@@ -12,6 +12,7 @@ import type {
 import type { CorrectnessProvider } from './capabilities/correctness';
 import type { LintGateProvider } from './capabilities/lint-gate';
 import type { InstallStrategy, InstallStrategyProvider } from './capabilities/install-strategy';
+import type { RemediationCapabilityId, RemediationSupport } from './capabilities/remediation';
 import type { CapabilityRequirement } from '../execution';
 import type { ResolvedTolerances } from '../install/tolerances';
 import { dependencyTreeInvariant, type TreeInvariant } from './capabilities/tree-invariants';
@@ -941,6 +942,24 @@ export function activeInstallStrategies(
     if (strategy !== null) out.push({ id, strategy });
   }
   return out;
+}
+
+/**
+ * The remediation declaration set of a pack, by id string (evidence packs
+ * arrive as plain strings). Undefined only for an id no registered pack
+ * carries; every registered pack declares the field (required).
+ */
+export function remediationSupport(pack: string): RemediationSupport | undefined {
+  return LANGUAGES.find((l) => l.id === pack)?.remediation;
+}
+
+/** The packs whose declaration for `capability` is a real provider (not an
+ *  exemption). The recipe registry's tier decision and the executors both
+ *  read this union, so adding a pack extends every consumer (Rule 6). */
+export function languagesDeclaringRemediation(
+  capability: RemediationCapabilityId,
+): readonly LanguageSupport[] {
+  return LANGUAGES.filter((l) => l.remediation[capability].kind === 'capability');
 }
 
 /** What the ONE invariant collector answers: the invariants, plus the

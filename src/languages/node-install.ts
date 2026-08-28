@@ -102,8 +102,10 @@ function legacyPeerDeps(bin: string, args: readonly string[]): InstallFallback {
 }
 
 /** A node install needs the node toolchain and nothing else; it never
- *  builds the project (lifecycle scripts are the repo's own business). */
-const NODE_EXECUTION: ExecutionRequirement = {
+ *  builds the project (lifecycle scripts are the repo's own business).
+ *  Shared with the node remediation capabilities (`node-remediation.ts`),
+ *  whose installs and probes need exactly the same environment. */
+export const NODE_EXECUTION: ExecutionRequirement = {
   hosts: ['any'],
   toolchains: ['node'],
   needsBuild: false,
