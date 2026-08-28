@@ -27,7 +27,8 @@ import {
   type RecipeDeclaration,
 } from '../../../src/remediate/work-orders/recipes-registry';
 import type { CorrectnessFloorResult } from '../../../src/analyzers/correctness/run';
-import { resolveRemediateConfig } from '../../../src/remediate/config';
+import { budgetForTask, resolveRemediateConfig } from '../../../src/remediate/config';
+import { deriveBudget } from '../../../src/remediate/work-orders/shared';
 import { trustedLocalContext, untrustedContentContext } from '../../../src/analysis-trust';
 import { fakeExec, lintFinding, makeOrder, tempRepo } from './helpers';
 
@@ -601,6 +602,54 @@ describe('runRecipePhaseForTask', () => {
     // Both the non-applied recipe order and the agent-tier floor order are queued.
     expect(ids.some((id) => id.startsWith('stale-lockfile:'))).toBe(true);
     expect(ids.some((id) => id.startsWith('floor-failure:'))).toBe(true);
+  });
+
+  it('a fallthrough order joins the agent queue with the RAISED recipe-fallthrough budget, disclosed', async () => {
+    const cwd = tempRepo({
+      'package.json': '{"name":"fx"}',
+      'package-lock.json': '{}',
+      'src/index.ts': 'export const x = 1;\n',
+      '.dxkit/policy.json': '{}',
+    });
+    const git = fakeGit();
+    const { exec } = fakeExec(() => undefined);
+    const entryFloor = floorWith([
+      {
+        pack: 'typescript',
+        label: 'lockfile-sync',
+        bin: 'npm',
+        args: ['ci', '--dry-run'],
+        status: 'fail',
+        output: 'EUSAGE',
+      },
+      { pack: 'typescript', label: 'tests', bin: 'npx', args: ['vitest'], status: 'fail' },
+    ] as CorrectnessFloorResult['checks']);
+    const summary = await runRecipePhaseForTask({
+      cwd,
+      trust: trustedLocalContext(),
+      taskId: 'fix-build',
+      config: resolveRemediateConfig(cwd),
+      entryFloor,
+      git,
+      exec,
+    });
+    const queue = summary.agentOrders ?? [];
+    const fallthrough = queue.find((o) => o.id.startsWith('stale-lockfile:'));
+    const native = queue.find((o) => o.id.startsWith('floor-failure:'));
+    expect(fallthrough).toBeDefined();
+    expect(native).toBeDefined();
+    // The fallthrough order's budget is re-derived with the disclosed
+    // recipe-fallthrough floor; a native agent-tier order keeps the
+    // planner's standard derivation.
+    expect(fallthrough!.budget.derivation).toContain('recipe-fallthrough floor');
+    expect(native!.budget.derivation).not.toContain('recipe-fallthrough');
+    const cap = budgetForTask(resolveRemediateConfig(cwd), 'fix-build');
+    expect(fallthrough!.budget).toEqual(
+      deriveBudget(fallthrough!.findings.length, cap, { recipeFallthrough: true }),
+    );
+    expect(fallthrough!.budget.turns).toBeGreaterThan(
+      deriveBudget(fallthrough!.findings.length, cap).turns,
+    );
   });
 
   it('recipes disabled still plans and routes EVERY selected order to the agent queue', async () => {
