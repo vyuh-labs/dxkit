@@ -154,6 +154,34 @@ export function describeScoreInputsDrift(
   return `the tools behind the scores differ (${parts.join('; ')})`;
 }
 
+const DEBT_SEVERITY_KEYS: ReadonlyArray<DebtSeverity> = ['critical', 'high', 'medium', 'low'];
+
+/**
+ * Validate a parsed line's `debt` stamp. Strict like `coerceScores`: a kind
+ * key that would break downstream rendering (table pipes, newlines, or any
+ * non-identifier shape) or a non-finite severity count drops the WHOLE debt
+ * object (the entry itself is kept; its debt reads as unmeasured). Unknown
+ * cell keys are ignored (forward compatibility); known severities must be
+ * finite numbers.
+ */
+function coerceDebt(raw: unknown): ReportDebtCounts | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const out: Record<string, Partial<Record<DebtSeverity, number>>> = {};
+  for (const [kind, cell] of Object.entries(raw as Record<string, unknown>)) {
+    if (!/^[A-Za-z0-9_.-]+$/.test(kind)) return null;
+    if (!cell || typeof cell !== 'object' || Array.isArray(cell)) return null;
+    const clean: Partial<Record<DebtSeverity, number>> = {};
+    for (const sev of DEBT_SEVERITY_KEYS) {
+      const v = (cell as Record<string, unknown>)[sev];
+      if (v === undefined) continue;
+      if (typeof v !== 'number' || !Number.isFinite(v)) return null;
+      clean[sev] = v;
+    }
+    out[kind] = clean;
+  }
+  return out;
+}
+
 function isFiniteNumberOrNull(v: unknown): v is number | null {
   return v === null || (typeof v === 'number' && Number.isFinite(v));
 }
@@ -201,7 +229,10 @@ export function parseHistory(jsonl: string | null | undefined): ReportHistoryEnt
       ...(o.findings && typeof o.findings === 'object'
         ? { findings: o.findings as ReportFindingCounts }
         : {}),
-      ...(o.debt && typeof o.debt === 'object' ? { debt: o.debt as ReportDebtCounts } : {}),
+      ...(() => {
+        const debt = coerceDebt(o.debt);
+        return debt !== null ? { debt } : {};
+      })(),
       ...(o.inventory && typeof o.inventory === 'object'
         ? { inventory: o.inventory as Record<string, Record<string, number>> }
         : {}),

@@ -116,6 +116,40 @@ describe('report history codec', () => {
     expect(parseHistory(serializeHistory(withDebt))[0].debt).toEqual(debt);
   });
 
+  it('drops a malformed debt stamp whole (non-numeric cell, table-breaking kind key), keeping the entry', () => {
+    const good = { code: { critical: 0, high: 1, medium: 0, low: 0 } };
+    const nonNumeric = JSON.stringify({
+      sha: 'a',
+      date: 'd',
+      scores,
+      debt: { code: { critical: 'NaN-ish', high: 1 } },
+    });
+    const pipeKey = JSON.stringify({
+      sha: 'b',
+      date: 'd',
+      scores,
+      debt: { 'kind | with pipes': { critical: 1 } },
+    });
+    const okLine = JSON.stringify({ sha: 'c', date: 'd', scores, debt: good });
+    const parsed = parseHistory([nonNumeric, pipeKey, okLine].join('\n') + '\n');
+    expect(parsed.map((e) => e.sha)).toEqual(['a', 'b', 'c']); // entries all kept
+    expect(parsed[0].debt).toBeUndefined();
+    expect(parsed[1].debt).toBeUndefined();
+    expect(parsed[2].debt).toEqual(good);
+  });
+
+  it('ignores unknown debt-cell keys (forward compatibility) while validating the known ones', () => {
+    const parsed = parseHistory(
+      JSON.stringify({
+        sha: 'a',
+        date: 'd',
+        scores,
+        debt: { code: { critical: 1, someFutureField: 'whatever' } },
+      }) + '\n',
+    );
+    expect(parsed[0].debt).toEqual({ code: { critical: 1 } });
+  });
+
   it('parses the methodology stamp and omits it when absent (pre-4.4.7 lines)', () => {
     const stamped = parseHistory(
       JSON.stringify({ sha: 'a', date: 'd', scores, methodology: 'spec-v1' }) + '\n',

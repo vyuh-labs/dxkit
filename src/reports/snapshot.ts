@@ -57,6 +57,15 @@ export interface SnapshotSource {
       readonly secretsBySeverity: SeverityBuckets;
       readonly codeBySeverity: SeverityBuckets;
       readonly depBySeverity: SeverityBuckets;
+      /** The per-source run-state (the aggregate's own provenance). REQUIRED
+       *  alongside the buckets: a bucket without its provenance cannot say
+       *  whether {0,0,0,0} means "scanned clean" or "scanner never ran", and
+       *  the debt stamp must never chart the latter as zero. */
+      readonly provenance: {
+        readonly secrets: { readonly ran: boolean };
+        readonly codePatterns: { readonly ran: boolean };
+        readonly depVulns: { readonly available: boolean };
+      };
     };
   };
 }
@@ -136,15 +145,25 @@ export { describeScoreInputsDrift } from './history';
  * run's canonical `SecurityAggregate` buckets (Rule 2: no new gather, no
  * recount; the ONE aggregator already computed them). Keys are the durable
  * `IdentityKind` names. Raw buckets, deliberately (what exists, before any
- * allowlist adjustment) so the series charts the debt itself. All four
- * severities are always present, zero as zero: a cleared kind must chart
- * as 0, distinguishable from an unmeasured (absent) stamp. Counts only,
- * never per-finding data (the reports ref is a shareable surface).
+ * allowlist adjustment) so the series charts the debt itself.
+ *
+ * Provenance-gated, per kind (Rule 19 applied to the stamp): a kind whose
+ * source the aggregate's provenance says did NOT observe this run (gitleaks
+ * missing, OSV offline) is OMITTED, so the published series charts a gap
+ * there, never a fabricated "debt cleared to zero". A kind that RAN stamps
+ * all four severities with zero as zero: a cleared kind must chart as 0,
+ * distinguishable from unmeasured. Counts only, never per-finding data (the
+ * reports ref is a shareable surface).
  */
 export function debtFromAggregate(aggregate: {
   readonly secretsBySeverity: SeverityBuckets;
   readonly codeBySeverity: SeverityBuckets;
   readonly depBySeverity: SeverityBuckets;
+  readonly provenance: {
+    readonly secrets: { readonly ran: boolean };
+    readonly codePatterns: { readonly ran: boolean };
+    readonly depVulns: { readonly available: boolean };
+  };
 }): ReportDebtCounts {
   const cell = (b: SeverityBuckets): Readonly<Record<DebtSeverity, number>> => ({
     critical: b.critical,
@@ -153,9 +172,11 @@ export function debtFromAggregate(aggregate: {
     low: b.low,
   });
   return {
-    secret: cell(aggregate.secretsBySeverity),
-    code: cell(aggregate.codeBySeverity),
-    'dep-vuln': cell(aggregate.depBySeverity),
+    ...(aggregate.provenance.secrets.ran ? { secret: cell(aggregate.secretsBySeverity) } : {}),
+    ...(aggregate.provenance.codePatterns.ran ? { code: cell(aggregate.codeBySeverity) } : {}),
+    ...(aggregate.provenance.depVulns.available
+      ? { 'dep-vuln': cell(aggregate.depBySeverity) }
+      : {}),
   };
 }
 
@@ -166,6 +187,7 @@ export function debtFromAggregate(aggregate: {
  *  run built the canonical security aggregate (absent means unmeasured). */
 export function reportToHistoryEntry(src: SnapshotSource, meta: SnapshotMeta): ReportHistoryEntry {
   const aggregate = src.capabilities?.securityAggregate;
+  const debt = aggregate !== undefined ? debtFromAggregate(aggregate) : undefined;
   return {
     sha: meta.sha,
     date: meta.date,
@@ -175,7 +197,9 @@ export function reportToHistoryEntry(src: SnapshotSource, meta: SnapshotMeta): R
     scoreInputs: scoreToolInputs(src),
     scores: scoresFromReport(src),
     ...(src.findings ? { findings: src.findings } : {}),
-    ...(aggregate !== undefined ? { debt: debtFromAggregate(aggregate) } : {}),
+    // Stamp only when at least one kind was observed: an all-unobserved run
+    // reads as unmeasured, never as an empty measurement.
+    ...(debt !== undefined && Object.keys(debt).length > 0 ? { debt } : {}),
   };
 }
 

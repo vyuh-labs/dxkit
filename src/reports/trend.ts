@@ -196,8 +196,10 @@ export function debtKinds(entries: ReadonlyArray<ReportHistoryEntry>): string[] 
 /**
  * The debt-over-time series for one segment's entries: one row per kind
  * (total across severities), count-scaled. An entry without a debt stamp
- * (pre-4.4.7, or a run with no aggregate) contributes null: unmeasured,
- * never zero.
+ * (pre-4.4.7, or a run with no aggregate) AND an entry whose stamp lacks
+ * the kind (its scanner did not observe that run, or the kind joined the
+ * schema later) both contribute null: unmeasured, never zero. Zero is only
+ * ever an explicitly stamped zero.
  */
 export function debtRows(entries: ReadonlyArray<ReportHistoryEntry>): TrendSeriesRow[] {
   return debtKinds(entries).map((kind) =>
@@ -205,8 +207,11 @@ export function debtRows(entries: ReadonlyArray<ReportHistoryEntry>): TrendSerie
       `debt:${kind}`,
       kind,
       entries.map((e) => {
+        // A kind ABSENT from a stamp is unmeasured (its scanner did not
+        // observe, or the kind postdates this entry), never zero; only a
+        // present cell (which stamps zeros explicitly) charts a number.
         const cell = e.debt?.[kind];
-        return e.debt === undefined ? null : debtKindTotal(cell ?? {});
+        return cell === undefined ? null : debtKindTotal(cell);
       }),
       { countScale: true },
     ),
@@ -216,10 +221,11 @@ export function debtRows(entries: ReadonlyArray<ReportHistoryEntry>): TrendSerie
 // ─── The trend context (the Impact section's one line) ────────────────────
 
 /**
- * The since-install trend summary a PR surface can print in one line.
- * Directions are computed WITHIN the latest comparability segment only; the
- * anchor is the install date (the first snapshot) when the whole series is
- * one comparable segment, else the latest segment's start, disclosed.
+ * The trend summary a PR surface can print in one line. Directions are
+ * computed WITHIN the latest comparability segment only; the anchor is the
+ * first snapshot ON RECORD when the whole series is one comparable segment
+ * (never claimed as "install": retention can truncate the record), else the
+ * latest segment's start, disclosed.
  */
 export interface TrendContext {
   /** Latest measured overall score in the latest segment (null when the
@@ -229,12 +235,13 @@ export interface TrendContext {
   readonly from: number | null;
   /** Net movement over the latest segment (first measured to last). */
   readonly direction: 'up' | 'down' | 'flat';
-  /** ISO date (YYYY-MM-DD) of the latest segment's first snapshot. Equals
-   *  the install date when `sinceInstall`. */
+  /** ISO date (YYYY-MM-DD) of the latest segment's first snapshot. */
   readonly sinceDate: string;
-  /** True when the latest segment reaches back to the very first snapshot
-   *  (the install baseline), so "since <date>" means since install. */
-  readonly sinceInstall: boolean;
+  /** True when the latest segment reaches back to the FIRST SNAPSHOT ON
+   *  RECORD (deliberately not "install": `reports.retain.history` can
+   *  truncate the series, so the record's start is the only claim the
+   *  data can back). */
+  readonly sinceFirstSnapshot: boolean;
   /** Snapshots in the latest (comparable) segment. */
   readonly snapshots: number;
   /** Snapshots across the whole history. */
@@ -263,12 +270,16 @@ export function computeTrendContext(
   const from = measured.length > 0 ? measured[0] : null;
   const overall = measured.length > 0 ? measured[measured.length - 1] : null;
   const net = from !== null && overall !== null ? overall - from : 0;
+  // An improvement on record: any increase between consecutive MEASURED
+  // overall values within one segment (the same null-skipping the direction
+  // uses, so [24, null, 26] counts). Cross-boundary increases never count.
   let improvementOnRecord = false;
   for (const seg of segments) {
-    for (let i = 1; i < seg.entries.length && !improvementOnRecord; i++) {
-      const a = seg.entries[i - 1].scores.overall;
-      const b = seg.entries[i].scores.overall;
-      if (typeof a === 'number' && typeof b === 'number' && b > a) improvementOnRecord = true;
+    const vals = seg.entries
+      .map((e) => e.scores.overall)
+      .filter((v): v is number => typeof v === 'number');
+    for (let i = 1; i < vals.length && !improvementOnRecord; i++) {
+      if (vals[i] > vals[i - 1]) improvementOnRecord = true;
     }
   }
   return {
@@ -276,7 +287,7 @@ export function computeTrendContext(
     from,
     direction: net > 0 ? 'up' : net < 0 ? 'down' : 'flat',
     sinceDate: latest.entries[0].date.slice(0, 10),
-    sinceInstall: segments.length === 1,
+    sinceFirstSnapshot: segments.length === 1,
     snapshots: latest.entries.length,
     totalSnapshots: entries.length,
     improvementOnRecord,
@@ -302,9 +313,19 @@ export function formatTrendContext(
   opts: { readonly projectedOverallDelta?: number | null } = {},
 ): string {
   const overall = ctx.overall === null ? 'unmeasured' : String(ctx.overall);
+  const window = ctx.sinceFirstSnapshot
+    ? `${ctx.totalSnapshots} snapshots`
+    : `${ctx.snapshots} of ${ctx.totalSnapshots} snapshots; earlier ones scored under different methodology or inputs`;
   let line: string;
-  if (ctx.snapshots === 1 && ctx.totalSnapshots === 1) {
-    line = `Repo trend: overall ${overall}, one snapshot on record (${ctx.sinceDate})`;
+  if (ctx.snapshots === 1) {
+    // A one-point window has no direction: say exactly what exists.
+    line =
+      ctx.totalSnapshots === 1
+        ? `Repo trend: overall ${overall}, one snapshot on record (${ctx.sinceDate})`
+        : `Repo trend: overall ${overall}, one comparable snapshot (${ctx.sinceDate}; ${window})`;
+  } else if (ctx.overall === null) {
+    // No measured overall in the window: no direction claim either.
+    line = `Repo trend: overall unmeasured since ${ctx.sinceDate} (${window})`;
   } else {
     const movement =
       ctx.direction === 'up'
@@ -312,9 +333,6 @@ export function formatTrendContext(
         : ctx.direction === 'down'
           ? `down from ${ctx.from}`
           : 'flat';
-    const window = ctx.sinceInstall
-      ? `${ctx.totalSnapshots} snapshots`
-      : `${ctx.snapshots} of ${ctx.totalSnapshots} snapshots; earlier ones scored under different methodology or inputs`;
     line = `Repo trend: overall ${overall}, ${movement} since ${ctx.sinceDate} (${window})`;
   }
   if (ctx.unverified) {

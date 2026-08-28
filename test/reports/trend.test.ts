@@ -12,6 +12,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   computeTrendContext,
+  debtRows,
   describeTrendBoundary,
   formatTrendContext,
   segmentHistory,
@@ -157,7 +158,7 @@ describe('computeTrendContext', () => {
       from: 24,
       direction: 'flat',
       sinceDate: '2026-07-20',
-      sinceInstall: true,
+      sinceFirstSnapshot: true,
       snapshots: 3,
       totalSnapshots: 3,
       improvementOnRecord: false,
@@ -186,7 +187,7 @@ describe('computeTrendContext', () => {
     ]);
     expect(ctx).toMatchObject({
       sinceDate: '2026-08-01',
-      sinceInstall: false,
+      sinceFirstSnapshot: false,
       snapshots: 2,
       totalSnapshots: 4,
     });
@@ -206,6 +207,22 @@ describe('computeTrendContext', () => {
       entry({ methodology: 'spec-v2', scores: scores({ overall: 20 }) }),
     ]);
     expect(withinOld?.improvementOnRecord).toBe(true);
+  });
+
+  it('a null gap between measured values still reads as movement AND an improvement on record', () => {
+    // [24, null, 26]: the unmeasured middle point must not hide the 24 -> 26
+    // increase from the improvement-on-record scan (it already does not hide
+    // it from the direction).
+    const ctx = computeTrendContext([
+      entry({ scores: scores({ overall: 24 }) }),
+      entry({ scores: scores({ overall: null }) }),
+      entry({ scores: scores({ overall: 26 }) }),
+    ]);
+    expect(ctx).toMatchObject({ direction: 'up', improvementOnRecord: true });
+    // Consequently no "first improvement" claim can render for this repo.
+    expect(formatTrendContext(ctx!, { projectedOverallDelta: 2 })).not.toContain(
+      'first improvement',
+    );
   });
 
   it('an unverified latest segment carries the caveat flag', () => {
@@ -269,9 +286,51 @@ describe('formatTrendContext (one phrasing, every surface)', () => {
     ).not.toContain('first improvement');
   });
 
+  it('a one-point latest segment says "one comparable snapshot", never a direction', () => {
+    const ctx = computeTrendContext([
+      entry({ date: '2026-07-01T00:00:00.000Z' }),
+      entry({ date: '2026-08-01T00:00:00.000Z', methodology: 'spec-v2' }),
+    ])!;
+    const line = formatTrendContext(ctx);
+    expect(line).toContain('one comparable snapshot (2026-08-01');
+    expect(line).toContain('1 of 2 snapshots');
+    expect(line).not.toContain('flat');
+  });
+
+  it('a window with no measured overall makes no direction claim', () => {
+    const ctx = computeTrendContext([
+      entry({ date: '2026-07-01T00:00:00.000Z', scores: scores({ overall: null }) }),
+      entry({ scores: scores({ overall: null }) }),
+    ])!;
+    expect(formatTrendContext(ctx)).toBe(
+      'Repo trend: overall unmeasured since 2026-07-01 (2 snapshots)',
+    );
+  });
+
   it('an unverified segment appends the comparability caveat', () => {
     const a = unstampedEntry({ date: '2026-07-20T00:00:00.000Z' });
     const ctx = computeTrendContext([a, { ...a, sha: 'sha-x' }])!;
     expect(formatTrendContext(ctx)).toContain('comparability unverified');
+  });
+});
+
+describe('debtRows (the four honesty directions)', () => {
+  it('ran-with-zero charts 0; absent kind charts a gap; no stamp charts a gap; counts chart counts', () => {
+    const stampedZero = entry({
+      debt: {
+        secret: { critical: 0, high: 0, medium: 0, low: 0 },
+        code: { critical: 0, high: 2, medium: 5, low: 0 },
+      },
+    });
+    const unstamped = entry(); // no debt at all (pre-4.4.7 / no aggregate)
+    const missingKind = entry({
+      debt: { code: { critical: 0, high: 1, medium: 0, low: 0 } }, // secret's scanner did not run
+    });
+    const rows = debtRows([unstamped, stampedZero, missingKind]);
+    const byKey = new Map(rows.map((r) => [r.label, r.values]));
+    // secret: gap (no stamp), 0 (ran clean), gap (kind omitted: unobserved).
+    expect(byKey.get('secret')).toEqual([null, 0, null]);
+    // code: gap, 7, 1.
+    expect(byKey.get('code')).toEqual([null, 7, 1]);
   });
 });

@@ -87,6 +87,12 @@ describe('reportToHistoryEntry', () => {
     expect(e.scores.quality).toBeNull();
   });
 
+  const RAN_ALL = {
+    secrets: { ran: true },
+    codePatterns: { ran: true },
+    depVulns: { available: true },
+  };
+
   it('stamps the debt-over-time counts from the canonical aggregate buckets (4.4.7), zero as zero', () => {
     const e = reportToHistoryEntry(
       {
@@ -96,6 +102,7 @@ describe('reportToHistoryEntry', () => {
             secretsBySeverity: { critical: 2, high: 0, medium: 0, low: 0 },
             codeBySeverity: { critical: 0, high: 3, medium: 7, low: 1 },
             depBySeverity: { critical: 0, high: 0, medium: 0, low: 0 },
+            provenance: RAN_ALL,
           },
         },
       },
@@ -104,10 +111,60 @@ describe('reportToHistoryEntry', () => {
     expect(e.debt).toEqual({
       secret: { critical: 2, high: 0, medium: 0, low: 0 },
       code: { critical: 0, high: 3, medium: 7, low: 1 },
-      // Zero debt is stamped as zero: distinguishable from an unmeasured
-      // (absent) stamp.
+      // Zero debt from a scanner that RAN is stamped as zero:
+      // distinguishable from an unmeasured (absent) stamp.
       'dep-vuln': { critical: 0, high: 0, medium: 0, low: 0 },
     });
+  });
+
+  it('OMITS a kind whose scanner did not observe the run (never a fabricated zero)', () => {
+    // The OSV-offline week: the dep bucket is {0,0,0,0} because nothing
+    // scanned, not because the debt cleared. The stamp must chart a gap.
+    const e = reportToHistoryEntry(
+      {
+        ...source,
+        capabilities: {
+          securityAggregate: {
+            secretsBySeverity: { critical: 1, high: 0, medium: 0, low: 0 },
+            codeBySeverity: { critical: 0, high: 3, medium: 0, low: 0 },
+            depBySeverity: { critical: 0, high: 0, medium: 0, low: 0 },
+            provenance: {
+              secrets: { ran: true },
+              codePatterns: { ran: true },
+              depVulns: { available: false },
+            },
+          },
+        },
+      },
+      { sha: 'abc', date: 'd', dxkitVersion: '4.4.7' },
+    );
+    expect(e.debt).toEqual({
+      secret: { critical: 1, high: 0, medium: 0, low: 0 },
+      code: { critical: 0, high: 3, medium: 0, low: 0 },
+    });
+    expect(e.debt?.['dep-vuln']).toBeUndefined();
+  });
+
+  it('a run where NO source observed stamps no debt at all (unmeasured, not an empty measurement)', () => {
+    const e = reportToHistoryEntry(
+      {
+        ...source,
+        capabilities: {
+          securityAggregate: {
+            secretsBySeverity: { critical: 0, high: 0, medium: 0, low: 0 },
+            codeBySeverity: { critical: 0, high: 0, medium: 0, low: 0 },
+            depBySeverity: { critical: 0, high: 0, medium: 0, low: 0 },
+            provenance: {
+              secrets: { ran: false },
+              codePatterns: { ran: false },
+              depVulns: { available: false },
+            },
+          },
+        },
+      },
+      { sha: 'abc', date: 'd', dxkitVersion: '4.4.7' },
+    );
+    expect(e.debt).toBeUndefined();
   });
 
   it('a run with no aggregate stamps NO debt (unmeasured, never fabricated zero)', () => {
