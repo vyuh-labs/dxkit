@@ -1,5 +1,5 @@
 import { NO_TREE_INVARIANTS } from './capabilities/tree-invariants';
-import { plannedRemediationSupport } from './capabilities/remediation';
+import { jvmRemediation } from './jvm-remediation';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -515,6 +515,22 @@ const kotlinLintGateProvider: LintGateProvider = {
       expectedExit: 0,
     };
   },
+  // The lint-autofix recipe's fix mode (4.4.7): `ktlint -F` scoped to the
+  // work order's files. ktlint's built-in reporters emit only the errors it
+  // could NOT autocorrect when formatting, so the same JSON parse reads the
+  // LEFTOVERS out of the one run: fix and verify in a single execution, the
+  // seam's contract.
+  fixCommand(ctx) {
+    if (ctx.files.length === 0) return null;
+    const ktlint = findTool(TOOL_DEFS.ktlint, ctx.cwd);
+    if (!ktlint.available || !ktlint.path) return null;
+    return {
+      bin: ktlint.path,
+      args: ['-F', '--reporter=json', ...ctx.files],
+      parse: { kind: 'structured', label: 'ktlint-json', parse: parseKtlintJson },
+      expectedExit: 0,
+    };
+  },
   recallInputs(ctx) {
     // ktlint's rule set moves with its version; `.editorconfig` is where a
     // Kotlin repo enables/disables rules and sets the code style, so it is the
@@ -807,7 +823,9 @@ export const kotlin: LanguageSupport = {
   },
 
   treeInvariants: NO_TREE_INVARIANTS,
-  remediation: plannedRemediationSupport('kotlin'),
+  // Dependency-shaped capabilities: the shared JVM exemptions (Rule 2,
+  // jvm-remediation.ts states why). lintFix rides the ktlint fixCommand.
+  remediation: jvmRemediation({ kind: 'capability' }),
   correctness: kotlinCorrectnessProvider,
   lintGate: kotlinLintGateProvider,
 

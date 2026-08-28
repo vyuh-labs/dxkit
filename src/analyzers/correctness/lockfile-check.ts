@@ -196,12 +196,19 @@ export function executeLockfileCheck(
       // A further tolerated-class failure with the ladder exhausted keeps
       // the disclosed pass (the pre-fix semantics, now the LAST resort).
       if (notes.length > 0 && retries.some((r) => r.matches(attempt.output))) return pass();
-      // A pack-declared NON-DRIFT classification (poetry check validates
-      // the whole pyproject alongside the lock) replaces the resync remedy
-      // with the pack's own disclosure: the check still fails (the frozen
-      // install fails on this tree either way), but the cause is named so
-      // a manifest error is never read, or remediated, as lockfile drift.
+      // A pack-declared classification decides what a non-tolerated
+      // failure means (see `SyncCheckClassification`):
+      //   - `{ skipped }`: the check CANNOT JUDGE here (an EOL toolchain
+      //     missing the dry-run flag). A disclosed skip, never a fail: a
+      //     fail would mint a stale-lockfile order every run whose resync
+      //     can only be discarded again.
+      //   - a string: a real NON-DRIFT failure (poetry check validates the
+      //     whole pyproject alongside the lock); the check still fails,
+      //     with the pack's disclosure instead of the resync remedy.
       const classified = check.classifyFailure?.(attempt.output) ?? null;
+      if (classified !== null && typeof classified === 'object') {
+        return { ...base, status: 'skipped-unavailable', output: classified.skipped };
+      }
       return {
         ...base,
         status: 'fail',

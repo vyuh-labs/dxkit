@@ -1,5 +1,6 @@
 import { NO_TREE_INVARIANTS } from './capabilities/tree-invariants';
-import { plannedRemediationSupport } from './capabilities/remediation';
+import { goRemediation } from './go-remediation';
+import { goInstallStrategy } from './go-install';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -25,7 +26,10 @@ import type {
   CorrectnessCommand,
   CorrectnessContext,
   CorrectnessProvider,
+  LockfileCheck,
 } from './capabilities/correctness';
+import { lockfileCheckFromStrategy } from './capabilities/correctness';
+import { resolveTolerances } from '../install/tolerances';
 import type { ExecutionRequirement } from '../execution';
 import type {
   CoverageResult,
@@ -909,6 +913,14 @@ function goChangedPackages(changedFiles: readonly string[]): string[] {
   return [...dirs];
 }
 
+/** The package directory of one repo-relative file, in the `./dir` spec
+ *  shape Go tools take (`.` for a root-level file), the same shape
+ *  `goChangedPackages` emits (Rule 2: one dir-spec convention). */
+function goPackageDir(file: string): string {
+  const dir = path.dirname(file).replace(/\\/g, '/');
+  return dir === '.' ? '.' : `./${dir}`;
+}
+
 /**
  * The Go correctness floor.
  *
@@ -955,6 +967,15 @@ const goCorrectnessProvider: CorrectnessProvider = {
       return { label: 'affected-tests', bin: 'go', args: ['test', ...pkgs] };
     }
     return { label: 'affected-tests', bin: 'go', args: ['test', './...'] };
+  },
+
+  // The module-sync floor check derives from the ONE install strategy
+  // through the ONE derivation (`lockfileCheckFromStrategy`), so the check
+  // and the install cannot disagree (Rule 2.30).
+  lockfileCheck(ctx: CorrectnessContext): LockfileCheck | null {
+    const strategy = goInstallStrategy.strategy(ctx.cwd);
+    if (strategy === null) return null;
+    return lockfileCheckFromStrategy(strategy, ctx.tolerances ?? resolveTolerances(ctx.cwd));
   },
 };
 
@@ -1009,6 +1030,30 @@ const goLintGateProvider: LintGateProvider = {
       // display format collapses a multi-line diagnostic to its first line
       // and a regex over it silently drops what doesn't fit (Rule 5).
       args: ['run', '--out-format', 'json'],
+      parse: { kind: 'structured', label: 'golangci-json', parse: parseGolangciJson },
+      expectedExit: 0,
+    };
+  },
+  // The lint-autofix recipe's fix mode (4.4.7): `golangci-lint run --fix`
+  // scoped to the work order's files' PACKAGE DIRECTORIES. A bare file
+  // argument makes golangci-lint load that one file as the whole package,
+  // so identifiers living in sibling files produce typecheck diagnostics
+  // that would read as net-new leftovers and discard real fixes on any
+  // multi-file package; the directory form type-checks the full package.
+  // Leftovers outside the order's own file are filtered by the recipe's
+  // in-file scoping, and edits outside the envelope are dropped by the
+  // frame's enforcement. golangci-lint's fixer removes the issues it fixed
+  // from the report (registry pins the v1 flag family), so the same JSON
+  // parse reads only the LEFTOVERS out of the one run: fix and verify in a
+  // single execution, the seam's contract.
+  fixCommand(ctx) {
+    if (ctx.files.length === 0) return null;
+    const gl = findTool(TOOL_DEFS['golangci-lint'], ctx.cwd);
+    if (!gl.available || !gl.path) return null;
+    const dirs = [...new Set(ctx.files.map((f) => goPackageDir(f)))];
+    return {
+      bin: gl.path,
+      args: ['run', '--fix', '--out-format', 'json', ...dirs],
       parse: { kind: 'structured', label: 'golangci-json', parse: parseGolangciJson },
       expectedExit: 0,
     };
@@ -1216,7 +1261,8 @@ export const go: LanguageSupport = {
   },
 
   treeInvariants: NO_TREE_INVARIANTS,
-  remediation: plannedRemediationSupport('go'),
+  installStrategy: goInstallStrategy,
+  remediation: goRemediation,
   correctness: goCorrectnessProvider,
   lintGate: goLintGateProvider,
 

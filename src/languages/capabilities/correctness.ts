@@ -222,9 +222,9 @@ export type LockfileCheck =
       readonly kind: 'command';
       readonly command: CorrectnessCommand;
       readonly tolerated?: readonly ToleratedCheckRetry[];
-      /** The strategy's declared non-drift classifier, passed through by
-       *  the one derivation below (see `LockfileSyncCheck`). */
-      readonly classifyFailure?: (output: string) => string | null;
+      /** The strategy's declared failure classifier, passed through by
+       *  the one derivation below (see `SyncCheckClassification`). */
+      readonly classifyFailure?: (output: string) => SyncCheckClassification;
     }
   | { readonly kind: 'skipped'; readonly reason: string };
 
@@ -276,7 +276,7 @@ export function lockfileCheckFromStrategy(
 }
 
 import type { ExecutionRequirement } from '../../execution';
-import type { InstallStrategy } from './install-strategy';
+import type { InstallStrategy, SyncCheckClassification } from './install-strategy';
 
 /**
  * A pack's correctness-floor provider. Both methods are pure command builders —

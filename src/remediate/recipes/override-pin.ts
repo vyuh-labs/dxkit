@@ -28,6 +28,7 @@ import type { DepAdvisoryEvidence } from '../work-orders/types';
 import {
   ambiguousRootReason,
   environmentRefusal,
+  execStepFailure,
   osvBlockTier,
   packStrategyAt,
   pickPinVersion,
@@ -118,7 +119,10 @@ export async function executeOverridePin(
   // $0 pre-check: would the pinned version itself carry a block-tier
   // advisory? A null answer (network) is disclosed and the re-audit verify
   // plus the frame's guardrail stay the backstop; it is never read as clean.
-  const known = await ctx.queryOsv(pkg, pin, provider.osvEcosystem);
+  // The pack may declare the form OSV stores (go: bare, no v prefix) so
+  // the pre-check queries what the database actually records.
+  const osvPin = provider.osvVersion?.(pin) ?? pin;
+  const known = await ctx.queryOsv(pkg, osvPin, provider.osvEcosystem);
   if (known === null) {
     notes.push(`OSV pre-check for ${pkg}@${pin} could not be reached; the re-audit verifies`);
   } else {
@@ -134,19 +138,38 @@ export async function executeOverridePin(
     }
   }
 
-  // Apply the pack's pure manifest edit: the executor owns the read and the
-  // write; the transform owns the format (and may still refuse: a direct
-  // dependency it only sees with the text in hand).
+  // Apply the pin, per the plan's declared shape:
+  //   - an EDIT plan: the executor owns the read and the write; the pack's
+  //     pure transform owns the format (and may still refuse: a direct
+  //     dependency it only sees with the text in hand). Then the lock
+  //     resync through the pack's install strategy at the same root (the
+  //     ONE install seam; never a second install path).
+  //   - a COMMAND plan (the tool-owned ecosystems): the pack's declared
+  //     command rewrites the dependency files itself, consistently, so no
+  //     separate resync runs.
   const rootAbs = path.join(ctx.cwd, rootDir);
-  const manifestAbs = path.join(rootAbs, plan.edit.file);
-  const edited = plan.edit.transform(fs.readFileSync(manifestAbs, 'utf8'));
-  if ('refused' in edited) return { kind: 'refused', reason: edited.refused };
-  fs.writeFileSync(manifestAbs, edited.text);
+  let changedFiles: string[];
+  if (plan.kind === 'command') {
+    const applied = ctx.exec({ bin: plan.command.bin, args: [...plan.command.args] }, rootAbs);
+    const failure = execStepFailure(
+      'apply-pin',
+      [plan.command.bin, ...plan.command.args].join(' '),
+      applied,
+    );
+    if (failure) return failure;
+    changedFiles = plan.writes.map((f) => (rootDir ? `${rootDir}/${f}` : f));
+  } else {
+    const manifestAbs = path.join(rootAbs, plan.edit.file);
+    const edited = plan.edit.transform(fs.readFileSync(manifestAbs, 'utf8'));
+    if ('refused' in edited) return { kind: 'refused', reason: edited.refused };
+    fs.writeFileSync(manifestAbs, edited.text);
 
-  // The lock resync through the pack's install strategy at the same root
-  // (the ONE install seam; never a second install path).
-  const installFailure = runResyncInstall(strategy, rootAbs, ctx);
-  if (installFailure) return installFailure;
+    const installFailure = runResyncInstall(strategy, rootAbs, ctx);
+    if (installFailure) return installFailure;
+    const manifestPath = rootDir ? `${rootDir}/${plan.edit.file}` : plan.edit.file;
+    const lockPath = rootDir ? `${rootDir}/${strategy.lockfile}` : strategy.lockfile;
+    changedFiles = [manifestPath, lockPath];
+  }
 
   // Verify: the ONE dep-audit dispatch, then "the order's package audits
   // clean": its known advisories are gone and nothing new was minted on it
@@ -170,11 +193,9 @@ export async function executeOverridePin(
         remaining.map((f) => f.id).join(', '),
     };
   }
-  const manifestPath = rootDir ? `${rootDir}/${plan.edit.file}` : plan.edit.file;
-  const lockPath = rootDir ? `${rootDir}/${strategy.lockfile}` : strategy.lockfile;
   return {
     kind: 'applied',
-    changedFiles: [manifestPath, lockPath],
+    changedFiles,
     revert: plan.revert,
     ...(notes.length > 0 ? { notes } : {}),
   };

@@ -156,6 +156,22 @@ export interface InstallPlan {
 }
 
 /**
+ * What a sync check's declared failure classifier may answer:
+ *   - a STRING: the failure is real but is NOT lockfile drift (poetry's
+ *     check validates the whole pyproject alongside the lock); the full
+ *     disclosure sentence is printed INSTEAD of the resync remedy, and the
+ *     check still FAILS (the frozen install fails on this tree either way).
+ *   - `{ skipped }`: the check CANNOT JUDGE here at all (an EOL toolchain
+ *     whose dry-run flag does not exist). A disclosed SKIP, never a fail:
+ *     a fail would mint a stale-lockfile order every run whose resync can
+ *     only be discarded again, a wasted spawn per run forever.
+ *   - null: a real drift; the standard resync remedy applies.
+ * Pure; biased toward false negatives (uncertain output keeps the drift
+ * reading).
+ */
+export type SyncCheckClassification = string | { readonly skipped: string } | null;
+
+/**
  * A non-installing "would the frozen install succeed?" check (the floor's
  * lockfile-sync tier), or a disclosed skip for an ecosystem whose manager
  * has no reliable dry-run. `tolerates` names the classes whose fallback
@@ -168,16 +184,9 @@ export type LockfileSyncCheck =
       readonly kind: 'command';
       readonly command: InstallCommand;
       readonly tolerates: readonly ToleranceClass[];
-      /**
-       * OPTIONAL classifier for a failure that is NOT lockfile drift, when
-       * the ecosystem's only check also validates other things (poetry
-       * check validates the whole pyproject alongside the lock). Returns
-       * the full disclosure sentence to print INSTEAD of the resync
-       * remedy, or null for a real drift. Pure; biased toward false
-       * negatives (uncertain output keeps the drift reading, since the
-       * frozen install would fail on it either way).
-       */
-      readonly classifyFailure?: (output: string) => string | null;
+      /** OPTIONAL classifier for a failure that is not a plain drift; see
+       *  `SyncCheckClassification` for the three answers. */
+      readonly classifyFailure?: (output: string) => SyncCheckClassification;
     }
   | { readonly kind: 'skipped'; readonly reason: string };
 

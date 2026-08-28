@@ -1,5 +1,5 @@
 import { NO_TREE_INVARIANTS } from './capabilities/tree-invariants';
-import { plannedRemediationSupport } from './capabilities/remediation';
+import type { RemediationSupport } from './capabilities/remediation';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -628,6 +628,56 @@ function detectSwiftToolchainVersion(cwd: string): string | undefined {
 
 // ─── The pack ───────────────────────────────────────────────────────────────
 
+/**
+ * The swift pack's remediation declarations: four reasoned exemptions
+ * (4.4.7 V3), each naming the future mechanism.
+ *
+ *   - resyncLockfile: SwiftPM has no frozen-install dry-run dxkit can
+ *     verify a Package.resolved resync with (resolution and staleness are
+ *     judged inside the build), so a resync could never confirm its fix.
+ *   - pinTransitive: SwiftPM has no override mechanism for transitive
+ *     dependencies (no resolutions/overrides table); forcing a version
+ *     means declaring the package directly in Package.swift, an
+ *     EXECUTABLE Swift manifest a mechanical edit can corrupt.
+ *   - declareDependency: declaring a package needs that same executable
+ *     manifest edit plus a repository URL an import name does not
+ *     identify (`import NIO` does not name github.com/apple/swift-nio).
+ *   - lintFix: swiftlint's fix mode reports the corrections it APPLIED
+ *     rather than what remains (the phpcbf class), and swiftformat
+ *     answers different rules than the swiftlint gate, so neither can
+ *     fix-and-verify an order's findings in one run.
+ */
+const swiftRemediation: RemediationSupport = {
+  resyncLockfile: {
+    kind: 'exemption',
+    reason:
+      'SwiftPM has no frozen-install dry-run dxkit can verify a Package.resolved resync ' +
+      'with (staleness is judged inside the build), so a resync could never confirm its ' +
+      'fix; these orders stay on the agent tier',
+  },
+  pinTransitive: {
+    kind: 'exemption',
+    reason:
+      'SwiftPM has no override mechanism for transitive dependencies; forcing a version ' +
+      'means editing Package.swift, an executable Swift manifest a mechanical edit can ' +
+      'corrupt; the pin stays on the agent tier',
+  },
+  declareDependency: {
+    kind: 'exemption',
+    reason:
+      'declaring a Swift package needs a Package.swift edit (executable Swift source) plus ' +
+      'a repository URL the import name does not identify; these orders stay on the agent ' +
+      'tier',
+  },
+  lintFix: {
+    kind: 'exemption',
+    reason:
+      "swiftlint's fix mode reports the corrections it applied rather than the findings " +
+      "that remain, so one run cannot both fix and verify an order's findings; these " +
+      'orders stay on the agent tier',
+  },
+};
+
 export const swift: LanguageSupport = {
   id: 'swift',
   displayName: 'Swift',
@@ -730,7 +780,7 @@ export const swift: LanguageSupport = {
   callGraphReliability: 'partial',
 
   treeInvariants: NO_TREE_INVARIANTS,
-  remediation: plannedRemediationSupport('swift'),
+  remediation: swiftRemediation,
   correctness: swiftCorrectnessProvider,
   lintGate: swiftLintGateProvider,
 

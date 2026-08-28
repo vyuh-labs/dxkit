@@ -38,63 +38,16 @@ import type { ExecutionRequirement } from '../../execution';
 import type { WorkOrder } from '../work-orders/types';
 import type { RecipeExecuteContext, RecipeOutcome } from './types';
 
-/** A CONCRETE semver (x.y.z with optional prerelease/build), never a range.
- *  A range-shaped "fixed version" (`>=4.1.0`) cannot be pinned verbatim, so
- *  orders carrying one tier to the agent instead of guessing. */
-const CONCRETE_SEMVER =
-  /^\d+\.\d+\.\d+(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$/;
-
-export function isConcreteSemver(version: string): boolean {
-  return CONCRETE_SEMVER.test(version);
-}
-
-/** Semver precedence for CONCRETE versions, prerelease rules included: a
- *  release outranks its prereleases (1.2.3 > 1.2.3-beta.1), prerelease
- *  identifiers compare numerically when numeric, bytewise otherwise, and a
- *  longer identifier list wins over its prefix (semver.org section 11). */
-export function compareConcreteSemver(a: string, b: string): number {
-  const parse = (v: string) => {
-    const [core] = v.split('+');
-    const [nums, ...preParts] = core.split('-');
-    return {
-      nums: nums.split('.').map(Number),
-      pre: preParts.length > 0 ? preParts.join('-').split('.') : null,
-    };
-  };
-  const pa = parse(a);
-  const pb = parse(b);
-  for (let i = 0; i < 3; i++) {
-    if (pa.nums[i] !== pb.nums[i]) return pa.nums[i] - pb.nums[i];
-  }
-  if (pa.pre === null && pb.pre === null) return 0;
-  if (pa.pre === null) return 1;
-  if (pb.pre === null) return -1;
-  for (let i = 0; i < Math.max(pa.pre.length, pb.pre.length); i++) {
-    const x = pa.pre[i];
-    const y = pb.pre[i];
-    if (x === undefined) return -1;
-    if (y === undefined) return 1;
-    const xn = /^\d+$/.test(x);
-    const yn = /^\d+$/.test(y);
-    if (xn && yn) {
-      if (Number(x) !== Number(y)) return Number(x) - Number(y);
-    } else if (xn !== yn) {
-      return xn ? -1 : 1; // numeric identifiers rank below alphanumeric
-    } else if (x !== y) {
-      return x < y ? -1 : 1;
-    }
-  }
-  return 0;
-}
-
-/** The default pin-version grammar: the x.y.z semver shape. Packs whose
- *  advisories carry other concrete forms declare their own
- *  `PinVersionScheme` (Rule 6); everything here consumes the scheme, never
- *  the semver helpers directly. */
-export const DEFAULT_PIN_VERSIONS: PinVersionScheme = {
-  concrete: isConcreteSemver,
-  compare: compareConcreteSemver,
-};
+// The concrete-semver shape and the default pin grammar live on the seam
+// itself (`capabilities/remediation.ts`), beside `PinVersionScheme`, so a
+// pack composing on the semver order (go's v-prefixed grammar) reads the
+// ONE comparator. Re-exported here for the recipe tier's consumers.
+import { DEFAULT_PIN_VERSIONS } from '../../languages/capabilities/remediation';
+export {
+  compareConcreteSemver,
+  DEFAULT_PIN_VERSIONS,
+  isConcreteSemver,
+} from '../../languages/capabilities/remediation';
 
 /** The version grammar serving a pin provider: its declared scheme, or the
  *  semver default. The ONE resolution consumed by the registry's `matches`

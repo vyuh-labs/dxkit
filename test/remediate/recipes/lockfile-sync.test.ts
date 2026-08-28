@@ -100,7 +100,7 @@ describe('lockfile-sync recipe', () => {
     if (outcome.kind === 'applied') expect(outcome.changedFiles).toEqual(['npm-shrinkwrap.json']);
   });
 
-  it('refuses a pack with no lockfile-sync check to verify with', async () => {
+  it("refuses when the envelope names no root under the pack's manifests (defensive rail)", async () => {
     const cwd = tempRepo({ 'package.json': PKG, 'package-lock.json': '{}' });
     const { exec } = fakeExec();
     const order = makeOrder({
@@ -110,6 +110,25 @@ describe('lockfile-sync recipe', () => {
     });
     const outcome = await executeLockfileSync(order, makeCtx(cwd, { exec }));
     expect(outcome.kind).toBe('refused');
-    if (outcome.kind === 'refused') expect(outcome.reason).toContain('go');
+    if (outcome.kind === 'refused') expect(outcome.reason).toContain('go.mod');
+  });
+
+  it("honors the pack's per-repo admission refusal BEFORE anything runs (go: vendored module)", async () => {
+    const cwd = tempRepo({
+      'go.mod': 'module example.com/app\n\ngo 1.22\n',
+      'go.sum': '',
+      'vendor/modules.txt': '# example.com/dep v1.0.0\n',
+    });
+    const { exec, calls } = fakeExec();
+    const order = makeOrder({
+      id: 'stale-lockfile:go',
+      class: 'stale-lockfile',
+      findings: [floorFinding('go/lockfile-sync', 'go', 'lockfile-sync')],
+      envelope: { paths: ['go.mod', 'go.sum'], manifests: true },
+    });
+    const outcome = await executeLockfileSync(order, makeCtx(cwd, { exec }));
+    expect(outcome.kind).toBe('refused');
+    if (outcome.kind === 'refused') expect(outcome.reason).toContain('inconsistent vendoring');
+    expect(calls).toHaveLength(0);
   });
 });
