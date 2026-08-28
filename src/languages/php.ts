@@ -1,5 +1,5 @@
 import { NO_TREE_INVARIANTS } from './capabilities/tree-invariants';
-import { plannedRemediationSupport } from './capabilities/remediation';
+import { phpRemediation } from './php-remediation';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -24,8 +24,11 @@ import type {
   CorrectnessCommand,
   CorrectnessContext,
   CorrectnessProvider,
+  LockfileCheck,
   ResolutionCheckResult,
 } from './capabilities/correctness';
+import { lockfileCheckFromStrategy } from './capabilities/correctness';
+import { resolveTolerances } from '../install/tolerances';
 import type {
   CoverageResult,
   DepVulnGatherOutcome,
@@ -633,6 +636,15 @@ export function phpResolutionCheck(ctx: CorrectnessContext): ResolutionCheckResu
 const phpCorrectnessProvider: CorrectnessProvider = {
   resolutionCheck: phpResolutionCheck,
 
+  // The lockfile-sync check (4.4.7): composer's own offline validate,
+  // derived from the strategy's declared sync check through the ONE
+  // derivation, so the check and the install read one declaration.
+  lockfileCheck(ctx: CorrectnessContext): LockfileCheck | null {
+    const strategy = phpInstallStrategy.strategy(ctx.cwd);
+    if (strategy === null || strategy.lockfile === null) return null;
+    return lockfileCheckFromStrategy(strategy, ctx.tolerances ?? resolveTolerances(ctx.cwd));
+  },
+
   execution: () => PHP_CLI_EXECUTION,
 
   syntaxCheck(ctx: CorrectnessContext): CorrectnessCommand | null {
@@ -682,7 +694,25 @@ const phpInstallStrategy = declareInstallStrategy(
       strategy: {
         manager: 'composer',
         lockfile: 'composer.lock',
-        modes: { frozen: { primary: { bin: 'composer', args: ['install'] }, fallbacks: [] } },
+        modes: {
+          frozen: { primary: { bin: 'composer', args: ['install'] }, fallbacks: [] },
+          // `composer update` is composer's own lock-writing resync (its
+          // stale-lock error names it as the remedy): re-resolve within
+          // the manifest's constraints, rewrite composer.lock, install.
+          resync: { primary: { bin: 'composer', args: ['update'] }, fallbacks: [] },
+        },
+        // `composer validate` checks the lock against composer.json by
+        // default and exits non-zero on a stale lock (verified: exit 2);
+        // --no-check-all / --no-check-publish keep unrelated manifest
+        // warnings from failing the sync question. Offline, non-installing.
+        syncCheck: {
+          kind: 'command',
+          command: {
+            bin: 'composer',
+            args: ['validate', '--no-check-all', '--no-check-publish'],
+          },
+          tolerates: [],
+        },
         execution: {
           hosts: ['any'],
           toolchains: ['php'],
@@ -772,7 +802,7 @@ export const php: LanguageSupport = {
   callGraphReliability: 'partial',
 
   treeInvariants: NO_TREE_INVARIANTS,
-  remediation: plannedRemediationSupport('php'),
+  remediation: phpRemediation,
   correctness: phpCorrectnessProvider,
   lintGate: phpLintGateProvider,
 
