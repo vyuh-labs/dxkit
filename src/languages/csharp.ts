@@ -1,5 +1,5 @@
 import { NO_TREE_INVARIANTS } from './capabilities/tree-invariants';
-import { plannedRemediationSupport } from './capabilities/remediation';
+import type { RemediationSupport } from './capabilities/remediation';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -1760,6 +1760,58 @@ function detectCsharpVersion(cwd: string): string | undefined {
   return undefined;
 }
 
+/**
+ * The csharp pack's remediation declarations: four reasoned exemptions
+ * (4.4.7 V3), each naming the future mechanism.
+ *
+ *   - The dependency-shaped recipes derive the owning root from a
+ *     pack-declared list of manifest BASENAMES, and .NET project manifests
+ *     have repo-specific basenames (MyApp.csproj), so no declaration can
+ *     name them today; NuGet lockfiles (packages.lock.json) are also a
+ *     per-project opt-in living beside each csproj. The fills graduate
+ *     when the seam grows a pattern-aware root derivation.
+ *   - pinTransitive additionally means a csproj / Directory.Packages.props
+ *     XML edit, hand-authored XML a mechanical edit can corrupt.
+ *   - declareDependency: the compiler is the resolution floor here (no
+ *     resolutionCheck), so unresolved-import orders are never minted.
+ *   - lintFix: the gate reads Roslyn analyzer warnings out of
+ *     `dotnet build`, while `dotnet format` reports what it CHANGED rather
+ *     than the analyzer findings that remain, so one run cannot both fix
+ *     and verify an order's findings (the phpcbf class).
+ */
+const csharpRemediation: RemediationSupport = {
+  resyncLockfile: {
+    kind: 'exemption',
+    reason:
+      'NuGet lockfiles (packages.lock.json) are a per-project opt-in living beside each ' +
+      '.csproj, and .NET project manifests have repo-specific basenames the order envelope ' +
+      'cannot name by basename; these orders stay on the agent tier until a pattern-aware ' +
+      'root derivation exists',
+  },
+  pinTransitive: {
+    kind: 'exemption',
+    reason:
+      'a .NET transitive pin is a .csproj or Directory.Packages.props XML edit, ' +
+      'hand-authored XML a mechanical edit can corrupt, and per-project manifests have ' +
+      'repo-specific basenames the order envelope cannot name; the pin stays on the agent ' +
+      'tier until a provably pure project-file edit exists',
+  },
+  declareDependency: {
+    kind: 'exemption',
+    reason:
+      'the C# compiler is the import-resolution floor for this pack (no resolutionCheck is ' +
+      'declared), so unresolved-import orders are never minted and a declare could not be ' +
+      'resolution-verified; these orders stay on the agent tier',
+  },
+  lintFix: {
+    kind: 'exemption',
+    reason:
+      'the C# lint gate reads Roslyn analyzer warnings out of dotnet build, and dotnet ' +
+      'format reports what it changed rather than the findings that remain, so one run ' +
+      "cannot both fix and verify an order's findings; these orders stay on the agent tier",
+  },
+};
+
 export const csharp: LanguageSupport = {
   id: 'csharp',
   displayName: 'C#',
@@ -2032,7 +2084,7 @@ export const csharp: LanguageSupport = {
   deepSast: { codeqlLanguage: 'csharp', snykCode: true, execution: csharpBuildExecution },
 
   treeInvariants: NO_TREE_INVARIANTS,
-  remediation: plannedRemediationSupport('dotnet'),
+  remediation: csharpRemediation,
   correctness: csharpCorrectnessProvider,
   lintGate: csharpLintGateProvider,
 

@@ -50,23 +50,26 @@ describe('pinTransitive: the Gemfile explicit-entry pin', () => {
 
   it('refuses a directly declared gem (either quote style) and non-Gemfile text', () => {
     const doubleQuoted = planPin('rails');
-    if (doubleQuoted.kind !== 'plan') throw new Error(doubleQuoted.reason);
+    if (doubleQuoted.kind !== 'plan')
+      throw new Error(doubleQuoted.kind === 'refused' ? doubleQuoted.reason : doubleQuoted.kind);
     const d = doubleQuoted.edit.transform(GEMFILE);
     expect(d).toHaveProperty('refused');
     if ('refused' in d) expect(d.refused).toContain('dep-bump');
 
     const singleQuoted = planPin('pg');
-    if (singleQuoted.kind !== 'plan') throw new Error(singleQuoted.reason);
+    if (singleQuoted.kind !== 'plan')
+      throw new Error(singleQuoted.kind === 'refused' ? singleQuoted.reason : singleQuoted.kind);
     expect(singleQuoted.edit.transform(GEMFILE)).toHaveProperty('refused');
 
     // A group-declared gem is still declared.
     const grouped = planPin('rspec-rails');
-    if (grouped.kind !== 'plan') throw new Error(grouped.reason);
+    if (grouped.kind !== 'plan')
+      throw new Error(grouped.kind === 'refused' ? grouped.reason : grouped.kind);
     expect(grouped.edit.transform(GEMFILE)).toHaveProperty('refused');
 
     for (const garbage of ['', 'not a manifest {', '42']) {
       const p = planPin();
-      if (p.kind !== 'plan') throw new Error(p.reason);
+      if (p.kind !== 'plan') throw new Error(p.kind === 'refused' ? p.reason : p.kind);
       expect(p.edit.transform(garbage)).toHaveProperty('refused');
     }
   });

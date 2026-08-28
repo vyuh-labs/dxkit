@@ -47,6 +47,7 @@ import type {
   RemediationSupport,
 } from './capabilities/remediation';
 import { compareNumericSegments } from './capabilities/remediation';
+import { findTomlTable, foldPackageKey, notToml, tableKeyNames, tomlTableNames } from './toml-text';
 import { pyDistForImport } from './python-dist-names';
 import { pythonInstallStrategy, PYTHON_INSTALL_EXECUTION } from './python-install';
 
@@ -67,54 +68,9 @@ function directDepRefusal(pkg: string): string {
 }
 
 // ── TOML text surgery (line-level, style-preserving, refusal-biased) ──────
-// Documented residual: a TOML multiline string containing a line shaped
-// like a `[table]` header (or a `key = [` array opener) can false-match
-// these line-level scans. The worst outcome is an INERT pin (the entry
-// lands inside the string) or an over-refusal; the recipe's verify
-// (re-audit) then fails and the runner discards the diff, so a corrupt
-// manifest never lands. Full TOML parsing is deliberately not worth that
-// tail risk here.
-
-/** The `[name]` table in `lines`: header index and exclusive body end. */
-function findTomlTable(
-  lines: readonly string[],
-  name: string,
-): { header: number; end: number } | null {
-  const headerRe = new RegExp(`^\\s*\\[${name.replace(/\./g, '\\.')}\\]\\s*(#.*)?$`);
-  for (let i = 0; i < lines.length; i++) {
-    if (!headerRe.test(lines[i])) continue;
-    let end = lines.length;
-    for (let j = i + 1; j < lines.length; j++) {
-      if (/^\s*\[/.test(lines[j])) {
-        end = j;
-        break;
-      }
-    }
-    return { header: i, end };
-  }
-  return null;
-}
-
-/** Every table header name in the document. */
-function tomlTableNames(lines: readonly string[]): string[] {
-  const out: string[] = [];
-  for (const line of lines) {
-    const m = line.match(/^\s*\[\s*([^\]]+?)\s*\]\s*(#.*)?$/);
-    if (m) out.push(m[1]);
-  }
-  return out;
-}
-
-/** Key names declared in one table's body (`name = ...` lines, quoted or
- *  bare), PEP-503 normalized for comparison. */
-function tableKeyNames(lines: readonly string[], table: { header: number; end: number }): string[] {
-  const out: string[] = [];
-  for (let i = table.header + 1; i < table.end; i++) {
-    const m = lines[i].match(/^\s*(?:"([^"]+)"|'([^']+)'|([A-Za-z0-9._-]+))\s*=/);
-    if (m) out.push(m[1] ?? m[2] ?? m[3]);
-  }
-  return out;
-}
+// The generic table/key scans live in `toml-text.ts` (shared with the rust
+// pack, Rule 2); the documented multiline-string residual is stated there.
+// The PEP 508 array scan below stays python-specific.
 
 /** The quoted requirement strings of every `<key> = [ ... ]` array in one
  *  table's body (bracket-balanced across lines), as leading PEP 508 names. */
@@ -140,17 +96,18 @@ function tableArrayRequirementNames(
   return out;
 }
 
-const norm = (n: string): string => n.toLowerCase().replace(/[-_.]+/g, '-');
-
 /** Is `pkg` a direct dependency under PEP 621 (`[project]` dependencies,
  *  `[project.optional-dependencies]` groups, and PEP 735
  *  `[dependency-groups]`, uv's default dev home and what the pack's own
  *  `uv add --dev` writes)? */
 function directInPep621(lines: readonly string[], pkg: string): boolean {
-  const target = norm(pkg);
+  const target = foldPackageKey(pkg);
   for (const name of ['project', 'project.optional-dependencies', 'dependency-groups']) {
     const table = findTomlTable(lines, name);
-    if (table && tableArrayRequirementNames(lines, table).some((n) => norm(n) === target)) {
+    if (
+      table &&
+      tableArrayRequirementNames(lines, table).some((n) => foldPackageKey(n) === target)
+    ) {
       return true;
     }
   }
@@ -159,20 +116,12 @@ function directInPep621(lines: readonly string[], pkg: string): boolean {
 
 /** Is `pkg` declared as a key in any table whose name matches `re`? */
 function directInKeyedTables(lines: readonly string[], re: RegExp, pkg: string): boolean {
-  const target = norm(pkg);
+  const target = foldPackageKey(pkg);
   return tomlTableNames(lines).some((name) => {
     if (!re.test(name)) return false;
     const table = findTomlTable(lines, name);
-    return table !== null && tableKeyNames(lines, table).some((n) => norm(n) === target);
+    return table !== null && tableKeyNames(lines, table).some((n) => foldPackageKey(n) === target);
   });
-}
-
-/** Every transform starts here: a manifest with no table header at all is
- *  not TOML dxkit can edit (garbage, an empty file, JSON). */
-function notToml(text: string, what: string): string | null {
-  return /^\s*\[[^\]]*\]/m.test(text)
-    ? null
-    : `this ${what} does not parse as a TOML manifest, so it cannot be edited`;
 }
 
 // ── the three pin transforms ───────────────────────────────────────────────

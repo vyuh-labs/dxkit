@@ -5,7 +5,23 @@
  * order, pack without a fix mode). Also pins the ts pack's `fixCommand`
  * shape: file-scoped `eslint --fix`, json output, same parser as the gate.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+
+// The Rule 20 gate probes the REAL machine (`currentEnvironment` is not an
+// injected seam). The mock reports the node toolchain present (the
+// typescript fixtures) and everything else absent, so the environment
+// refusal is testable deterministically on any host.
+vi.mock('../../../src/execution', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../src/execution')>();
+  return {
+    ...actual,
+    currentEnvironment: () => ({
+      host: 'linux' as const,
+      hasToolchain: (id: string) => id === 'node',
+      toolchainProblem: () => null,
+    }),
+  };
+});
 import { executeLintAutofix } from '../../../src/remediate/recipes/lint-autofix';
 import { getLanguage } from '../../../src/languages';
 import { fakeExec, lintFinding, makeCtx, makeOrder, tempRepo } from './helpers';
@@ -138,10 +154,26 @@ describe('lint-autofix recipe', () => {
     const cwd = eslintRepo();
     const { exec } = fakeExec();
     const outcome = await executeLintAutofix(
-      lintOrder('lint:go', 'src/a.ts'),
+      lintOrder('lint:java', 'src/a.ts'),
       makeCtx(cwd, { exec }),
     );
     expect(outcome.kind).toBe('refused');
-    if (outcome.kind === 'refused') expect(outcome.reason).toContain('go');
+    if (outcome.kind === 'refused') expect(outcome.reason).toContain('java');
+  });
+
+  it('Rule 20: an unmet gate execution requirement is a disclosed refusal BEFORE any spawn', async () => {
+    // kotlin's gate needs the jdk toolchain, absent under the env mock.
+    const cwd = eslintRepo();
+    const { exec, calls } = fakeExec();
+    const outcome = await executeLintAutofix(
+      lintOrder('lint:kotlin', 'src/A.kt'),
+      makeCtx(cwd, { exec }),
+    );
+    expect(outcome.kind).toBe('refused');
+    if (outcome.kind === 'refused') {
+      expect(outcome.reason).toContain('cannot run in this environment');
+      expect(outcome.reason).toContain('jdk');
+    }
+    expect(calls).toHaveLength(0);
   });
 });

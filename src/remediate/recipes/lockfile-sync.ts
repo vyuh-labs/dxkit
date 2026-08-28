@@ -52,6 +52,12 @@ export async function executeLockfileSync(
       reason: ambiguousRootReason(declaration.provider.manifestFiles, 'the owning dependency root'),
     };
   }
+  // The pack's per-repo admission check (pure fs reads): a tree shape
+  // where the declared resync would be unsound (a vendored go module, a
+  // go.work workspace) refuses up front instead of burning a run on a
+  // diff the verify or the envelope enforcement must discard.
+  const admission = declaration.provider.refusal?.({ cwd: ctx.cwd, rootDir }) ?? null;
+  if (admission !== null) return { kind: 'refused', reason: admission };
   const rootAbs = path.join(ctx.cwd, rootDir);
   // The pack's install strategy at this root (the ONE install seam): its
   // resync mode is the fix, its lockfile is what the fix rewrites.

@@ -223,3 +223,40 @@ describe('template == executor == verifier, per variant', () => {
     }
   });
 });
+
+// The wave-2 strategies (go, rust) declare ZERO fallbacks and are not CI
+// dependency installs, so the per-fallback parity loops above generate no
+// cases for them, a known and bounded vacuity: their command shapes are
+// pinned by the pack declaration tests (test/languages/go-remediation,
+// rust-remediation) and their live recipe path by the e2e go scenario.
+// The degenerate parity property they DO carry is pinned here generically,
+// for every present and future zero-fallback strategy.
+describe('zero-fallback strategies: the degenerate parity (no chain, no retry, no tolerance)', () => {
+  it('a plan with no fallbacks renders exactly its primary and the executor never retries', () => {
+    for (const provider of PROVIDERS) {
+      for (const v of provider.variants()) {
+        const s = v.strategy;
+        const plans = [s.modes.frozen, ...(s.modes.resync ? [s.modes.resync] : [])];
+        for (const plan of plans) {
+          if (plan.fallbacks.length > 0) continue;
+          const argvs: string[] = [];
+          const r = runInstall(
+            plan,
+            '/repo',
+            (cmd) => {
+              argvs.push(text(cmd));
+              return { available: true, code: 1, output: 'any failure shape' };
+            },
+            DEFAULTS,
+          );
+          expect(r.status, `${s.manager}: no silent retry ladder`).toBe('failed');
+          expect(argvs).toEqual([text(plan.primary)]);
+        }
+        if (s.modes.frozen.fallbacks.length === 0) {
+          // The rendered line is the bare primary: nothing to chain.
+          expect(renderInstallLine(v, DEFAULTS)).not.toContain(' || ');
+        }
+      }
+    }
+  });
+});

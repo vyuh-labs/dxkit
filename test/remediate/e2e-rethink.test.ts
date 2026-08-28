@@ -38,8 +38,25 @@
  *      reason while the pin still lands (`partially-landed`, the rows
  *      naming the dropped order's step).
  */
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { execFileSync } from 'child_process';
+
+// The recipes' Rule 20 gate probes the REAL machine (`currentEnvironment`
+// is not an injected seam), and the go scenario must land on hosts without
+// a Go toolchain (every spawn here is faked anyway). The mock reports every
+// toolchain present and healthy; the gate's own both-direction behavior is
+// pinned by the execution-platform and recipe-playbook tests.
+vi.mock('../../src/execution', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/execution')>();
+  return {
+    ...actual,
+    currentEnvironment: () => ({
+      host: 'linux' as const,
+      hasToolchain: () => true,
+      toolchainProblem: () => null,
+    }),
+  };
+});
 import * as fs from 'fs';
 import * as path from 'path';
 import { runRemediateTask } from '../../src/remediate/run';
@@ -466,6 +483,143 @@ describe('e2e a2: a recipe-only plan lands verified at $0 on a python repo', () 
     expect(uvCalls).toContain('lock');
     expect(git(repo, ['log', '--oneline'])).toContain('lockfile-sync recipe');
     expect(r.ledger).toContain('stale-lockfile:python');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// a3. The compiled-language proof (4.4.7 V3): the same recipe-only $0
+//     landing on a GO repo through the seam's COMMAND plan shape (go owns
+//     go.mod/go.sum, so the pin is `go get`, not a manifest edit). The
+//     driver still throws on contact; every spawn goes through go.
+// ---------------------------------------------------------------------------
+
+const GO_PACKS = [getLanguage('go')!];
+
+const GO_MOD_FIXTURE = `module example.com/app
+
+go 1.22
+
+require golang.org/x/text v0.3.7 // indirect
+`;
+
+/** A go estate: go.mod + go.sum, remediate enabled, the same committed
+ *  baseline + deferred allowlist shape as the node estate. */
+function goEstate(): string {
+  return fixtureRepo({
+    'go.mod': GO_MOD_FIXTURE,
+    'go.sum': 'golang.org/x/text v0.3.7/go.mod h1:aaaa\n',
+    'main.go': 'package main\n\nfunc main() {}\n',
+    '.dxkit/policy.json': policyJson(),
+    '.dxkit/baselines/main.json': baselineJson(),
+    '.dxkit/allowlist.json': DEFERRED_ALLOWLIST,
+  });
+}
+
+/** The go estate's exec fake: `go get` rewrites go.mod + go.sum (the tool
+ *  owns both files, one command); `go mod tidy` rewrites go.sum; the
+ *  `go mod tidy -diff` verify passes cleanly. */
+function goToolExec(repo: string): ReturnType<typeof fakeExec> {
+  return fakeExec((cmd, execCwd) => {
+    const root = execCwd ?? repo;
+    if (cmd.bin !== 'go') return;
+    if (cmd.args[0] === 'get') {
+      fs.appendFileSync(
+        path.join(root, 'go.mod'),
+        'require golang.org/x/text v0.3.8 // indirect\n',
+      );
+      fs.appendFileSync(path.join(root, 'go.sum'), 'golang.org/x/text v0.3.8/go.mod h1:bbbb\n');
+    }
+    if (cmd.args[0] === 'mod' && cmd.args[1] === 'tidy' && !cmd.args.includes('-diff')) {
+      fs.appendFileSync(path.join(root, 'go.sum'), '\n');
+    }
+  });
+}
+
+describe('e2e a3: a recipe-only plan lands verified at $0 on a go repo (the command-plan shape)', () => {
+  it('deferred advisory with a fixed version: the go tool applies its own pin, commits; no resync, no driver', async () => {
+    const repo = goEstate();
+    const { driver, runs } = stubDriver(); // throws on contact
+    const exec = goToolExec(repo);
+    const r = await runOnEstate({
+      repo,
+      packs: GO_PACKS,
+      taskId: 'fix-vulns',
+      driver,
+      exec,
+      scan: [
+        {
+          id: 'GO-2026-0001',
+          package: 'golang.org/x/text',
+          installedVersion: '0.3.7',
+          tool: 'osv-scanner',
+          packId: 'go',
+          severity: 'high',
+          reachable: true,
+          fingerprint: 'dead000011112222',
+          fixedVersion: '0.3.8',
+        },
+      ],
+    });
+
+    expect(runs).toHaveLength(0);
+    expect(r.outcome).toBe('verified');
+    expect(r.recipes?.records.map((rec) => [rec.orderId, rec.outcome.kind])).toEqual([
+      ['dep-advisory:golang.org/x/text', 'applied'],
+    ]);
+    expect(r.envelope).toBeUndefined(); // nothing was spent
+    // The fix is REAL and TOOL-OWNED: one `go get` rewrote both module
+    // files in a commit made by the recipe; no separate resync install ran
+    // and nothing ever spawned npm.
+    const goArgs = exec.calls.filter((c) => c.cmd.bin === 'go').map((c) => c.cmd.args.join(' '));
+    expect(goArgs[0]).toBe('get golang.org/x/text@v0.3.8');
+    // No lock-writing resync followed the pin (the frame's invariant step
+    // may run the non-writing tidy -diff CHECK; a plain tidy never runs).
+    expect(goArgs).not.toContain('mod tidy');
+    expect(exec.calls.every((c) => c.cmd.bin === 'go')).toBe(true);
+    expect(git(repo, ['show', 'HEAD:go.mod'])).toContain('golang.org/x/text v0.3.8');
+    expect(git(repo, ['show', 'HEAD:go.sum'])).toContain('v0.3.8/go.mod');
+    expect(git(repo, ['log', '--oneline'])).toContain('override-pin recipe');
+  });
+
+  it('stale go.sum: lockfile-sync resyncs with go mod tidy, verifies with tidy -diff, commits; zero driver invocations', async () => {
+    const repo = goEstate();
+    const { driver, runs } = stubDriver();
+    const staleEntry: CorrectnessFloorResult = {
+      ran: true,
+      blocks: true,
+      checks: [
+        {
+          pack: 'go',
+          label: LOCKFILE_SYNC_LABEL,
+          bin: 'go',
+          args: ['mod', 'tidy', '-diff'],
+          status: 'fail',
+          output: 'go.mod and go.sum need updates',
+        },
+      ],
+    };
+    const exec = goToolExec(repo);
+    const r = await runOnEstate({
+      repo,
+      packs: GO_PACKS,
+      taskId: 'fix-build',
+      driver,
+      entryFloor: staleEntry,
+      exec,
+    });
+
+    expect(runs).toHaveLength(0);
+    expect(r.outcome).toBe('verified');
+    expect(r.recipes?.records.map((rec) => [rec.orderId, rec.outcome.kind])).toEqual([
+      ['stale-lockfile:go', 'applied'],
+    ]);
+    // The resync AND the verify both went through the go pack's declared
+    // commands (go mod tidy, then go mod tidy -diff).
+    const goArgs = exec.calls.filter((c) => c.cmd.bin === 'go').map((c) => c.cmd.args.join(' '));
+    expect(goArgs).toContain('mod tidy');
+    expect(goArgs).toContain('mod tidy -diff');
+    expect(git(repo, ['log', '--oneline'])).toContain('lockfile-sync recipe');
+    expect(r.ledger).toContain('stale-lockfile:go');
   });
 });
 
