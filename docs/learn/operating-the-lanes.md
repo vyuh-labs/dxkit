@@ -82,6 +82,60 @@ Inside each task run, the frame works the plan in two tiers:
   (infrastructure) keeps the commits on the branch and completes
   `verification-unavailable` instead of destroying or landing anything.
 
+### Recipe coverage per ecosystem
+
+Which orders can go recipe-tier depends on the repo's language packs: each
+pack either declares a provider for a recipe capability or carries a
+reasoned exemption, and exempt orders tier to the agent with the reason
+disclosed in `remediate plan` output. The table below is generated from
+those declarations (a hand-edited copy would drift; edit the pack, then
+run `npm run build && npm run docs:remediation-coverage`).
+
+<!-- BEGIN GENERATED: remediation-coverage (edit the pack declarations, then: npm run build && npm run docs:remediation-coverage) -->
+
+| Pack         | lockfile resync | transitive pin | declare dependency | lint autofix |
+| ------------ | --------------- | -------------- | ------------------ | ------------ |
+| `python`     | recipe          | recipe         | recipe             | recipe       |
+| `typescript` | recipe          | recipe         | recipe             | recipe       |
+| `csharp`     | agent tier      | agent tier     | agent tier         | agent tier   |
+| `go`         | recipe          | recipe         | agent tier         | recipe       |
+| `rust`       | recipe          | recipe         | agent tier         | agent tier   |
+| `kotlin`     | agent tier      | agent tier     | agent tier         | recipe       |
+| `java`       | agent tier      | agent tier     | agent tier         | agent tier   |
+| `ruby`       | recipe          | recipe         | recipe             | recipe       |
+| `swift`      | agent tier      | agent tier     | agent tier         | agent tier   |
+| `php`        | recipe          | recipe         | agent tier         | agent tier   |
+| `abap`       | agent tier      | agent tier     | agent tier         | agent tier   |
+
+The agent-tier cells, in each pack's own words:
+
+- `csharp` lockfile resync: NuGet lockfiles (packages.lock.json) are a per-project opt-in living beside each .csproj, and .NET project manifests have repo-specific basenames the order envelope cannot name by basename; these orders stay on the agent tier until a pattern-aware root derivation exists
+- `csharp` transitive pin: a .NET transitive pin is a .csproj or Directory.Packages.props XML edit, hand-authored XML a mechanical edit can corrupt, and per-project manifests have repo-specific basenames the order envelope cannot name; the pin stays on the agent tier until a provably pure project-file edit exists
+- `csharp` declare dependency: the C# compiler is the import-resolution floor for this pack (no resolutionCheck is declared), so unresolved-import orders are never minted and a declare could not be resolution-verified; these orders stay on the agent tier
+- `csharp` lint autofix: the C# lint gate reads Roslyn analyzer warnings out of dotnet build, and dotnet format reports what it changed rather than the findings that remain, so one run cannot both fix and verify an order's findings; these orders stay on the agent tier
+- `go` declare dependency: the go compiler is the import-resolution floor for this pack (no resolutionCheck is declared), so unresolved-import orders are never minted and a declare could not be resolution-verified; these orders stay on the agent tier
+- `rust` declare dependency: the rust compiler is the import-resolution floor for this pack (no resolutionCheck is declared), so unresolved-import orders are never minted and a declare could not be resolution-verified; these orders stay on the agent tier
+- `rust` lint autofix: cargo clippy's fix mode rewrites whole crates rather than a work order's files and refuses a dirty working tree without --allow-dirty (a flag dxkit will not pass); these orders stay on the agent tier
+- `kotlin` lockfile resync: maven has no lockfile, and gradle dependency locking is a per-configuration opt-in whose semantics live in the build script (a mechanical --write-locks run could silently change the locked set); these orders stay on the agent tier
+- `kotlin` transitive pin: a JVM transitive pin is a build-file edit (dependencyManagement in pom.xml, a gradle constraints block), and build files are executable configuration a mechanical edit can corrupt; the pin stays on the agent tier until a provably pure build-file edit exists
+- `kotlin` declare dependency: an unresolved JVM import names a package namespace, which does not identify maven coordinates (groupId:artifactId cannot be derived from it mechanically), and the compiler is the resolution floor here; these orders stay on the agent tier
+- `java` lockfile resync: maven has no lockfile, and gradle dependency locking is a per-configuration opt-in whose semantics live in the build script (a mechanical --write-locks run could silently change the locked set); these orders stay on the agent tier
+- `java` transitive pin: a JVM transitive pin is a build-file edit (dependencyManagement in pom.xml, a gradle constraints block), and build files are executable configuration a mechanical edit can corrupt; the pin stays on the agent tier until a provably pure build-file edit exists
+- `java` declare dependency: an unresolved JVM import names a package namespace, which does not identify maven coordinates (groupId:artifactId cannot be derived from it mechanically), and the compiler is the resolution floor here; these orders stay on the agent tier
+- `java` lint autofix: the java lint gate is dormant (no linter command is wired), so there is no declared fixer to run; these orders stay on the agent tier
+- `swift` lockfile resync: SwiftPM has no frozen-install dry-run dxkit can verify a Package.resolved resync with (staleness is judged inside the build), so a resync could never confirm its fix; these orders stay on the agent tier
+- `swift` transitive pin: SwiftPM has no override mechanism for transitive dependencies; forcing a version means editing Package.swift, an executable Swift manifest a mechanical edit can corrupt; the pin stays on the agent tier
+- `swift` declare dependency: declaring a Swift package needs a Package.swift edit (executable Swift source) plus a repository URL the import name does not identify; these orders stay on the agent tier
+- `swift` lint autofix: swiftlint's fix mode reports the corrections it applied rather than the findings that remain, so one run cannot both fix and verify an order's findings; these orders stay on the agent tier
+- `php` declare dependency: an unresolved php import names a namespace, and a namespace does not identify a Packagist package (the vendor/package name cannot be derived from it mechanically); these orders stay on the agent tier
+- `php` lint autofix: phpcbf, the phpcs fixer, reports what it fixed rather than what remains, so a single fix run cannot also verify the order's findings are gone; these orders stay on the agent tier
+- `abap` lockfile resync: ABAP has no package manager or lockfile for dxkit to resync
+- `abap` transitive pin: ABAP has no dependency manifest in which a transitive version could be pinned
+- `abap` declare dependency: ABAP has no package registry to declare and install dependencies from
+- `abap` lint autofix: no ABAP linter with a reliable machine autofix is wired as a lint gate yet
+
+<!-- END GENERATED: remediation-coverage -->
+
 Every order's outcome is recorded in the lane's order ledger
 (`.dxkit/lanes/<lane>-<task>.orders.jsonl`): rows ride a landed PR's own
 diff, and a run that lands nothing pushes its rows as a metadata commit on

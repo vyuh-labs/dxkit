@@ -50,6 +50,18 @@ describe('scaffold-language emits a compiling pack', () => {
       expect(packSrc).toContain(
         "import { plannedRemediationSupport } from './capabilities/remediation';",
       );
+      // The remediation TODO points a new pack author at the real
+      // per-capability exemplars, the exemption pattern, and the generated
+      // docs coverage table regen step (4.4.7 V4).
+      for (const pointer of [
+        'node-remediation',
+        'python-remediation',
+        'go-remediation',
+        'jvm-remediation',
+        'docs:remediation-coverage',
+      ]) {
+        expect(packSrc, `scaffold TODO should point at ${pointer}`).toContain(pointer);
+      }
       // The scaffolder extended the copied union, so `id: 'zetalang'` types.
       const types = fs.readFileSync(path.join(root, 'src', 'types.ts'), 'utf8');
       expect(types).toMatch(/LanguageId[^;]*'zetalang'/);

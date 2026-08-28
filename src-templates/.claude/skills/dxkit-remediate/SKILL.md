@@ -76,6 +76,15 @@ with disclosure). A refused or failed recipe order falls through to the
 agent tier in the same run; when nothing lands for such orders the outcome
 is `recipes-refused`, never a green no-op.
 
+Which orders CAN go recipe-tier is declared per ecosystem by the language
+packs: each pack either provides a recipe capability (lockfile resync,
+transitive pin, declare dependency, lint autofix) or carries a reasoned
+exemption, and exempt orders tier to the agent with the reason disclosed
+in `remediate plan` output. The per-ecosystem coverage table (generated
+from the pack declarations, with every exemption's reason) lives in the
+"Operating the lanes" learn guide (`vyuh-dxkit learn`, or
+`docs/learn/operating-the-lanes.md` in the dxkit repo).
+
 The frame owns the dependency tree (and whatever else a language pack
 declares as a frame-owned invariant): each order prompt tells the agent not
 to edit the lockfile or run installs, and after every agent order and
