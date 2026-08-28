@@ -22,6 +22,13 @@ import {
 } from './reports/snapshot';
 import type { ReportHistoryEntry } from './reports/history';
 import { renderHistoryMarkdown } from './reports/render';
+import {
+  defaultGhExec,
+  resolveRepoSlug,
+  updateLandedComment,
+  type GhExec,
+  type LandedCommentOutcome,
+} from './reports/landed-comment';
 import { loadPolicyFromCwd, type ReportsPolicy } from './baseline/policy';
 import { announceAnchorNotPushed } from './baseline/anchor-publish';
 import * as logger from './logger';
@@ -88,6 +95,28 @@ export interface ReportSnapshotOptions {
   readonly dryRun?: boolean;
   /** ISO timestamp override (tests / determinism). */
   readonly now?: string;
+  /**
+   * After a successful publish, update the merged PR's guardrail comment
+   * with the landed (actual) scores beside the projection it carried
+   * (impact surface P2). Best-effort: every failure is a disclosed skip in
+   * the output + step summary, never a non-zero exit: the reports lane
+   * passes this flag; local runs default off.
+   */
+  readonly prComment?: boolean;
+  /** Injected gh executor for the PR-comment update (tests). */
+  readonly ghExec?: GhExec;
+}
+
+/** Append a line to the Actions step summary when running under CI.
+ *  Best-effort decoration, mirroring the remediate lane's helper. */
+function appendStepSummary(line: string): void {
+  const file = process.env.GITHUB_STEP_SUMMARY;
+  if (!file) return;
+  try {
+    fs.appendFileSync(file, line + '\n\n', 'utf8');
+  } catch {
+    /* summary is decoration, never a failure */
+  }
 }
 
 export async function runReportSnapshot(opts: ReportSnapshotOptions): Promise<number> {
@@ -134,6 +163,39 @@ export async function runReportSnapshot(opts: ReportSnapshotOptions): Promise<nu
   // the workflow went green, and no reports ref ever appeared). Announce it the
   // ONE way both publishers do, in JSON and human mode alike.
   const notPushed = !result.publish.pushed && result.publish.reason !== 'no change';
+
+  // The post-merge landed update (impact P2): patch the merged PR's guardrail
+  // comment with actual-vs-projected scores. Only after a publish that stands
+  // ("no change" republishes the same truth, so the comment is still honest);
+  // a REJECTED publish means the entry never landed, so claiming it on a PR
+  // would fabricate history.
+  let prComment: LandedCommentOutcome | undefined;
+  if (opts.prComment) {
+    if (notPushed) {
+      prComment = {
+        status: 'skipped',
+        reason: 'snapshot publish was rejected, so there is no landed entry to report',
+      };
+    } else {
+      const exec = opts.ghExec ?? defaultGhExec;
+      const slug = resolveRepoSlug(exec);
+      prComment = slug
+        ? updateLandedComment({
+            slug,
+            sha,
+            entry,
+            ...(result.previousEntry ? { prev: result.previousEntry } : {}),
+            exec,
+          })
+        : { status: 'skipped', reason: 'could not resolve the repository slug (owner/repo)' };
+    }
+    appendStepSummary(
+      prComment.status === 'updated'
+        ? `dxkit landed scores: updated the guardrail comment on PR #${prComment.prNumber}.`
+        : `dxkit landed scores: PR comment skipped (${prComment.reason}).`,
+    );
+  }
+
   if (opts.json) {
     if (notPushed) announceAnchorNotPushed(result.anchorRef, result.publish.reason);
     process.stdout.write(
@@ -144,6 +206,7 @@ export async function runReportSnapshot(opts: ReportSnapshotOptions): Promise<nu
         anchorRef: result.anchorRef,
         historyCount: result.historyCount,
         overall: entry.scores.overall,
+        ...(prComment !== undefined ? { prComment } : {}),
       }) + '\n',
     );
     return 0;
@@ -157,6 +220,15 @@ export async function runReportSnapshot(opts: ReportSnapshotOptions): Promise<nu
     logger.info('No change since the last snapshot — nothing published.');
   } else {
     announceAnchorNotPushed(result.anchorRef, result.publish.reason);
+  }
+  if (prComment !== undefined) {
+    if (prComment.status === 'updated') {
+      logger.success(
+        `Updated the guardrail comment on PR #${prComment.prNumber} with landed scores.`,
+      );
+    } else {
+      logger.info(`PR comment skipped: ${prComment.reason}`);
+    }
   }
   return 0;
 }
