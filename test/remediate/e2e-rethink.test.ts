@@ -36,7 +36,14 @@
  *      (the order lands, the lockfile is the tool's truth), or, when the
  *      resync cannot re-establish the tree, drops THAT order with the
  *      reason while the pin still lands (`partially-landed`, the rows
- *      naming the dropped order's step).
+ *      naming the dropped order's step);
+ *   e. TWO-PHASE LANDING (4.4.7): under the lane's deferred-landing env
+ *      the executor performs ZERO pushes and writes ONE landing record
+ *      (the verified head, the assembled PR, the order rows), and
+ *      `remediate land` then lands exactly that record through the real
+ *      landing primitive; a guardrail-red run whose blocking findings
+ *      containment attributes to one order lands the GREEN subset the
+ *      same way (one record, the dropped order riding only the rows).
  */
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { execFileSync } from 'child_process';
@@ -61,6 +68,16 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { runRemediateTask } from '../../src/remediate/run';
 import type { RemediateResult, RemediateRunOptions } from '../../src/remediate/run';
+import { executeTask, type ExecutorSeams } from '../../src/remediate/execute';
+import { runRemediateLand } from '../../src/remediate/land-cli';
+import { landRemediateHead } from '../../src/remediate/land';
+import {
+  DEFERRED_LANDING_ENV,
+  landingRecordPath,
+  type LandingRecord,
+} from '../../src/remediate/landing-record';
+import type { Exec } from '../../src/land-refresh';
+import type { GuardrailGateResult } from '../../src/lanes/verify';
 import { realGit } from '../../src/remediate/git-ops';
 import { realRecipeGit } from '../../src/remediate/recipes/git';
 import {
@@ -84,6 +101,7 @@ import { remediateStamp } from '../../src/remediate/work-orders/breaker';
 import { BUDGET_DERIVATION } from '../../src/remediate/work-orders/shared';
 import type { GatherWorkOrderOptions } from '../../src/remediate/work-orders/gather';
 import { trustedLocalContext } from '../../src/analysis-trust';
+import { DXKIT_RUNTIME_ARTIFACT_PATHS } from '../../src/runtime-artifacts';
 import { GREEN_FLOOR, stubDriver } from './helpers';
 import { fakeExec, tempRepo, type ExecScript } from './recipes/helpers';
 
@@ -185,9 +203,15 @@ function policyJson(extra: object = {}): string {
 }
 
 /** Base fixture: a node repo (package.json + lockfile), remediate enabled,
- *  a committed baseline and a deferred dep-vuln allowlist entry. */
+ *  a committed baseline and a deferred dep-vuln allowlist entry. The ignore
+ *  block mirrors an onboarded repo (init seeds it): without it the sweep
+ *  commits + scrubs `.dxkit/cache/` runtime state inside the order range,
+ *  and a later containment revert of that range collides with the freshly
+ *  recreated untracked record (a disclosed containment refusal, but not
+ *  the shape an installed repo has). */
 function estate(extraFiles: Record<string, string> = {}, policyExtra: object = {}): string {
   return fixtureRepo({
+    '.gitignore': DXKIT_RUNTIME_ARTIFACT_PATHS.join('\n') + '\n',
     'package.json': JSON.stringify(
       { name: 'fixture', version: '1.0.0', dependencies: { 'left-pad': '^1.0.0' } },
       null,
@@ -237,6 +261,9 @@ interface EstateRun {
   /** The exec the frame's invariant step uses after an AGENT order
    *  (defaults to the same fake as the recipe tier). */
   readonly frameExec?: ReturnType<typeof fakeExec>;
+  /** The guardrail arbiter (defaults to always PASSED); the containment
+   *  scenario injects a content-driven red. */
+  readonly runGuardrail?: RemediateRunOptions['runGuardrail'];
 }
 
 /** Drive `runRemediateTask` through the REAL recipe phase (real planner,
@@ -257,7 +284,8 @@ async function runOnEstate(o: EstateRun): Promise<RemediateResult> {
     git: realGit(o.repo),
     entryFloor: o.entryFloor ?? GREEN_FLOOR,
     runFloor: () => GREEN_FLOOR,
-    runGuardrail: async () => ({ verdict: 'PASSED', ran: true, passesGate: true }),
+    runGuardrail:
+      o.runGuardrail ?? (async () => ({ verdict: 'PASSED', ran: true, passesGate: true })),
     verifySeams: {
       worktree: async (_o, fn) => fn(o.repo),
       install: () => ({ status: 'no-provision-declared', packs: [] }) as const,
@@ -1075,5 +1103,195 @@ describe('e2e c: the circuit breaker pauses a failing class and an explicit disp
     expect((r.recipes?.paused ?? []).map((p) => p.class)).toEqual(['dep-advisory']);
     // The offline standing-branch probe is a disclosure, never an error.
     expect((r.recipes?.disclosures ?? []).join('\n')).toContain('no remote reachable');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// e. Two-phase landing (4.4.7): the lane composition end to end. A deferred
+//    run performs ZERO pushes and writes ONE landing record, and
+//    `remediate land` then lands exactly that record through the REAL
+//    landing primitive (git push + standing PR via an injected exec).
+// ---------------------------------------------------------------------------
+
+const DEFERRED_ENV = { [DEFERRED_LANDING_ENV]: '1' };
+
+function readLandingRecordFile(repo: string, taskId: string): LandingRecord {
+  return JSON.parse(
+    fs.readFileSync(path.join(repo, landingRecordPath(taskId)), 'utf8'),
+  ) as LandingRecord;
+}
+
+/** Executor seams for the lane composition: pushes are SPIES that must
+ *  stay uncalled under the deferred env; everything else is real. */
+function laneSeams(pushes: string[], run: () => Promise<RemediateResult>): ExecutorSeams {
+  return {
+    env: DEFERRED_ENV,
+    runTask: run,
+    branch: () => 'main',
+    defaultBranch: () => 'main',
+    probeDelivery: () => ({ probes: [], anyBlocked: false, unverifiable: false }),
+    landHead: () => {
+      pushes.push('landHead');
+      return { outcome: 'pr-opened', mode: 'pr' };
+    },
+    writeOrderLedger: () => {
+      pushes.push('writeOrderLedger'); // composes against the standing branch
+      return null;
+    },
+    publishOrderRows: () => {
+      pushes.push('publishOrderRows');
+      return { published: true };
+    },
+  };
+}
+
+/** A recording Exec for the REAL `landRemediateHead`: `gh pr list` finds
+ *  no standing PR, `gh pr create` answers with a URL, git spawns succeed
+ *  silently. Nothing touches the network. */
+function recordingLandExec(): { exec: Exec; calls: string[][] } {
+  const calls: string[][] = [];
+  const exec: Exec = (bin, args) => {
+    calls.push([bin, ...args]);
+    if (bin === 'gh' && args[0] === 'pr' && args[1] === 'list') return '[]';
+    if (bin === 'gh' && args[0] === 'pr' && args[1] === 'create') {
+      return 'https://example.test/pr/447';
+    }
+    return '';
+  };
+  return { exec, calls };
+}
+
+describe('e2e e: two-phase landing, the lane composition', () => {
+  it('a deferred verified run pushes nothing and writes one landing record; `remediate land` lands it through the real primitive', async () => {
+    const repo = estate();
+    const { driver, runs } = stubDriver(); // throws on contact: recipe-only
+    const pushes: string[] = [];
+
+    const run = await executeTask(
+      repo,
+      resolveRemediateConfig(repo),
+      'fix-vulns',
+      'pr',
+      laneSeams(pushes, () =>
+        runOnEstate({ repo, taskId: 'fix-vulns', driver, scan: [scanFinding('4.1.0')] }),
+      ),
+    );
+
+    // Phase one: the REAL recipe fix landed in a commit, but nothing was
+    // pushed; the record carries the whole delivery.
+    expect(runs).toHaveLength(0);
+    expect(pushes).toEqual([]);
+    expect(run.landed).toBe(false);
+    expect(run.clean).toBe(true);
+    expect(run.landingDeferred).toContain('remediate land');
+    const record = readLandingRecordFile(repo, 'fix-vulns');
+    expect(record.action).toBe('land');
+    expect(record.branch).toBe('dxkit/remediate-fix-vulns');
+    // The recorded head IS the verified head the recipe committed.
+    expect(record.head).toBe(git(repo, ['rev-parse', 'HEAD']));
+    expect(record.prTitle).toBe('dxkit remediate: fix-vulns');
+    expect(record.prBody).toContain('dep-advisory:js-yaml');
+    expect(record.orderRows.map((row) => [row.orderId, row.outcome])).toEqual([
+      ['dep-advisory:js-yaml', 'verified'],
+    ]);
+
+    // Phase two: `remediate land` validates the record and lands it via
+    // the REAL landRemediateHead over a recorded exec (push + PR).
+    const { exec, calls } = recordingLandExec();
+    const landed = runRemediateLand(repo, 'fix-vulns', {
+      writeOrderLedger: () => null, // the standing-branch read is offline here
+      landHead: (o) => landRemediateHead({ ...o, exec }),
+    });
+    expect(landed).toEqual({ outcome: 'landed', prUrl: 'https://example.test/pr/447' });
+    const push = calls.find((c) => c[0] === 'git' && c[1] === 'push');
+    expect(push).toBeDefined();
+    expect(push?.join(' ')).toContain('dxkit/remediate-fix-vulns');
+    const prCreate = calls.find((c) => c[0] === 'gh' && c[2] === 'create');
+    expect(prCreate).toContain('--base');
+    expect(prCreate).toContain('main');
+    // Idempotent: the record is cleared, a re-run is a disclosed no-op.
+    expect(fs.existsSync(path.join(repo, landingRecordPath('fix-vulns')))).toBe(false);
+    const rerun = runRemediateLand(repo, 'fix-vulns', {
+      landHead: () => {
+        throw new Error('must not land twice');
+      },
+    });
+    expect(rerun.outcome).toBe('no-record');
+  });
+
+  it('a contained partially-landed run writes ONE record for the green subset (the dropped order rides only the rows)', async () => {
+    const repo = estate({ '.dxkit/allowlist.json': TWO_DEFERRED_ALLOWLIST });
+    // The agent order's fix for lodash is what the final guardrail rejects.
+    const { driver, runs } = stubDriver((opts) => {
+      const manifestPath = path.join(opts.cwd, 'package.json');
+      const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8')) as Record<
+        string,
+        Record<string, string>
+      >;
+      manifest.overrides = { ...manifest.overrides, lodash: '4.17.21' };
+      fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
+      return { turns: 3, costUsd: 0.2 };
+    });
+    // Content-driven arbiter: red (naming lodash) while the agent's pin is
+    // in the tree, green once containment unwound it, so the final check
+    // goes red and the post-revert re-verification goes green, however
+    // many times the seam is consulted.
+    const redOnLodash = async (): Promise<GuardrailGateResult> => {
+      const manifest = fs.readFileSync(path.join(repo, 'package.json'), 'utf8');
+      if (!manifest.includes('"lodash"')) {
+        return { verdict: 'PASSED', ran: true, passesGate: true };
+      }
+      const description = '[dep-vuln] lodash@4.17.21 · GHSA-2 added (no-prior-match)';
+      return {
+        verdict: 'BLOCKED',
+        ran: true,
+        passesGate: false,
+        blocking: [description],
+        blockingFindings: [{ kind: 'dep-vuln', description, package: 'lodash' }],
+      };
+    };
+    const pushes: string[] = [];
+    const run = await executeTask(
+      repo,
+      resolveRemediateConfig(repo),
+      'fix-vulns',
+      'pr',
+      laneSeams(pushes, () =>
+        runOnEstate({
+          repo,
+          taskId: 'fix-vulns',
+          driver,
+          scan: [scanFinding('4.1.0'), LODASH],
+          runGuardrail: redOnLodash,
+        }),
+      ),
+    );
+
+    // The containment engine dropped the agent order and kept the pin;
+    // the run completed partially-landed with zero pushes.
+    expect(runs).toHaveLength(1);
+    expect(pushes).toEqual([]);
+    expect(run.landed).toBe(false);
+    expect(run.clean).toBe(false); // dropped orders are never read as done
+    expect(run.result.outcome).toBe('partially-landed');
+
+    // ONE record, for the GREEN subset: its head is the post-unwind HEAD,
+    // whose manifest carries the recipe pin but not the reverted fix.
+    const record = readLandingRecordFile(repo, 'fix-vulns');
+    expect(record.action).toBe('land');
+    expect(record.head).toBe(git(repo, ['rev-parse', 'HEAD']));
+    expect(record.prTitle).toContain('partial');
+    const manifest = JSON.parse(git(repo, ['show', 'HEAD:package.json'])) as Record<
+      string,
+      Record<string, string>
+    >;
+    expect(manifest.overrides?.['js-yaml']).toBe('4.1.0');
+    expect(manifest.overrides?.lodash).toBeUndefined();
+    // The dropped order is not part of the delivery, but its failure rides
+    // the record's rows so the circuit breaker still sees it.
+    expect(record.orderRows.map((row) => [row.orderId, row.outcome])).toEqual([
+      ['dep-advisory:js-yaml', 'verified'],
+      ['dep-advisory:lodash', 'guardrail-red'],
+    ]);
   });
 });

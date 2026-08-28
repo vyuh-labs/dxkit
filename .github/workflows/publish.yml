@@ -100,6 +100,21 @@ jobs:
           fi
           echo "✓ @vyuhlabs/dxkit-sdk@${RANGE} resolves on npm (${MATCH})"
 
+      # Preflight 6/6: the npm token actually authenticates. The 4.4.6
+      # release reached the publish step with an expired NPM_TOKEN and
+      # failed after the build; `npm whoami` proves the credential against
+      # the registry up front, so a dead token fails the run in seconds
+      # with the remedy named.
+      - name: 'Preflight: npm token authenticates'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if ! WHO=$(npm whoami 2>&1); then
+            echo "::error::NPM_TOKEN does not authenticate against the registry (npm whoami failed: ${WHO}). Rotate the token (npm token create) and update the NPM_TOKEN repo secret, then re-run this workflow."
+            exit 1
+          fi
+          echo "✓ npm token authenticates as ${WHO}"
+
       - name: Install dependencies
         run: npm ci
 
