@@ -308,6 +308,12 @@ export function buildPolicySchema(version: string): Schema {
         },
         'Report snapshots published on merge.',
       ),
+      impact: obj(
+        {
+          projectScores: boolProp('impact.projectScores'),
+        },
+        'PR Impact surface tuning.',
+      ),
       loop: obj(
         {
           preset: stringProp('loop.preset'),
