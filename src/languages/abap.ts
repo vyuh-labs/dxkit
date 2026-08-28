@@ -27,6 +27,8 @@
  */
 
 import { NO_TREE_INVARIANTS } from './capabilities/tree-invariants';
+import type { RemediationSupport } from './capabilities/remediation';
+
 import { fileExists } from '../analyzers/tools/runner';
 import { walkPaths } from '../analyzers/tools/walk-paths';
 import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
@@ -39,6 +41,28 @@ import { abapBdefStructureCheck } from './abap-bdef';
 import type { CapabilityProvider } from './capabilities/provider';
 import type { LintResult, SeverityCounts } from './capabilities/types';
 import type { RawLocatedFinding } from './capabilities/lint-gate';
+
+/** ABAP's remediation answer: the ecosystem genuinely lacks the mechanisms
+ *  (no package manager, no lockfile, no dependency registry), so every
+ *  capability is a PERMANENT reasoned exemption, not a planned one. */
+const abapRemediation: RemediationSupport = {
+  resyncLockfile: {
+    kind: 'exemption',
+    reason: 'ABAP has no package manager or lockfile for dxkit to resync',
+  },
+  pinTransitive: {
+    kind: 'exemption',
+    reason: 'ABAP has no dependency manifest in which a transitive version could be pinned',
+  },
+  declareDependency: {
+    kind: 'exemption',
+    reason: 'ABAP has no package registry to declare and install dependencies from',
+  },
+  lintFix: {
+    kind: 'exemption',
+    reason: 'no ABAP linter with a reliable machine autofix is wired as a lint gate yet',
+  },
+};
 
 /**
  * An ABAP repo: a committed `abaplint.json` (the ecosystem's one config
@@ -159,6 +183,7 @@ export const abap: LanguageSupport = {
   },
 
   treeInvariants: NO_TREE_INVARIANTS,
+  remediation: abapRemediation,
   correctness: {
     // abaplint is a registry TOOL running on dxkit's own Node runtime —
     // no ambient toolchain, no build, any host (Rule 20).

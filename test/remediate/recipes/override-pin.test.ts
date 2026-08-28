@@ -61,6 +61,17 @@ describe('override-pin recipe', () => {
     }
   });
 
+  it('the applied outcome carries the pack-declared revert prose (rendered in the ledger)', async () => {
+    const cwd = tempRepo({ 'package.json': PKG + '\n', 'package-lock.json': '{}' });
+    const { exec } = fakeExec();
+    const outcome = await executeOverridePin(pinOrder(), makeCtx(cwd, { exec }));
+    expect(outcome.kind).toBe('applied');
+    if (outcome.kind === 'applied') {
+      expect(outcome.revert).toContain('remove the "overrides" entry for \'js-yaml\'');
+      expect(outcome.revert).toContain('package.json');
+    }
+  });
+
   it('REFUSES with the advisory named when the pin itself carries a block-tier vuln ($0, tree untouched)', async () => {
     const cwd = tempRepo({ 'package.json': PKG, 'package-lock.json': '{}' });
     const { exec, calls } = fakeExec();

@@ -1,17 +1,21 @@
 /**
  * The `override-pin` recipe: a `dep-advisory` order whose every advisory has
  * a known fixed version, on a package with no direct upgrade path (a
- * transitive dependency), is fixed by a package-manager override pinning the
- * fixed version, then a lockfile resync.
+ * transitive dependency), is fixed by the OWNING PACK's declared pin
+ * mechanism (`remediation.pinTransitive`, Rule 6: the executor knows no
+ * ecosystem; npm overrides live in the ts pack) and a lockfile resync
+ * through the pack's install strategy.
  *
  * Honesty gates, in order:
- *   - npm first: pnpm `pnpm.overrides` and yarn `resolutions` are
- *     DECLARED-REFUSED this round (reason named), never half-implemented;
- *   - a DIRECT dependency is refused: the honest fix is upgrading the
- *     declared dep (the dep-bump lane's job), not overriding it;
- *   - the candidate pin is OSV pre-checked ($0): a block-tier advisory
- *     against the pinned version refuses with the advisory named, so the
- *     recipe never trades one red gate for another;
+ *   - the owning pack's declaration decides: an exemption (or an
+ *     unresolvable pack) refuses with the declared reason; the pack's own
+ *     `plan` may refuse too (a mechanism it does not implement yet, a
+ *     direct dependency: the honest fix is upgrading the declared dep, the
+ *     dep-bump lane's job);
+ *   - the candidate pin is OSV pre-checked ($0) in the pack's declared
+ *     ecosystem: a block-tier advisory against the pinned version refuses
+ *     with the advisory named, so the recipe never trades one red gate for
+ *     another;
  *   - verify is a re-audit through the ONE dep-audit dispatch: the order's
  *     package must audit clean afterwards (its known advisories gone AND
  *     nothing new minted on it), or the recipe fails and the diff is
@@ -19,15 +23,15 @@
  */
 import * as fs from 'fs';
 import * as path from 'path';
-import { serializePreservingJson } from '../../files';
 import type { WorkOrder } from '../work-orders/types';
 import type { DepAdvisoryEvidence } from '../work-orders/types';
 import {
-  nodePmAt,
-  nodeStrategyAt,
+  ambiguousRootReason,
+  environmentRefusal,
   osvBlockTier,
-  owningManifestRoot,
+  packStrategyAt,
   pickPinVersion,
+  resolvePinCapability,
   runResyncInstall,
 } from './shared';
 import type { RecipeExecuteContext, RecipeOutcome } from './types';
@@ -36,41 +40,6 @@ function advisories(order: WorkOrder): DepAdvisoryEvidence[] {
   return order.findings
     .map((f) => f.evidence)
     .filter((e): e is DepAdvisoryEvidence => e.type === 'dep-vuln');
-}
-
-interface ManifestEdit {
-  readonly file: string;
-  readonly refused?: string;
-}
-
-/** Write `overrides[pkg] = version` into the root package.json, preserving
- *  the file's own indentation and trailing newline. Refuses (without
- *  writing) when the package is a DIRECT dependency there. */
-function writeNpmOverride(rootAbs: string, pkg: string, version: string): ManifestEdit {
-  const file = path.join(rootAbs, 'package.json');
-  const text = fs.readFileSync(file, 'utf8');
-  const manifest = JSON.parse(text) as Record<string, unknown>;
-  for (const section of ['dependencies', 'devDependencies', 'optionalDependencies'] as const) {
-    const deps = manifest[section];
-    if (deps && typeof deps === 'object' && pkg in (deps as Record<string, unknown>)) {
-      return {
-        file,
-        refused:
-          `'${pkg}' is a direct ${section.replace(/ies$/, 'y')} of this manifest; the honest ` +
-          'fix is upgrading the declared dependency (the dep-bump lane), not overriding it',
-      };
-    }
-  }
-  const overrides =
-    manifest.overrides && typeof manifest.overrides === 'object'
-      ? (manifest.overrides as Record<string, unknown>)
-      : {};
-  overrides[pkg] = version;
-  manifest.overrides = overrides;
-  // The one style-preserving JSON writer (files.ts): indentation, compact
-  // form, and trailing newline survive, so the override is a one-key diff.
-  fs.writeFileSync(file, serializePreservingJson(text, manifest));
-  return { file };
 }
 
 export async function executeOverridePin(
@@ -89,28 +58,35 @@ export async function executeOverridePin(
       reason: `no fixed version is known for every advisory against '${pkg}'`,
     };
   }
-  const rootDir = owningManifestRoot(order);
+  // The owning pack's declaration (the ONE resolution `matches` and the plan
+  // disclosure also read). At runtime this is the defensive rail: the
+  // planner already tiers exemption / unknown orders to the agent.
+  const resolved = resolvePinCapability(order);
+  if (resolved.kind !== 'capability') {
+    return { kind: 'refused', reason: resolved.reason };
+  }
+  const { pack, provider, rootDir } = resolved;
+  // Rule 20, decided before anything spawns: the provider's declared
+  // environment requirement gates the whole attempt with a disclosed
+  // refusal (the runners' skipped-environment doctrine), never a spawn
+  // that fails in a way that reads as a code finding.
+  const envRefusal = environmentRefusal(
+    `the ${pack} pack's transitive pin`,
+    (cwd) => provider.execution(cwd),
+    ctx.cwd,
+  );
+  if (envRefusal) return envRefusal;
   if (rootDir === null) {
     return {
       kind: 'refused',
-      reason:
-        'the envelope does not name exactly one package.json, so the owning dependency root ' +
-        'is ambiguous',
+      reason: ambiguousRootReason(provider.manifestFiles, 'the owning dependency root'),
     };
   }
-  const lock = nodePmAt(ctx.cwd, rootDir);
-  if (lock === null) {
+  const strategy = packStrategyAt(pack, ctx.cwd, rootDir);
+  if (strategy === null || strategy.lockfile === null) {
     return {
       kind: 'refused',
       reason: `no lockfile exists at ${rootDir || 'the repo root'}, and an override cannot be verified without one`,
-    };
-  }
-  if (lock.pm !== 'npm') {
-    return {
-      kind: 'refused',
-      reason:
-        `the '${lock.pm}' override mechanism (${lock.pm === 'yarn' ? 'resolutions' : `${lock.pm}.overrides`}) ` +
-        'is not implemented in this recipe yet (npm overrides only this round)',
     };
   }
 
@@ -127,12 +103,18 @@ export async function executeOverridePin(
         `(${fixedVersions.join(', ')}); a range cannot be pinned verbatim`,
     };
   }
+
+  // The pack's pin plan: a pure decision. Refusals here (an override
+  // mechanism not implemented for this manager) cost $0 and touch nothing.
+  const plan = provider.plan({ cwd: ctx.cwd, rootDir, pkg, version: pin });
+  if (plan.kind === 'refused') return { kind: 'refused', reason: plan.reason };
+
   const notes: string[] = [];
 
   // $0 pre-check: would the pinned version itself carry a block-tier
   // advisory? A null answer (network) is disclosed and the re-audit verify
   // plus the frame's guardrail stay the backstop; it is never read as clean.
-  const known = await ctx.queryOsv(pkg, pin, 'npm');
+  const known = await ctx.queryOsv(pkg, pin, provider.osvEcosystem);
   if (known === null) {
     notes.push(`OSV pre-check for ${pkg}@${pin} could not be reached; the re-audit verifies`);
   } else {
@@ -148,16 +130,17 @@ export async function executeOverridePin(
     }
   }
 
+  // Apply the pack's pure manifest edit: the executor owns the read and the
+  // write; the transform owns the format (and may still refuse: a direct
+  // dependency it only sees with the text in hand).
   const rootAbs = path.join(ctx.cwd, rootDir);
-  const edit = writeNpmOverride(rootAbs, pkg, pin);
-  if (edit.refused) return { kind: 'refused', reason: edit.refused };
+  const manifestAbs = path.join(rootAbs, plan.edit.file);
+  const edited = plan.edit.transform(fs.readFileSync(manifestAbs, 'utf8'));
+  if ('refused' in edited) return { kind: 'refused', reason: edited.refused };
+  fs.writeFileSync(manifestAbs, edited.text);
 
-  // The same lockfile presence `nodePmAt` read selects the strategy, so the
-  // resync is the declared one for the manager that owns this root.
-  const strategy = nodeStrategyAt(ctx.cwd, rootDir);
-  if (strategy === null) {
-    return { kind: 'refused', reason: 'no node install strategy applies at this root' };
-  }
+  // The lock resync through the pack's install strategy at the same root
+  // (the ONE install seam; never a second install path).
   const installFailure = runResyncInstall(strategy, rootAbs, ctx);
   if (installFailure) return installFailure;
 
@@ -183,11 +166,12 @@ export async function executeOverridePin(
         remaining.map((f) => f.id).join(', '),
     };
   }
-  const manifestPath = rootDir ? `${rootDir}/package.json` : 'package.json';
-  const lockPath = rootDir ? `${rootDir}/${lock.lockfile}` : lock.lockfile;
+  const manifestPath = rootDir ? `${rootDir}/${plan.edit.file}` : plan.edit.file;
+  const lockPath = rootDir ? `${rootDir}/${strategy.lockfile}` : strategy.lockfile;
   return {
     kind: 'applied',
     changedFiles: [manifestPath, lockPath],
+    revert: plan.revert,
     ...(notes.length > 0 ? { notes } : {}),
   };
 }

@@ -2067,6 +2067,43 @@ if [ -n "$ROGUE_POLICY_PATH_WRITE" ]; then
   ERRORS=$((ERRORS + 1))
 fi
 
+# Remediation-capability seam (4.4.7 V1, Rule 6 applied to the recipe
+# executors): the four recipe executors under src/remediate/recipes/ are
+# cross-cutting and consume every ecosystem fact (manifest names, package-
+# manager commands, override mechanisms, OSV ecosystems) from the packs'
+# declared `remediation` capabilities. A package-manager binary literal or a
+# package-manager module import in that directory re-hardcodes an ecosystem
+# into the executor, the exact class the seam killed (npm overrides inline
+# in override-pin served only node repos).
+# Both string shapes count: a quoted bin name ('npm') and a backtick template
+# literal carrying a package-manager word (a template-string npm ci) are the
+# same hardcode; the template form previously escaped the rule.
+RULE_RECIPE_PM_TOKENS='npm|npx|pnpm|yarn|bun|pip|pip3|poetry|uv|bundler?|gem|composer|cargo|dotnet|nuget|mvn|gradle|gradlew|swift'
+RULE_RECIPE_PM_LITERAL=$({ \
+  grep -rnE "'(${RULE_RECIPE_PM_TOKENS})'" src/remediate/recipes/ src/remediate/work-orders/recipes-registry.ts 2>/dev/null; \
+  grep -rnE "`[^`]*(^|[^a-zA-Z0-9_-])(${RULE_RECIPE_PM_TOKENS})([^a-zA-Z0-9_-]|$)" src/remediate/recipes/ src/remediate/work-orders/recipes-registry.ts 2>/dev/null; \
+} | grep -E '\.ts:' | grep -v -E ':[[:space:]]*(//|\*)' | grep -v "// recipe-ecosystem-ok" | sort -u)
+if [ -n "$RULE_RECIPE_PM_LITERAL" ]; then
+  echo "❌ Remediation-seam violation: package-manager literal inside the recipe executors:"
+  echo "$RULE_RECIPE_PM_LITERAL"
+  echo "   → Ecosystem facts are pack-declared: extend the owning pack's 'remediation'"
+  echo "     capability (src/languages/capabilities/remediation.ts) and consume it via"
+  echo "     the registry (packDeclaration / resolvePinCapability in recipes/shared.ts)."
+  echo "   → Annotate '// recipe-ecosystem-ok' for a justified exception (rare)."
+  ERRORS=$((ERRORS + 1))
+fi
+
+RULE_RECIPE_PM_IMPORT=$(grep -rnE "from '[^']*(package-manager|languages/node-install|languages/node-remediation)'"   src/remediate/recipes/ src/remediate/work-orders/ 2>/dev/null   | grep -E '\.ts:'   | grep -v -E ':[[:space:]]*(//|\*)'   | grep -v "// recipe-ecosystem-ok")
+if [ -n "$RULE_RECIPE_PM_IMPORT" ]; then
+  echo "❌ Remediation-seam violation: ecosystem module import inside the order/recipe layer:"
+  echo "$RULE_RECIPE_PM_IMPORT"
+  echo "   → The recipe/order layer consumes ecosystem facts only through the packs'"
+  echo "     declared 'remediation' capabilities and 'installStrategy' (Rule 6);"
+  echo "     node-specific knowledge lives in src/languages/node-remediation.ts."
+  echo "   → Annotate '// recipe-ecosystem-ok' for a justified exception (rare)."
+  ERRORS=$((ERRORS + 1))
+fi
+
 if [ $ERRORS -gt 0 ]; then
   echo ""
   echo "Architecture checks failed. See CLAUDE.md for rules."

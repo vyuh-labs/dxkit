@@ -1178,3 +1178,130 @@ describe('purlType declarations (SBOM export, Rule 6)', () => {
     expect(withoutPurl).toEqual(['abap', 'swift']);
   });
 });
+
+// ─── Remediation capabilities (4.4.7 V1) ────────────────────────────────────
+// Every pack answers every remediation capability: a well-formed provider
+// (pure, total, deterministic, machine-independent, the Rule 19/20
+// discipline) or a declared exemption with a real reason. Never a silent
+// omission. Rider capabilities are pinned to their underlying builders so
+// the two facts cannot drift (lintFix ⇔ lintGate.fixCommand; resyncLockfile
+// ⇒ installStrategy with a resync mode).
+describe('remediation capabilities: a provider or a reasoned exemption, per pack', () => {
+  const CAPABILITY_IDS = [
+    'resyncLockfile',
+    'pinTransitive',
+    'declareDependency',
+    'lintFix',
+  ] as const;
+
+  for (const lang of LANGUAGES) {
+    it(`${lang.id} declares all four capabilities, each a capability or an exemption with a reason`, () => {
+      expect(lang.remediation, `${lang.id}: remediation is required`).toBeDefined();
+      for (const id of CAPABILITY_IDS) {
+        const declaration = lang.remediation[id];
+        expect(declaration, `${lang.id}.${id}`).toBeDefined();
+        expect(['capability', 'exemption']).toContain(declaration.kind);
+        if (declaration.kind === 'exemption') {
+          expect(
+            declaration.reason.length,
+            `${lang.id}.${id}: an exemption carries a real reason`,
+          ).toBeGreaterThan(20);
+        }
+      }
+    });
+
+    it(`${lang.id}: the lintFix rider agrees with lintGate.fixCommand (one fact, two statements)`, () => {
+      const declared = lang.remediation.lintFix.kind === 'capability';
+      const hasBuilder = lang.lintGate?.fixCommand !== undefined;
+      expect(
+        declared,
+        `${lang.id}: lintFix ${declared ? 'declared without' : 'exempt despite'} a lintGate.fixCommand builder`,
+      ).toBe(hasBuilder);
+    });
+
+    it(`${lang.id}: a resyncLockfile capability rides a declared install strategy with a resync mode`, () => {
+      const declaration = lang.remediation.resyncLockfile;
+      if (declaration.kind !== 'capability') return;
+      expect(declaration.provider.manifestFiles.length).toBeGreaterThan(0);
+      for (const f of declaration.provider.manifestFiles) {
+        expect(f, `${lang.id}: manifest basenames only`).not.toContain('/');
+      }
+      expect(
+        lang.installStrategy,
+        `${lang.id}: resyncLockfile declared but no installStrategy to ride (Rule 2)`,
+      ).toBeDefined();
+      expect(
+        lang.installStrategy!.variants().some((v) => v.strategy.modes.resync !== undefined),
+        `${lang.id}: no variant declares a lock-writing resync`,
+      ).toBe(true);
+    });
+
+    it(`${lang.id}: a pinTransitive provider is well-formed, pure, total, machine-independent`, () => {
+      const declaration = lang.remediation.pinTransitive;
+      if (declaration.kind !== 'capability') return;
+      const p = declaration.provider;
+      expect(p.manifestFiles.length).toBeGreaterThan(0);
+      expect(p.osvEcosystem.length).toBeGreaterThan(0);
+      const req = p.execution(os.tmpdir());
+      expect(req.hosts.length).toBeGreaterThan(0);
+      for (const t of req.toolchains) expect(Object.keys(TOOLCHAIN_DEFS)).toContain(t);
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-remediation-pin-'));
+      try {
+        const ctx = { cwd: dir, rootDir: '', pkg: 'sample-pkg', version: '1.2.3' };
+        const first = p.plan(ctx);
+        const second = p.plan(ctx);
+        expect(first.kind).toBe(second.kind);
+        if (first.kind === 'refused') {
+          expect(first.reason.length).toBeGreaterThan(0);
+          expect(first.reason).not.toContain(dir);
+        } else {
+          expect(first.edit.file.length).toBeGreaterThan(0);
+          expect(first.edit.file).not.toContain('..');
+          expect(first.revert.length).toBeGreaterThan(0);
+          expect(first.revert).not.toContain(dir);
+          // The transform is TOTAL over untrusted manifest text: garbage
+          // refuses, it never throws.
+          for (const garbage of ['', 'not a manifest {', '42']) {
+            let out!: ReturnType<typeof first.edit.transform>;
+            expect(() => (out = first.edit.transform(garbage))).not.toThrow();
+            expect('text' in out || 'refused' in out).toBe(true);
+          }
+        }
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it(`${lang.id}: a declareDependency provider is well-formed, with a working injection rail`, () => {
+      const declaration = lang.remediation.declareDependency;
+      if (declaration.kind !== 'capability') return;
+      const p = declaration.provider;
+      expect(p.manifestFiles.length).toBeGreaterThan(0);
+      expect(p.osvEcosystem.length).toBeGreaterThan(0);
+      expect(p.packageNameLabel.length).toBeGreaterThan(0);
+      const req = p.execution(os.tmpdir());
+      expect(req.hosts.length).toBeGreaterThan(0);
+      for (const t of req.toolchains) expect(Object.keys(TOOLCHAIN_DEFS)).toContain(t);
+      // Rule 11: the rail must reject flag-shaped and malformed specifiers.
+      for (const bad of ['', '-x', '--registry=https://evil.example', 'a b', 'a\nb']) {
+        expect(p.validSpecifier(bad), `${lang.id}: validSpecifier(${JSON.stringify(bad)})`).toBe(
+          false,
+        );
+      }
+      const ctx = { cwd: os.tmpdir(), rootDir: '', specifier: 'sample-pkg' };
+      const probe = p.versionProbe(ctx);
+      expect(probe.bin.length).toBeGreaterThan(0);
+      expect(probe.args.join(' ')).not.toContain(os.tmpdir());
+      // parseProbeOutput is TOTAL: garbage yields null, never a throw.
+      for (const garbage of ['', 'npm error 404', '\n\n', 'not-a-version']) {
+        let out: string | null = null;
+        expect(() => (out = p.parseProbeOutput(garbage))).not.toThrow();
+        expect(out).toBeNull();
+      }
+      const install = p.installCommand({ ...ctx, version: '1.2.3', dev: true });
+      expect(install.bin.length).toBeGreaterThan(0);
+      expect(install.args.length).toBeGreaterThan(0);
+      expect(install.args.join(' ')).toContain('sample-pkg');
+    });
+  }
+});

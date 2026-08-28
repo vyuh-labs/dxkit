@@ -12,7 +12,12 @@
  * (`floor-orders.ts`, `advisory-orders.ts`, `lint-orders.ts`).
  */
 import type { RichBaselineEntry } from '../../baseline/types';
-import { matchRecipe, RECIPE_REGISTRY, type RecipeDeclaration } from './recipes-registry';
+import {
+  matchPackExemption,
+  matchRecipe,
+  RECIPE_REGISTRY,
+  type RecipeDeclaration,
+} from './recipes-registry';
 import { floorOrders, type FloorFailureInput } from './floor-orders';
 import { advisoryOrders, type AdvisoryInput } from './advisory-orders';
 import { lintOrders, type CustomCheckEntry, type LintSource } from './lint-orders';
@@ -120,13 +125,19 @@ export interface PlannerOptions {
   readonly registry?: readonly RecipeDeclaration[];
 }
 
-/** The tier decision: `recipe` when a registry entry matches, else `agent`. */
+/** The tier decision: `recipe` when a registry entry matches, else `agent`.
+ *  An agent tier caused by a pack's DECLARED capability exemption carries
+ *  the exemption on the order, so the plan surface can say why the
+ *  deterministic tier was unavailable (disclosed, never silence). */
 export function assignTier(
   order: Draft,
   registry: readonly RecipeDeclaration[] = RECIPE_REGISTRY,
 ): WorkOrder {
-  const recipe = matchRecipe({ ...order, tier: 'agent' }, registry);
-  return recipe ? { ...order, tier: 'recipe', recipe: recipe.id } : { ...order, tier: 'agent' };
+  const probe: WorkOrder = { ...order, tier: 'agent' };
+  const recipe = matchRecipe(probe, registry);
+  if (recipe) return { ...order, tier: 'recipe', recipe: recipe.id };
+  const exemption = matchPackExemption(probe, registry);
+  return { ...order, tier: 'agent', ...(exemption ? { capabilityExemption: exemption } : {}) };
 }
 
 /** Baseline dep-vuln debt as an advisory input (identity + severity only;

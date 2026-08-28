@@ -191,7 +191,17 @@ describe('order-intrinsic feasibility lives in matches (an executor-certain refu
   it('declare-dependency: an unsupported pack or a flag-shaped specifier tiers agent', () => {
     const ok = { id: 'unresolved-import:typescript:.', class: 'unresolved-import' as const };
     expect(tierOf({ ...ok, findings: [floorFinding('typescript', 'left-pad')] })).toBe('recipe');
-    expect(tierOf({ ...ok, findings: [floorFinding('python', 'requests')] })).toBe('agent');
+    // A pack whose declaration is a (planned) exemption tiers agent AND the
+    // order carries the declared reason for the plan surface (4.4.7 V1).
+    const python = assignTier({
+      ...draftBase,
+      ...ok,
+      findings: [floorFinding('python', 'requests')],
+    });
+    expect(python.tier).toBe('agent');
+    expect(python.capabilityExemption?.pack).toBe('python');
+    expect(python.capabilityExemption?.capability).toBe('declareDependency');
+    expect(python.capabilityExemption?.reason).toContain('python');
     expect(tierOf({ ...ok, findings: [floorFinding('typescript', '--registry=https://x')] })).toBe(
       'agent',
     );

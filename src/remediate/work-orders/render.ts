@@ -153,7 +153,10 @@ export function renderWorkOrderSummary(order: WorkOrder): string {
   const tier =
     order.tier === 'recipe'
       ? `recipe ${order.recipe}${executable ? '' : ' (declared, not yet executable)'}`
-      : 'agent';
+      : order.capabilityExemption
+        ? `agent (no ${order.capabilityExemption.capability} recipe for the ` +
+          `${order.capabilityExemption.pack} pack: ${order.capabilityExemption.reason})`
+        : 'agent';
   const attribution = order.findings.some((f) => f.attribution === 'net-new')
     ? 'net-new'
     : order.findings.some((f) => f.attribution === 'deferred')

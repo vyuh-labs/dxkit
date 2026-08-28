@@ -69,9 +69,26 @@ import {
   buildDevcontainerFeatures,
   detectActiveLanguages,
   dominantVocabulary,
+  collectExecutionRequirements,
 } from '../src/languages';
 import { runCorrectnessFloor } from '../src/analyzers/correctness/run';
 import { declareInstallStrategy } from '../src/languages/capabilities/install-strategy';
+import type { RemediationSupport } from '../src/languages/capabilities/remediation';
+import { assignTier } from '../src/remediate/work-orders/planner';
+import { renderWorkOrderSummary } from '../src/remediate/work-orders/render';
+import { executeOverridePin } from '../src/remediate/recipes/override-pin';
+import { executeDeclareDependency } from '../src/remediate/recipes/declare-dependency';
+import { executeLockfileSync } from '../src/remediate/recipes/lockfile-sync';
+import { executeLintAutofix } from '../src/remediate/recipes/lint-autofix';
+import {
+  advisoryFinding,
+  fakeExec,
+  floorFinding,
+  lintFinding,
+  makeCtx,
+  makeOrder,
+  tempRepo,
+} from './remediate/recipes/helpers';
 import { activeInstallStrategies, installStrategyProviders } from '../src/languages';
 import { ciInstallVariants, renderInstallDependenciesShell } from '../src/install/shell';
 import { defaultResolvedTolerances } from '../src/install/tolerances';
@@ -336,6 +353,66 @@ const mockPlaybookPack = {
     ],
     { ciDependencyInstall: true },
   ),
+  // Remediation-capability contribution (4.4.7 V1). Distinctive tokens
+  // (playbook.toml, PlaybookEco, playbook-reg-mock) so the assertions below
+  // prove the seam is pack-driven: the planner tiers this pack's orders
+  // through its declarations and the four cross-cutting executors consume
+  // its builders with no per-ecosystem wiring. `lintFix` is deliberately a
+  // declared EXEMPTION so the disclosure path is provable end to end.
+  remediation: {
+    resyncLockfile: { kind: 'capability', provider: { manifestFiles: ['playbook.toml'] } },
+    pinTransitive: {
+      kind: 'capability',
+      provider: {
+        manifestFiles: ['playbook.toml'],
+        osvEcosystem: 'PlaybookEco',
+        plan: (ctx) => ({
+          kind: 'plan',
+          edit: {
+            file: 'playbook.toml',
+            transform: (text) => ({
+              text: `${text}[pin."${ctx.pkg}"]\nversion = "${ctx.version}"\n`,
+            }),
+          },
+          revert: `remove the [pin."${ctx.pkg}"] table from playbook.toml and re-run the resync`,
+        }),
+        execution: () => ({
+          hosts: ['any' as const],
+          toolchains: [],
+          needsBuild: false,
+          buildTarget: 'none' as const,
+          weight: 'cheap' as const,
+        }),
+      },
+    },
+    declareDependency: {
+      kind: 'capability',
+      provider: {
+        manifestFiles: ['playbook.toml'],
+        osvEcosystem: 'PlaybookEco',
+        packageNameLabel: 'playbook package name',
+        validSpecifier: (spec: string) => /^[a-z][a-z0-9-]*$/.test(spec),
+        versionProbe: (ctx) => ({ bin: 'playbook-reg-mock', args: ['latest', ctx.specifier] }),
+        parseProbeOutput: (output: string) =>
+          /^\d+\.\d+\.\d+$/.test(output.trim()) ? output.trim() : null,
+        installCommand: (ctx) => ({
+          bin: 'playbook-pm-mock',
+          args: ['add', `${ctx.specifier}@${ctx.version}`, ...(ctx.dev ? ['--dev'] : [])],
+        }),
+        execution: () => ({
+          hosts: ['any' as const],
+          toolchains: [],
+          needsBuild: false,
+          buildTarget: 'none' as const,
+          weight: 'cheap' as const,
+        }),
+      },
+    },
+    lintFix: {
+      kind: 'exemption',
+      reason: 'the playbook mock linter has no reliable machine autofix to declare',
+    },
+  } satisfies RemediationSupport,
   detect: vi.fn(() => false),
   tools: [],
   semgrepRulesets: [],
@@ -1715,3 +1792,233 @@ function makeFakeConfig(opts: { playbook: boolean; playbookVersion?: string }) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } as any;
 }
+
+// ─── Remediation capability seam (4.4.7 V1) ─────────────────────────────────
+// The synthetic pack declares all four remediation capabilities (lintFix as
+// a declared exemption). These assertions prove the whole seam is pack-
+// driven, both directions: the planner tiers the pack's orders RECIPE
+// through its declarations, the cross-cutting executors consume its
+// builders (edit transform, version probe, install command, install-
+// strategy resync) with no per-ecosystem wiring, and an exemption becomes
+// a DISCLOSED agent tier + a disclosed executor refusal, never silence.
+describe('recipe playbook: remediation capability seam (4.4.7 V1)', () => {
+  const PLAYBOOK_ENVELOPE = { paths: ['playbook.toml', 'playbook.lock'], manifests: true };
+  const PLAYBOOK_INSTALL = { bin: 'playbook-pm-mock', args: ['install', '--frozen'] };
+
+  function pinOrder() {
+    return makeOrder({
+      id: 'dep-advisory:vuln-dep',
+      class: 'dep-advisory',
+      findings: [
+        {
+          ...advisoryFinding('f1', 'vuln-dep', 'GHSA-pbk1', '2.0.1'),
+          evidence: {
+            type: 'dep-vuln' as const,
+            package: 'vuln-dep',
+            advisoryId: 'GHSA-pbk1',
+            fixedVersion: '2.0.1',
+            pack: 'playbook',
+          },
+        },
+      ],
+      envelope: PLAYBOOK_ENVELOPE,
+      constraints: { install: PLAYBOOK_INSTALL, forbidden: [] },
+    });
+  }
+
+  function declareOrder(specifier: string) {
+    return makeOrder({
+      id: 'unresolved-import:playbook:.',
+      class: 'unresolved-import',
+      findings: [
+        floorFinding(`playbook/import-resolution#${specifier}`, 'playbook', 'import-resolution', {
+          specifier,
+          importingFiles: ['src/a.pbk'],
+        }),
+      ],
+      envelope: { paths: ['src/a.pbk', ...PLAYBOOK_ENVELOPE.paths], manifests: true },
+      constraints: { install: PLAYBOOK_INSTALL, forbidden: [] },
+    });
+  }
+
+  function staleOrder() {
+    return makeOrder({
+      id: 'stale-lockfile:playbook',
+      class: 'stale-lockfile',
+      findings: [floorFinding('playbook/lockfile-sync', 'playbook', 'lockfile-sync')],
+      envelope: PLAYBOOK_ENVELOPE,
+      constraints: { install: PLAYBOOK_INSTALL, forbidden: [] },
+    });
+  }
+
+  function lintOrder() {
+    return makeOrder({
+      id: 'lint-located:src/a.pbk',
+      class: 'lint-located',
+      findings: [lintFinding('l1', 'lint:playbook', 'src/a.pbk', 'pbk-rule')],
+      envelope: { paths: ['src/a.pbk'], manifests: false },
+    });
+  }
+
+  it('the planner tiers the synthetic pack orders RECIPE through its declared capabilities', () => {
+    const { tier: pinTier, recipe: pinRecipe } = assignTier(pinOrder());
+    expect(pinTier).toBe('recipe');
+    expect(pinRecipe).toBe('override-pin');
+    const declared = assignTier(declareOrder('leftpad'));
+    expect(declared.tier).toBe('recipe');
+    expect(declared.recipe).toBe('declare-dependency');
+    const stale = assignTier(staleOrder());
+    expect(stale.tier).toBe('recipe');
+    expect(stale.recipe).toBe('lockfile-sync');
+  });
+
+  it('a specifier failing the PACK-declared rail tiers agent (the rail is pack-driven)', () => {
+    // Valid npm name, INVALID playbook name (uppercase): only the synthetic
+    // pack rail can reject it, so an agent tier proves the rail dispatch.
+    expect(assignTier(declareOrder('UpperCase')).tier).toBe('agent');
+  });
+
+  it('a declared lintFix EXEMPTION tiers agent WITH the reason on the order and in the plan line', () => {
+    const order = assignTier(lintOrder());
+    expect(order.tier).toBe('agent');
+    expect(order.capabilityExemption).toEqual({
+      pack: 'playbook',
+      capability: 'lintFix',
+      reason: 'the playbook mock linter has no reliable machine autofix to declare',
+    });
+    const line = renderWorkOrderSummary(order);
+    expect(line).toContain('no lintFix recipe for the playbook pack');
+    expect(line).toContain('no reliable machine autofix');
+  });
+
+  it('executeOverridePin consumes the pack edit transform, OSV ecosystem, and install-strategy resync', async () => {
+    const cwd = tempRepo({ 'playbook.toml': '[package]\nname = "fx"\n', 'playbook.lock': '' });
+    const { exec, calls } = fakeExec();
+    const ecosystems: string[] = [];
+    const outcome = await executeOverridePin(
+      pinOrder(),
+      makeCtx(cwd, {
+        exec,
+        queryOsv: async (_pkg, _version, ecosystem) => {
+          ecosystems.push(ecosystem);
+          return [];
+        },
+      }),
+    );
+    expect(outcome.kind).toBe('applied');
+    if (outcome.kind === 'applied') {
+      expect(outcome.changedFiles).toEqual(['playbook.toml', 'playbook.lock']);
+      // The pack-declared revert prose rides the applied outcome into the
+      // ledger (the contract's promise, consumed, never inert).
+      expect(outcome.revert).toContain('remove the [pin."vuln-dep"] table');
+    }
+    // The pack's pure transform wrote the pin; the executor owned the write.
+    const manifest = fs.readFileSync(path.join(cwd, 'playbook.toml'), 'utf8');
+    expect(manifest).toContain('[pin."vuln-dep"]');
+    expect(manifest).toContain('version = "2.0.1"');
+    // The OSV pre-check ran in the PACK's declared ecosystem.
+    expect(ecosystems).toEqual(['PlaybookEco']);
+    // The resync ran the pack's install-strategy resync primary (the ONE
+    // install seam), at the owning root.
+    expect(calls.map((c) => `${c.cmd.bin} ${c.cmd.args.join(' ')}`)).toContain(
+      'playbook-pm-mock install',
+    );
+  });
+
+  it('executeDeclareDependency consumes the pack probe, parser, and install command', async () => {
+    const cwd = tempRepo({ 'playbook.toml': '[package]\n', 'playbook.lock': '' });
+    const { exec, calls } = fakeExec((cmd) => {
+      if (cmd.bin === 'playbook-reg-mock') return { output: '1.4.0\n' };
+      return undefined;
+    });
+    const outcome = await executeDeclareDependency(declareOrder('leftpad'), makeCtx(cwd, { exec }));
+    // The mock resolutionCheck reports only its own distinctive phantom
+    // specifier unresolved, so the order's specifier verifies as resolved.
+    expect(outcome.kind).toBe('applied');
+    if (outcome.kind === 'applied') {
+      expect(outcome.changedFiles).toEqual(['playbook.toml', 'playbook.lock']);
+    }
+    const rendered = calls.map((c) => `${c.cmd.bin} ${c.cmd.args.join(' ')}`);
+    expect(rendered).toContain('playbook-reg-mock latest leftpad');
+    expect(rendered).toContain('playbook-pm-mock add leftpad@1.4.0');
+  });
+
+  it('executeLockfileSync resyncs through the pack install strategy and verifies with its lockfileCheck', async () => {
+    const cwd = tempRepo({ 'playbook.toml': '[package]\n', 'playbook.lock': '' });
+    const { exec, calls } = fakeExec();
+    const outcome = await executeLockfileSync(staleOrder(), makeCtx(cwd, { exec }));
+    expect(outcome.kind).toBe('applied');
+    if (outcome.kind === 'applied') expect(outcome.changedFiles).toEqual(['playbook.lock']);
+    const rendered = calls.map((c) => `${c.cmd.bin} ${c.cmd.args.join(' ')}`);
+    expect(rendered).toContain('playbook-pm-mock install');
+    expect(rendered).toContain('playbookc-mock lock --dry-run');
+  });
+
+  it('Rule 20 both directions: an unmet provider requirement is a DISCLOSED refusal BEFORE any spawn; met executes', async () => {
+    // Met => executes is pinned by the applied tests above (the declared
+    // hosts: ['any'] requirement passes on this runner). Unmet: swap the
+    // synthetic providers to a windows-only requirement and both executors
+    // must refuse with the ONE describeUnmetRequirement phrasing, spawning
+    // nothing; restore afterwards.
+    const remediation = mockPlaybookPack.remediation as {
+      pinTransitive: { provider: { execution: (cwd: string) => unknown } };
+      declareDependency: { provider: { execution: (cwd: string) => unknown } };
+    };
+    const savedPin = remediation.pinTransitive.provider.execution;
+    const savedDeclare = remediation.declareDependency.provider.execution;
+    const windowsOnly = () => ({
+      hosts: ['windows' as const],
+      toolchains: [],
+      needsBuild: true,
+      buildTarget: 'configured' as const,
+      weight: 'build' as const,
+    });
+    try {
+      remediation.pinTransitive.provider.execution = windowsOnly;
+      remediation.declareDependency.provider.execution = windowsOnly;
+      const cwd = tempRepo({ 'playbook.toml': '[package]\n', 'playbook.lock': '' });
+      const { exec, calls } = fakeExec();
+      const pin = await executeOverridePin(pinOrder(), makeCtx(cwd, { exec }));
+      expect(pin.kind).toBe('refused');
+      if (pin.kind === 'refused') {
+        expect(pin.reason).toContain('cannot run in this environment');
+        expect(pin.reason).toContain('needs windows');
+      }
+      const declare = await executeDeclareDependency(
+        declareOrder('leftpad'),
+        makeCtx(cwd, { exec }),
+      );
+      expect(declare.kind).toBe('refused');
+      if (declare.kind === 'refused') expect(declare.reason).toContain('needs windows');
+      // Decided BEFORE the spawn: no probe, no install, no resync ran.
+      expect(calls).toHaveLength(0);
+    } finally {
+      remediation.pinTransitive.provider.execution = savedPin;
+      remediation.declareDependency.provider.execution = savedDeclare;
+    }
+  });
+
+  it('collectExecutionRequirements carries the synthetic remediation requirements to placement (Rule 20)', () => {
+    const caps = collectExecutionRequirements(os.tmpdir(), [mockPlaybookPack]);
+    const ids = caps.map((c) => `${c.pack}:${c.capability}`);
+    expect(ids).toContain('playbook:pinTransitive');
+    expect(ids).toContain('playbook:declareDependency');
+    for (const c of caps) {
+      if (c.capability === 'pinTransitive' || c.capability === 'declareDependency') {
+        expect(c.requirement.hosts.length).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it('an exempt capability is a DISCLOSED executor refusal carrying the declared reason (never silence)', async () => {
+    const cwd = tempRepo({ 'src/a.pbk': '' });
+    const { exec, calls } = fakeExec();
+    const outcome = await executeLintAutofix(lintOrder(), makeCtx(cwd, { exec }));
+    expect(outcome.kind).toBe('refused');
+    if (outcome.kind === 'refused') {
+      expect(outcome.reason).toContain('playbook');
+      expect(outcome.reason).toContain('no reliable machine autofix');
+    }
+    expect(calls).toHaveLength(0);
+  });
+});
