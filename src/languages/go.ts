@@ -1,4 +1,5 @@
 import { NO_TREE_INVARIANTS } from './capabilities/tree-invariants';
+import { plannedRemediationSupport } from './capabilities/remediation';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -1215,6 +1216,7 @@ export const go: LanguageSupport = {
   },
 
   treeInvariants: NO_TREE_INVARIANTS,
+  remediation: plannedRemediationSupport('go'),
   correctness: goCorrectnessProvider,
   lintGate: goLintGateProvider,
 

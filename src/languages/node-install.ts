@@ -38,6 +38,7 @@ import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import {
   addDevPrefix,
+  detectLockfile,
   detectPackageManager,
   LOCKFILES,
   upgradeArgv,
@@ -102,8 +103,10 @@ function legacyPeerDeps(bin: string, args: readonly string[]): InstallFallback {
 }
 
 /** A node install needs the node toolchain and nothing else; it never
- *  builds the project (lifecycle scripts are the repo's own business). */
-const NODE_EXECUTION: ExecutionRequirement = {
+ *  builds the project (lifecycle scripts are the repo's own business).
+ *  Shared with the node remediation capabilities (`node-remediation.ts`),
+ *  whose installs and probes need exactly the same environment. */
+export const NODE_EXECUTION: ExecutionRequirement = {
   hosts: ['any'],
   toolchains: ['node'],
   needsBuild: false,
@@ -253,7 +256,20 @@ const VARIANTS: readonly InstallVariant[] = [
 
 export const nodeInstallStrategy: InstallStrategyProvider = {
   variants: () => VARIANTS,
-  strategy: (dir) => strategyFromVariants(VARIANTS, dir),
+  // The picked variant's `lockfile` is its canonical basename, but a trigger
+  // set can hold several spellings of one lockfile (npm-shrinkwrap.json for
+  // package-lock.json, bun.lockb for bun.lock). Resolve the file actually
+  // present through the ONE detector so a shrinkwrap-only root reports the
+  // file its installs really rewrite; commands are unaffected (npm and bun
+  // read whichever spelling exists).
+  strategy: (dir) => {
+    const picked = strategyFromVariants(VARIANTS, dir);
+    if (picked === null || picked.lockfile === null) return picked;
+    const present = detectLockfile(dir);
+    return present === null || present.lockfile === picked.lockfile
+      ? picked
+      : { ...picked, lockfile: present.lockfile };
+  },
   ciDependencyInstall: true,
 };
 

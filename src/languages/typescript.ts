@@ -1,3 +1,4 @@
+import { nodeRemediation } from './node-remediation';
 import { NO_TREE_INVARIANTS } from './capabilities/tree-invariants';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -3098,6 +3099,7 @@ export const typescript: LanguageSupport = {
   },
 
   treeInvariants: NO_TREE_INVARIANTS,
+  remediation: nodeRemediation,
   correctness: tsCorrectnessProvider,
   lintGate: tsLintGateProvider,
 

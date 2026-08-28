@@ -37,7 +37,13 @@
 const fs = require('fs');
 const path = require('path');
 
-const REPO_ROOT = path.resolve(__dirname, '..');
+// DXKIT_SCAFFOLD_ROOT is the test seam: the scaffold-compile pin
+// (test/scaffold-language.test.ts) runs the scaffolder against a temp copy
+// of src/ and typechecks the emitted pack, so a template drifting from the
+// real LanguageSupport contract fails in CI instead of on a contributor.
+const REPO_ROOT = process.env.DXKIT_SCAFFOLD_ROOT
+  ? path.resolve(process.env.DXKIT_SCAFFOLD_ROOT)
+  : path.resolve(__dirname, '..');
 
 // CLI scaffolder — `console.*` is the user-facing output channel, not slop.
 function die(msg) {
@@ -420,6 +426,7 @@ if (!/^[a-z][a-z0-9]*$/.test(id)) {
 
 const PACK_TEMPLATE = `import { fileExists } from '../analyzers/tools/runner';
 import { NO_TREE_INVARIANTS } from './capabilities/tree-invariants';
+import { plannedRemediationSupport } from './capabilities/remediation';
 import type { LanguageSupport } from './types';
 
 // TODO(${id}): implement detection logic — return true when this is a
@@ -692,6 +699,20 @@ export const ${id}: LanguageSupport = {
   // appliesWhen(changedPaths), ownedPaths, a reestablish InstallPlan (or
   // null) and a verify check (see src/languages/capabilities/tree-invariants.ts).
   treeInvariants: NO_TREE_INVARIANTS,
+
+  // REQUIRED(${id}): remediation capabilities (4.4.7), how the deterministic
+  // remediation recipes fix findings in this ecosystem: the lockfile resync
+  // (rides installStrategy), the transitive-dependency pin, the dependency
+  // declaration, and the linter autofix (rides lintGate.fixCommand). The
+  // scaffold declares all four as PLANNED exemptions: dormant but honest
+  // (orders tier to the agent with the reason disclosed in plan output), and
+  // the pack compiles (the same optional-then-filled arc as correctness).
+  // TODO(${id}): replace entries with real providers where the ecosystem has
+  // the mechanism; see src/languages/node-remediation.ts for the worked
+  // example and src/languages/capabilities/remediation.ts for the contracts
+  // (an ecosystem that genuinely lacks a mechanism keeps a PERMANENT
+  // exemption with the real reason, like abap.ts).
+  remediation: plannedRemediationSupport('${id}'),
 
   // Lint-GATE provider (custom-check flagship): the linter command that gates
   // NET-NEW lint findings, plus a regex mapping its output to per-location

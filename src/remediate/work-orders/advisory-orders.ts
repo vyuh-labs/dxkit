@@ -65,6 +65,7 @@ function evidenceOf(a: AdvisoryInput, expiresAt?: string): DepAdvisoryEvidence {
   return {
     type: 'dep-vuln',
     package: a.package,
+    ...(a.pack !== undefined ? { pack: a.pack } : {}),
     ...(a.installedVersion !== undefined ? { installedVersion: a.installedVersion } : {}),
     advisoryId: a.advisoryId,
     ...(a.fixedVersion !== undefined ? { fixedVersion: a.fixedVersion } : {}),

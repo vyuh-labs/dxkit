@@ -11,6 +11,7 @@ import type { CorrectnessProvider } from './capabilities/correctness';
 import type { TreeInvariantProvider } from './capabilities/tree-invariants';
 import type { LintGateProvider } from './capabilities/lint-gate';
 import type { InstallStrategyProvider } from './capabilities/install-strategy';
+import type { RemediationSupport } from './capabilities/remediation';
 
 // `LanguageId` lives in `src/types.ts` (where `DetectedStack.languages`
 // references it) to avoid circular imports. Re-exported here for
@@ -455,6 +456,19 @@ export interface LanguageSupport {
    * `test/languages-contract.test.ts`, never a silent omission.
    */
   readonly installStrategy?: InstallStrategyProvider;
+
+  /**
+   * REQUIRED: the pack's remediation capability declarations
+   * (`capabilities/remediation.ts`), one per deterministic recipe: the
+   * lockfile resync, the transitive pin, the dependency declaration, and
+   * the linter autofix. Each entry is a provider or a declared exemption
+   * with a reason (the DEFERRED_KINDS discipline, surfaced in plan
+   * output) - never a silent omission, and a new pack that drops the
+   * field fails to compile. The recipe executors and the planner's tier
+   * decision consume these through the registry; they never hardcode an
+   * ecosystem fact.
+   */
+  readonly remediation: RemediationSupport;
 
   /**
    * REQUIRED: the tree properties the remediate frame OWNS for this

@@ -1,17 +1,27 @@
 /**
  * The `lockfile-sync` recipe: a `stale-lockfile` order (the lockfile-sync
  * floor check failed: CI's frozen install cannot load this tree) is fixed
- * by the ecosystem's lock-WRITING install at the owning root, then verified
- * by the SAME pack-declared frozen dry-run the floor runs (`lockfileCheck`,
- * via the correctness module's single-check entry point: one concept, one
- * code path). A verify the pack cannot give (yarn's declared skip) is a
- * refusal, never an unconfirmed "applied".
+ * by the PRODUCING PACK's lock-writing install at the owning root (its
+ * `installStrategy` resync mode, through the ONE install executor; the
+ * pack's `remediation.resyncLockfile` declaration is what admits the order
+ * to this recipe, Rule 6), then verified by the SAME pack-declared frozen
+ * dry-run the floor runs (`lockfileCheck`, via the correctness module's
+ * single-check entry point: one concept, one code path). A verify the pack
+ * cannot give (yarn's declared skip) is a refusal, never an unconfirmed
+ * "applied".
  */
 import * as path from 'path';
 import { tail } from '../../analyzers/tools/bounded-exec';
 import { runSingleLockfileCheck } from '../../analyzers/correctness/single-checks';
 import type { WorkOrder } from '../work-orders/types';
-import { nodePmAt, nodeStrategyAt, owningManifestRoot, runResyncInstall } from './shared';
+import {
+  ambiguousRootReason,
+  exemptionReason,
+  owningManifestRoot,
+  packDeclaration,
+  packStrategyAt,
+  runResyncInstall,
+} from './shared';
 import type { RecipeExecuteContext, RecipeOutcome } from './types';
 
 /** The pack that produced the order's floor finding. */
@@ -28,21 +38,25 @@ export async function executeLockfileSync(
   if (pack === null) {
     return { kind: 'refused', reason: 'the order carries no floor evidence naming its pack' };
   }
-  const rootDir = owningManifestRoot(order);
+  const declaration = packDeclaration(pack, 'resyncLockfile');
+  if (declaration === undefined) {
+    return { kind: 'refused', reason: `no registered language pack has the id '${pack}'` };
+  }
+  if (declaration.kind === 'exemption') {
+    return { kind: 'refused', reason: exemptionReason(pack, declaration) };
+  }
+  const rootDir = owningManifestRoot(order, declaration.provider.manifestFiles);
   if (rootDir === null) {
     return {
       kind: 'refused',
-      reason:
-        'the envelope does not name exactly one package.json, so the owning dependency root ' +
-        'is ambiguous',
+      reason: ambiguousRootReason(declaration.provider.manifestFiles, 'the owning dependency root'),
     };
   }
   const rootAbs = path.join(ctx.cwd, rootDir);
-  const strategy = nodeStrategyAt(ctx.cwd, rootDir);
-  // The lockfile actually present (a shrinkwrap counts), from the same file
-  // presence the strategy keyed on.
-  const lock = nodePmAt(ctx.cwd, rootDir);
-  if (strategy === null || strategy.lockfile === null || lock === null) {
+  // The pack's install strategy at this root (the ONE install seam): its
+  // resync mode is the fix, its lockfile is what the fix rewrites.
+  const strategy = packStrategyAt(pack, ctx.cwd, rootDir);
+  if (strategy === null || strategy.lockfile === null) {
     return {
       kind: 'refused',
       reason: `no lockfile exists at ${rootDir || 'the repo root'}, so there is nothing to re-sync`,
@@ -73,7 +87,7 @@ export async function executeLockfileSync(
   }
   return {
     kind: 'applied',
-    changedFiles: [rootDir ? `${rootDir}/${lock.lockfile}` : lock.lockfile],
+    changedFiles: [rootDir ? `${rootDir}/${strategy.lockfile}` : strategy.lockfile],
     ...(verify.note ? { notes: [verify.note] } : {}),
   };
 }

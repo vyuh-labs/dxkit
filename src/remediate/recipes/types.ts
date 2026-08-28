@@ -38,6 +38,9 @@ export type RecipeOutcome =
       /** Disclosed side notes (a tolerated fallback that ran, an OSV
        *  pre-check that could not be reached). */
       readonly notes?: readonly string[];
+      /** How a human undoes the applied fix (an override-pin's declared
+       *  revert prose), rendered on the ledger's applied-order line. */
+      readonly revert?: string;
     }
   | {
       /** The recipe decided not to act. The reason is a full sentence a
