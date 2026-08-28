@@ -224,6 +224,38 @@ export function clearInMemoryCache(): void {
   inMemoryCache.clear();
 }
 
+/**
+ * Return the shared `AnalysisResult` for this tree WITHOUT ever building one:
+ * the in-memory entry a full-scope gather in this process left behind, or the
+ * disk entry for a clean tree. `null` when nothing full covers the tree: a
+ * scoped/partial gather (a ref-based guardrail's trimmed scope) bypasses the
+ * shared cache by design, so it never shows up here.
+ *
+ * This is the availability probe the score projection (impact surface P2)
+ * uses: projecting dimension scores after a guardrail run must reuse the
+ * envelope that run already gathered (Rule 2) or honestly decline. Building
+ * here would silently pay a full re-gather (measured at 80+ seconds on a
+ * large tree) inside a surface that promised to be free.
+ */
+export async function peekAnalysisResult(
+  cwd: string,
+  opts?: Pick<ReadOrBuildOptions, 'resolveProvenance' | 'cacheDir'>,
+): Promise<AnalysisResult | null> {
+  const provenance = (opts?.resolveProvenance ?? resolveProvenance)(cwd);
+  const inMemory = inMemoryCache.get(buildCacheKey(provenance));
+  if (inMemory) {
+    try {
+      return await inMemory;
+    } catch {
+      return null; // a failed build is not a usable envelope
+    }
+  }
+  if (!provenance.workingTreeDirty) {
+    return readDiskCache(opts?.cacheDir ?? path.join(provenance.cwd, CACHE_SUBDIR), provenance);
+  }
+  return null;
+}
+
 // ─── Internals ────────────────────────────────────────────────────────────
 
 function buildCacheKey(p: ResolvedProvenance): string {

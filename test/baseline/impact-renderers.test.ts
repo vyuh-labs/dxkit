@@ -33,6 +33,8 @@ import type { ClassifiedPair } from '../../src/gate/result';
 import type { BaselineEntry, FindingSeverity, FindingStatus } from '../../src/baseline/types';
 import { trustedLocalContext } from '../../src/analysis-trust';
 import { deriveImpact } from '../../src/baseline/impact';
+import { computeScoreProjection } from '../../src/baseline/impact-projection';
+import { SCORING_METHODOLOGY_VERSION } from '../../src/scoring/methodology';
 import { findTool, TOOL_DEFS } from '../../src/analyzers/tools/tool-registry';
 
 function git(dir: string, args: string[]): void {
@@ -81,6 +83,37 @@ const RESOLVING_PAIRS = [
   pair('removed', { kind: 'dep-vuln', severity: 'high' }),
   pair('removed', { kind: 'dep-vuln', severity: 'medium' }),
 ];
+
+/** A projected outcome (security 40 -> 46 against a comparable snapshot). */
+const PROJECTED = computeScoreProjection({
+  current: {
+    overall: 52,
+    security: 46,
+    quality: 60,
+    tests: 55,
+    documentation: 30,
+    maintainability: 70,
+    developerExperience: 65,
+  },
+  methodology: SCORING_METHODOLOGY_VERSION,
+  history: [
+    {
+      sha: 'baseentrysha0000',
+      date: '2026-08-20T00:00:00.000Z',
+      dxkitVersion: '4.4.7',
+      methodology: SCORING_METHODOLOGY_VERSION,
+      scores: {
+        overall: 50,
+        security: 40,
+        quality: 60,
+        tests: 55,
+        documentation: 30,
+        maintainability: 70,
+        developerExperience: 65,
+      },
+    },
+  ],
+});
 
 const CAPPED_SCORE: ImpactScoreInput = {
   dimension: 'security',
@@ -148,6 +181,35 @@ describe('the Impact section reaches every check surface', () => {
     );
     // Without a score result the section carries the finding delta alone.
     expect(renderMarkdown(withResolved)).not.toContain('capped by');
+  });
+
+  it('markdown: the projection line + hidden marker render inside the section, labeled projected (P2)', () => {
+    const withResolved = { ...base, pairs: [...base.pairs, ...RESOLVING_PAIRS] };
+    const md = renderMarkdown(withResolved, { scoreProjection: PROJECTED });
+    expect(md).toContain('security 40 -> 46 (projected)');
+    expect(md).toContain('<!-- dxkit-impact-projection ');
+    // A non-projected outcome renders its disclosure, and no marker.
+    const disclosed = renderMarkdown(withResolved, {
+      scoreProjection: { status: 'unavailable', reason: 'no score history on the reports ref yet' },
+    });
+    expect(disclosed).toContain('scores not projected: no score history');
+    expect(disclosed).not.toContain('<!-- dxkit-impact-projection ');
+    // Disabled: no line at all, section otherwise intact.
+    const off = renderMarkdown(withResolved, {
+      scoreProjection: { status: 'disabled', reason: 'impact.projectScores is false' },
+    });
+    expect(off).toContain('### Impact');
+    expect(off).not.toContain('(projected)');
+  });
+
+  it('console + json: the projection reaches the other two surfaces (labeled, additive)', () => {
+    const withResolved = { ...base, pairs: [...base.pairs, ...RESOLVING_PAIRS] };
+    const out = renderConsole(withResolved, { scoreProjection: PROJECTED });
+    expect(out).toContain('security 40 -> 46 (projected)');
+    const json = renderJson(withResolved, { scoreProjection: PROJECTED });
+    expect(json.impact?.projection?.status).toBe('projected');
+    // The JSON stays additive: without a projection the field is simply absent.
+    expect(renderJson(withResolved).impact?.projection).toBeUndefined();
   });
 
   it('markdown: an excluded (not_observed / tooling_drift) pair is disclosed, not counted', () => {

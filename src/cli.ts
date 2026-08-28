@@ -547,6 +547,9 @@ export async function run(argv: string[]): Promise<void> {
       refresh: { type: 'boolean', default: false },
       // report snapshot flag: retain the most recent N history entries
       retain: { type: 'string' },
+      // report snapshot flag: update the merged PR's guardrail comment with
+      // landed (actual) scores beside the projection it carried (impact P2)
+      'pr-comment': { type: 'boolean', default: false },
       substring: { type: 'boolean', default: false },
       // pr: skip the structural-duplicate seam pass
       'no-seams': { type: 'boolean', default: false },
@@ -2419,6 +2422,7 @@ export async function run(argv: string[]): Promise<void> {
                 cwd,
                 json: !!values.json,
                 dryRun: !!values['dry-run'],
+                prComment: !!values['pr-comment'],
                 ...(values.ref ? { anchorRef: String(values.ref) } : {}),
                 ...(values.retain ? { retainHistory: Number(values.retain) } : {}),
               })
@@ -3119,6 +3123,17 @@ export async function run(argv: string[]): Promise<void> {
           cliRef: values.ref as string | undefined,
         });
         if (!quiet) logger.info(`Baseline ${result.mode.explanation}`);
+        // Score projection (impact P2): score the shared envelope this run
+        // already gathered against the latest snapshot. Never re-gathers
+        // (peek-only), never throws into the check, and every non-projected
+        // outcome carries its reason. Default on; policy off-switch
+        // `impact.projectScores: false`.
+        const { gatherScoreProjection } = await import('./baseline/impact-projection');
+        const projected = await gatherScoreProjection(targetPath, result.policy);
+        const renderOpts = {
+          scoreProjection: projected.projection,
+          ...(projected.scoreInputs !== undefined ? { impactScores: projected.scoreInputs } : {}),
+        };
         // Cache the verdict so a same-tree replay (the `receipt` command, a
         // second gate this session) reuses it instead of re-gathering. Keyed on
         // a content-complete tree signature + policy hash, so a replay can never
@@ -3130,17 +3145,17 @@ export async function run(argv: string[]): Promise<void> {
           blockingCount: counts.blocking,
           unattributableCount: counts.unattributable,
           warningCount: counts.warning,
-          markdown: renderMarkdown(result),
+          markdown: renderMarkdown(result, renderOpts),
           ranAt: new Date().toISOString(),
           blockingFindings: cacheBlockingFindings(result.pairs),
         });
         const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
         if (values.json) {
-          await emitJson(renderJson(result));
+          await emitJson(renderJson(result, renderOpts));
         } else if (values.markdown) {
-          process.stdout.write(renderMarkdown(result) + '\n');
+          process.stdout.write(renderMarkdown(result, renderOpts) + '\n');
         } else {
-          process.stdout.write(renderConsole(result) + '\n');
+          process.stdout.write(renderConsole(result, renderOpts) + '\n');
           logger.dim(`Completed in ${elapsed}s`);
         }
         // The ONE exit-code derivation (consumes attribution gaps) — never

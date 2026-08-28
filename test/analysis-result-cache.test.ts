@@ -27,6 +27,7 @@ import * as os from 'os';
 import * as path from 'path';
 import {
   readOrBuildAnalysisResult,
+  peekAnalysisResult,
   resolveProvenance,
   clearInMemoryCache,
   type ResolvedProvenance,
@@ -94,6 +95,34 @@ function stubBody(): AnalysisResultBody {
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────
+
+describe('peekAnalysisResult (the never-build probe)', () => {
+  it('returns the envelope a full-scope gather left behind, without building', async () => {
+    const provenance = makeProvenance();
+    const opts = { resolveProvenance: () => provenance, cacheDir };
+    await readOrBuildAnalysisResult({ cwd: tmp, build: async () => stubBody(), opts });
+    const peeked = await peekAnalysisResult(tmp, opts);
+    expect(peeked?.commitSha).toBe('abc1234');
+  });
+
+  it('returns null when nothing full covers the tree: it NEVER builds', async () => {
+    const provenance = makeProvenance({ workingTreeDirty: true });
+    const opts = { resolveProvenance: () => provenance, cacheDir };
+    expect(await peekAnalysisResult(tmp, opts)).toBeNull();
+  });
+
+  it('a partial (scoped) gather bypasses the shared cache, so peek stays null', async () => {
+    const provenance = makeProvenance();
+    const opts = { resolveProvenance: () => provenance, cacheDir };
+    await readOrBuildAnalysisResult({
+      cwd: tmp,
+      build: async () => stubBody(),
+      opts: { ...opts, partial: true },
+    });
+    // The partial result was never admitted to memory or disk: honest null.
+    expect(await peekAnalysisResult(tmp, opts)).toBeNull();
+  });
+});
 
 describe('readOrBuildAnalysisResult', () => {
   it('builds on first call and stamps provenance fields', async () => {
