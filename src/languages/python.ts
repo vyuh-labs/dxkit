@@ -1,5 +1,4 @@
 import { NO_TREE_INVARIANTS } from './capabilities/tree-invariants';
-import { plannedRemediationSupport } from './capabilities/remediation';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -24,10 +23,15 @@ import type {
   CorrectnessCommand,
   CorrectnessContext,
   CorrectnessProvider,
+  LockfileCheck,
   ResolutionCheckResult,
 } from './capabilities/correctness';
+import { lockfileCheckFromStrategy } from './capabilities/correctness';
 import type { ExecutionRequirement } from '../execution';
-import { declareInstallStrategy } from './capabilities/install-strategy';
+import { resolveTolerances } from '../install/tolerances';
+import { pythonInstallStrategy } from './python-install';
+import { pythonRemediation } from './python-remediation';
+import { PY_MODULE_DIST_ALIASES } from './python-dist-names';
 import type {
   CoverageResult,
   DepVulnFinding,
@@ -563,6 +567,7 @@ const pyDepVulnsProvider: DepVulnsProvider = {
     'Pipfile',
     'Pipfile.lock',
     'poetry.lock',
+    'uv.lock',
   ],
   // A nested requirements.txt / pyproject.toml resolves its own
   // environment (separate services in one repo), unlike a package of a
@@ -1214,40 +1219,6 @@ const PY_STDLIB = new Set([
   'zoneinfo',
 ]);
 
-/** Import-name → PyPI distribution names for the well-known mismatches
- *  (`import yaml` installs as `pyyaml`). Consulted only on the DECLARED
- *  side — an installed module is found in site-packages under its import
- *  name regardless. KNOWN pairs only (false-negative bias). */
-const PY_MODULE_DIST_ALIASES: Readonly<Record<string, readonly string[]>> = {
-  yaml: ['pyyaml'],
-  PIL: ['pillow'],
-  sklearn: ['scikit-learn', 'scikit_learn'],
-  bs4: ['beautifulsoup4'],
-  cv2: ['opencv-python', 'opencv-python-headless', 'opencv_python'],
-  dotenv: ['python-dotenv', 'python_dotenv'],
-  dateutil: ['python-dateutil', 'python_dateutil'],
-  jose: ['python-jose', 'python_jose'],
-  jwt: ['pyjwt'],
-  Crypto: ['pycryptodome', 'pycrypto'],
-  magic: ['python-magic', 'python_magic'],
-  git: ['gitpython'],
-  github: ['pygithub'],
-  docx: ['python-docx', 'python_docx'],
-  pptx: ['python-pptx', 'python_pptx'],
-  slugify: ['python-slugify', 'python_slugify'],
-  MySQLdb: ['mysqlclient'],
-  psycopg2: ['psycopg2-binary', 'psycopg2_binary'],
-  attr: ['attrs'],
-  serial: ['pyserial'],
-  usb: ['pyusb'],
-  OpenSSL: ['pyopenssl'],
-  wx: ['wxpython'],
-  fitz: ['pymupdf'],
-  kafka: ['kafka-python', 'kafka_python'],
-  snowflake: ['snowflake-connector-python', 'snowflake_connector_python'],
-  google: ['protobuf', 'google-api-python-client', 'google-cloud-storage'],
-};
-
 /** Repo-local virtualenv site-packages directories (`.venv` / `venv`,
  *  POSIX `lib/pythonX.Y/site-packages` and Windows `Lib/site-packages`).
  *  The Python analog of "does node_modules exist". */
@@ -1421,6 +1392,17 @@ export function pyResolutionCheck(ctx: CorrectnessContext): ResolutionCheckResul
 const pyCorrectnessProvider: CorrectnessProvider = {
   resolutionCheck: pyResolutionCheck,
 
+  // The lockfile-sync check (4.4.7): would the manager's frozen install of
+  // this tree succeed? Derived from the strategy's own declared sync check
+  // through the ONE derivation (`lockfileCheckFromStrategy`), so the check
+  // and the install read one declaration. No lockfile (a plain
+  // requirements root) → nothing to keep in sync → null.
+  lockfileCheck(ctx: CorrectnessContext): LockfileCheck | null {
+    const strategy = pythonInstallStrategy.strategy(ctx.cwd);
+    if (strategy === null || strategy.lockfile === null) return null;
+    return lockfileCheckFromStrategy(strategy, ctx.tolerances ?? resolveTolerances(ctx.cwd));
+  },
+
   // Rule 20: host-agnostic, needs the Python runtime; py_compile + pytest run
   // the project's own code — 'build' weight without a compiled-build env.
   execution: (): ExecutionRequirement => ({
@@ -1506,6 +1488,23 @@ const pyLintGateProvider: LintGateProvider = {
       // humans, and a diagnostic whose message breaks the line shape is
       // silently dropped by a display regex (the eslint class, Rule 5).
       args: ['check', '.', '--output-format', 'json'],
+      parse: { kind: 'structured', label: 'ruff-json', parse: parseRuffJson },
+      expectedExit: 0,
+    };
+  },
+  // The lint-autofix recipe's fix mode (4.4.7): `ruff check --fix` scoped to
+  // the work order's files. One run both writes the fixes and reports the
+  // REMAINING (unfixable) findings through the SAME json parser the gate
+  // uses, so the recipe's verify reads the leftovers of the very command
+  // that fixed. ruff exits non-zero when findings remain; the recipe parses
+  // regardless of exit (the seam's own doctrine).
+  fixCommand(ctx) {
+    if (ctx.files.length === 0) return null;
+    const ruff = findTool(TOOL_DEFS.ruff, ctx.cwd);
+    if (!ruff.available || !ruff.path) return null;
+    return {
+      bin: ruff.path,
+      args: ['check', '--fix', '--output-format', 'json', ...ctx.files],
       parse: { kind: 'structured', label: 'ruff-json', parse: parseRuffJson },
       expectedExit: 0,
     };
@@ -1733,67 +1732,6 @@ function detectPythonVersion(cwd: string): string | undefined {
   return undefined;
 }
 
-const PYTHON_INSTALL_EXECUTION: ExecutionRequirement = {
-  hosts: ['any'],
-  toolchains: ['python'],
-  needsBuild: false,
-  buildTarget: 'none',
-  weight: 'cheap',
-};
-
-const pythonInstallStrategy = declareInstallStrategy(
-  [
-    {
-      when: ['poetry.lock'],
-      strategy: {
-        manager: 'poetry',
-        lockfile: 'poetry.lock',
-        modes: { frozen: { primary: { bin: 'poetry', args: ['install'] }, fallbacks: [] } },
-        execution: PYTHON_INSTALL_EXECUTION,
-      },
-    },
-    {
-      when: ['uv.lock'],
-      strategy: {
-        manager: 'uv',
-        lockfile: 'uv.lock',
-        modes: {
-          frozen: { primary: { bin: 'uv', args: ['sync', '--locked'] }, fallbacks: [] },
-          resync: { primary: { bin: 'uv', args: ['sync'] }, fallbacks: [] },
-        },
-        execution: PYTHON_INSTALL_EXECUTION,
-      },
-    },
-    {
-      when: ['Pipfile.lock'],
-      strategy: {
-        manager: 'pipenv',
-        lockfile: 'Pipfile.lock',
-        modes: {
-          frozen: { primary: { bin: 'pipenv', args: ['install', '--deploy'] }, fallbacks: [] },
-          resync: { primary: { bin: 'pipenv', args: ['install'] }, fallbacks: [] },
-        },
-        execution: PYTHON_INSTALL_EXECUTION,
-      },
-    },
-    {
-      when: ['requirements.txt'],
-      strategy: {
-        manager: 'pip',
-        lockfile: null,
-        modes: {
-          frozen: {
-            primary: { bin: 'pip', args: ['install', '-r', 'requirements.txt'] },
-            fallbacks: [],
-          },
-        },
-        execution: PYTHON_INSTALL_EXECUTION,
-      },
-    },
-  ],
-  { ciDependencyInstall: false },
-);
-
 export const python: LanguageSupport = {
   id: 'python',
   displayName: 'Python',
@@ -1828,14 +1766,9 @@ export const python: LanguageSupport = {
   tlsBypassPatterns: ['verify[[:space:]]*=[[:space:]]*False', 'VERIFY_SSL.*[Ff]alse'],
 
   // How a python root installs (Rule 6): one variant per dependency
-  // artifact, in preference order. The frozen forms are the ones that
-  // REFUSE a stale lockfile (`uv sync --locked`, `pipenv install --deploy`,
-  // and `poetry install`, which aborts when pyproject moved ahead of
-  // poetry.lock); a resync is declared only where ONE command both
-  // rewrites the lockfile and installs (uv, pipenv). Poetry needs
-  // `poetry lock` first and plain requirements have no lockfile, so
-  // neither declares one. No ecosystem tolerance exists here: python
-  // resolvers have no peer-check analogue, so no fallbacks are declared.
+  // artifact, in preference order; declarations + doctrine live in
+  // python-install.ts (the node-install.ts split), shared with the
+  // remediation capabilities.
   installStrategy: pythonInstallStrategy,
 
   upgradeCommand(name, version) {
@@ -2060,7 +1993,7 @@ export const python: LanguageSupport = {
   },
 
   treeInvariants: NO_TREE_INVARIANTS,
-  remediation: plannedRemediationSupport('python'),
+  remediation: pythonRemediation,
   correctness: pyCorrectnessProvider,
   lintGate: pyLintGateProvider,
 
