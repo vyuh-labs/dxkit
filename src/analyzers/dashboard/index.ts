@@ -25,6 +25,14 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { getReportDate } from '../tools/report-date';
 import { GRAPH_TAB_CSS, renderGraphTab } from '../../dashboard/graph-tab';
+import { readReportHistory } from '../../reports/snapshot';
+import {
+  computeTrendContext,
+  formatTrendContext,
+  segmentHistory,
+  sparkline,
+} from '../../reports/trend';
+import type { ReportHistoryEntry } from '../../reports/history';
 
 /** Known report stems → display config. Order here = sidebar order. */
 const REPORT_STEMS: Array<{
@@ -75,6 +83,9 @@ export interface DashboardOptions {
   jsonDir?: string;
   /** Project name shown in the header. Default: derived from package.json or basename(cwd). */
   projectName?: string;
+  /** Injected snapshot-history reader (tests); production reads the reports
+   *  anchor via the one canonical reader. */
+  readHistory?: (cwd: string) => ReportHistoryEntry[];
 }
 
 export interface DashboardResult {
@@ -355,6 +366,25 @@ export function analyzeDashboard(cwd: string, options: DashboardOptions = {}): D
     badge: graphTab.navBadge,
   });
 
+  // Overall-score trend sparkline (impact P3), from the on-merge snapshot
+  // history on the reports anchor via the ONE reader + the ONE segmentation
+  // (a sparkline is never drawn across a scoring-methodology boundary; the
+  // gap marker separates segments). Best-effort decoration: offline, no
+  // anchor, or no history simply renders no trend row.
+  let trendLine: string | null = null;
+  try {
+    const history = (options.readHistory ?? readReportHistory)(cwd);
+    if (history.length > 0) {
+      const spark = segmentHistory(history)
+        .map((seg) => sparkline(seg.entries.map((e) => e.scores.overall)))
+        .join(' ┊ ');
+      const context = computeTrendContext(history);
+      trendLine = context !== null ? `${spark}  ${formatTrendContext(context)}` : spark;
+    }
+  } catch {
+    /* the trend row is decoration; a missing anchor never breaks the dashboard */
+  }
+
   const html = renderHtml({
     projectName,
     generationDate,
@@ -384,6 +414,7 @@ export function analyzeDashboard(cwd: string, options: DashboardOptions = {}): D
     reports,
     navEntries,
     graphTabHtml: graphTab.html,
+    trendLine,
   });
 
   return {
@@ -519,6 +550,9 @@ interface RenderArgs {
    * card). Spliced into the dashboard body by `renderHtml`.
    */
   graphTabHtml: string;
+  /** The overall-score trend row (segmented sparkline + the one trend
+   *  phrasing), or null when there is no snapshot history to draw. */
+  trendLine: string | null;
 }
 
 function renderHtml(a: RenderArgs): string {
@@ -586,6 +620,7 @@ function renderHtml(a: RenderArgs): string {
     .hero-score .grade { font-size: 28px; color: var(--accent-blue); display: block; margin-top: 6px; }
     .hero-meta h2 { font-size: 22px; color: var(--text-primary); margin-bottom: 6px; }
     .hero-meta p { color: var(--text-muted); }
+    .hero-trend { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; margin-top: 10px; letter-spacing: 1px; }
     .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 24px; }
     .grid-2 { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; margin-bottom: 24px; }
     .stat-card { background: var(--bg-card); padding: 20px; border-radius: 10px; border: 1px solid var(--border); }
@@ -690,6 +725,7 @@ function renderHtml(a: RenderArgs): string {
           <div class="hero-meta">
             <h2>Overall Codebase Health</h2>
             <p>Computed across 6 dimensions: testing, code quality, documentation, security, maintainability, developer experience.</p>
+            ${a.trendLine ? `<p class="hero-trend">${escapeHtml(a.trendLine)}</p>` : ''}
           </div>
         </div>`
             : ''
