@@ -39,7 +39,7 @@ describe('remediation coverage table is emitted, never hand-written', () => {
     expect(guide).toContain(REMEDIATION_COVERAGE_END);
   });
 
-  it('committed guide matches a fresh render — if this fails: npm run build && npm run docs:remediation-coverage', () => {
+  it('committed guide matches a fresh render (if this fails: npm run build && npm run docs:remediation-coverage)', () => {
     expect(normalize(replaceRemediationCoverage(guide))).toBe(normalize(guide));
   });
 
