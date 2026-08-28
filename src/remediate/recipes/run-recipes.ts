@@ -35,6 +35,8 @@ import type { RemediateConfig } from '../config';
 import { planRepoWorkOrders, type GatherWorkOrderOptions } from '../work-orders/gather';
 import { classesSelectedBy } from '../work-orders/types';
 import { selectOrders } from '../work-orders/planner';
+import { withRecipeFallthroughBudget } from '../work-orders/shared';
+import { budgetForTask } from '../config';
 import { realRecipeGit, type RecipeGit } from './git';
 // The order executor lives in `./execute-orders` (module-size split);
 // re-exported so consumers keep one import surface.
@@ -159,9 +161,21 @@ export async function runRecipePhaseForTask(opts: RecipePhaseOptions): Promise<R
   // The agent queue, in plan (value) order: agent-tier orders plus every
   // recipe order whose recipe did not APPLY — a refused/failed recipe order
   // falls through to the agent within THIS run instead of dead-ending it.
+  // A fallthrough order's budget is RE-DERIVED with the recipe-fallthrough
+  // floor (4.4.7): the deterministic fix was tried and declined, so the
+  // agent inherits the class's hardest work; the raised derivation is
+  // disclosed on the order and in the ledger. Same cap as the planner's
+  // (the selecting task's effective budget), one formula (`deriveBudget`).
   const applied = new Set(
     records.filter((r) => r.outcome.kind === 'applied').map((r) => r.orderId),
   );
-  const agentOrders = selected.filter((o) => o.tier === 'agent' || !applied.has(o.id));
+  const fallthroughCap = budgetForTask(opts.config, opts.taskId);
+  const agentOrders = selected
+    .filter((o) => o.tier === 'agent' || !applied.has(o.id))
+    .map((o) =>
+      o.tier === 'recipe' && !applied.has(o.id)
+        ? withRecipeFallthroughBudget(o, fallthroughCap)
+        : o,
+    );
   return { ran: true, records, ...summaryBase, agentOrders };
 }

@@ -136,8 +136,8 @@ export function realGit(cwd: string): RemediateGit {
     resetTo(head) {
       git(['reset', '-q', '--hard', head]);
     },
-    changedPaths(baseHead) {
-      return git(['diff', '--no-renames', '--name-only', baseHead, 'HEAD'])
+    changedPaths(baseHead, head) {
+      return git(['diff', '--no-renames', '--name-only', baseHead, head ?? 'HEAD'])
         .split('\n')
         .filter(Boolean);
     },
@@ -148,6 +148,39 @@ export function realGit(cwd: string): RemediateGit {
       // UNTRACKED files among them — never a blanket clean of the tree.
       if (paths.length === 0) return;
       git(['clean', '-f', '-q', '--', ...paths]);
+    },
+    revertRange(from, to, message) {
+      // The containment unwind: revert one unit's committed range as a
+      // single new commit at the tip, so later kept commits are untouched.
+      // A conflicting revert throws AFTER its own in-progress state is
+      // cleaned up (sequencer aborted, tree reset to the tip): the caller
+      // refuses containment; a half-applied revert must never linger.
+      try {
+        git(['revert', '--no-commit', `${from}..${to}`]);
+      } catch (err) {
+        try {
+          git(['revert', '--abort']);
+        } catch {
+          // no revert in progress: nothing to abort
+        }
+        try {
+          git(['reset', '-q', '--hard', 'HEAD']);
+        } catch {
+          // the caller's restore (resetTo) is the backstop
+        }
+        throw err;
+      }
+      git([
+        '-c',
+        `user.name=${BOT_IDENTITY.name}`,
+        '-c',
+        `user.email=${BOT_IDENTITY.email}`,
+        'commit',
+        '-q',
+        '--allow-empty',
+        '-m',
+        message,
+      ]);
     },
     revertPaths(baseHead, paths) {
       // Targeted revert of the branch's own commits: move the branch back

@@ -98,7 +98,14 @@ export function doneFor(
 /** Default `remediate.workOrders.maxSliceSize`. */
 export const DEFAULT_MAX_SLICE_SIZE = 25;
 
-/** Budget derivation constants, declared once (section 3C). */
+/** Budget derivation constants, declared once (section 3C). The
+ *  recipe-fallthrough multiplier (4.4.7) raises the floor for an agent
+ *  order whose RECIPE already failed: that order inherits the hardest work
+ *  in its class (the deterministic fix was tried and refused, so real
+ *  investigation is left), and the live evidence is two agent orders that
+ *  exhausted their derived 12 turns investigating an audit-vs-advisory
+ *  disagreement. A derivation, not a magic constant: the standard formula
+ *  is scaled, still clamped by the selecting task's budget cap. */
 export const BUDGET_DERIVATION = {
   baseTurns: 8,
   perFindingTurns: 4,
@@ -106,6 +113,7 @@ export const BUDGET_DERIVATION = {
   baseMinutes: 5,
   perFindingMinutes: 2,
   minMinutes: 5,
+  recipeFallthroughMultiplier: 2,
 } as const;
 
 /** `min(cap, max(floor, value))`: the policy cap always wins, even when it
@@ -115,29 +123,58 @@ function bounded(value: number, floor: number, cap: number): number {
 }
 
 /**
- * `turns = min(cap.maxTurns, max(min, base + perFinding * n))`, same shape
- * for minutes; usd scales with the turn fraction of the cap and is capped
- * by it. `cap` is the SELECTING TASK's effective budget (`budgetForTask`),
- * so one plan never shows two budgets for one concept.
+ * `turns = min(cap.maxTurns, m * max(min, base + perFinding * n))`, same
+ * shape for minutes; usd scales with the turn fraction of the cap and is
+ * capped by it. `m` is 1 normally and `recipeFallthroughMultiplier` for an
+ * order whose recipe tier already failed or refused (it inherits the class's
+ * hardest work; the disclosed formula, never a constant). `cap` is the
+ * SELECTING TASK's effective budget (`budgetForTask`), so one plan never
+ * shows two budgets for one concept.
  */
-export function deriveBudget(findingCount: number, cap: RemediateBudget): WorkOrderBudget {
+export function deriveBudget(
+  findingCount: number,
+  cap: RemediateBudget,
+  opts: { readonly recipeFallthrough?: boolean } = {},
+): WorkOrderBudget {
   const d = BUDGET_DERIVATION;
-  const turns = bounded(d.baseTurns + d.perFindingTurns * findingCount, d.minTurns, cap.maxTurns);
-  const minutes = bounded(
-    d.baseMinutes + d.perFindingMinutes * findingCount,
-    d.minMinutes,
+  const m = opts.recipeFallthrough ? d.recipeFallthroughMultiplier : 1;
+  const turns = Math.min(
+    cap.maxTurns,
+    m * bounded(d.baseTurns + d.perFindingTurns * findingCount, d.minTurns, cap.maxTurns),
+  );
+  const minutes = Math.min(
     cap.maxMinutes,
+    m * bounded(d.baseMinutes + d.perFindingMinutes * findingCount, d.minMinutes, cap.maxMinutes),
   );
   const usd = Math.min(cap.maxUsd, Math.max(1, Math.round((cap.maxUsd * turns) / cap.maxTurns)));
+  const factor = m === 1 ? '' : `${m} * `;
+  const why =
+    m === 1
+      ? ''
+      : ` (recipe-fallthrough floor, x${m}: the recipe tier already failed or refused this ` +
+        `order, so the agent inherits the investigation the recipe could not do)`;
   return {
     turns,
     minutes,
     usd,
     derivation:
-      `turns = min(${cap.maxTurns}, max(${d.minTurns}, ${d.baseTurns} + ${d.perFindingTurns} * ` +
-      `${findingCount})) = ${turns}; minutes = min(${cap.maxMinutes}, max(${d.minMinutes}, ` +
-      `${d.baseMinutes} + ${d.perFindingMinutes} * ${findingCount})) = ${minutes}; ` +
-      `usd = min(${cap.maxUsd}, round(${cap.maxUsd} * ${turns} / ${cap.maxTurns})) = ${usd}`,
+      `turns = min(${cap.maxTurns}, ${factor}max(${d.minTurns}, ${d.baseTurns} + ` +
+      `${d.perFindingTurns} * ${findingCount})) = ${turns}; minutes = min(${cap.maxMinutes}, ` +
+      `${factor}max(${d.minMinutes}, ${d.baseMinutes} + ${d.perFindingMinutes} * ` +
+      `${findingCount})) = ${minutes}; ` +
+      `usd = min(${cap.maxUsd}, round(${cap.maxUsd} * ${turns} / ${cap.maxTurns})) = ${usd}` +
+      why,
+  };
+}
+
+/** Re-derive an order's budget with the recipe-fallthrough floor (4.4.7):
+ *  applied by the recipe phase when a recipe-tier order joins the agent
+ *  queue after its recipe failed or refused. ONE formula (`deriveBudget`),
+ *  never a second derivation. */
+export function withRecipeFallthroughBudget(order: WorkOrder, cap: RemediateBudget): WorkOrder {
+  return {
+    ...order,
+    budget: deriveBudget(order.findings.length, cap, { recipeFallthrough: true }),
   };
 }
 
@@ -148,6 +185,17 @@ export function undispatch(
   findings: readonly WorkOrderFinding[],
 ): void {
   if (findings.length > 0) into.push({ reason, findings });
+}
+
+/** The packages a finding set names (dep-advisory evidence): the ONE
+ *  projection both the recipe executor (recording what an applied order
+ *  pinned) and the guardrail-red containment's package tier read. */
+export function packagesNamedBy(findings: readonly WorkOrderFinding[]): string[] {
+  const out = new Set<string>();
+  for (const f of findings) {
+    if (f.evidence.type === 'dep-vuln') out.add(f.evidence.package);
+  }
+  return [...out].sort(byteOrder);
 }
 
 /** A finding carrying only an identity (no class, or nothing to join). */

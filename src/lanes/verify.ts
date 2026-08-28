@@ -46,6 +46,27 @@ export interface GuardrailGateResult {
    *  ephemeral runner is inspectable from the ledger alone (the
    *  uninspectable-attempt defect). Absent when nothing blocked. */
   readonly blocking?: readonly string[];
+  /**
+   * Structured projections of EVERY blocking finding (uncapped, unlike the
+   * display list above): what the remediate lane's guardrail-red
+   * containment attributes to orders (4.4.7). Attribution is a cause claim
+   * (Rule 19), so it needs the finding's own coordinates (file, package),
+   * never a re-parse of the display string. Absent when nothing blocked or
+   * when the verdict came from a shape with no findings (deferred,
+   * unavailable, not consulted).
+   */
+  readonly blockingFindings?: readonly BlockingFinding[];
+}
+
+/** One blocking finding, projected for per-order attribution. */
+export interface BlockingFinding {
+  readonly kind: string;
+  /** The same compact line the display list carries. */
+  readonly description: string;
+  /** Repo-relative file, when the finding is located. */
+  readonly file?: string;
+  /** Package name, when the finding is package-shaped (dep-vuln, license). */
+  readonly package?: string;
 }
 
 /** Cap on the per-lane blocking-finding list — evidence, not a full report. */
@@ -72,26 +93,45 @@ export async function guardrailVerdictFor(
     const blockingPairs = result.pairs.filter(
       (p) => p.classification.blocks && p.suppressedByAllowlist === undefined,
     );
-    const blocking = blockingPairs.slice(0, BLOCKING_SUMMARY_CAP).map((p) => {
-      // Per-finding reason codes ride the line: the #25 investigation had to
-      // read SOURCE to learn why six findings blocked, because the lane's
-      // list gave a kind + path and nothing else. The codes are the
-      // classifier's own (`no-prior-match`, `block-rule`, …), compact enough
-      // for a ledger row while making the verdict auditable from the run.
+    // Per-finding reason codes ride the line: the #25 investigation had to
+    // read SOURCE to learn why six findings blocked, because the lane's
+    // list gave a kind + path and nothing else. The codes are the
+    // classifier's own (`no-prior-match`, `block-rule`, …), compact enough
+    // for a ledger row while making the verdict auditable from the run.
+    const describeBlockingPair = (p: (typeof blockingPairs)[number]): string => {
       const codes = p.classification.reasons.map((r) => r.code).join(', ');
       return (
         `[${p.kind}] ${p.locator ?? p.file ?? '(no locator)'} — ` +
         `${p.classification.status}${codes ? ` (${codes})` : ''}`
       );
-    });
+    };
+    const blocking = blockingPairs.slice(0, BLOCKING_SUMMARY_CAP).map(describeBlockingPair);
     if (blockingPairs.length > BLOCKING_SUMMARY_CAP) {
       blocking.push(`… and ${blockingPairs.length - BLOCKING_SUMMARY_CAP} more`);
     }
+    // The structured, UNCAPPED projection for guardrail-red containment:
+    // the package comes from the anchor entry itself (the current scan's
+    // finding), never parsed back out of the display locator.
+    const currentById = new Map(result.current.findings.map((f) => [f.id, f] as const));
+    const blockingFindings: BlockingFinding[] = blockingPairs.map((p) => {
+      const entry = p.pair.currentId ? currentById.get(p.pair.currentId) : undefined;
+      const pkg =
+        entry && 'package' in entry && typeof entry.package === 'string'
+          ? entry.package
+          : undefined;
+      return {
+        kind: p.kind,
+        description: describeBlockingPair(p),
+        ...(p.file !== undefined ? { file: p.file } : {}),
+        ...(pkg !== undefined ? { package: pkg } : {}),
+      };
+    });
     return {
       verdict: counts.verdict,
       ran: true,
       passesGate: counts.exitCode === 0,
       ...(blocking.length > 0 ? { blocking } : {}),
+      ...(blockingFindings.length > 0 ? { blockingFindings } : {}),
     };
   } catch (e) {
     return {

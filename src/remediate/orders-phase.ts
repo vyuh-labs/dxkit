@@ -46,7 +46,7 @@
  * hinge tail lives only on the legacy path.
  */
 import type { CorrectnessFloorResult } from '../analyzers/correctness/run';
-import { detectActiveLanguages, dependencyManifestFilesIn } from '../languages';
+import { manifestPathProbe } from './containment';
 import {
   ORDER_TOKEN_ENV,
   clearOrderScope,
@@ -142,15 +142,9 @@ export async function runOrdersPhase(
   // scope from a killed or concurrent lane's leftover.
   const orderToken = newOrderScopeToken();
   // The manifests:false gate reads the pack-declared manifest-pattern union
-  // (computed lazily once; injectable for tests).
-  let manifestProbe = args.isManifestPath;
-  const isManifestPath = (p: string): boolean => {
-    if (!manifestProbe) {
-      const packs = detectActiveLanguages(opts.cwd);
-      manifestProbe = (x) => dependencyManifestFilesIn([x], packs).length > 0;
-    }
-    return manifestProbe(p);
-  };
+  // (computed lazily once; injectable for tests): the same probe the
+  // guardrail-red containment consults (`manifestPathProbe`, Rule 2).
+  const isManifestPath = manifestPathProbe(opts.cwd, args.isManifestPath);
   const records: OrderRunRecord[] = [];
   const scrubbed: string[] = [];
   const failures: string[] = [];

@@ -9,6 +9,8 @@
  * with the legacy tail via the `verify.ts` phrasing helpers.
  */
 import { floorOrderDone } from '../loop/order-scope';
+import { containGuardrailRed, manifestPathProbe } from './containment';
+import type { GuardrailContainment } from './outcome';
 import type {
   AgentEnvelope,
   OrderDisposition,
@@ -194,6 +196,45 @@ export async function completeOrdersRun(
     runFloor: args.runFloor,
   });
 
+  // Guardrail-red CONTAINMENT (4.4.7): the guardrail RAN and did not pass.
+  // Attribute the blocking findings per order, unwind the attributed
+  // orders, re-verify the remainder (bounded rounds): the contained run
+  // lands its green subset as `partially-landed`; a red that cannot be
+  // attributed refuses honestly and keeps the plain guardrail-red path
+  // (branch restored). An unrunnable guardrail is infrastructure, never
+  // contained; the fail-closed arm below keeps it.
+  let effVerified = verified;
+  let effGuardrail = guardrail;
+  let effRecipes = args.recipes;
+  let effRecords: readonly OrderRunRecord[] = records;
+  let effHead = head;
+  let containment: GuardrailContainment | undefined;
+  let contained = false;
+  if (guardrail.ran && !guardrail.passesGate) {
+    const outcome = await containGuardrailRed(opts, {
+      git: args.git,
+      baseHead: args.baseHead,
+      agentBase: args.agentBase,
+      entryFloor: args.entryFloor,
+      runFloor: args.runFloor,
+      recipes: args.recipes,
+      records,
+      ordersById: new Map(dispatchList.map((o) => [o.id, o] as const)),
+      guardrail,
+      isManifestPath: manifestPathProbe(opts.cwd, args.isManifestPath),
+    });
+    containment = outcome.containment;
+    if (outcome.kind === 'contained') {
+      contained = true;
+      effVerified = outcome.verified;
+      effGuardrail = outcome.guardrail;
+      effRecipes = outcome.recipes;
+      effRecords = outcome.records;
+      effHead = outcome.head;
+    }
+  }
+  const containmentDisclosure = containment !== undefined ? { containment } : {};
+
   // Per-order done, judged from the FINAL verified floor for floor-verifier
   // orders through the ONE `floorOrderDone` computation (the Stop-gate's
   // floor arm reads the same function, so the two cannot drift). Honest in
@@ -201,9 +242,9 @@ export async function completeOrdersRun(
   // absent, or a floor that did not run at all) yields UNDECIDED, never a
   // claimed closure; a guardrail-verifier order's closure is arbitrated by
   // the guardrail verdict below and the next plan — the ledger says so.
-  const verifiedChecks = verified.floor?.checks;
+  const verifiedChecks = effVerified.floor?.checks;
   const byId = new Map(dispatchList.map((o) => [o.id, o] as const));
-  const withDone = records.map((r) => {
+  const withDone = effRecords.map((r) => {
     const order = byId.get(r.orderId);
     if (
       !order ||
@@ -227,12 +268,13 @@ export async function completeOrdersRun(
 
   const common = {
     task: args.taskId,
-    recipes: args.recipes,
+    recipes: effRecipes,
     orders: finalSummary,
     envelope,
-    ...verificationDisclosures(verified, guardrail, opts.cwd),
+    ...verificationDisclosures(effVerified, effGuardrail, opts.cwd),
+    ...containmentDisclosure,
     baseHead: args.baseHead,
-    head,
+    head: effHead,
     ...evidenceTail,
     ...(scrubbed.length > 0 ? { scrubbedArtifacts: scrubbed } : {}),
     ...(partial ? { partial } : {}),
@@ -251,17 +293,39 @@ export async function completeOrdersRun(
         'truthful failure, never a PR.',
     };
   }
-  if (!guardrail.ran || !guardrail.passesGate) {
+  if (!contained && (!guardrail.ran || !guardrail.passesGate)) {
+    const refusalNote =
+      containment?.refused !== undefined
+        ? ` Containment was attempted and refused: ${containment.refused}.`
+        : '';
     return {
       outcome: 'guardrail-red',
       ...common,
-      note: guardrailRedNote(guardrail, args.effectiveSalvage),
+      note: guardrailRedNote(guardrail, args.effectiveSalvage) + refusalNote,
     };
   }
+  // Recomputed over the EFFECTIVE records/recipes: a containment drop is a
+  // dropped order like any other for the note, the ledger, and the rows.
+  const effDroppedOrders = effRecords.filter((r) => r.disposition?.kind === 'dropped');
+  const effDroppedRecipes = effRecipes.records.filter((r) => r.disposition?.kind === 'dropped');
   const droppedNote =
-    droppedOrders.length + droppedRecipes.length > 0
-      ? ` Dropped at their own verification (still open): ${describeDropped([...droppedRecipes, ...droppedOrders])}.`
+    effDroppedOrders.length + effDroppedRecipes.length > 0
+      ? ` Dropped at their own verification (still open): ${describeDropped([...effDroppedRecipes, ...effDroppedOrders])}.`
       : '';
+  if (contained) {
+    // The contained run completes partially-landed EVEN when partial: the
+    // remainder is fully verified and lands; the dropped orders are named
+    // and their rows record the guardrail failure per order.
+    return {
+      outcome: 'partially-landed',
+      ...common,
+      note:
+        'the final guardrail was red; its blocking findings were attributed per order, the ' +
+        'attributed orders were dropped (commits reverted), and the remainder re-verified ' +
+        'green, so the verified remainder lands.' +
+        droppedNote,
+    };
+  }
   if (partial) {
     const salvage =
       args.effectiveSalvage === 'draft-pr'
