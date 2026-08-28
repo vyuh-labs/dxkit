@@ -277,6 +277,33 @@ describe('analyzeDashboard', () => {
     expect(offline.html).toContain('DXKit Dashboard');
   });
 
+  it('resolves the reports anchor ref from policy for the trend read (custom anchorRef)', () => {
+    fs.mkdirSync(path.join(tmp, '.dxkit'), { recursive: true });
+    fs.writeFileSync(
+      path.join(tmp, '.dxkit', 'policy.json'),
+      JSON.stringify({ version: 1, mode: 'brownfield', reports: { anchorRef: 'custom-reports' } }),
+    );
+    const seen: Array<string | undefined> = [];
+    analyzeDashboard(tmp, {
+      readHistory: (_cwd, anchorRef) => {
+        seen.push(anchorRef);
+        return [];
+      },
+    });
+    expect(seen).toEqual(['custom-reports']);
+    // Without a policy override the default (undefined => dxkit-reports)
+    // reaches the reader.
+    fs.rmSync(path.join(tmp, '.dxkit', 'policy.json'));
+    seen.length = 0;
+    analyzeDashboard(tmp, {
+      readHistory: (_cwd, anchorRef) => {
+        seen.push(anchorRef);
+        return [];
+      },
+    });
+    expect(seen).toEqual([undefined]);
+  });
+
   it('embeds markdown as a JSON-safe payload that the client can render', () => {
     // The dashboard embeds report markdowns inside a <script type="application/json">
     // block. The implementation must escape `<` so the embedded content

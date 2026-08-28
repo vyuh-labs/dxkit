@@ -26,6 +26,7 @@ import * as path from 'path';
 import { getReportDate } from '../tools/report-date';
 import { GRAPH_TAB_CSS, renderGraphTab } from '../../dashboard/graph-tab';
 import { readReportHistory } from '../../reports/snapshot';
+import { loadPolicyFromCwd } from '../../baseline/policy';
 import {
   computeTrendContext,
   formatTrendContext,
@@ -84,8 +85,10 @@ export interface DashboardOptions {
   /** Project name shown in the header. Default: derived from package.json or basename(cwd). */
   projectName?: string;
   /** Injected snapshot-history reader (tests); production reads the reports
-   *  anchor via the one canonical reader. */
-  readHistory?: (cwd: string) => ReportHistoryEntry[];
+   *  anchor via the one canonical reader. Receives the POLICY-RESOLVED
+   *  anchor ref (reports.anchorRef, resolved outside the seam so an injected
+   *  reader can assert it). */
+  readHistory?: (cwd: string, anchorRef?: string) => ReportHistoryEntry[];
 }
 
 export interface DashboardResult {
@@ -373,7 +376,11 @@ export function analyzeDashboard(cwd: string, options: DashboardOptions = {}): D
   // anchor, or no history simply renders no trend row.
   let trendLine: string | null = null;
   try {
-    const history = (options.readHistory ?? readReportHistory)(cwd);
+    // The anchor ref comes from the ONE policy loader, like every other
+    // history consumer (reports-cli, the projection gather): a repo with a
+    // custom reports.anchorRef must not silently chart an empty default ref.
+    const anchorRef = loadPolicyFromCwd(cwd).reports?.anchorRef;
+    const history = (options.readHistory ?? readReportHistory)(cwd, anchorRef);
     if (history.length > 0) {
       const spark = segmentHistory(history)
         .map((seg) => sparkline(seg.entries.map((e) => e.scores.overall)))
