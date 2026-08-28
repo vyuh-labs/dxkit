@@ -29,6 +29,7 @@ import {
   renderMarkdown,
 } from '../../src/baseline/check-renderers';
 import type { ImpactScoreInput } from '../../src/baseline/impact';
+import type { TrendContext } from '../../src/reports/trend';
 import type { ClassifiedPair } from '../../src/gate/result';
 import type { BaselineEntry, FindingSeverity, FindingStatus } from '../../src/baseline/types';
 import { trustedLocalContext } from '../../src/analysis-trust';
@@ -114,6 +115,18 @@ const PROJECTED = computeScoreProjection({
     },
   ],
 });
+
+/** A since-install trend context (the design's flat-repo sketch). */
+const TREND: TrendContext = {
+  overall: 24,
+  from: 24,
+  direction: 'flat',
+  sinceDate: '2026-07-20',
+  sinceInstall: true,
+  snapshots: 16,
+  totalSnapshots: 16,
+  improvementOnRecord: false,
+};
 
 const CAPPED_SCORE: ImpactScoreInput = {
   dimension: 'security',
@@ -299,6 +312,48 @@ describe('the Impact section reaches every check surface', () => {
     const json = renderJson({ ...base, pairs: [...base.pairs, ...RESOLVING_PAIRS] });
     expect(json.impact?.resolved).toBe(json.summary.resolved);
   });
+
+  it('markdown + console: the trend context line renders inside an attributable Impact section (P3)', () => {
+    const withResolved = { ...base, pairs: [...base.pairs, ...RESOLVING_PAIRS] };
+    const md = renderMarkdown(withResolved, { trendContext: TREND });
+    expect(md).toContain('Repo trend: overall 24, flat since 2026-07-20 (16 snapshots)');
+    const out = renderConsole(withResolved, { trendContext: TREND });
+    expect(out).toContain('Repo trend: overall 24, flat since 2026-07-20 (16 snapshots)');
+    // Without a trend context there is no line (nothing invented).
+    expect(renderMarkdown(withResolved)).not.toContain('Repo trend');
+  });
+
+  it('markdown: the first-improvement variant appends only over a positive projected overall on a record with no improvement', () => {
+    const withResolved = { ...base, pairs: [...base.pairs, ...RESOLVING_PAIRS] };
+    // PROJECTED carries overall 50 -> 52 (+2); TREND has no improvement on
+    // record, so the conditional claim renders.
+    const md = renderMarkdown(withResolved, { scoreProjection: PROJECTED, trendContext: TREND });
+    expect(md).toContain('this PR would be the first improvement on record');
+    // With an improvement already on record, no such claim.
+    const seen = renderMarkdown(withResolved, {
+      scoreProjection: PROJECTED,
+      trendContext: { ...TREND, improvementOnRecord: true },
+    });
+    expect(seen).not.toContain('first improvement on record');
+    // Without a projected overall movement, no claim either (the trend alone
+    // cannot say what this PR would do).
+    const noProjection = renderMarkdown(withResolved, { trendContext: TREND });
+    expect(noProjection).not.toContain('first improvement on record');
+  });
+
+  it('markdown: the trend line is suppressed with the section on a neutral change; JSON stays additive', () => {
+    const md = renderMarkdown(base, { trendContext: TREND });
+    expect(md).not.toContain('Repo trend');
+    const json = renderJson(
+      { ...base, pairs: [...base.pairs, ...RESOLVING_PAIRS] },
+      {
+        trendContext: TREND,
+      },
+    );
+    expect(json.impact?.trend?.sinceDate).toBe('2026-07-20');
+    // Absent context => absent field, never a fabricated object.
+    expect(renderJson(base).impact?.trend).toBeUndefined();
+  });
 });
 
 // A synthetic attribution gap: the shape the refusal tier carries.
@@ -348,6 +403,16 @@ describe('a refused run (CANNOT GATE) never renders a resolved claim (Rule 19 at
     expect(json.impact?.attributable).toBe(false);
     expect(json.impact?.resolved).toBe(3);
     expect(json.verdict.refused).toBe(true);
+  });
+
+  it('a refused run renders no trend line either (nothing beside the one-liner), while the JSON keeps the record', () => {
+    const md = renderMarkdown(refused(), { trendContext: TREND });
+    expect(md).not.toContain('Repo trend');
+    // The trend describes the repo's published record, not this run, so the
+    // JSON still carries it, plainly beside attributable: false.
+    const json = renderJson(refused(), { trendContext: TREND });
+    expect(json.impact?.attributable).toBe(false);
+    expect(json.impact?.trend?.snapshots).toBe(16);
   });
 
   it('json: a refused run neutralizes the projection: never projected deltas under CANNOT GATE', () => {

@@ -68,6 +68,7 @@ import {
   formatImpactHeadline,
   formatImpactNotAttributable,
   formatImpactQuietLine,
+  formatImpactTrendLine,
 } from './impact';
 import type { ImpactScoreInput, ImpactSummary } from './impact';
 import {
@@ -75,6 +76,7 @@ import {
   impactProjectionMarker,
   type ScoreProjection,
 } from './impact-projection';
+import type { TrendContext } from '../reports/trend';
 
 // ─── Shared render options ────────────────────────────────────────────────
 
@@ -95,6 +97,13 @@ export interface CheckRenderOptions {
    * labeled projected, and carried on the JSON `impact.projection` field.
    */
   readonly scoreProjection?: ScoreProjection;
+  /**
+   * The since-install trend context (impact P3), read from the same history
+   * fetch as the projection. Rendered as ONE line inside an attributable
+   * Impact section (the design's "Repo trend: overall 24, flat since ..."
+   * sketch); carried on the JSON `impact.trend` field.
+   */
+  readonly trendContext?: TrendContext;
 }
 
 // ─── Shared verdict predicates ────────────────────────────────────────────
@@ -442,7 +451,12 @@ export function renderConsole(result: GuardrailCheckResult, opts?: CheckRenderOp
   // resolved, so a neutral run gets no extra block here (the quiet line is
   // a PR-comment concern).
   {
-    const impact = deriveImpact(result, opts?.impactScores, opts?.scoreProjection);
+    const impact = deriveImpact(
+      result,
+      opts?.impactScores,
+      opts?.scoreProjection,
+      opts?.trendContext,
+    );
     if (!impact.attributable) {
       lines.push(logger.bold('Impact'));
       lines.push(`  ${formatImpactNotAttributable()}`);
@@ -457,6 +471,9 @@ export function renderConsole(result: GuardrailCheckResult, opts?: CheckRenderOp
       const projectionLine =
         impact.projection !== undefined ? formatScoreProjection(impact.projection) : null;
       if (projectionLine) lines.push(`  ${projectionLine}`);
+      // The trend context line (P3): the repo's published record in one line.
+      const trendLine = formatImpactTrendLine(impact);
+      if (trendLine) lines.push(`  ${trendLine}`);
       const exclusions = formatImpactExclusions(impact);
       if (exclusions) lines.push(`  ${exclusions}`);
       lines.push('');
@@ -1615,7 +1632,7 @@ export function renderJson(
     // two renderers already print it) — always present, [] when none.
     refExcludedKinds: result.refExcludedKinds,
     // The finding-delta impact, always emitted, zero reported as zero.
-    impact: deriveImpact(result, opts?.impactScores, opts?.scoreProjection),
+    impact: deriveImpact(result, opts?.impactScores, opts?.scoreProjection, opts?.trendContext),
     ...(result.depVulnsUnmeasured ? { depVulnsUnmeasured: result.depVulnsUnmeasured } : {}),
     ...(result.deferredCapture && result.deferredCapture.length > 0
       ? { deferredCapture: result.deferredCapture }
@@ -1869,7 +1886,12 @@ export function renderMarkdown(result: GuardrailCheckResult, opts?: CheckRenderO
   // CANNOT GATE heading would claim exactly what the refusal says cannot
   // be claimed, so the one-liner defers to the gap banner directly below.
   {
-    const impact = deriveImpact(result, opts?.impactScores, opts?.scoreProjection);
+    const impact = deriveImpact(
+      result,
+      opts?.impactScores,
+      opts?.scoreProjection,
+      opts?.trendContext,
+    );
     if (!impact.attributable) {
       lines.push(`_${escapeMd(formatImpactNotAttributable())}_`);
       lines.push('');
@@ -1893,6 +1915,14 @@ export function renderMarkdown(result: GuardrailCheckResult, opts?: CheckRenderO
           const marker = impactProjectionMarker(impact.projection);
           if (marker) lines.push(marker);
         }
+      }
+      // The trend context line (P3): the repo's published record, one line,
+      // only inside an attributable Impact section (same rule as the
+      // projection line).
+      const trendLine = formatImpactTrendLine(impact);
+      if (trendLine) {
+        lines.push('');
+        lines.push(escapeMd(trendLine));
       }
       const exclusions = formatImpactExclusions(impact);
       if (exclusions) {

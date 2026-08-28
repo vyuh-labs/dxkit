@@ -40,6 +40,7 @@ import type { ClassifiedPair } from '../gate/result';
 import type { BaselineEntry, FindingSeverity, FindingStatus } from './types';
 import type { CapApplied, TopAction } from '../scoring/result';
 import type { ScoreProjection } from './impact-projection';
+import { formatTrendContext, type TrendContext } from '../reports/trend';
 
 /** Severity display order, most severe first. */
 const SEVERITY_ORDER: ReadonlyArray<FindingSeverity> = ['critical', 'high', 'medium', 'low'];
@@ -145,6 +146,15 @@ export interface ImpactSummary {
    * word "projected" (see `formatScoreProjection`).
    */
   readonly projection?: ScoreProjection;
+  /**
+   * The since-install trend context (impact P3), when the surface read the
+   * snapshot history this run (the projection gather's one fetch). A
+   * statement about the repo's PUBLISHED record, not about this change, so
+   * it is carried even on a refused run (data, plainly labeled); the
+   * renderers still print its line only inside an attributable Impact
+   * section. Additive optional, like `projection`.
+   */
+  readonly trend?: TrendContext;
 }
 
 /**
@@ -205,6 +215,7 @@ export function deriveImpact(
   },
   scores?: ReadonlyArray<ImpactScoreInput>,
   projection?: ScoreProjection,
+  trend?: TrendContext,
 ): ImpactSummary {
   const priorById = new Map(result.baseline.findings.map((e) => [e.id, e] as const));
 
@@ -305,6 +316,7 @@ export function deriveImpact(
     excluded,
     capNotes,
     ...(effectiveProjection !== undefined ? { projection: effectiveProjection } : {}),
+    ...(trend !== undefined ? { trend } : {}),
   };
 }
 
@@ -416,4 +428,21 @@ export function formatImpactQuietLine(impact: ImpactSummary): string {
     );
   }
   return 'No debt impact: this change neither resolves nor adds findings.';
+}
+
+/**
+ * The trend context line (impact P3), composed from the summary's own
+ * fields: the one trend phrasing (`formatTrendContext`) plus the projected
+ * OVERALL movement when this run projected one (it feeds the conditional
+ * "this PR would be the first improvement on record" claim). Null when the
+ * surface read no history. Rendered only inside an attributable Impact
+ * section, like the projection line.
+ */
+export function formatImpactTrendLine(impact: ImpactSummary): string | null {
+  if (impact.trend === undefined) return null;
+  const overallDelta =
+    impact.projection !== undefined && impact.projection.status === 'projected'
+      ? (impact.projection.deltas.find((d) => d.key === 'overall')?.delta ?? null)
+      : null;
+  return formatTrendContext(impact.trend, { projectedOverallDelta: overallDelta });
 }
