@@ -191,15 +191,123 @@ describe('declare-dependency recipe', () => {
     if (outcome.kind === 'refused') expect(outcome.reason).toContain('no-such-pkg');
   });
 
-  it('refuses orders from packs other than typescript this round', async () => {
+  it('refuses orders from a pack whose declaration is an exemption, with the declared reason', async () => {
     const cwd = repoImporting('left-pad');
     const { exec } = fakeExec();
     const outcome = await executeDeclareDependency(
-      importOrder('requests', ['app.py'], 'python'),
+      importOrder('github.com/x/y', ['main.go'], 'go'),
       makeCtx(cwd, { exec }),
     );
     expect(outcome.kind).toBe('refused');
-    if (outcome.kind === 'refused') expect(outcome.reason).toContain('python');
+    if (outcome.kind === 'refused') expect(outcome.reason).toContain('go');
+  });
+
+  it('applies on a python root: the alias-mapped distribution resolves, uv adds it, the resolution check confirms', async () => {
+    // `import yaml` in a uv-managed root: the probe and install must target
+    // the DISTRIBUTION (pyyaml), and the verify is the python pack's own
+    // resolution check reading the declared manifest after the install.
+    const cwd = tempRepo({
+      'pyproject.toml': '[project]\nname = "fx"\nversion = "0.1.0"\ndependencies = []\n',
+      'uv.lock': 'version = 1\n',
+      'app.py': 'import yaml\n',
+      // A provisioned project venv: the resolution check declines without
+      // one, and the declared-manifest read is what confirms the install.
+      '.venv/lib/python3.12/site-packages/.keep': '',
+    });
+    const { exec, calls } = fakeExec((cmd) => {
+      if (cmd.bin === 'uv' && cmd.args[0] === 'pip') {
+        return {
+          output: 'Resolved 1 package in 49ms\nWould install 1 package\n + pyyaml==6.0.2\n',
+        };
+      }
+      if (cmd.bin === 'uv' && cmd.args[0] === 'add') {
+        fs.writeFileSync(
+          path.join(cwd, 'pyproject.toml'),
+          '[project]\nname = "fx"\nversion = "0.1.0"\ndependencies = ["pyyaml==6.0.2"]\n',
+        );
+      }
+      return undefined;
+    });
+    const order = makeOrder({
+      id: 'unresolved-import:python:.',
+      class: 'unresolved-import',
+      findings: [
+        floorFinding('python/import-resolution#yaml', 'python', 'import-resolution', {
+          specifier: 'yaml',
+          importingFiles: ['app.py'],
+        }),
+      ],
+      envelope: { paths: ['app.py', 'pyproject.toml', 'uv.lock'], manifests: true },
+      constraints: { install: { bin: 'uv', args: ['sync', '--locked'] }, forbidden: [] },
+    });
+    const outcome = await executeDeclareDependency(order, makeCtx(cwd, { exec }));
+    expect(outcome).toEqual({
+      kind: 'applied',
+      changedFiles: ['pyproject.toml', 'uv.lock'],
+    });
+    // Probe and install both name the distribution, never the import, and
+    // a uv root probes through uv itself (its venvs ship without pip).
+    expect(calls.map((c) => [c.cmd.bin, ...c.cmd.args].join(' '))).toEqual([
+      'uv pip install --dry-run --no-deps pyyaml',
+      'uv add pyyaml==6.0.2',
+    ]);
+  });
+
+  it('an infrastructure-shaped probe failure is a named failure, never a typo refusal', async () => {
+    // An old pip without the `index` subcommand: the specifier gets no
+    // verdict, the order stays open for the agent tier.
+    const cwd = repoImporting('left-pad');
+    const { exec } = fakeExec((cmd) => {
+      if (cmd.args[0] === 'view') {
+        return { code: 1, output: 'ERROR: unknown command "index"' };
+      }
+      return undefined;
+    });
+    const outcome = await executeDeclareDependency(
+      importOrder('left-pad', ['src/a.ts']),
+      makeCtx(cwd, { exec }),
+    );
+    expect(outcome.kind).toBe('failed');
+    if (outcome.kind === 'failed') {
+      expect(outcome.step).toBe('resolve-version');
+      expect(outcome.output).toContain('cannot answer a version probe');
+    }
+  });
+
+  it('the pack-declared infrastructure shape classifies too (uv without a venv)', async () => {
+    const cwd = tempRepo({
+      'pyproject.toml': '[project]\nname = "fx"\nversion = "0.1.0"\ndependencies = []\n',
+      'uv.lock': 'version = 1\n',
+      'app.py': 'import yaml\n',
+    });
+    const { exec } = fakeExec((cmd) => {
+      if (cmd.bin === 'uv' && cmd.args[0] === 'pip') {
+        return {
+          code: 2,
+          output: 'error: No virtual environment found; run `uv venv` to create an environment',
+        };
+      }
+      return undefined;
+    });
+    const order = makeOrder({
+      id: 'unresolved-import:python:.',
+      class: 'unresolved-import',
+      findings: [
+        floorFinding('python/import-resolution#yaml', 'python', 'import-resolution', {
+          specifier: 'yaml',
+          importingFiles: ['app.py'],
+        }),
+      ],
+      envelope: { paths: ['app.py', 'pyproject.toml', 'uv.lock'], manifests: true },
+      constraints: { install: { bin: 'uv', args: ['sync', '--locked'] }, forbidden: [] },
+    });
+    const outcome = await executeDeclareDependency(order, makeCtx(cwd, { exec }));
+    expect(outcome.kind).toBe('failed');
+    if (outcome.kind === 'failed') {
+      expect(outcome.step).toBe('resolve-version');
+      expect(outcome.output).toContain('cannot answer a version probe');
+      expect(outcome.output).toContain('No virtual environment');
+    }
   });
 
   it('fails verify when the specifier still does not resolve after the install', async () => {

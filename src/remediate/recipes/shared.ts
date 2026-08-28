@@ -21,6 +21,7 @@ import { getLanguage, languagesDeclaringRemediation, remediationSupport } from '
 import type { LanguageId } from '../../languages/types';
 import type {
   PinTransitiveProvider,
+  PinVersionScheme,
   RemediationCapabilityId,
   RemediationSupport,
 } from '../../languages/capabilities/remediation';
@@ -86,12 +87,34 @@ export function compareConcreteSemver(a: string, b: string): number {
   return 0;
 }
 
+/** The default pin-version grammar: the x.y.z semver shape. Packs whose
+ *  advisories carry other concrete forms declare their own
+ *  `PinVersionScheme` (Rule 6); everything here consumes the scheme, never
+ *  the semver helpers directly. */
+export const DEFAULT_PIN_VERSIONS: PinVersionScheme = {
+  concrete: isConcreteSemver,
+  compare: compareConcreteSemver,
+};
+
+/** The version grammar serving a pin provider: its declared scheme, or the
+ *  semver default. The ONE resolution consumed by the registry's `matches`
+ *  and the executor's pick, so the tier decision and the runtime pick can
+ *  never grade a fixed version differently. */
+export function pinVersionScheme(
+  provider: Pick<PinTransitiveProvider, 'versions'>,
+): PinVersionScheme {
+  return provider.versions ?? DEFAULT_PIN_VERSIONS;
+}
+
 /** The pin an override-pin order applies: the highest CONCRETE version among
- *  the known fixed versions, or null when any is range-shaped (refuse, never
- *  guess a range's meaning). */
-export function pickPinVersion(versions: readonly string[]): string | null {
-  if (versions.length === 0 || !versions.every(isConcreteSemver)) return null;
-  return versions.reduce((best, v) => (compareConcreteSemver(v, best) > 0 ? v : best));
+ *  the known fixed versions under the owning pack's version grammar, or
+ *  null when any is range-shaped (refuse, never guess a range's meaning). */
+export function pickPinVersion(
+  versions: readonly string[],
+  scheme: PinVersionScheme = DEFAULT_PIN_VERSIONS,
+): string | null {
+  if (versions.length === 0 || !versions.every((v) => scheme.concrete(v))) return null;
+  return versions.reduce((best, v) => (scheme.compare(v, best) > 0 ? v : best));
 }
 
 /**

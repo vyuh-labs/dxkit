@@ -8,6 +8,7 @@ import { getLanguage } from '../src/languages';
 import { clearWalkPathsCache } from '../src/analyzers/tools/walk-paths';
 
 const TS = getLanguage('typescript')!;
+const PY = getLanguage('python')!;
 
 /**
  * The lockfile-sync floor check on the REAL TypeScript pack (4.4.5): the
@@ -340,5 +341,49 @@ describe('lockfile-sync floor check (typescript pack, npm)', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('lockfile-sync floor check (python pack, poetry): non-drift classification (4.4.7 V2)', () => {
+  // poetry has no lock-only check: `poetry check --lock` validates the whole
+  // pyproject alongside the lock, so a manifest error would otherwise read,
+  // and be remediated, as lockfile drift.
+  function poetryFloor(output: string) {
+    const dir = mkdtempSync(join(tmpdir(), 'dxkit-locksync-py-'));
+    writeFileSync(join(dir, 'pyproject.toml'), '[tool.poetry]\nname = "fx"\n');
+    writeFileSync(join(dir, 'poetry.lock'), '');
+    try {
+      const r = runCorrectnessFloor({
+        cwd: dir,
+        changedFiles: [],
+        scope: 'full',
+        packs: [PY],
+        exec: (cmd) =>
+          cmd.bin === 'poetry' && cmd.args[0] === 'check'
+            ? { available: true, code: 1, output }
+            : { available: true, code: 0, output: '' },
+      });
+      return r.checks.find((c) => c.label === LOCKFILE_SYNC_LABEL)!;
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  it('a real drift keeps the resync remedy', () => {
+    const lock = poetryFloor(
+      'Error: pyproject.toml changed significantly since poetry.lock was last generated. ' +
+        'Run `poetry lock` to fix the lock file.',
+    );
+    expect(lock.status).toBe('fail');
+    expect(lock.output).toContain('frozen install');
+    expect(lock.output).not.toContain('manifest-validation');
+  });
+
+  it('a manifest-validation failure is disclosed as such, never as lockfile drift', () => {
+    const lock = poetryFloor('Error: Declared README file does not exist: README.md');
+    expect(lock.status).toBe('fail');
+    expect(lock.output).toContain('manifest-validation');
+    expect(lock.output).toContain('rather than re-locking');
+    expect(lock.output).not.toContain('Re-run the package manager install');
   });
 });

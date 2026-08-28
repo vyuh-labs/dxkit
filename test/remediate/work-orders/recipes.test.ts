@@ -193,21 +193,129 @@ describe('order-intrinsic feasibility lives in matches (an executor-certain refu
     expect(tierOf({ ...ok, findings: [floorFinding('typescript', 'left-pad')] })).toBe('recipe');
     // A pack whose declaration is a (planned) exemption tiers agent AND the
     // order carries the declared reason for the plan surface (4.4.7 V1).
-    const python = assignTier({
+    const go = assignTier({
       ...draftBase,
       ...ok,
-      findings: [floorFinding('python', 'requests')],
+      findings: [floorFinding('go', 'github.com/x/y')],
     });
-    expect(python.tier).toBe('agent');
-    expect(python.capabilityExemption?.pack).toBe('python');
-    expect(python.capabilityExemption?.capability).toBe('declareDependency');
-    expect(python.capabilityExemption?.reason).toContain('python');
+    expect(go.tier).toBe('agent');
+    expect(go.capabilityExemption?.pack).toBe('go');
+    expect(go.capabilityExemption?.capability).toBe('declareDependency');
+    expect(go.capabilityExemption?.reason).toContain('go');
     expect(tierOf({ ...ok, findings: [floorFinding('typescript', '--registry=https://x')] })).toBe(
       'agent',
     );
     expect(tierOf({ ...ok, findings: [floorFinding('typescript', './src/missing')] })).toBe(
       'agent',
     );
+  });
+
+  it('the wave-1 packs tier recipe through their declarations (python/ruby/php, 4.4.7 V2)', () => {
+    // declare-dependency: python maps the import through the one alias
+    // table; an ambiguous alias (cv2 serves three distributions) fails the
+    // rail and tiers agent. Ruby rides the gem-name rail; a nested require
+    // path names a file inside a gem, not a gem.
+    const pyDeclare = {
+      id: 'unresolved-import:python:.',
+      class: 'unresolved-import' as const,
+      envelope: { paths: ['pyproject.toml', 'uv.lock'], manifests: true },
+    };
+    expect(tierOf({ ...pyDeclare, findings: [floorFinding('python', 'requests')] })).toBe('recipe');
+    expect(tierOf({ ...pyDeclare, findings: [floorFinding('python', 'yaml')] })).toBe('recipe');
+    expect(tierOf({ ...pyDeclare, findings: [floorFinding('python', 'cv2')] })).toBe('agent');
+    const rbDeclare = {
+      id: 'unresolved-import:ruby:.',
+      class: 'unresolved-import' as const,
+      envelope: { paths: ['Gemfile', 'Gemfile.lock'], manifests: true },
+    };
+    expect(tierOf({ ...rbDeclare, findings: [floorFinding('ruby', 'nokogiri')] })).toBe('recipe');
+    expect(
+      tierOf({ ...rbDeclare, findings: [floorFinding('ruby', 'active_support/core_ext')] }),
+    ).toBe('agent');
+    // php: a namespace does not identify a Packagist package, a declared
+    // exemption, disclosed on the order.
+    const php = assignTier({
+      ...draftBase,
+      id: 'unresolved-import:php:.',
+      class: 'unresolved-import' as const,
+      envelope: { paths: ['composer.json', 'composer.lock'], manifests: true },
+      findings: [floorFinding('php', 'Monolog')],
+    });
+    expect(php.tier).toBe('agent');
+    expect(php.capabilityExemption?.capability).toBe('declareDependency');
+    expect(php.capabilityExemption?.reason).toContain('Packagist');
+
+    // override-pin: the three packs resolve through their declared
+    // manifests; the concrete-semver rail still applies.
+    const pin = (pack: string, paths: string[], fixedVersion: string) =>
+      tierOf({
+        id: 'dep-advisory:p',
+        class: 'dep-advisory' as const,
+        envelope: { paths, manifests: true },
+        findings: [
+          {
+            kind: 'dep-vuln',
+            id: 'a',
+            attribution: 'deferred' as const,
+            evidence: {
+              type: 'dep-vuln' as const,
+              package: 'p',
+              advisoryId: 'GHSA-1',
+              fixedVersion,
+              pack,
+            },
+          },
+        ],
+      });
+    expect(pin('python', ['pyproject.toml', 'uv.lock'], '2.5.0')).toBe('recipe');
+    expect(pin('ruby', ['Gemfile', 'Gemfile.lock'], '1.16.5')).toBe('recipe');
+    expect(pin('php', ['composer.json', 'composer.lock'], '2.4.5')).toBe('recipe');
+    expect(pin('python', ['pyproject.toml'], '>=2.5')).toBe('agent');
+    // The version grammar is pack-declared (Rule 6): RubyGems 4-segment
+    // security releases (the rails-family shape) and PyPI 2-segment
+    // releases tier recipe under their packs' schemes, while an
+    // unorderable PEP 440 marker and npm's x.y.z default both refuse.
+    expect(pin('ruby', ['Gemfile', 'Gemfile.lock'], '7.0.8.7')).toBe('recipe');
+    expect(pin('python', ['pyproject.toml', 'uv.lock'], '2.31')).toBe('recipe');
+    expect(pin('python', ['pyproject.toml', 'uv.lock'], '2.31.post1')).toBe('agent');
+    expect(pin('typescript', ['package.json', 'package-lock.json'], '1.2.3.4')).toBe('agent');
+
+    // lockfile-sync: python + php declare the capability AND a verifiable
+    // sync check, so a one-root envelope tiers recipe. Ruby's sync check
+    // is a DECLARED skip: the executor could never confirm a resync
+    // (certain discard), so the order tiers agent with the pack's own
+    // skip reason disclosed; same doctrine for a yarn-lockfile envelope
+    // under the typescript pack.
+    const staleOrder = (pack: string, paths: string[]) => ({
+      ...draftBase,
+      id: `stale-lockfile:${pack}`,
+      class: 'stale-lockfile' as const,
+      envelope: { paths, manifests: true },
+      findings: [floorFinding(pack)],
+    });
+    const stale = (pack: string, paths: string[]) => assignTier(staleOrder(pack, paths)).tier;
+    expect(stale('python', ['pyproject.toml', 'poetry.lock'])).toBe('recipe');
+    expect(stale('php', ['composer.json', 'composer.lock'])).toBe('recipe');
+    const ruby = assignTier(staleOrder('ruby', ['Gemfile', 'Gemfile.lock']));
+    expect(ruby.tier).toBe('agent');
+    expect(ruby.capabilityExemption?.capability).toBe('resyncLockfile');
+    expect(ruby.capabilityExemption?.reason).toContain('could never be verified');
+    expect(ruby.capabilityExemption?.reason).toContain('bundler');
+    expect(stale('typescript', ['package.json', 'yarn.lock'])).toBe('agent');
+    expect(stale('typescript', ['package.json', 'package-lock.json'])).toBe('recipe');
+
+    // lint-autofix: ruff and rubocop declare fix modes; phpcs cannot
+    // fix-and-verify in one run, a declared exemption.
+    const lint = (check: string) =>
+      tierOf({
+        id: 'lint-located:src/a',
+        class: 'lint-located' as const,
+        envelope: { paths: ['src/a'], manifests: false },
+        findings: [lintFinding(check)],
+      });
+    expect(lint('lint:python')).toBe('recipe');
+    expect(lint('lint:ruby')).toBe('recipe');
+    expect(lint('lint:php')).toBe('agent');
   });
 
   it('lint-autofix: a user check or a fixCommand-less pack tiers agent; a SLICED order stays recipe (grouped fix)', () => {

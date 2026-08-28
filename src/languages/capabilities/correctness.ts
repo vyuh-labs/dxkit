@@ -222,6 +222,9 @@ export type LockfileCheck =
       readonly kind: 'command';
       readonly command: CorrectnessCommand;
       readonly tolerated?: readonly ToleratedCheckRetry[];
+      /** The strategy's declared non-drift classifier, passed through by
+       *  the one derivation below (see `LockfileSyncCheck`). */
+      readonly classifyFailure?: (output: string) => string | null;
     }
   | { readonly kind: 'skipped'; readonly reason: string };
 
@@ -246,6 +249,7 @@ export function lockfileCheckFromStrategy(
   return {
     kind: 'command',
     command: { label: LOCKFILE_SYNC_LABEL, bin: check.command.bin, args: check.command.args },
+    ...(check.classifyFailure !== undefined ? { classifyFailure: check.classifyFailure } : {}),
     ...(fallbacks.length > 0
       ? {
           // One retry per authorized fallback, its command the dry-run

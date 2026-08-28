@@ -1,5 +1,5 @@
 import { NO_TREE_INVARIANTS } from './capabilities/tree-invariants';
-import { plannedRemediationSupport } from './capabilities/remediation';
+import { rubyRemediation } from './ruby-remediation';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -20,9 +20,12 @@ import type {
   CorrectnessCommand,
   CorrectnessContext,
   CorrectnessProvider,
+  LockfileCheck,
   ResolutionCheckResult,
 } from './capabilities/correctness';
+import { lockfileCheckFromStrategy } from './capabilities/correctness';
 import type { ExecutionRequirement } from '../execution';
+import { resolveTolerances } from '../install/tolerances';
 import { declareInstallStrategy } from './capabilities/install-strategy';
 import type {
   CoverageResult,
@@ -931,6 +934,16 @@ export function rubyResolutionCheck(ctx: CorrectnessContext): ResolutionCheckRes
 const rubyCorrectnessProvider: CorrectnessProvider = {
   resolutionCheck: rubyResolutionCheck,
 
+  // The lockfile-sync check (4.4.7), derived from the strategy's own
+  // declared sync check through the ONE derivation. Bundler's is a
+  // DISCLOSED skip (no non-installing dry-run exists), so the floor says
+  // why instead of silently observing nothing.
+  lockfileCheck(ctx: CorrectnessContext): LockfileCheck | null {
+    const strategy = rubyInstallStrategy.strategy(ctx.cwd);
+    if (strategy === null || strategy.lockfile === null) return null;
+    return lockfileCheckFromStrategy(strategy, ctx.tolerances ?? resolveTolerances(ctx.cwd));
+  },
+
   // Rule 20: host-agnostic, needs the Ruby runtime; the floor runs the
   // project's own specs — 'build' weight without a compiled-build env.
   execution: (): ExecutionRequirement => ({
@@ -996,6 +1009,21 @@ const rubyCorrectnessProvider: CorrectnessProvider = {
  *  identities carry over. Exported so the lint-gate format contract is
  *  testable against real samples. */
 export function parseRubocopJson(output: string): RawLocatedFinding[] {
+  return mapRubocopOffenses(output, { excludeCorrected: false });
+}
+
+/** The fix-mode sibling: under `rubocop -a` an offense the run CORRECTED
+ *  still appears in the json with `corrected: true`; only the leftovers
+ *  are findings, or the recipe's verify would fail on its own fixes.
+ *  Exported so the filter is testable against a real `-a` sample. */
+export function parseRubocopFixJson(output: string): RawLocatedFinding[] {
+  return mapRubocopOffenses(output, { excludeCorrected: true });
+}
+
+function mapRubocopOffenses(
+  output: string,
+  opts: { excludeCorrected: boolean },
+): RawLocatedFinding[] {
   const data = asRecord(extractJsonBlob(output));
   if (!data || !Array.isArray(data.files)) return [];
   const out: RawLocatedFinding[] = [];
@@ -1007,6 +1035,7 @@ export function parseRubocopJson(output: string): RawLocatedFinding[] {
       const offense = asRecord(raw);
       const message = str(offense?.message);
       if (!offense || !message) continue;
+      if (opts.excludeCorrected && offense.corrected === true) continue;
       const line = num(asRecord(offense.location)?.line);
       const rule = str(offense.cop_name);
       out.push({
@@ -1038,6 +1067,23 @@ const rubyLintGateProvider: LintGateProvider = {
       // ABSOLUTE paths and a lossy one-line render (Rule 5).
       args: ['--format', 'json'],
       parse: { kind: 'structured', label: 'rubocop-json', parse: parseRubocopJson },
+      expectedExit: 0,
+    };
+  },
+  // The lint-autofix recipe's fix mode (4.4.7): `rubocop -a` (SAFE
+  // autocorrect only, never -A) scoped to the work order's files. One run
+  // both writes the fixes and reports the leftovers through the fix-mode
+  // parser, which drops offenses the run itself corrected; rubocop exits
+  // non-zero when offenses remain and the recipe parses regardless of exit
+  // (the seam's own doctrine).
+  fixCommand(ctx) {
+    if (ctx.files.length === 0) return null;
+    const rubocop = findTool(TOOL_DEFS.rubocop, ctx.cwd);
+    if (!rubocop.available || !rubocop.path) return null;
+    return {
+      bin: rubocop.path,
+      args: ['-a', '--format', 'json', ...ctx.files],
+      parse: { kind: 'structured', label: 'rubocop-fix-json', parse: parseRubocopFixJson },
       expectedExit: 0,
     };
   },
@@ -1078,7 +1124,21 @@ const rubyInstallStrategy = declareInstallStrategy(
       strategy: {
         manager: 'bundler',
         lockfile: 'Gemfile.lock',
-        modes: { frozen: { primary: { bin: 'bundle', args: ['install'] }, fallbacks: [] } },
+        modes: {
+          frozen: { primary: { bin: 'bundle', args: ['install'] }, fallbacks: [] },
+          // `bundle install` resolves the Gemfile, writes Gemfile.lock and
+          // installs in one command (bundler's own lock-writing form); a
+          // repo frozen via BUNDLE_FROZEN fails it named, never silently.
+          resync: { primary: { bin: 'bundle', args: ['install'] }, fallbacks: [] },
+        },
+        syncCheck: {
+          kind: 'skipped',
+          reason:
+            'bundler has no non-installing dry-run that compares the Gemfile to ' +
+            'Gemfile.lock (bundle check needs installed gems and may rewrite the ' +
+            'lockfile); a frozen install under BUNDLE_FROZEN refuses a stale ' +
+            'lockfile and CI is the backstop',
+        },
         execution: {
           hosts: ['any'],
           toolchains: ['ruby'],
@@ -1244,7 +1304,7 @@ export const ruby: LanguageSupport = {
   },
 
   treeInvariants: NO_TREE_INVARIANTS,
-  remediation: plannedRemediationSupport('ruby'),
+  remediation: rubyRemediation,
   correctness: rubyCorrectnessProvider,
   lintGate: rubyLintGateProvider,
 

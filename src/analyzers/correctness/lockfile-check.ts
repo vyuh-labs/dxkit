@@ -196,14 +196,22 @@ export function executeLockfileCheck(
       // A further tolerated-class failure with the ladder exhausted keeps
       // the disclosed pass (the pre-fix semantics, now the LAST resort).
       if (notes.length > 0 && retries.some((r) => r.matches(attempt.output))) return pass();
+      // A pack-declared NON-DRIFT classification (poetry check validates
+      // the whole pyproject alongside the lock) replaces the resync remedy
+      // with the pack's own disclosure: the check still fails (the frozen
+      // install fails on this tree either way), but the cause is named so
+      // a manifest error is never read, or remediated, as lockfile drift.
+      const classified = check.classifyFailure?.(attempt.output) ?? null;
       return {
         ...base,
         status: 'fail',
         output:
           tail(attempt.output) +
-          '\nThe lockfile does not satisfy the manifest: a frozen install (what CI runs before ' +
-          'any gate) fails on this tree. Re-run the package manager install so the lockfile ' +
-          'records the manifest, and commit both.',
+          '\n' +
+          (classified ??
+            'The lockfile does not satisfy the manifest: a frozen install (what CI runs before ' +
+              'any gate) fails on this tree. Re-run the package manager install so the lockfile ' +
+              'records the manifest, and commit both.'),
       };
     }
     const [retry] = remaining.splice(idx, 1);
