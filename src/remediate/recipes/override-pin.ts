@@ -27,6 +27,7 @@ import type { WorkOrder } from '../work-orders/types';
 import type { DepAdvisoryEvidence } from '../work-orders/types';
 import {
   ambiguousRootReason,
+  environmentRefusal,
   osvBlockTier,
   packStrategyAt,
   pickPinVersion,
@@ -65,6 +66,16 @@ export async function executeOverridePin(
     return { kind: 'refused', reason: resolved.reason };
   }
   const { pack, provider, rootDir } = resolved;
+  // Rule 20, decided before anything spawns: the provider's declared
+  // environment requirement gates the whole attempt with a disclosed
+  // refusal (the runners' skipped-environment doctrine), never a spawn
+  // that fails in a way that reads as a code finding.
+  const envRefusal = environmentRefusal(
+    `the ${pack} pack's transitive pin`,
+    (cwd) => provider.execution(cwd),
+    ctx.cwd,
+  );
+  if (envRefusal) return envRefusal;
   if (rootDir === null) {
     return {
       kind: 'refused',
@@ -160,6 +171,7 @@ export async function executeOverridePin(
   return {
     kind: 'applied',
     changedFiles: [manifestPath, lockPath],
+    revert: plan.revert,
     ...(notes.length > 0 ? { notes } : {}),
   };
 }

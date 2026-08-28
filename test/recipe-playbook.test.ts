@@ -69,6 +69,7 @@ import {
   buildDevcontainerFeatures,
   detectActiveLanguages,
   dominantVocabulary,
+  collectExecutionRequirements,
 } from '../src/languages';
 import { runCorrectnessFloor } from '../src/analyzers/correctness/run';
 import { declareInstallStrategy } from '../src/languages/capabilities/install-strategy';
@@ -1907,6 +1908,9 @@ describe('recipe playbook: remediation capability seam (4.4.7 V1)', () => {
     expect(outcome.kind).toBe('applied');
     if (outcome.kind === 'applied') {
       expect(outcome.changedFiles).toEqual(['playbook.toml', 'playbook.lock']);
+      // The pack-declared revert prose rides the applied outcome into the
+      // ledger (the contract's promise, consumed, never inert).
+      expect(outcome.revert).toContain('remove the [pin."vuln-dep"] table');
     }
     // The pack's pure transform wrote the pin; the executor owned the write.
     const manifest = fs.readFileSync(path.join(cwd, 'playbook.toml'), 'utf8');
@@ -1948,6 +1952,62 @@ describe('recipe playbook: remediation capability seam (4.4.7 V1)', () => {
     const rendered = calls.map((c) => `${c.cmd.bin} ${c.cmd.args.join(' ')}`);
     expect(rendered).toContain('playbook-pm-mock install');
     expect(rendered).toContain('playbookc-mock lock --dry-run');
+  });
+
+  it('Rule 20 both directions: an unmet provider requirement is a DISCLOSED refusal BEFORE any spawn; met executes', async () => {
+    // Met => executes is pinned by the applied tests above (the declared
+    // hosts: ['any'] requirement passes on this runner). Unmet: swap the
+    // synthetic providers to a windows-only requirement and both executors
+    // must refuse with the ONE describeUnmetRequirement phrasing, spawning
+    // nothing; restore afterwards.
+    const remediation = mockPlaybookPack.remediation as {
+      pinTransitive: { provider: { execution: (cwd: string) => unknown } };
+      declareDependency: { provider: { execution: (cwd: string) => unknown } };
+    };
+    const savedPin = remediation.pinTransitive.provider.execution;
+    const savedDeclare = remediation.declareDependency.provider.execution;
+    const windowsOnly = () => ({
+      hosts: ['windows' as const],
+      toolchains: [],
+      needsBuild: true,
+      buildTarget: 'configured' as const,
+      weight: 'build' as const,
+    });
+    try {
+      remediation.pinTransitive.provider.execution = windowsOnly;
+      remediation.declareDependency.provider.execution = windowsOnly;
+      const cwd = tempRepo({ 'playbook.toml': '[package]\n', 'playbook.lock': '' });
+      const { exec, calls } = fakeExec();
+      const pin = await executeOverridePin(pinOrder(), makeCtx(cwd, { exec }));
+      expect(pin.kind).toBe('refused');
+      if (pin.kind === 'refused') {
+        expect(pin.reason).toContain('cannot run in this environment');
+        expect(pin.reason).toContain('needs windows');
+      }
+      const declare = await executeDeclareDependency(
+        declareOrder('leftpad'),
+        makeCtx(cwd, { exec }),
+      );
+      expect(declare.kind).toBe('refused');
+      if (declare.kind === 'refused') expect(declare.reason).toContain('needs windows');
+      // Decided BEFORE the spawn: no probe, no install, no resync ran.
+      expect(calls).toHaveLength(0);
+    } finally {
+      remediation.pinTransitive.provider.execution = savedPin;
+      remediation.declareDependency.provider.execution = savedDeclare;
+    }
+  });
+
+  it('collectExecutionRequirements carries the synthetic remediation requirements to placement (Rule 20)', () => {
+    const caps = collectExecutionRequirements(os.tmpdir(), [mockPlaybookPack]);
+    const ids = caps.map((c) => `${c.pack}:${c.capability}`);
+    expect(ids).toContain('playbook:pinTransitive');
+    expect(ids).toContain('playbook:declareDependency');
+    for (const c of caps) {
+      if (c.capability === 'pinTransitive' || c.capability === 'declareDependency') {
+        expect(c.requirement.hosts.length).toBeGreaterThan(0);
+      }
+    }
   });
 
   it('an exempt capability is a DISCLOSED executor refusal carrying the declared reason (never silence)', async () => {

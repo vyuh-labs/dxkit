@@ -110,7 +110,9 @@ describe('nodeInstallStrategy.strategy', () => {
           expect(detectLockfile(dir)?.pm, `${file} detects as ${pm}`).toBe(pm);
           const s = nodeInstallStrategy.strategy(dir)!;
           expect(s.manager, `${file} installs with ${pm}`).toBe(pm);
-          expect(s).toBe(NODE_STRATEGY_BY_PM[pm]);
+          // The canonical per-PM strategy, with `lockfile` resolved to the
+          // spelling actually present (npm-shrinkwrap.json, bun.lockb).
+          expect(s).toEqual({ ...NODE_STRATEGY_BY_PM[pm], lockfile: file });
         } finally {
           rmSync(dir, { recursive: true, force: true });
         }
@@ -303,6 +305,45 @@ describe('the derived lockfile-sync check', () => {
       const c = lockfileCheckFromStrategy(NODE_STRATEGY_BY_PM[pm], defaultResolvedTolerances());
       expect(c?.kind).toBe('skipped');
       if (c?.kind === 'skipped') expect(c.reason).toContain('backstop');
+    }
+  });
+});
+
+describe('the picked strategy reports the lockfile actually present (4.4.7 review fix)', () => {
+  function lockRoot(files: string[]): string {
+    const dir = mkdtempSync(join(tmpdir(), 'dxkit-node-lock-'));
+    for (const f of files) writeFileSync(join(dir, f), '');
+    return dir;
+  }
+
+  it('a shrinkwrap-only root reports npm-shrinkwrap.json, never the canonical basename', () => {
+    const dir = lockRoot(['package.json', 'npm-shrinkwrap.json']);
+    try {
+      const s = nodeInstallStrategy.strategy(dir);
+      expect(s?.manager).toBe('npm');
+      expect(s?.lockfile).toBe('npm-shrinkwrap.json');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('a bun.lockb root reports bun.lockb (the same alternate-spelling class)', () => {
+    const dir = lockRoot(['package.json', 'bun.lockb']);
+    try {
+      const s = nodeInstallStrategy.strategy(dir);
+      expect(s?.manager).toBe('bun');
+      expect(s?.lockfile).toBe('bun.lockb');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('the canonical lockfile keeps the canonical answer', () => {
+    const dir = lockRoot(['package.json', 'package-lock.json']);
+    try {
+      expect(nodeInstallStrategy.strategy(dir)?.lockfile).toBe('package-lock.json');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 });

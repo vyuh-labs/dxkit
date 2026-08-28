@@ -74,9 +74,12 @@ export type RemediationRider = { readonly kind: 'capability' } | RemediationExem
 export interface ResyncLockfileProvider {
   /**
    * Manifest basenames that name the owning dependency root in an order's
-   * envelope (`package.json`, `pyproject.toml`). The executor derives the
-   * root from the ONE envelope entry matching these; command and verify
-   * come from `installStrategy.strategy(root).modes.resync` and
+   * envelope (`package.json`, `pyproject.toml`). Declaration order is the
+   * pack's PREFERENCE order: when several basenames sit at one root, the
+   * first-declared one is the file the recipe reports (never envelope
+   * order). The executor derives the root from the ONE envelope entry
+   * matching these; command and verify come from
+   * `installStrategy.strategy(root).modes.resync` and
    * `correctness.lockfileCheck` respectively (Rule 2: this provider
    * declares no command of its own).
    */
@@ -117,7 +120,8 @@ export type PinPlanResult =
 
 export interface PinTransitiveProvider {
   /** Manifest basenames naming the owning root in an envelope (the edit
-   *  surface); drives the same root derivation `resyncLockfile` uses. */
+   *  surface); drives the same root derivation `resyncLockfile` uses, with
+   *  the same rule: declaration order is preference order at one root. */
   readonly manifestFiles: readonly string[];
   /** OSV ecosystem name for the candidate pre-check (`npm`, `PyPI`, ...). */
   readonly osvEcosystem: string;
@@ -147,7 +151,8 @@ export interface DeclareInstallContext extends DeclareContext {
 }
 
 export interface DeclareDependencyProvider {
-  /** Manifest basenames naming the owning root in an envelope. */
+  /** Manifest basenames naming the owning root in an envelope (declaration
+   *  order is preference order at one root). */
   readonly manifestFiles: readonly string[];
   /** OSV ecosystem name for the candidate pre-check. */
   readonly osvEcosystem: string;

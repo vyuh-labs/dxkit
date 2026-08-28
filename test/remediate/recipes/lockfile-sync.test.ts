@@ -89,6 +89,17 @@ describe('lockfile-sync recipe', () => {
     if (outcome.kind === 'refused') expect(outcome.reason).toContain('exactly one package.json');
   });
 
+  it('a shrinkwrap-only root reports npm-shrinkwrap.json in changedFiles (4.4.7 review fix)', async () => {
+    const cwd = tempRepo({ 'package.json': PKG, 'npm-shrinkwrap.json': '{}' });
+    const { exec } = fakeExec();
+    const outcome = await executeLockfileSync(
+      staleOrder(['package.json', 'npm-shrinkwrap.json']),
+      makeCtx(cwd, { exec }),
+    );
+    expect(outcome.kind).toBe('applied');
+    if (outcome.kind === 'applied') expect(outcome.changedFiles).toEqual(['npm-shrinkwrap.json']);
+  });
+
   it('refuses a pack with no lockfile-sync check to verify with', async () => {
     const cwd = tempRepo({ 'package.json': PKG, 'package-lock.json': '{}' });
     const { exec } = fakeExec();

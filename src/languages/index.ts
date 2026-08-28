@@ -908,6 +908,24 @@ export function collectExecutionRequirements(
         requirement: lang.deepSast.execution(cwd),
       });
     }
+    // Remediation capabilities that spawn (4.4.7): the pin and the declare
+    // carry their own execution declarations, consumed by the executors'
+    // pre-spawn gate AND collected here so placement sees them (the
+    // resync's requirement already rides its install strategy).
+    if (lang.remediation.pinTransitive.kind === 'capability') {
+      out.push({
+        pack: lang.id,
+        capability: 'pinTransitive',
+        requirement: lang.remediation.pinTransitive.provider.execution(cwd),
+      });
+    }
+    if (lang.remediation.declareDependency.kind === 'capability') {
+      out.push({
+        pack: lang.id,
+        capability: 'declareDependency',
+        requirement: lang.remediation.declareDependency.provider.execution(cwd),
+      });
+    }
   }
   return out;
 }

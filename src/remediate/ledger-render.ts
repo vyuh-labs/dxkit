@@ -52,7 +52,8 @@ function renderRecipeSection(recipes: RecipePhaseSummary): string[] {
     if (o.kind === 'applied') {
       lines.push(
         `- \`${rec.orderId}\` (${rec.recipe}): APPLIED, changed ${o.changedFiles.join(', ')}` +
-          (o.notes && o.notes.length > 0 ? ` (${o.notes.join('; ')})` : ''),
+          (o.notes && o.notes.length > 0 ? ` (${o.notes.join('; ')})` : '') +
+          (o.revert ? `. To revert: ${o.revert}` : ''),
       );
     } else if (o.kind === 'refused') {
       lines.push(`- \`${rec.orderId}\` (${rec.recipe}): refused, ${o.reason}`);

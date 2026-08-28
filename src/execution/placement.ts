@@ -23,7 +23,13 @@ import type { ExecutionHost, ExecutionRequirement } from './requirement';
 export interface CapabilityRequirement {
   /** Pack id (string here, `LanguageId` at the collector — layering). */
   readonly pack: string;
-  readonly capability: 'correctness' | 'lintGate' | 'depVulns' | 'deepSast';
+  readonly capability:
+    | 'correctness'
+    | 'lintGate'
+    | 'depVulns'
+    | 'deepSast'
+    | 'pinTransitive'
+    | 'declareDependency';
   readonly requirement: ExecutionRequirement;
 }
 

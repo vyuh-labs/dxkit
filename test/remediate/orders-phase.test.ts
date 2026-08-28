@@ -571,6 +571,33 @@ describe('ledger honesty for the recipe section', () => {
     expect(ledger).toContain('Recipes are disabled by policy');
     expect(ledger).toContain('gather exploded');
   });
+
+  it("an applied record's revert prose reaches the ledger line (the pack-declared undo)", () => {
+    const ledger = renderRemediateLedger({
+      outcome: 'no-op',
+      task: 'fix-build',
+      recipes: {
+        ran: true,
+        disclosures: [],
+        selectedRecipeTier: 1,
+        selectedAgentTier: 0,
+        records: [
+          {
+            orderId: 'dep-advisory:js-yaml',
+            class: 'dep-advisory',
+            recipe: 'override-pin',
+            outcome: {
+              kind: 'applied',
+              changedFiles: ['package.json', 'package-lock.json'],
+              revert: 'remove the "overrides" entry for \'js-yaml\' from package.json',
+            },
+          },
+        ],
+      },
+    });
+    expect(ledger).toContain('APPLIED, changed package.json, package-lock.json');
+    expect(ledger).toContain('To revert: remove the "overrides" entry for \'js-yaml\'');
+  });
 });
 
 describe('the per-order done disclosure', () => {

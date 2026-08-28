@@ -29,6 +29,11 @@ import {
   type InstallStrategy,
 } from '../../languages/capabilities/install-strategy';
 import { describeInfrastructure, runInstall } from '../../install/run';
+// exec-requirement-ok: this is the recipe tier's ONE Rule 20 consumption
+// point (environmentRefusal below); both dependency executors route their
+// pre-spawn gate through it, mirroring the runners' disclosed skips.
+import { currentEnvironment, describeUnmetRequirement, unmetRequirement } from '../../execution';
+import type { ExecutionRequirement } from '../../execution';
 import type { WorkOrder } from '../work-orders/types';
 import type { RecipeExecuteContext, RecipeOutcome } from './types';
 
@@ -145,16 +150,19 @@ export function owningManifestRoot(
 }
 
 /** The owning root WITH the manifest basename the envelope matched (the
- *  file a dependency edit's `changedFiles` names). */
+ *  file a dependency edit's `changedFiles` names). When several declared
+ *  basenames sit at ONE root, the FIRST-declared one wins deterministically
+ *  (`manifestFiles` order is the pack's preference order, part of the
+ *  provider contract); envelope order never decides. */
 export function owningManifestEntry(
   order: WorkOrder,
   manifestFiles: readonly string[],
 ): { dir: string; file: string } | null {
   const dirs = new Map<string, string>();
-  for (const p of order.envelope.paths) {
-    for (const f of manifestFiles) {
-      if (p === f) dirs.set('', f);
-      else if (p.endsWith(`/${f}`)) dirs.set(p.slice(0, -(f.length + 1)), f);
+  for (const f of manifestFiles) {
+    for (const p of order.envelope.paths) {
+      const dir = p === f ? '' : p.endsWith(`/${f}`) ? p.slice(0, -(f.length + 1)) : null;
+      if (dir !== null && !dirs.has(dir)) dirs.set(dir, f);
     }
   }
   if (dirs.size !== 1) return null;
@@ -197,6 +205,29 @@ export function packDeclaration<K extends RemediationCapabilityId>(
  *  exemption in refusals and plan output (one phrasing). */
 export function exemptionReason(pack: string, exemption: { reason: string }): string {
   return `the ${pack} pack declares this capability exempt: ${exemption.reason}`;
+}
+
+/**
+ * The Rule 20 gate for a remediation provider's spawns, decided BEFORE
+ * anything runs: the provider's declared `execution(cwd)` against the ONE
+ * environment probe, phrased by the ONE describer (the same disclosed-skip
+ * doctrine the correctness and custom-check runners apply). Null when the
+ * environment satisfies the requirement; a disclosed refusal otherwise, so
+ * an environment boundary reads as routing ("runs where windows is
+ * available"), never as a code failure.
+ */
+export function environmentRefusal(
+  what: string,
+  execution: (cwd: string) => ExecutionRequirement,
+  cwd: string,
+): Extract<RecipeOutcome, { kind: 'refused' }> | null {
+  const env = currentEnvironment();
+  const unmet = unmetRequirement(execution(cwd), env);
+  if (unmet === null) return null;
+  return {
+    kind: 'refused',
+    reason: `${what} cannot run in this environment: ${describeUnmetRequirement(unmet, env.host)}`,
+  };
 }
 
 /**

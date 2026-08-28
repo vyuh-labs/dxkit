@@ -2075,7 +2075,14 @@ fi
 # package-manager module import in that directory re-hardcodes an ecosystem
 # into the executor, the exact class the seam killed (npm overrides inline
 # in override-pin served only node repos).
-RULE_RECIPE_PM_LITERAL=$(grep -rnE "'(npm|npx|pnpm|yarn|bun|pip|pip3|poetry|uv|bundler?|gem|composer|cargo|dotnet|nuget|mvn|gradle|gradlew|swift)'"   src/remediate/recipes/ src/remediate/work-orders/recipes-registry.ts 2>/dev/null   | grep -E '\.ts:'   | grep -v -E ':[[:space:]]*(//|\*)'   | grep -v "// recipe-ecosystem-ok")
+# Both string shapes count: a quoted bin name ('npm') and a backtick template
+# literal carrying a package-manager word (a template-string npm ci) are the
+# same hardcode; the template form previously escaped the rule.
+RULE_RECIPE_PM_TOKENS='npm|npx|pnpm|yarn|bun|pip|pip3|poetry|uv|bundler?|gem|composer|cargo|dotnet|nuget|mvn|gradle|gradlew|swift'
+RULE_RECIPE_PM_LITERAL=$({ \
+  grep -rnE "'(${RULE_RECIPE_PM_TOKENS})'" src/remediate/recipes/ src/remediate/work-orders/recipes-registry.ts 2>/dev/null; \
+  grep -rnE "`[^`]*(^|[^a-zA-Z0-9_-])(${RULE_RECIPE_PM_TOKENS})([^a-zA-Z0-9_-]|$)" src/remediate/recipes/ src/remediate/work-orders/recipes-registry.ts 2>/dev/null; \
+} | grep -E '\.ts:' | grep -v -E ':[[:space:]]*(//|\*)' | grep -v "// recipe-ecosystem-ok" | sort -u)
 if [ -n "$RULE_RECIPE_PM_LITERAL" ]; then
   echo "❌ Remediation-seam violation: package-manager literal inside the recipe executors:"
   echo "$RULE_RECIPE_PM_LITERAL"

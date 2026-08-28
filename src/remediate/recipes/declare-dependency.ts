@@ -24,6 +24,7 @@ import { isTestSourceFile } from '../../analyzers/tools/walk-source-files';
 import type { FloorEvidence, WorkOrder } from '../work-orders/types';
 import {
   ambiguousRootReason,
+  environmentRefusal,
   execStepFailure,
   exemptionReason,
   osvBlockTier,
@@ -65,6 +66,15 @@ export async function executeDeclareDependency(
     return { kind: 'refused', reason: exemptionReason(pack, declaration) };
   }
   const provider = declaration.provider;
+  // Rule 20, decided before anything spawns: the provider's declared
+  // environment requirement gates the whole attempt with a disclosed
+  // refusal (the runners' skipped-environment doctrine).
+  const envRefusal = environmentRefusal(
+    `the ${pack} pack's dependency declaration`,
+    (cwd) => provider.execution(cwd),
+    ctx.cwd,
+  );
+  if (envRefusal) return envRefusal;
   // Rule 11 argument-injection rail: a specifier is attacker-influencable
   // source text and flows into package-manager argv below. Anything outside
   // the pack's declared name shape (a leading dash, spaces, a URL) is
