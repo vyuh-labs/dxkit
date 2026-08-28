@@ -321,6 +321,29 @@ imports, testFramework, licenses }`. Each is a `CapabilityProvider`
   declare a real gate; Java ships a dormant provider (no single zero-config
   standalone linter). See CLAUDE.md Rule 17.
 
+- **Remediation capabilities** (4.4.7) — `remediation: RemediationSupport`,
+  REQUIRED: how the deterministic remediation recipes fix findings in this
+  ecosystem. Four declarations, one per recipe — `resyncLockfile` (rides
+  `installStrategy` + `correctness.lockfileCheck`; the pack adds only the
+  manifest basenames and an optional pure `refusal` hook), `pinTransitive`
+  (a pure manifest text edit or a tool-owned pin command, plus the OSV
+  ecosystem, an optional version grammar and `osvVersion` projection),
+  `declareDependency` (specifier rail, registry version probe + parser,
+  install command), and `lintFix` (a rider over `lintGate.fixCommand`).
+  Every entry is either a provider or a reasoned exemption — declare-or-
+  exempt, never silence; exempt orders tier to the agent with the reason
+  disclosed in `remediate plan`. The scaffold wires
+  `plannedRemediationSupport('<id>')` (dormant, compiling); replace entries
+  where the ecosystem has the mechanism. Worked examples:
+  `node-remediation.ts` (the full set), `python-remediation.ts` (TOML
+  surgery + custom version grammar), `go-remediation.ts` (tool-owned pin +
+  refusal hook), `jvm-remediation.ts` / `abap.ts` (permanent reasoned
+  exemptions). Contracts in `src/languages/capabilities/remediation.ts`;
+  the contract test pins well-formedness and the recipe playbook pins
+  registry iteration. The per-ecosystem coverage table in
+  `docs/learn/operating-the-lanes.md` is GENERATED from these declarations:
+  after changing them, run `npm run build && npm run docs:remediation-coverage`
+  (`test/remediation-coverage-docs.test.ts` fails until you do).
 - **HTTP flow** (M6) — `httpFlow?: HttpFlowSupport` +
   `treeSitterGrammars?`, the UI→API flow extraction surface. The recipe
   is DECLARATION-ONLY — the one extractor
