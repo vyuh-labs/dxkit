@@ -302,6 +302,25 @@ describe('override-pin recipe (command plans: the tool-owned ecosystems, 4.4.7 V
     expect(calls).toHaveLength(0);
   });
 
+  it('go: the OSV pre-check queries the BARE version form the Go ecosystem stores', async () => {
+    const cwd = tempRepo({ 'go.mod': GO_MOD, 'go.sum': '' });
+    const { exec } = fakeExec();
+    const queried: string[] = [];
+    const outcome = await executeOverridePin(
+      goOrder('v0.3.8'),
+      makeCtx(cwd, {
+        exec,
+        queryOsv: async (_pkg, version) => {
+          queried.push(version);
+          return [];
+        },
+      }),
+    );
+    expect(outcome.kind).toBe('applied');
+    // A v-prefixed query would silently match nothing and read as clean.
+    expect(queried).toEqual(['0.3.8']);
+  });
+
   it('rust: runs `cargo update -p --precise` at the root and reports the lockfile as the one write', async () => {
     const cwd = tempRepo({
       'Cargo.toml': '[package]\nname = "fx"\n\n[dependencies]\ntop = "1.0"\n',

@@ -22,7 +22,7 @@ import { parseLocated, parseStructuredLocated } from '../../analyzers/custom-che
 import type { CustomCheckFinding } from '../../analyzers/custom-checks/types';
 import { getLanguage } from '../../languages';
 import type { LanguageId } from '../../languages/types';
-import { exemptionReason, packDeclaration } from './shared';
+import { environmentRefusal, exemptionReason, packDeclaration } from './shared';
 import type { WorkOrder } from '../work-orders/types';
 import type { RecipeExecuteContext, RecipeOutcome } from './types';
 
@@ -58,6 +58,18 @@ export async function executeLintAutofix(
     return { kind: 'refused', reason: exemptionReason(pack, declaration) };
   }
   const provider = getLanguage(pack as LanguageId)?.lintGate;
+  // Rule 20, decided before anything spawns: the gate's declared execution
+  // requirement gates the fix run with a disclosed refusal (the same
+  // doctrine as the dependency recipes), so a missing JDK or Go toolchain
+  // reads as routing, never as a fix failure.
+  if (provider !== undefined) {
+    const envRefusal = environmentRefusal(
+      `the ${pack} pack's linter fix mode`,
+      (cwd) => provider.execution(cwd),
+      ctx.cwd,
+    );
+    if (envRefusal) return envRefusal;
+  }
   const fix = provider?.fixCommand?.({ cwd: ctx.cwd, files: [file] }) ?? null;
   if (fix === null) {
     return {

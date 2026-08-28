@@ -95,9 +95,57 @@ function goModRequiresDirectly(goMod: string, pkg: string): boolean {
 function goModReplaces(goMod: string, pkg: string): boolean {
   const escaped = pkg.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   if (new RegExp(`^\\s*replace\\s+${escaped}(\\s|=)`, 'm').test(goMod)) return true;
-  // The block form: any line inside `replace ( ... )` starting with pkg.
-  const block = goMod.match(/^\s*replace\s*\(([\s\S]*?)^\s*\)/m);
-  return block !== null && new RegExp(`^\\s*${escaped}(\\s|=)`, 'm').test(block[1]);
+  // The block form: any line inside ANY `replace ( ... )` block starting
+  // with pkg (a go.mod may carry several blocks; the first-block-only scan
+  // was the shipped gap).
+  const entry = new RegExp(`^\\s*${escaped}(\\s|=)`, 'm');
+  for (const block of goMod.matchAll(/^\s*replace\s*\(([\s\S]*?)^\s*\)/gm)) {
+    if (entry.test(block[1])) return true;
+  }
+  return false;
+}
+
+/**
+ * Repo shapes where the go tool's own pin/resync would be UNSOUND, refused
+ * up front (pure fs reads, the seam's refusal bias):
+ *   - a VENDORED module (vendor/modules.txt beside go.mod): neither
+ *     `go get` nor `go mod tidy` refreshes the vendor tree, so the default
+ *     -mod=vendor build fails "inconsistent vendoring" AFTER the commit
+ *     (the floor catches it one run too late, burning a run per attempt);
+ *     the mechanical fix would need a `go mod vendor` step this seam does
+ *     not model yet.
+ *   - a go.work WORKSPACE at or above the root: the go tool also rewrites
+ *     go.work.sum, a file OUTSIDE the order's envelope, so the enforcement
+ *     step would discard it and commit an inconsistent go.sum/go.work.sum
+ *     pair.
+ */
+export function goTreeRefusal(cwd: string, rootDir: string): string | null {
+  const rootAbs = path.join(cwd, rootDir);
+  if (fs.existsSync(path.join(rootAbs, 'vendor', 'modules.txt'))) {
+    return (
+      'this module is vendored (vendor/modules.txt), and the go tool does not refresh the ' +
+      'vendor tree here (a go mod vendor step is needed too), so the build would fail with ' +
+      'inconsistent vendoring after the commit; this stays on the agent tier'
+    );
+  }
+  // go.work applies from the module directory up to (and including) the
+  // repo root; the go tool would also rewrite go.work.sum there.
+  let dir = rootAbs;
+  const stop = path.resolve(cwd);
+  for (;;) {
+    if (fs.existsSync(path.join(dir, 'go.work'))) {
+      return (
+        'a go.work workspace governs this module, and the go tool would also rewrite ' +
+        "go.work.sum outside the order's envelope (the change would be discarded and the " +
+        'sum files left inconsistent); this stays on the agent tier'
+      );
+    }
+    if (path.resolve(dir) === stop) break;
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return null;
 }
 
 const goPinTransitive: PinTransitiveProvider = {
@@ -122,6 +170,8 @@ const goPinTransitive: PinTransitiveProvider = {
         reason: `no readable go.mod exists at ${ctx.rootDir || 'the repo root'}, so there is no module to pin in`,
       };
     }
+    const tree = goTreeRefusal(ctx.cwd, ctx.rootDir);
+    if (tree !== null) return { kind: 'refused', reason: tree };
     if (goModRequiresDirectly(goMod, ctx.pkg)) {
       return {
         kind: 'refused',
@@ -153,6 +203,9 @@ const goPinTransitive: PinTransitiveProvider = {
       ],
     };
   },
+  // OSV's `Go` ecosystem stores bare X.Y.Z versions; a v-prefixed query
+  // silently matches nothing, and an empty answer would read as clean.
+  osvVersion: stripV,
   execution: () => GO_MOD_EXECUTION,
 };
 
@@ -161,7 +214,13 @@ const goPinTransitive: PinTransitiveProvider = {
  *  the golangci-lint `fixCommand`; Rule 2: one code path each); declare is
  *  the reasoned exemption the doctrine block above explains. */
 export const goRemediation: RemediationSupport = {
-  resyncLockfile: { kind: 'capability', provider: { manifestFiles: ['go.mod'] } },
+  resyncLockfile: {
+    kind: 'capability',
+    // The same tree shapes that defeat the pin defeat the resync: `go mod
+    // tidy` leaves a vendored tree inconsistent and rewrites go.work.sum
+    // outside the envelope under a workspace (one predicate, Rule 2).
+    provider: { manifestFiles: ['go.mod'], refusal: (c) => goTreeRefusal(c.cwd, c.rootDir) },
+  },
   pinTransitive: { kind: 'capability', provider: goPinTransitive },
   declareDependency: {
     kind: 'exemption',

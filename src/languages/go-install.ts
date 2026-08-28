@@ -50,13 +50,17 @@ export const goInstallStrategy = declareInstallStrategy(
           kind: 'command',
           command: { bin: 'go', args: ['mod', 'tidy', '-diff'] },
           tolerates: [],
-          // A rejected -diff flag is a toolchain-age fact, not drift: name
-          // it so an EOL Go install is never read, or remediated, as an
-          // out-of-sync module file.
+          // A rejected -diff flag is a toolchain-age fact, not drift: the
+          // check CANNOT JUDGE on an EOL Go install, so it classifies as a
+          // disclosed SKIP (a fail here would mint a stale-lockfile order
+          // every run whose resync ends in the same flag error).
           classifyFailure: (output) =>
             /flag provided but not defined.*-diff|unknown flag.*-diff/i.test(output)
-              ? 'toolchain-age: this Go toolchain predates go 1.23 (go mod tidy -diff), so the ' +
-                'module-sync state cannot be judged here; update the Go toolchain.'
+              ? {
+                  skipped:
+                    'this Go toolchain predates go 1.23 (go mod tidy -diff), so the module-sync ' +
+                    'state cannot be judged here; update the Go toolchain',
+                }
               : null,
         },
         execution: GO_MOD_EXECUTION,

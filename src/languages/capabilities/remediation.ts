@@ -84,6 +84,18 @@ export interface ResyncLockfileProvider {
    * declares no command of its own).
    */
   readonly manifestFiles: readonly string[];
+  /**
+   * OPTIONAL per-repo admission check, consulted by the lockfile-sync
+   * executor AFTER the owning root resolves and BEFORE anything runs: a
+   * repo shape where the pack's declared resync would be unsound refuses
+   * with the reason (pure fs reads only, never a spawn). The go pack is
+   * the motivating case: on a vendored module `go mod tidy` leaves
+   * vendor/modules.txt behind (an inconsistent-vendoring tree the floor
+   * only catches post-commit), and under a go.work workspace the go tool
+   * also rewrites go.work.sum OUTSIDE the order's envelope, so the
+   * enforcement step would discard half the fix. Null = proceed.
+   */
+  refusal?(ctx: { readonly cwd: string; readonly rootDir: string }): string | null;
 }
 
 // ── pinTransitive ──────────────────────────────────────────────────────────
@@ -252,6 +264,14 @@ export interface PinTransitiveProvider {
    *  nothing) yielding the edit + revert prose, or a refusal with the
    *  reason (an override mechanism the pack does not implement yet). */
   plan(ctx: PinContext): PinPlanResult;
+  /**
+   * OPTIONAL: the form of a concrete version as OSV stores it for this
+   * ecosystem, consumed by the executor's $0 pre-check. The go ecosystem
+   * is the case: modules spell versions vX.Y.Z while OSV's `Go` records
+   * carry the bare X.Y.Z, and a v-prefixed query silently matches nothing
+   * (an empty answer reads as clean). Defaults to identity. Pure.
+   */
+  osvVersion?(version: string): string;
   /** What applying the pin needs from the environment (Rule 20). Pure and
    *  repo-intrinsic, the install-strategy discipline. */
   execution(cwd: string): ExecutionRequirement;

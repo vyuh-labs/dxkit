@@ -80,6 +80,88 @@ function cargoDeclaresDirectly(cargoToml: string, pkg: string): boolean {
   return false;
 }
 
+/** The `members = [ ... ]` patterns of a root manifest's `[workspace]`
+ *  table (bracket-balanced across lines), or null when no workspace/member
+ *  declaration exists. */
+function workspaceMemberPatterns(lines: readonly string[]): string[] | null {
+  const table = findTomlTable(lines, 'workspace');
+  if (table === null) return null;
+  const out: string[] = [];
+  let started = false;
+  let open = 0;
+  for (let i = table.header + 1; i < table.end; i++) {
+    const line = lines[i];
+    if (!started) {
+      if (!/^\s*members\s*=\s*\[/.test(line)) continue;
+      started = true;
+    }
+    for (const m of line.matchAll(/["']([^"']+)["']/g)) out.push(m[1]);
+    open += (line.match(/\[/g) ?? []).length - (line.match(/\]/g) ?? []).length;
+    if (open <= 0) break;
+  }
+  return started ? out : null;
+}
+
+/**
+ * The workspace-member half of the direct-dependency refusal: the root
+ * manifest alone cannot see a member crate's direct declarations, so a pin
+ * that doctrine says should refuse (a member declares the crate) would
+ * otherwise proceed. Member paths are enumerated only where that is
+ * CONFIDENT (literal paths and the common `prefix/*` glob); any other
+ * pattern refuses outright rather than guess what it matches (refusal
+ * bias: over-refusal is the safe direction, under-enumeration is not).
+ * A missing member directory or manifest contributes nothing (there is no
+ * declaration there to see).
+ */
+function workspaceMemberRefusal(
+  cwd: string,
+  rootDir: string,
+  cargoToml: string,
+  pkg: string,
+): string | null {
+  const patterns = workspaceMemberPatterns(cargoToml.split('\n'));
+  if (patterns === null) return null;
+  const memberDirs: string[] = [];
+  for (const pattern of patterns) {
+    if (!/[*?{}[\]]/.test(pattern)) {
+      memberDirs.push(pattern);
+      continue;
+    }
+    const starDir = pattern.match(/^([^*?{}[\]]+)\/\*$/);
+    if (starDir === null) {
+      return (
+        `this is a cargo workspace whose member pattern '${pattern}' cannot be enumerated ` +
+        'confidently, so member manifests cannot be checked for a direct declaration; ' +
+        'this pin stays on the agent tier'
+      );
+    }
+    let entries: fs.Dirent[] = [];
+    try {
+      entries = fs.readdirSync(path.join(cwd, rootDir, starDir[1]), { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const e of entries) {
+      if (e.isDirectory()) memberDirs.push(`${starDir[1]}/${e.name}`);
+    }
+  }
+  for (const dir of memberDirs) {
+    let text: string;
+    try {
+      text = fs.readFileSync(path.join(cwd, rootDir, dir, 'Cargo.toml'), 'utf8');
+    } catch {
+      continue;
+    }
+    if (cargoDeclaresDirectly(text, pkg)) {
+      return (
+        `'${pkg}' is declared directly by the workspace member ${dir}; the honest fix is ` +
+        'upgrading the declared dependency (the dep-bump lane), not pinning it'
+      );
+    }
+  }
+  return null;
+}
+
 /** A crates.io version shape for the rail (the grammar itself is the
  *  default concrete-semver scheme; this only guards the argv). */
 const CARGO_VERSION = /^[0-9][0-9A-Za-z.+-]*$/;
@@ -114,6 +196,8 @@ const rustPinTransitive: PinTransitiveProvider = {
           'lane), not pinning it',
       };
     }
+    const member = workspaceMemberRefusal(ctx.cwd, ctx.rootDir, cargoToml, ctx.pkg);
+    if (member !== null) return { kind: 'refused', reason: member };
     return {
       kind: 'command',
       command: { bin: 'cargo', args: ['update', '-p', ctx.pkg, '--precise', ctx.version] },

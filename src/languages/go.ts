@@ -913,6 +913,14 @@ function goChangedPackages(changedFiles: readonly string[]): string[] {
   return [...dirs];
 }
 
+/** The package directory of one repo-relative file, in the `./dir` spec
+ *  shape Go tools take (`.` for a root-level file), the same shape
+ *  `goChangedPackages` emits (Rule 2: one dir-spec convention). */
+function goPackageDir(file: string): string {
+  const dir = path.dirname(file).replace(/\\/g, '/');
+  return dir === '.' ? '.' : `./${dir}`;
+}
+
 /**
  * The Go correctness floor.
  *
@@ -1027,17 +1035,25 @@ const goLintGateProvider: LintGateProvider = {
     };
   },
   // The lint-autofix recipe's fix mode (4.4.7): `golangci-lint run --fix`
-  // scoped to the work order's files. golangci-lint's fixer removes the
-  // issues it fixed from the report (registry pins the v1 flag family), so
-  // the same JSON parse reads only the LEFTOVERS out of the one run: fix
-  // and verify in a single execution, the seam's contract.
+  // scoped to the work order's files' PACKAGE DIRECTORIES. A bare file
+  // argument makes golangci-lint load that one file as the whole package,
+  // so identifiers living in sibling files produce typecheck diagnostics
+  // that would read as net-new leftovers and discard real fixes on any
+  // multi-file package; the directory form type-checks the full package.
+  // Leftovers outside the order's own file are filtered by the recipe's
+  // in-file scoping, and edits outside the envelope are dropped by the
+  // frame's enforcement. golangci-lint's fixer removes the issues it fixed
+  // from the report (registry pins the v1 flag family), so the same JSON
+  // parse reads only the LEFTOVERS out of the one run: fix and verify in a
+  // single execution, the seam's contract.
   fixCommand(ctx) {
     if (ctx.files.length === 0) return null;
     const gl = findTool(TOOL_DEFS['golangci-lint'], ctx.cwd);
     if (!gl.available || !gl.path) return null;
+    const dirs = [...new Set(ctx.files.map((f) => goPackageDir(f)))];
     return {
       bin: gl.path,
-      args: ['run', '--fix', '--out-format', 'json', ...ctx.files],
+      args: ['run', '--fix', '--out-format', 'json', ...dirs],
       parse: { kind: 'structured', label: 'golangci-json', parse: parseGolangciJson },
       expectedExit: 0,
     };

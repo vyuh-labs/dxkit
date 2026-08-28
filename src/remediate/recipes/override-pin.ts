@@ -119,7 +119,10 @@ export async function executeOverridePin(
   // $0 pre-check: would the pinned version itself carry a block-tier
   // advisory? A null answer (network) is disclosed and the re-audit verify
   // plus the frame's guardrail stay the backstop; it is never read as clean.
-  const known = await ctx.queryOsv(pkg, pin, provider.osvEcosystem);
+  // The pack may declare the form OSV stores (go: bare, no v prefix) so
+  // the pre-check queries what the database actually records.
+  const osvPin = provider.osvVersion?.(pin) ?? pin;
+  const known = await ctx.queryOsv(pkg, osvPin, provider.osvEcosystem);
   if (known === null) {
     notes.push(`OSV pre-check for ${pkg}@${pin} could not be reached; the re-audit verifies`);
   } else {

@@ -6,7 +6,10 @@
  * Every exemption is a full sentence naming why (the declared-exemption
  * discipline: a reason, never silence).
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import { getLanguage } from '../../src/languages';
 import {
   REMEDIATION_CAPABILITY_IDS,
@@ -18,6 +21,26 @@ const kotlin = getLanguage('kotlin')!;
 const csharp = getLanguage('csharp')!;
 const swift = getLanguage('swift')!;
 const go = getLanguage('go')!;
+
+const cleanups: string[] = [];
+afterEach(() => {
+  for (const d of cleanups.splice(0)) fs.rmSync(d, { recursive: true, force: true });
+});
+
+/** A fixture repo whose .dxkit/tools.json points findTool at a bin dir of
+ *  fake executables, so fixCommand SHAPES are testable on any host. */
+function repoWithFakeTools(binaries: readonly string[]): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-wave2-decl-'));
+  cleanups.push(dir);
+  const bin = path.join(dir, 'fake-bin');
+  fs.mkdirSync(bin, { recursive: true });
+  for (const b of binaries) {
+    fs.writeFileSync(path.join(bin, b), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  }
+  fs.mkdirSync(path.join(dir, '.dxkit'), { recursive: true });
+  fs.writeFileSync(path.join(dir, '.dxkit', 'tools.json'), JSON.stringify({ probePaths: [bin] }));
+  return dir;
+}
 
 describe('the shared JVM remediation exemptions (Rule 2 parity)', () => {
   it('java and kotlin state ONE reason per dependency capability', () => {
@@ -34,17 +57,17 @@ describe('the shared JVM remediation exemptions (Rule 2 parity)', () => {
 
   it('kotlin lintFix is a capability riding a real ktlint fixCommand; java stays exempt (dormant gate)', () => {
     expect(kotlin.remediation.lintFix.kind).toBe('capability');
-    const fix = kotlin.lintGate?.fixCommand?.({ cwd: process.cwd(), files: ['src/A.kt'] });
-    // Resolvable only where ktlint is installed; the SHAPE is what the
-    // rider contract pins, so assert it when the tool resolves.
-    if (fix) {
-      expect(fix.bin).toContain('ktlint');
-      expect(fix.args).toContain('-F');
-      expect(fix.args).toContain('src/A.kt');
-      expect(fix.parse.kind).toBe('structured');
-    }
+    // The SHAPE assertions run unconditionally: the fixture plants a fake
+    // ktlint binary on a user-configured probe path (.dxkit/tools.json),
+    // so no host toolchain is needed.
+    const cwd = repoWithFakeTools(['ktlint']);
+    const fix = kotlin.lintGate?.fixCommand?.({ cwd, files: ['src/A.kt'] });
+    expect(fix).toBeDefined();
+    expect(fix!.bin).toContain('ktlint');
+    expect(fix!.args).toEqual(['-F', '--reporter=json', 'src/A.kt']);
+    expect(fix!.parse.kind).toBe('structured');
     // An empty file scope never spawns a fixer.
-    expect(kotlin.lintGate?.fixCommand?.({ cwd: process.cwd(), files: [] })).toBeNull();
+    expect(kotlin.lintGate?.fixCommand?.({ cwd, files: [] })).toBeNull();
 
     expect(java.remediation.lintFix.kind).toBe('exemption');
     if (java.remediation.lintFix.kind === 'exemption') {
@@ -54,14 +77,16 @@ describe('the shared JVM remediation exemptions (Rule 2 parity)', () => {
 });
 
 describe('go lintFix rides golangci-lint --fix (the rider over the gate)', () => {
-  it('the fix command scopes to the order files and reuses the gate parser', () => {
-    const fix = go.lintGate?.fixCommand?.({ cwd: process.cwd(), files: ['pkg/a.go'] });
-    if (fix) {
-      expect(fix.args).toContain('--fix');
-      expect(fix.args).toContain('pkg/a.go');
-      expect(fix.parse.kind).toBe('structured');
-    }
-    expect(go.lintGate?.fixCommand?.({ cwd: process.cwd(), files: [] })).toBeNull();
+  it('the fix command scopes to the files PACKAGE DIRECTORIES and reuses the gate parser', () => {
+    const cwd = repoWithFakeTools(['golangci-lint']);
+    const fix = go.lintGate?.fixCommand?.({ cwd, files: ['pkg/a.go', 'pkg/b.go', 'main.go'] });
+    expect(fix).toBeDefined();
+    // Directory scoping, never bare files: a single named file loads as
+    // the whole package and sibling identifiers read as typecheck
+    // leftovers, discarding real fixes on any multi-file package.
+    expect(fix!.args).toEqual(['run', '--fix', '--out-format', 'json', './pkg', '.']);
+    expect(fix!.parse.kind).toBe('structured');
+    expect(go.lintGate?.fixCommand?.({ cwd, files: [] })).toBeNull();
   });
 });
 

@@ -23,7 +23,9 @@ function rootWith(files: Record<string, string>): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-rust-remediation-'));
   cleanups.push(dir);
   for (const [rel, content] of Object.entries(files)) {
-    fs.writeFileSync(path.join(dir, rel), content);
+    const p = path.join(dir, rel);
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, content);
   }
   return dir;
 }
@@ -157,5 +159,50 @@ describe('the rust install strategy + declared exemptions', () => {
     if (rustRemediation.lintFix.kind === 'exemption') {
       expect(rustRemediation.lintFix.reason).toContain('--allow-dirty');
     }
+  });
+});
+
+describe('the workspace-member half of the direct-dep refusal', () => {
+  const WS_ROOT = `[workspace]
+members = [
+    "crates/*",
+    "tools/cli",
+]
+
+[workspace.dependencies]
+anyhow = "1.0"
+`;
+
+  it('refuses when a member (literal or glob-enumerated) declares the crate directly', () => {
+    const cwd = rootWith({
+      'Cargo.toml': WS_ROOT,
+      'crates/core/Cargo.toml': '[package]\nname = "core"\n\n[dependencies]\nserde = "1.0"\n',
+      'tools/cli/Cargo.toml': '[package]\nname = "cli"\n\n[dependencies]\nclap = "4.0"\n',
+    });
+    const viaGlob = pin.plan({ cwd, rootDir: '', pkg: 'serde', version: '1.0.200' });
+    expect(viaGlob.kind).toBe('refused');
+    if (viaGlob.kind === 'refused') expect(viaGlob.reason).toContain('crates/core');
+    const viaLiteral = pin.plan({ cwd, rootDir: '', pkg: 'clap', version: '4.5.0' });
+    expect(viaLiteral.kind).toBe('refused');
+    if (viaLiteral.kind === 'refused') expect(viaLiteral.reason).toContain('tools/cli');
+    // A crate no member declares stays pinnable in the workspace.
+    const transitive = pin.plan({ cwd, rootDir: '', pkg: 'smallvec', version: '1.13.2' });
+    expect(transitive.kind).toBe('command');
+  });
+
+  it('refuses outright on a member pattern it cannot enumerate confidently', () => {
+    const cwd = rootWith({
+      'Cargo.toml': '[workspace]\nmembers = ["crates/**"]\n',
+    });
+    const plan = pin.plan({ cwd, rootDir: '', pkg: 'smallvec', version: '1.13.2' });
+    expect(plan.kind).toBe('refused');
+    if (plan.kind === 'refused') expect(plan.reason).toContain('cannot be enumerated');
+  });
+
+  it('a workspace table without members adds nothing beyond the root scan', () => {
+    const cwd = rootWith({
+      'Cargo.toml': '[workspace]\nresolver = "2"\n\n[dependencies]\ntop = "1.0"\n',
+    });
+    expect(pin.plan({ cwd, rootDir: '', pkg: 'smallvec', version: '1.13.2' }).kind).toBe('command');
   });
 });
