@@ -10,6 +10,7 @@
  * gather, and the reports-snapshot pickup of the persisted SBOM file.
  */
 import { describe, it, expect } from 'vitest';
+import { execFileSync } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -427,4 +428,133 @@ describe('discovery + snapshot pickup', () => {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
+});
+
+describe('review fixes (ratings union, deterministic sort, root ref uniqueness)', () => {
+  it('unions distinct ratings when one advisory carries different facts on two rows', () => {
+    const a = entry({
+      package: 'liba',
+      version: '1.0.0',
+      packId: 'rust',
+      vulns: [vuln({ id: 'RUSTSEC-2024-0002', package: 'liba', severity: 'high', cvssScore: 8.1 })],
+    });
+    const b = entry({
+      package: 'libb',
+      version: '2.0.0',
+      packId: 'rust',
+      vulns: [
+        vuln({ id: 'RUSTSEC-2024-0002', package: 'libb', severity: 'medium', cvssScore: 5.0 }),
+      ],
+    });
+    const d = toCycloneDx(report([a, b]), OPTS);
+    expect(d.vulnerabilities).toHaveLength(1);
+    expect(d.vulnerabilities![0].ratings).toEqual([
+      { severity: 'high', score: 8.1 },
+      { severity: 'medium', score: 5.0 },
+    ]);
+  });
+
+  it('does not repeat an identical rating across rows', () => {
+    const mk = (pkg: string) =>
+      entry({
+        package: pkg,
+        version: '1.0.0',
+        packId: 'rust',
+        vulns: [vuln({ id: 'RUSTSEC-2024-0003', package: pkg, severity: 'low' })],
+      });
+    const d = toCycloneDx(report([mk('liba'), mk('libb')]), OPTS);
+    expect(d.vulnerabilities![0].ratings).toEqual([{ severity: 'low' }]);
+  });
+
+  it('sorts vulnerabilities by codepoint, not host locale', () => {
+    const mk = (pkg: string, id: string) =>
+      entry({
+        package: pkg,
+        version: '1.0.0',
+        packId: 'rust',
+        vulns: [vuln({ id, package: pkg, severity: 'low' })],
+      });
+    const d = toCycloneDx(report([mk('liba', 'a-vuln'), mk('libb', 'B-vuln')]), OPTS);
+    // Codepoint order puts uppercase B (0x42) before lowercase a (0x61);
+    // a locale-collated sort would answer the other way on most hosts.
+    expect(d.vulnerabilities!.map((v) => v.id)).toEqual(['B-vuln', 'a-vuln']);
+  });
+
+  it("the root application's bom-ref shares the components' uniqueness domain", () => {
+    const d = toCycloneDx(report([entry({ package: 'x', version: '1.0.0' })]), OPTS);
+    const refs = d.components.map((c) => c['bom-ref']);
+    expect(refs).not.toContain(d.metadata.component['bom-ref']);
+  });
+});
+
+describe('CLI flag guards (integration over dist)', () => {
+  const CLI = path.resolve(__dirname, '..', 'dist', 'index.js');
+
+  function runCli(args: string[], cwd: string): { status: number; output: string } {
+    try {
+      const out = execFileSync('node', [CLI, ...args], { cwd, stdio: 'pipe', encoding: 'utf8' });
+      return { status: 0, output: out };
+    } catch (err) {
+      const e = err as { status?: number; stdout?: string; stderr?: string };
+      return { status: e.status ?? -1, output: `${e.stdout ?? ''}${e.stderr ?? ''}` };
+    }
+  }
+
+  it('rejects --json with --format cyclonedx (two stdout documents)', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-sbom-guard-'));
+    try {
+      const r = runCli(['bom', '.', '--json', '--format', 'cyclonedx'], tmp);
+      expect(r.status).toBe(1);
+      expect(r.output).toContain('Cannot combine --json with --format cyclonedx');
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects --xlsx plus --format cyclonedx sharing one --output path', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-sbom-guard2-'));
+    try {
+      const r = runCli(['bom', '.', '--xlsx', '--format', 'cyclonedx', '--output', 'f.xlsx'], tmp);
+      expect(r.status).toBe(1);
+      expect(r.output).toContain('one --output path');
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it('still rejects an unknown --format value', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-sbom-guard3-'));
+    try {
+      const r = runCli(['bom', '.', '--format', 'spdx'], tmp);
+      expect(r.status).toBe(1);
+      expect(r.output).toContain('Invalid --format value');
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it('cyclonedx stdout mode emits the document and nothing else on stdout', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-sbom-stdout-'));
+    try {
+      fs.writeFileSync(
+        path.join(tmp, 'package.json'),
+        JSON.stringify({ name: 'sbom-stdout-smoke', version: '0.0.1' }),
+      );
+      execFileSync('git', ['init', '-q'], { cwd: tmp });
+      const out = execFileSync('node', [CLI, 'bom', '.', '--format', 'cyclonedx', '--no-save'], {
+        cwd: tmp,
+        stdio: 'pipe',
+        encoding: 'utf8',
+      });
+      const doc = JSON.parse(out) as { bomFormat: string };
+      expect(doc.bomFormat).toBe('CycloneDX');
+      // The document is the WHOLE stdout: exactly one trailing newline,
+      // no spacer lines after it (the pipe-corruption regression).
+      expect(out.endsWith('}\n')).toBe(true);
+      expect(out.endsWith('\n\n')).toBe(false);
+      expect(out.startsWith('{')).toBe(true);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  }, 180000);
 });

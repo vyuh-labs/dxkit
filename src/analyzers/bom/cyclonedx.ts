@@ -144,6 +144,11 @@ export function cycloneDxLicenses(licenseType: string): CycloneDxLicenseEntry[] 
 /** Render the CycloneDX document object from the one BoM report. */
 export function toCycloneDx(report: BomReport, opts: CycloneDxOptions): CycloneDxDocument {
   const usedRefs = new Set<string>();
+  // The root application's own bom-ref participates in the same
+  // uniqueness domain as the component refs, so it is claimed first: a
+  // library that happened to reduce to the same key gets the ordinal.
+  const rootRef = `app:${report.repo}`;
+  usedRefs.add(rootRef);
   const components: CycloneDxComponent[] = [];
   const refByEntry = new Map<BomEntry, string>();
 
@@ -154,7 +159,7 @@ export function toCycloneDx(report: BomReport, opts: CycloneDxOptions): CycloneD
     // bom-ref: the purl when derivable (globally unique by construction),
     // else the join key. A collision (two rows reducing to one key) gets
     // a disambiguating ordinal so refs stay unique (required for
-    // `affects` resolution.
+    // `affects` resolution).
     let ref = purl ?? `${entry.package}@${entry.version}`;
     if (usedRefs.has(ref)) {
       let n = 2;
@@ -197,17 +202,25 @@ export function toCycloneDx(report: BomReport, opts: CycloneDxOptions): CycloneD
   for (const entry of report.entries) {
     const ref = refByEntry.get(entry)!;
     for (const v of entry.vulns) {
-      const existing = vulnById.get(v.id);
-      if (existing) {
-        if (!existing.affects.some((a) => a.ref === ref)) existing.affects.push({ ref });
-        continue;
-      }
-      const source = advisorySource(v.id);
       const rating: CycloneDxRating = {
         // Our four-tier severity IS a subset of the CycloneDX enum.
         severity: v.severity,
         ...(typeof v.cvssScore === 'number' ? { score: v.cvssScore } : {}),
       };
+      const existing = vulnById.get(v.id);
+      if (existing) {
+        if (!existing.affects.some((a) => a.ref === ref)) existing.affects.push({ ref });
+        // Distinct ratings union: another scan of the same advisory may
+        // carry a different severity or score (a fact, so it is kept),
+        // while an identical rating is not repeated.
+        if (
+          !existing.ratings.some((r) => r.severity === rating.severity && r.score === rating.score)
+        ) {
+          existing.ratings.push(rating);
+        }
+        continue;
+      }
+      const source = advisorySource(v.id);
       vulnById.set(v.id, {
         id: v.id,
         ...(source ? { source } : {}),
@@ -217,7 +230,12 @@ export function toCycloneDx(report: BomReport, opts: CycloneDxOptions): CycloneD
       });
     }
   }
-  const vulnerabilities = [...vulnById.values()].sort((a, b) => a.id.localeCompare(b.id));
+  // Plain codepoint comparison, not localeCompare: the anchor writer's
+  // unchanged-skip depends on byte-identical output across hosts, and
+  // localeCompare answers per the host locale.
+  const vulnerabilities = [...vulnById.values()].sort((a, b) =>
+    a.id < b.id ? -1 : a.id > b.id ? 1 : 0,
+  );
 
   return {
     bomFormat: 'CycloneDX',
@@ -228,7 +246,7 @@ export function toCycloneDx(report: BomReport, opts: CycloneDxOptions): CycloneD
       tools: {
         components: [{ type: 'application', name: '@vyuhlabs/dxkit', version: opts.dxkitVersion }],
       },
-      component: { 'bom-ref': `app:${report.repo}`, type: 'application', name: report.repo },
+      component: { 'bom-ref': rootRef, type: 'application', name: report.repo },
     },
     components,
     ...(vulnerabilities.length > 0 ? { vulnerabilities } : {}),

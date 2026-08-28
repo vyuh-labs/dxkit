@@ -2095,6 +2095,24 @@ export async function run(argv: string[]): Promise<void> {
         logger.fail(`Invalid --format value: ${rawFormat}. Expected 'cyclonedx'.`);
         process.exit(1);
       }
+      // Two output-shape flags cannot share one stdout: fail fast
+      // instead of silently privileging one document.
+      if (rawFormat === 'cyclonedx' && values.json) {
+        logger.fail(
+          'Cannot combine --json with --format cyclonedx: each defines the output document. ' +
+            'Use --format cyclonedx alone for the CycloneDX SBOM, or --json alone for the bom report schema.',
+        );
+        process.exit(1);
+      }
+      // Same for one --output path claimed by two writers: the xlsx
+      // export and the SBOM export would clobber each other.
+      if (rawFormat === 'cyclonedx' && values.xlsx && values.output) {
+        logger.fail(
+          'Cannot combine --xlsx and --format cyclonedx with one --output path: both would write it. ' +
+            'Run the two exports separately.',
+        );
+        process.exit(1);
+      }
       // `--format cyclonedx` without --output streams the document to
       // stdout, so progress chatter must ride stderr (same contract as
       // --json output).
@@ -2182,7 +2200,10 @@ export async function run(argv: string[]): Promise<void> {
         const reportPath = path.join(reportDir, `bom-${date}.md`);
         fs.mkdirSync(reportDir, { recursive: true });
         fs.writeFileSync(reportPath, formatBomReport(report, elapsed));
-        if (!values.json) console.log(''); // slop-ok
+        // In cyclonedx stdout mode the document must stay the ONLY
+        // stdout, so the cosmetic spacer is suppressed with the rest
+        // of the chatter.
+        if (!values.json && !cycloneDxToStdout) console.log(''); // slop-ok
         logger.success(`Report saved to ${path.relative(targetPath, reportPath)}`);
 
         // D032 (2.4.7): detailed JSON + MD always written so dashboard finds fresh inputs.
@@ -2229,7 +2250,14 @@ export async function run(argv: string[]): Promise<void> {
       // the lane surface; this one is the user's).
       if (rawFormat === 'cyclonedx' && values.output) {
         const sbomOutPath = path.resolve(values.output as string);
-        fs.writeFileSync(sbomOutPath, cycloneDxJson);
+        try {
+          fs.writeFileSync(sbomOutPath, cycloneDxJson);
+        } catch (err) {
+          logger.fail(
+            `Could not write CycloneDX SBOM to ${sbomOutPath}: ${(err as Error).message}`,
+          );
+          process.exit(1);
+        }
         logger.success(`CycloneDX SBOM written to ${sbomOutPath}`);
       }
 
