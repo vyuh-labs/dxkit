@@ -237,7 +237,15 @@ export function classifyPairs(input: ClassifyPairsInput): ClassifyPairsOutput {
         ? changedInFile === 'all' || changedInFile.has(line)
         : undefined;
 
-    const kindDrift = pair.status === 'added' ? driftByKind.get(anchorEntry.kind) : undefined;
+    // Recall drift is consulted for BOTH delta directions (Rule 19): an
+    // `added` pair on a drifted kind cannot be blamed on the developer, and
+    // a `removed` pair on a drifted kind cannot be credited to them either
+    // (a scanner bump that drops rules reads as a wave of "resolved"
+    // findings the tool caused). Persisted/relocated pairs never read it.
+    const kindDrift =
+      pair.status === 'added' || pair.status === 'removed'
+        ? driftByKind.get(anchorEntry.kind)
+        : undefined;
     const configDiffers =
       pair.status === 'added' &&
       (envelopeDrift.configHashChanged ||

@@ -219,6 +219,27 @@ describe('unresolvedOrderIds (judged from computed state only — nothing execut
     expect(w.unresolved).toEqual(['fp-two']);
   });
 
+  it('guardrail verifier: a target GONE on a recall-drifted kind is undecidable, never done (Rule 19)', () => {
+    // The removed-direction drift demotion: the kind's recall inputs moved,
+    // so the classifier labels the disappearance `tooling_drift` instead of
+    // `removed`. The finding is absent from the tree, but the cause may be
+    // the tool, not the fix: the order stays undecided with the reason
+    // named, and it is never reported as "still present" either.
+    const json = payload([
+      {
+        ...presentPair('x'),
+        currentId: undefined,
+        priorId: 'fp-one',
+        kind: 'code',
+        status: 'tooling_drift',
+      } as Pair,
+    ]);
+    const v = unresolvedOrderIds(scope({ absentIds: ['fp-one'], kinds: ['code'] }), json, NO_FLOOR);
+    expect(v.unresolved).toEqual([]);
+    expect(v.undecidable).toContain('fp-one');
+    expect(v.undecidable).toContain('recall drift');
+  });
+
   it('guardrail verifier: an UNOBSERVED target kind is undecidable, never silently done (Rule 19)', () => {
     // The target finding has no pair — but its kind was not observed at all
     // (custom-check dropped in ref-based mode / the check did not run), so

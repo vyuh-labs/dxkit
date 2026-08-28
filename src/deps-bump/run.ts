@@ -53,6 +53,7 @@ import { buildBumpPlan, type BumpPlan, type PlannedBump } from './plan';
 import { renderFloorVerification, renderGuardrailVerdict } from '../lanes/verification-render';
 import { appendLaneEvent, LANE_LEDGER_SCHEMA_VERSION } from '../lanes/ledger';
 import { guardrailVerdictFor, toFloorBaseChecks } from '../lanes/verify';
+import type { ImpactSummary } from '../baseline/impact';
 import { landRefreshPaths, type LandRefreshResult } from '../land-refresh';
 import { detectDefaultBranch } from '../ship-installers';
 
@@ -94,6 +95,11 @@ export interface DepsBumpResult {
    *  debt disclosed, never weaponized against the bump. */
   readonly floorAttribution?: readonly AttributedFloorFailure[];
   readonly guardrailVerdict?: string;
+  /** The finding-delta impact from the same guardrail run (impact surface
+   *  phase 1); rendered beside the verdict in the ledger. Absent when the
+   *  check ran through the injected seam (which reports only a verdict
+   *  string) or did not run. */
+  readonly guardrailImpact?: ImpactSummary;
   readonly land?: LandRefreshResult;
   readonly note?: string;
   /** The verification ledger — the PR body / job summary markdown. */
@@ -191,7 +197,7 @@ export function renderLedger(result: Omit<DepsBumpResult, 'ledger'>): string {
   lines.push(
     ...renderFloorVerification(result.floor, result.floorAttribution, 'the pre-bump entry run'),
   );
-  lines.push(...renderGuardrailVerdict(result.guardrailVerdict));
+  lines.push(...renderGuardrailVerdict(result.guardrailVerdict, result.guardrailImpact));
 
   if (result.plan.skipped.length > 0) {
     lines.push('### Not bumped (disclosed)', '');
@@ -384,10 +390,15 @@ export async function runDepsBump(opts: DepsBumpOptions): Promise<DepsBumpResult
   // dxkit-guardrails check is the backstop. The agent lane fails CLOSED —
   // the declared policy difference lives at each consumer.
   let guardrailVerdict: string | undefined;
+  let guardrailImpact: ImpactSummary | undefined;
   if (opts.runGuardrail) {
     guardrailVerdict = await opts.runGuardrail();
   } else {
-    guardrailVerdict = (await guardrailVerdictFor(cwd, opts.trust)).verdict;
+    const gate = await guardrailVerdictFor(cwd, opts.trust);
+    guardrailVerdict = gate.verdict;
+    // The finding-delta impact from the same check (impact surface phase 1):
+    // a bump that closes advisories shows what it closed, in the ledger.
+    guardrailImpact = gate.impact;
   }
 
   if (netNewFloorRed) {
@@ -398,6 +409,7 @@ export async function runDepsBump(opts: DepsBumpOptions): Promise<DepsBumpResult
       floor,
       floorAttribution,
       ...(guardrailVerdict !== undefined ? { guardrailVerdict } : {}),
+      ...(guardrailImpact !== undefined ? { guardrailImpact } : {}),
       note:
         'the correctness floor has NET-NEW failures after applying the bumps (the entry ' +
         'floor did not have them) — nothing was landed. A bump that breaks the build ' +
@@ -413,6 +425,7 @@ export async function runDepsBump(opts: DepsBumpOptions): Promise<DepsBumpResult
       floor,
       floorAttribution,
       ...(guardrailVerdict !== undefined ? { guardrailVerdict } : {}),
+      ...(guardrailImpact !== undefined ? { guardrailImpact } : {}),
     });
   }
 
@@ -423,6 +436,7 @@ export async function runDepsBump(opts: DepsBumpOptions): Promise<DepsBumpResult
     floor,
     floorAttribution,
     ...(guardrailVerdict !== undefined ? { guardrailVerdict } : {}),
+    ...(guardrailImpact !== undefined ? { guardrailImpact } : {}),
   };
   // The delivery-ledger event rides the SAME PR diff as the bumps, so it
   // reaches the default branch exactly when the PR merges — delivered means

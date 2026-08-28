@@ -61,6 +61,29 @@ import {
   type DuplicateFinding,
   type DuplicateGroup,
 } from '../analyzers/duplication/findings';
+import {
+  deriveImpact,
+  formatImpactCapNote,
+  formatImpactExclusions,
+  formatImpactHeadline,
+  formatImpactNotAttributable,
+  formatImpactQuietLine,
+} from './impact';
+import type { ImpactScoreInput, ImpactSummary } from './impact';
+
+// ─── Shared render options ────────────────────────────────────────────────
+
+/**
+ * Optional per-render inputs shared by the three surfaces. Phase 1 of the
+ * impact surface: a caller that computed dimension scores in the SAME run
+ * may hand them in so the Impact section can carry the cap-aware
+ * explanation (numbers straight off the spec engine, never recomputed).
+ * Absent scores mean the section carries the finding delta alone; no
+ * current guardrail surface computes scores (that is the phase 2 spike).
+ */
+export interface CheckRenderOptions {
+  readonly impactScores?: ReadonlyArray<ImpactScoreInput>;
+}
 
 // ─── Shared verdict predicates ────────────────────────────────────────────
 
@@ -262,7 +285,7 @@ export function deferredCaptureBannerLines(result: GuardrailCheckResult): string
   ];
 }
 
-export function renderConsole(result: GuardrailCheckResult): string {
+export function renderConsole(result: GuardrailCheckResult, opts?: CheckRenderOptions): string {
   const lines: string[] = [];
 
   // Verdict banner. Single line at the top so a developer skimming
@@ -398,6 +421,29 @@ export function renderConsole(result: GuardrailCheckResult): string {
   lines.push(...formatSchemaDriftGate(result.schemaDriftGate));
   lines.push(...formatDupGate(result.dupGate));
   lines.push(...formatPairedGate(result.pairedGate));
+
+  // The Impact block (impact surface phase 1): what this change did to the
+  // repo's debt, attribution-honest (only classifier-`removed` pairs count
+  // as resolved). A run that REFUSED to gate cannot back a resolved claim
+  // either, so it gets the not-attributable one-liner instead of any tally.
+  // Otherwise non-zero only: the summary footer already reports zero
+  // resolved, so a neutral run gets no extra block here (the quiet line is
+  // a PR-comment concern).
+  {
+    const impact = deriveImpact(result, opts?.impactScores);
+    if (!impact.attributable) {
+      lines.push(logger.bold('Impact'));
+      lines.push(`  ${formatImpactNotAttributable()}`);
+      lines.push('');
+    } else if (impact.resolved > 0) {
+      lines.push(logger.bold('Impact'));
+      lines.push(`  ${formatImpactHeadline(impact)}`);
+      for (const note of impact.capNotes) lines.push(`  ${formatImpactCapNote(note)}`);
+      const exclusions = formatImpactExclusions(impact);
+      if (exclusions) lines.push(`  ${exclusions}`);
+      lines.push('');
+    }
+  }
 
   // Always show a summary footer — sets expectations for what
   // happens next (exit code, what to read on a fail).
@@ -1289,6 +1335,13 @@ export interface GuardrailJsonPayload {
     readonly kind: string;
     readonly currentCount: number;
   }>;
+  /** The finding-delta impact of this change (impact surface phase 1):
+   *  attributable resolved/added counts, the Rule 19 exclusions, and the
+   *  cap-aware notes when the caller supplied score results. Additive in
+   *  schema v1 (typed optional so older captured payloads still satisfy
+   *  the interface), but ALWAYS emitted by the current renderer: zero is
+   *  reported as zero, never omitted. */
+  readonly impact?: ImpactSummary;
   /** Present when the dependency-vuln scan was requested but could not run —
    *  a pass is then NOT a clean bill of dependency health. */
   readonly depVulnsUnmeasured?: { readonly reason: string };
@@ -1506,7 +1559,10 @@ export interface GuardrailJsonPayload {
   };
 }
 
-export function renderJson(result: GuardrailCheckResult): GuardrailJsonPayload {
+export function renderJson(
+  result: GuardrailCheckResult,
+  opts?: CheckRenderOptions,
+): GuardrailJsonPayload {
   const blocking = result.pairs.filter(isBlocking).length;
   const suppressed = result.pairs.filter(isAllowlistSuppressed).length;
   const warning = result.pairs.filter(isWarning).length;
@@ -1540,6 +1596,8 @@ export function renderJson(result: GuardrailCheckResult): GuardrailJsonPayload {
     // The ref-mode exclusion disclosure, in the JSON payload too (the other
     // two renderers already print it) — always present, [] when none.
     refExcludedKinds: result.refExcludedKinds,
+    // The finding-delta impact, always emitted, zero reported as zero.
+    impact: deriveImpact(result, opts?.impactScores),
     ...(result.depVulnsUnmeasured ? { depVulnsUnmeasured: result.depVulnsUnmeasured } : {}),
     ...(result.deferredCapture && result.deferredCapture.length > 0
       ? { deferredCapture: result.deferredCapture }
@@ -1754,7 +1812,7 @@ export function renderJson(result: GuardrailCheckResult): GuardrailJsonPayload {
  *   <drift signal callout, when envelope drifted>
  *   <provenance footnote>
  */
-export function renderMarkdown(result: GuardrailCheckResult): string {
+export function renderMarkdown(result: GuardrailCheckResult, opts?: CheckRenderOptions): string {
   const lines: string[] = [];
   const blocking = result.pairs.filter(isBlocking);
   const suppressed = result.pairs.filter(isAllowlistSuppressed);
@@ -1783,6 +1841,39 @@ export function renderMarkdown(result: GuardrailCheckResult): string {
     ),
   );
   lines.push('');
+
+  // The Impact section (impact surface phase 1), above the fold: what this
+  // change did to the repo's debt, resolved side first. Non-zero only (UX
+  // call 1); a change that resolves nothing gets the one quiet line. The
+  // added/blocking side stays with the existing finding tables below,
+  // Impact counts it but never re-lists it (one concept, one section). A
+  // run that REFUSED to gate renders neither: a "-N resolved" beside a
+  // CANNOT GATE heading would claim exactly what the refusal says cannot
+  // be claimed, so the one-liner defers to the gap banner directly below.
+  {
+    const impact = deriveImpact(result, opts?.impactScores);
+    if (!impact.attributable) {
+      lines.push(`_${escapeMd(formatImpactNotAttributable())}_`);
+      lines.push('');
+    } else if (impact.resolved > 0) {
+      lines.push('### Impact');
+      lines.push('');
+      lines.push(escapeMd(formatImpactHeadline(impact)));
+      for (const note of impact.capNotes) {
+        lines.push('');
+        lines.push(escapeMd(formatImpactCapNote(note)));
+      }
+      const exclusions = formatImpactExclusions(impact);
+      if (exclusions) {
+        lines.push('');
+        lines.push(`_${escapeMd(exclusions)}_`);
+      }
+      lines.push('');
+    } else {
+      lines.push(`_${escapeMd(formatImpactQuietLine(impact))}_`);
+      lines.push('');
+    }
+  }
 
   if (result.attributionGaps.length > 0) {
     lines.push(
