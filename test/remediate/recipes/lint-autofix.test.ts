@@ -138,10 +138,10 @@ describe('lint-autofix recipe', () => {
     const cwd = eslintRepo();
     const { exec } = fakeExec();
     const outcome = await executeLintAutofix(
-      lintOrder('lint:go', 'src/a.ts'),
+      lintOrder('lint:java', 'src/a.ts'),
       makeCtx(cwd, { exec }),
     );
     expect(outcome.kind).toBe('refused');
-    if (outcome.kind === 'refused') expect(outcome.reason).toContain('go');
+    if (outcome.kind === 'refused') expect(outcome.reason).toContain('java');
   });
 });
