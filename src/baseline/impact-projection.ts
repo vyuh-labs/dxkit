@@ -49,6 +49,7 @@ import {
   scoresFromReport,
   scoreToolInputs,
 } from '../reports/snapshot';
+import { computeTrendContext, type TrendContext } from '../reports/trend';
 import type { ImpactScoreInput } from './impact';
 import type { ReportsPolicy } from './policy';
 import type { BaselineMode } from './modes';
@@ -102,6 +103,17 @@ export type ScoreProjection =
 export interface ScoreProjectionGather {
   readonly projection: ScoreProjection;
   readonly scoreInputs?: ReadonlyArray<ImpactScoreInput>;
+  /**
+   * The trend context (impact P3), computed from the SAME
+   * history read the projection uses (one fetch per run, Rule 2). Present
+   * whenever the history was read and non-empty, independent of whether a
+   * projection was possible: the trend line describes snapshots the org has
+   * already seen, so a ref-based run (whose projection is structurally
+   * unavailable) still carries it. Absent when the repo disabled score
+   * surfaces (`impact.projectScores: false`, which drops the snapshot read
+   * entirely) or when there is no history yet.
+   */
+  readonly trend?: TrendContext;
 }
 
 // ─── Pure core ────────────────────────────────────────────────────────────
@@ -172,10 +184,11 @@ export interface ScoreProjectionSeams {
 
 /**
  * Gather the projection for a guardrail run at `cwd`. Reads the policy knob,
- * probes the shared analysis envelope (never builds), scores it through the
- * one evaluator path, and compares against the latest snapshot. Every
- * non-projected outcome carries its reason; nothing here can throw into the
- * check (a projection failure must never fail a gate).
+ * reads the snapshot history ONCE (it feeds both the projection base and the
+ * trend context), probes the shared analysis envelope (never builds), scores
+ * it through the one evaluator path, and compares against the latest
+ * snapshot. Every non-projected outcome carries its reason; nothing here can
+ * throw into the check (a projection failure must never fail a gate).
  */
 export async function gatherScoreProjection(
   cwd: string,
@@ -194,23 +207,33 @@ export async function gatherScoreProjection(
       },
     };
   }
-  if (mode === 'ref-based') {
-    // Structural to the mode, quiet by design: ref-based mode trims the
-    // gather on EVERY run, so a per-PR sentence would repeat forever with
-    // nothing the PR author can do. The JSON keeps the disclosure; the
-    // off-switch (impact.projectScores: false) silences even that.
-    return {
-      projection: {
+  try {
+    // ONE history read per run (Rule 2): the projection's base AND the
+    // trend context (impact P3) both come from this fetch; no path reads
+    // the anchor twice. The trend describes snapshots the org has already
+    // seen, so it is computed BEFORE the paths that cannot project (a
+    // ref-based run, a run with no shared envelope) return.
+    const readHistory = seams?.readHistory ?? readReportHistory;
+    const history = readHistory(cwd, policy.reports?.anchorRef);
+    const trend = computeTrendContext(history);
+    const withTrend = (projection: ScoreProjection): ScoreProjectionGather => ({
+      projection,
+      ...(trend !== null ? { trend } : {}),
+    });
+    if (mode === 'ref-based') {
+      // Structural to the mode, quiet by design: ref-based mode trims the
+      // gather on EVERY run, so a per-PR sentence would repeat forever with
+      // nothing the PR author can do. The JSON keeps the disclosure; the
+      // off-switch (impact.projectScores: false) silences even that.
+      return withTrend({
         status: 'unavailable',
         reason:
           'ref-based mode gathers a trimmed analysis each run, so dimension scores are not ' +
           'recomputed on this surface (committed baseline modes project; ' +
           'impact.projectScores: false turns the projection off entirely)',
         quiet: true,
-      },
-    };
-  }
-  try {
+      });
+    }
     const peek =
       seams?.peek ??
       (async (dir: string) => {
@@ -219,25 +242,21 @@ export async function gatherScoreProjection(
       });
     const scored = await peek(cwd);
     if (!scored) {
-      return {
-        projection: {
-          status: 'unavailable',
-          reason:
-            'this run held no full shared analysis to score (a trimmed or partial gather), ' +
-            'so dimension scores were not recomputed',
-        },
-      };
+      return withTrend({
+        status: 'unavailable',
+        reason:
+          'this run held no full shared analysis to score (a trimmed or partial gather), ' +
+          'so dimension scores were not recomputed',
+      });
     }
     const scoreInputs = impactScoreInputsFromReport(scored.report);
-    const readHistory = seams?.readHistory ?? readReportHistory;
-    const history = readHistory(cwd, policy.reports?.anchorRef);
     const projection = computeScoreProjection({
       current: scoresFromReport(scored.report),
       methodology: SCORING_METHODOLOGY_VERSION,
       inputs: scoreToolInputs(scored.report),
       history,
     });
-    return { projection, scoreInputs };
+    return { ...withTrend(projection), scoreInputs };
   } catch (err) {
     // Fail open, never silent (the GateFailure discipline): a projection
     // error degrades to a disclosed unavailable, and the gate is untouched.
