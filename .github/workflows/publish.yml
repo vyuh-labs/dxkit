@@ -100,12 +100,12 @@ jobs:
           fi
           echo "✓ @vyuhlabs/dxkit-sdk@${RANGE} resolves on npm (${MATCH})"
 
-      # Preflight 6/6 — the npm token actually authenticates. The 4.4.6
+      # Preflight 6/6: the npm token actually authenticates. The 4.4.6
       # release reached the publish step with an expired NPM_TOKEN and
       # failed after the build; `npm whoami` proves the credential against
       # the registry up front, so a dead token fails the run in seconds
       # with the remedy named.
-      - name: Preflight — npm token authenticates
+      - name: "Preflight: npm token authenticates"
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
