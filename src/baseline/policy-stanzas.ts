@@ -262,4 +262,11 @@ export const SCAFFOLD_EXEMPT_KNOBS: readonly ScaffoldExemptKnob[] = [
       'requires an external engine + token that dxkit never selects for the user; the ingest ' +
       'command + dxkit-ingest skill own setup; a bare stanza without a token would not work.',
   },
+  {
+    path: 'impact.projectScores',
+    reason:
+      'a default-ON off-switch for the PR score projection: the right value needs no teaching ' +
+      'at scaffold time, and a commented stanza would read as an opt-in for behavior that is ' +
+      'already on; documented in the guide (impact-projection) and settable via `policy set`.',
+  },
 ];

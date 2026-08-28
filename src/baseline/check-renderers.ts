@@ -70,6 +70,11 @@ import {
   formatImpactQuietLine,
 } from './impact';
 import type { ImpactScoreInput, ImpactSummary } from './impact';
+import {
+  formatScoreProjection,
+  impactProjectionMarker,
+  type ScoreProjection,
+} from './impact-projection';
 
 // ─── Shared render options ────────────────────────────────────────────────
 
@@ -83,6 +88,13 @@ import type { ImpactScoreInput, ImpactSummary } from './impact';
  */
 export interface CheckRenderOptions {
   readonly impactScores?: ReadonlyArray<ImpactScoreInput>;
+  /**
+   * The score projection (impact surface P2), computed by the caller from
+   * the run's own shared analysis + the latest snapshot
+   * (`gatherScoreProjection`). Rendered inside the Impact section, always
+   * labeled projected, and carried on the JSON `impact.projection` field.
+   */
+  readonly scoreProjection?: ScoreProjection;
 }
 
 // ─── Shared verdict predicates ────────────────────────────────────────────
@@ -430,7 +442,7 @@ export function renderConsole(result: GuardrailCheckResult, opts?: CheckRenderOp
   // resolved, so a neutral run gets no extra block here (the quiet line is
   // a PR-comment concern).
   {
-    const impact = deriveImpact(result, opts?.impactScores);
+    const impact = deriveImpact(result, opts?.impactScores, opts?.scoreProjection);
     if (!impact.attributable) {
       lines.push(logger.bold('Impact'));
       lines.push(`  ${formatImpactNotAttributable()}`);
@@ -439,6 +451,12 @@ export function renderConsole(result: GuardrailCheckResult, opts?: CheckRenderOp
       lines.push(logger.bold('Impact'));
       lines.push(`  ${formatImpactHeadline(impact)}`);
       for (const note of impact.capNotes) lines.push(`  ${formatImpactCapNote(note)}`);
+      // The projection line (P2): labeled projected, disclosed when absent.
+      // Rendered only inside an attributable section: a refused run may not
+      // claim a score movement any more than a resolved count.
+      const projectionLine =
+        impact.projection !== undefined ? formatScoreProjection(impact.projection) : null;
+      if (projectionLine) lines.push(`  ${projectionLine}`);
       const exclusions = formatImpactExclusions(impact);
       if (exclusions) lines.push(`  ${exclusions}`);
       lines.push('');
@@ -1597,7 +1615,7 @@ export function renderJson(
     // two renderers already print it) — always present, [] when none.
     refExcludedKinds: result.refExcludedKinds,
     // The finding-delta impact, always emitted, zero reported as zero.
-    impact: deriveImpact(result, opts?.impactScores),
+    impact: deriveImpact(result, opts?.impactScores, opts?.scoreProjection),
     ...(result.depVulnsUnmeasured ? { depVulnsUnmeasured: result.depVulnsUnmeasured } : {}),
     ...(result.deferredCapture && result.deferredCapture.length > 0
       ? { deferredCapture: result.deferredCapture }
@@ -1851,7 +1869,7 @@ export function renderMarkdown(result: GuardrailCheckResult, opts?: CheckRenderO
   // CANNOT GATE heading would claim exactly what the refusal says cannot
   // be claimed, so the one-liner defers to the gap banner directly below.
   {
-    const impact = deriveImpact(result, opts?.impactScores);
+    const impact = deriveImpact(result, opts?.impactScores, opts?.scoreProjection);
     if (!impact.attributable) {
       lines.push(`_${escapeMd(formatImpactNotAttributable())}_`);
       lines.push('');
@@ -1862,6 +1880,19 @@ export function renderMarkdown(result: GuardrailCheckResult, opts?: CheckRenderO
       for (const note of impact.capNotes) {
         lines.push('');
         lines.push(escapeMd(formatImpactCapNote(note)));
+      }
+      // The projection line (P2), plus the hidden marker the post-merge
+      // landed update parses back for the "actual; projection was P"
+      // calibration line. Marker and line travel together: no line, no
+      // marker.
+      if (impact.projection !== undefined) {
+        const projectionLine = formatScoreProjection(impact.projection);
+        if (projectionLine) {
+          lines.push('');
+          lines.push(escapeMd(projectionLine));
+          const marker = impactProjectionMarker(impact.projection);
+          if (marker) lines.push(marker);
+        }
       }
       const exclusions = formatImpactExclusions(impact);
       if (exclusions) {

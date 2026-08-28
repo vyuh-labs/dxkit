@@ -165,6 +165,11 @@ export const POLICY_PARAMS: readonly PolicyParamMeta[] = [
     anchor: 'reports-on-merge',
   },
   {
+    path: 'impact.projectScores',
+    summary: 'project dimension scores in the PR Impact section (default on)',
+    anchor: 'impact-projection',
+  },
+  {
     // Settable because dxkit's own guidance (docs + the learn assistant)
     // points users at exactly this field — a knob the product recommends
     // must be reachable through `policy set`, not a hand edit (the

@@ -39,6 +39,7 @@
 import type { ClassifiedPair } from '../gate/result';
 import type { BaselineEntry, FindingSeverity, FindingStatus } from './types';
 import type { CapApplied, TopAction } from '../scoring/result';
+import type { ScoreProjection } from './impact-projection';
 
 /** Severity display order, most severe first. */
 const SEVERITY_ORDER: ReadonlyArray<FindingSeverity> = ['critical', 'high', 'medium', 'low'];
@@ -135,6 +136,15 @@ export interface ImpactSummary {
    *  (the section then carries the finding delta alone) or nothing is
    *  capped. */
   readonly capNotes: ReadonlyArray<ImpactCapNote>;
+  /**
+   * The score projection (impact surface P2), when the surface computed one:
+   * projected dimension deltas against the latest snapshot, or the disclosed
+   * reason none was made (`not-comparable` / `unavailable` / `disabled`).
+   * Additive optional: pre-P2 payloads and surfaces without a projection
+   * simply omit it. Never a claim of fact: every rendered form carries the
+   * word "projected" (see `formatScoreProjection`).
+   */
+  readonly projection?: ScoreProjection;
 }
 
 /**
@@ -194,6 +204,7 @@ export function deriveImpact(
     readonly requiredNotObserved?: ReadonlyArray<unknown>;
   },
   scores?: ReadonlyArray<ImpactScoreInput>,
+  projection?: ScoreProjection,
 ): ImpactSummary {
   const priorById = new Map(result.baseline.findings.map((e) => [e.id, e] as const));
 
@@ -271,6 +282,19 @@ export function deriveImpact(
     });
   }
 
+  // A refused run (CANNOT GATE) may not carry a projected score claim any
+  // more than a resolved count: the renderers already suppress the line, but
+  // the JSON field would still hand an embedder 'projected' deltas to render
+  // on their own. Neutralize it to a disclosed unavailable instead.
+  const effectiveProjection: ScoreProjection | undefined =
+    projection !== undefined && !attributable
+      ? {
+          status: 'unavailable',
+          reason:
+            'the run could not attribute changes (CANNOT GATE), so no score movement can be claimed',
+        }
+      : projection;
+
   const resolved = resolvedPairs.length;
   return {
     attributable,
@@ -280,6 +304,7 @@ export function deriveImpact(
     net: resolved - added,
     excluded,
     capNotes,
+    ...(effectiveProjection !== undefined ? { projection: effectiveProjection } : {}),
   };
 }
 

@@ -200,6 +200,24 @@ export interface ReportsPolicy {
 }
 
 /**
+ * `.dxkit/policy.json:impact`, tuning for the PR Impact surface. These
+ * refine an already-adopted surface (the guardrail comment); they are not a
+ * capability a repo opts into, so they carry no discovery contract (Rule 16
+ * tuning-field discipline, declared in `POSTURE_KNOBS`).
+ */
+export interface ImpactPolicy {
+  /**
+   * Project dimension scores in the Impact section ("security 40 -> 46
+   * (projected)") from the run's own shared analysis against the latest
+   * snapshot. Default TRUE: the spike measured the marginal cost at ~20ms
+   * (a cache-hit re-score; the run's gather is reused, never repeated) plus
+   * one shallow fetch of the reports ref. Set false to drop the projection
+   * line and the snapshot read entirely.
+   */
+  readonly projectScores?: boolean;
+}
+
+/**
  * Brownfield-mode policy. The product promise — "existing debt is
  * allowed; new regressions are blocked" — flows from these settings.
  */
@@ -275,6 +293,8 @@ export interface BrownfieldPolicy {
   readonly largeFileThreshold?: number;
   /** Opt-in report snapshots on merge (see ReportsPolicy). */
   readonly reports?: ReportsPolicy;
+  /** Impact-surface tuning (see ImpactPolicy). */
+  readonly impact?: ImpactPolicy;
   /**
    * Baseline-mode pinning. When absent, the resolver in `./modes.ts`
    * falls back to visibility-derived defaults
