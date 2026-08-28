@@ -1094,6 +1094,7 @@ const rubyInstallStrategy = declareInstallStrategy(
 export const ruby: LanguageSupport = {
   id: 'ruby',
   displayName: 'Ruby',
+  purlType: 'gem',
   commentSyntax: { lineComment: '#', blockCommentStart: '=begin', blockCommentEnd: '=end' },
 
   sourceExtensions: ['.rb'],

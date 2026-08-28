@@ -630,6 +630,9 @@ function detectSwiftToolchainVersion(cwd: string): string | undefined {
 export const swift: LanguageSupport = {
   id: 'swift',
   displayName: 'Swift',
+  // purlType deliberately omitted: a `pkg:swift/...` purl requires the
+  // source-host namespace (e.g. github.com/org) which our gathers do not
+  // carry; the SBOM export discloses the omission per row instead.
   commentSyntax: { lineComment: '//', blockCommentStart: '/*', blockCommentEnd: '*/' },
   sourceExtensions: ['.swift'],
   testFilePatterns: ['*Tests.swift', '*Test.swift'],

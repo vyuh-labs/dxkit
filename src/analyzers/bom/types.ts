@@ -9,6 +9,7 @@
  * can render col 12 (Vulnerability Issues) as an enumerated list.
  */
 import type { DepVulnFinding } from '../../languages/capabilities/types';
+import type { LanguageId } from '../../types';
 
 export type BomSeverity = 'critical' | 'high' | 'medium' | 'low';
 
@@ -54,6 +55,16 @@ export interface BomEntry {
    *  this is `false` — undefined passes through so degraded gathers
    *  don't accidentally filter the whole report down to zero. */
   isTopLevel?: boolean;
+
+  /** The language pack (ecosystem) this row came from, threaded from
+   *  `LicenseFinding.packId` (stamped by the cross-pack licenses
+   *  aggregation) or, for vuln-only rows, from the advisory's
+   *  `DepVulnFinding.packId`. Drives ecosystem-dependent rendering
+   *  (the CycloneDX export derives the purl type from the owning
+   *  pack's declaration, never from a hardcoded npm assumption).
+   *  Unset when neither source carried provenance: renderers must
+   *  treat unset as "ecosystem unknown", never guess. */
+  packId?: LanguageId;
 
   /** Reserved for per-row sub-root attribution. Currently unset under
    *  the canonical-cache gather path (one inventory at the repo

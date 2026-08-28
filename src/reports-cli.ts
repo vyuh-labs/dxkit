@@ -42,22 +42,37 @@ function gitLine(cwd: string, args: string[]): string {
   }
 }
 
-/** Collect the `latest/` artifacts already rendered under `.dxkit/reports/`. */
-function collectArtifacts(cwd: string): SnapshotArtifact[] {
+/** Collect the `latest/` artifacts already rendered under `.dxkit/reports/`.
+ *  Exported for tests (the publish path itself is exercised via
+ *  `runReportSnapshot`). */
+export function collectArtifacts(cwd: string): SnapshotArtifact[] {
   const reportsDir = path.join(cwd, '.dxkit', 'reports');
   const out: SnapshotArtifact[] = [];
   const dash = path.join(reportsDir, 'dashboard.html');
   if (fs.existsSync(dash))
     out.push({ path: 'dashboard.html', content: fs.readFileSync(dash, 'utf8') });
-  // Newest health-audit markdown, if any.
   try {
-    const md = fs
-      .readdirSync(reportsDir)
+    const files = fs.readdirSync(reportsDir);
+    // Newest health-audit markdown, if any.
+    const md = files
       .filter((f) => /^health-audit-.*\.md$/.test(f) && !f.includes('detailed'))
       .sort()
       .pop();
     if (md)
       out.push({ path: 'health.md', content: fs.readFileSync(path.join(reportsDir, md), 'utf8') });
+    // Newest CycloneDX SBOM (the bom command always writes one beside its
+    // markdown report), published under a stable name so consumers can
+    // fetch `latest/sbom.cdx.json` off the reports ref without knowing
+    // the run date.
+    const sbom = files
+      .filter((f) => /^bom-.*\.cdx\.json$/.test(f))
+      .sort()
+      .pop();
+    if (sbom)
+      out.push({
+        path: 'sbom.cdx.json',
+        content: fs.readFileSync(path.join(reportsDir, sbom), 'utf8'),
+      });
   } catch {
     /* no reports dir */
   }

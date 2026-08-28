@@ -272,11 +272,15 @@ export const COMMANDS = [
   },
   {
     id: 'bom',
+    aliases: ['sbom'],
     audience: 'user',
     group: 'assess',
     summary: 'Bill of Materials (licenses + vulnerabilities joined)',
     typicalRuntime: '1-3 min',
-    docsBlurb: 'Join the license inventory with the vulnerability scan into one dependency BOM.',
+    docsBlurb:
+      'Join the license inventory with the vulnerability scan into one dependency BOM. ' +
+      '`--format cyclonedx` exports the standard CycloneDX JSON SBOM (purls, SPDX licenses, ' +
+      'per-advisory vulnerabilities); the reports snapshot lane publishes it as latest/sbom.cdx.json.',
   },
   {
     id: 'coverage',

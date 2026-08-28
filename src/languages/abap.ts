@@ -114,6 +114,8 @@ const abapLintProvider: CapabilityProvider<LintResult> = {
 export const abap: LanguageSupport = {
   id: 'abap',
   displayName: 'ABAP',
+  // purlType deliberately omitted: the purl spec's type registry has no
+  // ABAP ecosystem; the SBOM export discloses the omission per row.
 
   // ABAP's inline comment is `"` (everything after it on the line).
   // Full-line `*` comments exist only in column 1 — the inline form is

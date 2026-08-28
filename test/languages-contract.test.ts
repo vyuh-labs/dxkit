@@ -1147,3 +1147,34 @@ describe('tree invariants: every pack declares its frame-owned invariants', () =
     });
   }
 });
+
+describe('purlType declarations (SBOM export, Rule 6)', () => {
+  it('every declared purlType is supported by the ONE purl builder', async () => {
+    const { SUPPORTED_PURL_TYPES, buildPurl } = await import('../src/analyzers/bom/purl');
+    for (const lang of LANGUAGES) {
+      if (lang.purlType === undefined) continue;
+      expect(
+        SUPPORTED_PURL_TYPES.has(lang.purlType),
+        `${lang.id} declares purlType '${lang.purlType}' which src/analyzers/bom/purl.ts cannot build; ` +
+          'extend buildPurl (and SUPPORTED_PURL_TYPES) or drop the declaration',
+      ).toBe(true);
+      // A well-shaped sample name must actually derive: the declaration is
+      // a promise the builder keeps (two projections of one concept, pinned).
+      const sample = lang.purlType === 'maven' ? 'com.example:artifact' : 'vendor/example';
+      const derived =
+        buildPurl(lang.purlType, sample, '1.0.0') ?? buildPurl(lang.purlType, 'example', '1.0.0');
+      expect(derived, `${lang.id}: buildPurl returned null for a well-shaped name`).toMatch(
+        new RegExp(`^pkg:${lang.purlType}/`),
+      );
+    }
+  });
+
+  it('packs without a purlType are the declared exemptions only', () => {
+    const withoutPurl = LANGUAGES.filter((l) => l.purlType === undefined)
+      .map((l) => l.id)
+      .sort();
+    // swift: a swift purl needs the source-host namespace we do not gather.
+    // abap: the purl spec has no ABAP type. Both disclosed in the pack files.
+    expect(withoutPurl).toEqual(['abap', 'swift']);
+  });
+});

@@ -39,13 +39,127 @@ const WEAK_COPYLEFT_PREFIXES: ReadonlyArray<string> = ['LGPL-', 'MPL-', 'EPL-', 
  * ("AGPL-3.0") matches itself.
  */
 export function licenseMatchesAny(licenseType: string, prefixes: ReadonlyArray<string>): boolean {
-  const terms = licenseType.split(/\s+OR\s+|\s+AND\s+|,\s*/);
-  for (const term of terms) {
+  for (const term of splitLicenseTerms(licenseType)) {
     for (const p of prefixes) {
       if (term.startsWith(p)) return true;
     }
   }
   return false;
+}
+
+/**
+ * The ONE compound-license-expression splitter (Rule 2). "GPL-3.0 OR MIT",
+ * "X AND Y" and comma lists split to their individual terms; both the risk
+ * matcher above and the CycloneDX SBOM export's license rendering route
+ * through it, so a second expression parser never grows elsewhere.
+ */
+export function splitLicenseTerms(licenseType: string): string[] {
+  return licenseType.split(/\s+OR\s+|\s+AND\s+|,\s*/).filter((t) => t.length > 0);
+}
+
+/**
+ * SPDX ids the license gathers are known to emit, for exact-id claims
+ * (the CycloneDX `license.id` field is schema-restricted to the SPDX
+ * enum, so a wrong claim makes the document invalid). This is a curated
+ * subset of the SPDX list, deliberately biased toward false NEGATIVES:
+ * a valid id missing here renders as the license NAME form instead,
+ * which stays spec-valid and honest; an id present here but wrong
+ * would not. Extend the set here (never a second list elsewhere) when
+ * a gather starts emitting an id it lacks.
+ */
+const KNOWN_SPDX_IDS: ReadonlySet<string> = new Set([
+  '0BSD',
+  'AFL-3.0',
+  'AGPL-1.0-only',
+  'AGPL-1.0-or-later',
+  'AGPL-3.0-only',
+  'AGPL-3.0-or-later',
+  'Apache-1.1',
+  'Apache-2.0',
+  'Artistic-1.0',
+  'Artistic-2.0',
+  'BlueOak-1.0.0',
+  'BSD-1-Clause',
+  'BSD-2-Clause',
+  'BSD-2-Clause-Patent',
+  'BSD-3-Clause',
+  'BSD-3-Clause-Clear',
+  'BSD-4-Clause',
+  'BSL-1.0',
+  'CC-BY-3.0',
+  'CC-BY-4.0',
+  'CC-BY-SA-3.0',
+  'CC-BY-SA-4.0',
+  'CC0-1.0',
+  'CDDL-1.0',
+  'CDDL-1.1',
+  'ECL-2.0',
+  'EPL-1.0',
+  'EPL-2.0',
+  'EUPL-1.1',
+  'EUPL-1.2',
+  'GPL-1.0-only',
+  'GPL-1.0-or-later',
+  'GPL-2.0-only',
+  'GPL-2.0-or-later',
+  'GPL-3.0-only',
+  'GPL-3.0-or-later',
+  'ISC',
+  'LGPL-2.0-only',
+  'LGPL-2.0-or-later',
+  'LGPL-2.1-only',
+  'LGPL-2.1-or-later',
+  'LGPL-3.0-only',
+  'LGPL-3.0-or-later',
+  'MIT',
+  'MIT-0',
+  'MPL-1.1',
+  'MPL-2.0',
+  'MS-PL',
+  'MS-RL',
+  'OFL-1.1',
+  'OSL-3.0',
+  'PostgreSQL',
+  'PSF-2.0',
+  'Python-2.0',
+  'Ruby',
+  'Unicode-DFS-2016',
+  'Unlicense',
+  'UPL-1.0',
+  'WTFPL',
+  'Zlib',
+  'ZPL-2.1',
+]);
+
+/**
+ * Deprecated-but-ubiquitous SPDX ids the ecosystems still ship (npm
+ * metadata predates the `-only`/`-or-later` split). Still valid ids in
+ * the SPDX list (marked deprecated), so claiming them is honest.
+ */
+const KNOWN_DEPRECATED_SPDX_IDS: ReadonlySet<string> = new Set([
+  'AGPL-1.0',
+  'AGPL-3.0',
+  'GPL-1.0',
+  'GPL-2.0',
+  'GPL-2.0+',
+  'GPL-3.0',
+  'GPL-3.0+',
+  'LGPL-2.0',
+  'LGPL-2.1',
+  'LGPL-2.1+',
+  'LGPL-3.0',
+  'LGPL-3.0+',
+]);
+
+/**
+ * The ONE "is this string a known SPDX id?" predicate (Rule 2). Returns
+ * the id itself for a single term found in the curated set, else null
+ * (compound expressions, unknown ids, and 'UNKNOWN' all return null;
+ * callers fall back to the free-form name representation).
+ */
+export function knownSpdxId(term: string): string | null {
+  const t = term.trim();
+  return KNOWN_SPDX_IDS.has(t) || KNOWN_DEPRECATED_SPDX_IDS.has(t) ? t : null;
 }
 
 const matchesAny = licenseMatchesAny;
