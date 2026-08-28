@@ -11,6 +11,7 @@ import { collectTreeInvariants } from '../src/languages';
 import { defaultResolvedTolerances } from '../src/install/tolerances';
 import { grammarShape } from '../src/ast/grammar-shape';
 import { modelShapeForGrammar } from '../src/ast/grammar-model-shape';
+import { DEFAULT_PIN_VERSIONS } from '../src/languages/capabilities/remediation';
 
 const REQUIRED_IDS: LanguageId[] = ['typescript', 'python', 'go', 'rust', 'csharp'];
 
@@ -1327,6 +1328,69 @@ describe('remediation capabilities: a provider or a reasoned exemption, per pack
       expect(install.bin.length).toBeGreaterThan(0);
       expect(install.args.length).toBeGreaterThan(0);
       expect(install.args.join(' ')).toContain('sample-pkg');
+    });
+
+    it(`${lang.id}: an optional resyncLockfile refusal hook is pure, deterministic, machine-independent`, () => {
+      const declaration = lang.remediation.resyncLockfile;
+      if (declaration.kind !== 'capability') return;
+      const refusal = declaration.provider.refusal;
+      if (refusal === undefined) return;
+      // The hook is a pure fs-read decision: total over an empty root (no
+      // throw), deterministic across calls, and any reason it returns is a
+      // real sentence with no machine path leaking into ledger prose.
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-remediation-refusal-'));
+      try {
+        const ctx = { cwd: dir, rootDir: '' };
+        let first!: string | null;
+        expect(() => (first = refusal(ctx))).not.toThrow();
+        expect(refusal(ctx)).toBe(first);
+        if (first !== null) {
+          expect(first.length).toBeGreaterThan(0);
+          expect(first).not.toContain(dir);
+        }
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it(`${lang.id}: an optional osvVersion mapper is pure, total, and non-erasing on concrete versions`, () => {
+      const declaration = lang.remediation.pinTransitive;
+      if (declaration.kind !== 'capability') return;
+      const osvVersion = declaration.provider.osvVersion;
+      if (osvVersion === undefined) return;
+      const scheme = declaration.provider.versions ?? DEFAULT_PIN_VERSIONS;
+      for (const v of ['1.2.3', 'v1.2.3', '1.2', '1.2.3.4', '', 'not-a-version']) {
+        let out!: string;
+        expect(
+          () => (out = osvVersion(v)),
+          `${lang.id}: osvVersion(${JSON.stringify(v)})`,
+        ).not.toThrow();
+        expect(osvVersion(v)).toBe(out);
+        // A version the pack can pin must survive the OSV projection: an
+        // empty mapping would turn the $0 pre-check into a silent no-op.
+        if (scheme.concrete(v)) expect(out.length).toBeGreaterThan(0);
+      }
+    });
+
+    it(`${lang.id}: an optional probeInfrastructure classifier is total and false-negative biased`, () => {
+      const declaration = lang.remediation.declareDependency;
+      if (declaration.kind !== 'capability') return;
+      const probe = declaration.provider.probeInfrastructure;
+      if (probe === undefined) return;
+      // Total and deterministic over untrusted output, and a real
+      // not-found must never read as infrastructure (the executor would
+      // retry a typo forever instead of refusing it).
+      for (const output of ['', '\n\n', 'npm error 404 Not Found', 'no matching version found']) {
+        let out!: boolean;
+        expect(
+          () => (out = probe(output)),
+          `${lang.id}: probeInfrastructure(${JSON.stringify(output)})`,
+        ).not.toThrow();
+        expect(probe(output)).toBe(out);
+        expect(out, `${lang.id}: ${JSON.stringify(output)} must not read as infrastructure`).toBe(
+          false,
+        );
+      }
     });
   }
 });

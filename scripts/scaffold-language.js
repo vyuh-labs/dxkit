@@ -708,10 +708,19 @@ export const ${id}: LanguageSupport = {
   // (orders tier to the agent with the reason disclosed in plan output), and
   // the pack compiles (the same optional-then-filled arc as correctness).
   // TODO(${id}): replace entries with real providers where the ecosystem has
-  // the mechanism; see src/languages/node-remediation.ts for the worked
-  // example and src/languages/capabilities/remediation.ts for the contracts
-  // (an ecosystem that genuinely lacks a mechanism keeps a PERMANENT
-  // exemption with the real reason, like abap.ts).
+  // the mechanism. Contracts: src/languages/capabilities/remediation.ts.
+  // Worked examples, one per capability shape:
+  //   - node-remediation.ts: the full set (manifest text edit for the pin,
+  //     registry probe + install for declare, resync riding installStrategy)
+  //   - python-remediation.ts: TOML text surgery, a custom version grammar,
+  //     and probeInfrastructure for ecosystem-specific probe failures
+  //   - go-remediation.ts: the tool-owned pin (kind: 'command'), an
+  //     osvVersion projection, and a resyncLockfile refusal hook
+  //   - jvm-remediation.ts / abap.ts: PERMANENT reasoned exemptions where
+  //     the ecosystem genuinely lacks the mechanism (a reason, never silence)
+  // After filling in (or keeping planned exemptions), regenerate the docs
+  // coverage table: npm run build && npm run docs:remediation-coverage
+  // (test/remediation-coverage-docs.test.ts pins it against the registry).
   remediation: plannedRemediationSupport('${id}'),
 
   // Lint-GATE provider (custom-check flagship): the linter command that gates
@@ -1213,7 +1222,9 @@ const nextSteps = [
   `  9. Add ${id} toolchain install to .github/workflows/ci.yml`,
   ` 10. Document the toolchain requirement in CONTRIBUTING.md "Cross-ecosystem benchmarks"`,
   ` 11. Update README.md ecosystem coverage table + CLAUDE.md path globs for the new language`,
-  `     (Recipe v3 / G5 — bash scripts/check-docs-coverage.sh fails until you do)`,
+  `     (Recipe v3 / G5 — bash scripts/check-docs-coverage.sh fails until you do), and regenerate`,
+  `     the remediation coverage table: npm run build && npm run docs:remediation-coverage`,
+  `     (test/remediation-coverage-docs.test.ts fails until you do)`,
   ` 12. Curate the CHANGELOG.md "[Unreleased]" stub before ship (G6 wrote a placeholder)`,
   '',
   `  Validate: npm run test:run`,
