@@ -2409,13 +2409,15 @@ export async function run(argv: string[]): Promise<void> {
 
     case 'report': {
       // Subcommands: `report snapshot` publishes a per-merge score snapshot to
-      // the `dxkit-reports` anchor; `report history` reads the trend back. Both
-      // dispatch to reports-cli; a bare `report` runs the full audit below.
+      // the `dxkit-reports` anchor; `report history` reads the raw table back;
+      // `report trend` renders the segmented since-install series (impact P3).
+      // All dispatch to reports-cli; a bare `report` runs the full audit below.
       const reportSub = positionals[1];
-      if (reportSub === 'snapshot' || reportSub === 'history') {
+      if (reportSub === 'snapshot' || reportSub === 'history' || reportSub === 'trend') {
         const cwd = resolveRepoPath(positionals[2]);
         if (values.json) logger.setJsonMode(true);
-        const { runReportSnapshot, runReportHistory } = await import('./reports-cli');
+        const { runReportSnapshot, runReportHistory, runReportTrend } =
+          await import('./reports-cli');
         const code =
           reportSub === 'snapshot'
             ? await runReportSnapshot({
@@ -2426,13 +2428,19 @@ export async function run(argv: string[]): Promise<void> {
                 ...(values.ref ? { anchorRef: String(values.ref) } : {}),
                 ...(values.retain ? { retainHistory: Number(values.retain) } : {}),
               })
-            : runReportHistory({
-                cwd,
-                json: !!values.json,
-                markdown: !!values.markdown,
-                ...(values.ref ? { anchorRef: String(values.ref) } : {}),
-                ...(values.limit ? { limit: Number(values.limit) } : {}),
-              });
+            : reportSub === 'trend'
+              ? runReportTrend({
+                  cwd,
+                  json: !!values.json,
+                  ...(values.ref ? { anchorRef: String(values.ref) } : {}),
+                })
+              : runReportHistory({
+                  cwd,
+                  json: !!values.json,
+                  markdown: !!values.markdown,
+                  ...(values.ref ? { anchorRef: String(values.ref) } : {}),
+                  ...(values.limit ? { limit: Number(values.limit) } : {}),
+                });
         process.exit(code);
       }
       // D021 (2.4.7 sub-piece 3): single orchestrator that runs every
@@ -3138,6 +3146,7 @@ export async function run(argv: string[]): Promise<void> {
         const renderOpts = {
           scoreProjection: projected.projection,
           ...(projected.scoreInputs !== undefined ? { impactScores: projected.scoreInputs } : {}),
+          ...(projected.trend !== undefined ? { trendContext: projected.trend } : {}),
         };
         // Cache the verdict so a same-tree replay (the `receipt` command, a
         // second gate this session) reuses it instead of re-gathering. Keyed on

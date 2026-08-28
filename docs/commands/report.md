@@ -31,6 +31,33 @@ doesn't take down the others):
 | `--with-coverage` | Pass `--with-coverage` to health + test-gaps (materializes real coverage first) |
 | `--detailed`      | All analyzers write their detailed reports                                      |
 
+## Subcommands: the score-over-time series
+
+Beyond the full audit, `report` carries the snapshot surface:
+
+```bash
+vyuh-dxkit report snapshot           # publish this merge's scores to the dxkit-reports ref
+vyuh-dxkit report history [--json]   # the raw snapshot table (--markdown for a CI summary)
+vyuh-dxkit report trend [--json]     # the since-install series: per-dimension sparklines
+```
+
+`report trend` renders every dimension's score over time since the first
+snapshot (the install baseline), plus the debt-over-time series (finding
+counts by kind, stamped per merge from the run's security aggregate) where
+the snapshots carry one. The series is segmented wherever the scoring
+methodology or the score-relevant tool set changed between snapshots: a
+line is never drawn across points that are not comparable, and each
+boundary prints its reason. Snapshots are published per merge by the
+`reports.onMerge` workflow (see the policy guide), or by hand with
+`report snapshot`.
+
+Each publish also renders `latest/impact.md` onto the reports ref: a
+shareable markdown impact report with the same segmented score trend, the
+debt-over-time table, and the latest merge's movement. Retrieve it with
+`git show <reports-ref>:latest/impact.md` (default ref `dxkit-reports`),
+beside `latest/dashboard.html` and `latest/sbom.cdx.json`. It carries
+counts and scores only, never finding details or file paths.
+
 ## When to use
 
 - **First-time audit** of a brownfield repo
