@@ -72,6 +72,16 @@ export const pythonInstallStrategy = declareInstallStrategy(
           kind: 'command',
           command: { bin: 'poetry', args: ['check', '--lock'] },
           tolerates: [],
+          // poetry has no lock-only check: `check --lock` validates the
+          // whole pyproject too (the php strategy scopes composer validate
+          // with --no-check-all; poetry offers no such flag). A failure
+          // that never mentions the lock is a MANIFEST error, disclosed as
+          // such so it is not read, or remediated, as lockfile drift.
+          classifyFailure: (output) =>
+            /poetry\.lock|lock file|poetry lock/i.test(output)
+              ? null
+              : 'manifest-validation: pyproject.toml itself failed poetry check (no lockfile ' +
+                'drift is reported); fix the manifest error above rather than re-locking.',
         },
         execution: PYTHON_INSTALL_EXECUTION,
       },

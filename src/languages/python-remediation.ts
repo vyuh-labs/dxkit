@@ -43,8 +43,10 @@ import type {
   ManifestTextEdit,
   PinPlanResult,
   PinTransitiveProvider,
+  PinVersionScheme,
   RemediationSupport,
 } from './capabilities/remediation';
+import { compareNumericSegments } from './capabilities/remediation';
 import { pyDistForImport } from './python-dist-names';
 import { pythonInstallStrategy, PYTHON_INSTALL_EXECUTION } from './python-install';
 
@@ -65,6 +67,13 @@ function directDepRefusal(pkg: string): string {
 }
 
 // ── TOML text surgery (line-level, style-preserving, refusal-biased) ──────
+// Documented residual: a TOML multiline string containing a line shaped
+// like a `[table]` header (or a `key = [` array opener) can false-match
+// these line-level scans. The worst outcome is an INERT pin (the entry
+// lands inside the string) or an over-refusal; the recipe's verify
+// (re-audit) then fails and the runner discards the diff, so a corrupt
+// manifest never lands. Full TOML parsing is deliberately not worth that
+// tail risk here.
 
 /** The `[name]` table in `lines`: header index and exclusive body end. */
 function findTomlTable(
@@ -133,11 +142,13 @@ function tableArrayRequirementNames(
 
 const norm = (n: string): string => n.toLowerCase().replace(/[-_.]+/g, '-');
 
-/** Is `pkg` a direct dependency under PEP 621 (`[project]` dependencies +
- *  `[project.optional-dependencies]` groups)? */
+/** Is `pkg` a direct dependency under PEP 621 (`[project]` dependencies,
+ *  `[project.optional-dependencies]` groups, and PEP 735
+ *  `[dependency-groups]`, uv's default dev home and what the pack's own
+ *  `uv add --dev` writes)? */
 function directInPep621(lines: readonly string[], pkg: string): boolean {
   const target = norm(pkg);
-  for (const name of ['project', 'project.optional-dependencies']) {
+  for (const name of ['project', 'project.optional-dependencies', 'dependency-groups']) {
     const table = findTomlTable(lines, name);
     if (table && tableArrayRequirementNames(lines, table).some((n) => norm(n) === target)) {
       return true;
@@ -215,7 +226,10 @@ function poetryPinTransform(pkg: string, version: string): ManifestTextEdit['tra
           'explicit-entry pin has nowhere to land; this pin stays on the agent tier',
       };
     }
-    lines.splice(table.header + 1, 0, `${pkg} = "${version}"`);
+    // The key is ALWAYS quoted: a dotted name (zope.interface) inserted
+    // bare would parse as a DOTTED key (a table "zope" with an "interface"
+    // entry), a different dependency entirely.
+    lines.splice(table.header + 1, 0, `"${pkg}" = "${version}"`);
     return { text: lines.join('\n') };
   };
 }
@@ -239,16 +253,33 @@ function pipfilePinTransform(pkg: string, version: string): ManifestTextEdit['tr
           'nowhere to land; this pin stays on the agent tier',
       };
     }
-    lines.splice(table.header + 1, 0, `${pkg} = "==${version}"`);
+    // Quoted key always: a dotted name would otherwise parse as a dotted
+    // key (see the poetry transform).
+    lines.splice(table.header + 1, 0, `"${pkg}" = "==${version}"`);
     return { text: lines.join('\n') };
   };
 }
 
 // ── the providers ──────────────────────────────────────────────────────────
 
+/**
+ * The python pin-version grammar (Rule 6): PyPI advisories carry PEP 440
+ * versions, where a plain release may have ANY number of segments (`2.31`
+ * is concrete; npm's x.y.z default would tier every 2-segment fix to the
+ * agent). Only plain release segments are accepted: epochs, pre/post/dev
+ * markers, local versions, wildcards and ranges refuse (false-negative
+ * bias: a form the numeric comparator cannot order confidently is never
+ * guessed).
+ */
+const pythonPinVersions: PinVersionScheme = {
+  concrete: (v) => /^\d+(\.\d+){0,5}$/.test(v),
+  compare: compareNumericSegments,
+};
+
 const pythonPinTransitive: PinTransitiveProvider = {
   manifestFiles: ['pyproject.toml', 'Pipfile'],
   osvEcosystem: 'PyPI',
+  versions: pythonPinVersions,
   plan(ctx): PinPlanResult {
     // Rule 11: both tokens land in manifest text verbatim; anything outside
     // the ecosystem's own name/version shapes is refused before any edit.
@@ -310,10 +341,19 @@ const pythonDeclareDependency: DeclareDependencyProvider = {
   // answer: an import that maps to no single distribution (malformed, or an
   // ambiguous alias like cv2/google) never reaches an argv.
   validSpecifier: (specifier) => pyDistForImport(specifier) !== null,
-  versionProbe: (ctx) => ({
-    bin: 'pip',
-    args: ['index', 'versions', pyDistForImport(ctx.specifier) ?? ctx.specifier],
-  }),
+  versionProbe(ctx) {
+    const dist = pyDistForImport(ctx.specifier) ?? ctx.specifier;
+    // A uv-managed root probes through uv itself: uv seeds its venvs
+    // WITHOUT pip, so `pip index` may not exist there. The dry-run
+    // resolves the version the install would take without touching the
+    // environment. Every other manager rides pip, which ships with the
+    // python toolchain dxkit requires.
+    const manager = pythonInstallStrategy.strategy(join(ctx.cwd, ctx.rootDir))?.manager;
+    if (manager === 'uv') {
+      return { bin: 'uv', args: ['pip', 'install', '--dry-run', '--no-deps', dist] };
+    }
+    return { bin: 'pip', args: ['index', 'versions', dist] };
+  },
   parseProbeOutput(output) {
     // `pip index versions requests` → `requests (2.32.5)` then an
     // `Available versions:` list; either names the latest first.
@@ -322,8 +362,14 @@ const pythonDeclareDependency: DeclareDependencyProvider = {
       if (m) return m[1];
     }
     const avail = output.match(/Available versions:\s*(\d[^\s,]*)/);
-    return avail ? avail[1] : null;
+    if (avail) return avail[1];
+    // uv's dry-run shape: ` + requests==2.32.5`.
+    const uv = output.match(/^\s*\+\s+[A-Za-z0-9._-]+==(\d\S*)\s*$/m);
+    return uv ? uv[1] : null;
   },
+  // uv without a provisioned project venv errors before resolving; that is
+  // an environment fact, never a verdict on the specifier.
+  probeInfrastructure: (output) => /no virtual environment found/i.test(output),
   installCommand(ctx) {
     const dist = pyDistForImport(ctx.specifier) ?? ctx.specifier;
     const spec = `${dist}==${ctx.version}`;

@@ -271,20 +271,38 @@ describe('order-intrinsic feasibility lives in matches (an executor-certain refu
     expect(pin('ruby', ['Gemfile', 'Gemfile.lock'], '1.16.5')).toBe('recipe');
     expect(pin('php', ['composer.json', 'composer.lock'], '2.4.5')).toBe('recipe');
     expect(pin('python', ['pyproject.toml'], '>=2.5')).toBe('agent');
+    // The version grammar is pack-declared (Rule 6): RubyGems 4-segment
+    // security releases (the rails-family shape) and PyPI 2-segment
+    // releases tier recipe under their packs' schemes, while an
+    // unorderable PEP 440 marker and npm's x.y.z default both refuse.
+    expect(pin('ruby', ['Gemfile', 'Gemfile.lock'], '7.0.8.7')).toBe('recipe');
+    expect(pin('python', ['pyproject.toml', 'uv.lock'], '2.31')).toBe('recipe');
+    expect(pin('python', ['pyproject.toml', 'uv.lock'], '2.31.post1')).toBe('agent');
+    expect(pin('typescript', ['package.json', 'package-lock.json'], '1.2.3.4')).toBe('agent');
 
-    // lockfile-sync: python + php declare the capability AND a lockfile
-    // check, so a one-root envelope tiers recipe; ruby's declaration rides
-    // its (disclosed-skip) check the same way.
-    const stale = (pack: string, paths: string[]) =>
-      tierOf({
-        id: `stale-lockfile:${pack}`,
-        class: 'stale-lockfile' as const,
-        envelope: { paths, manifests: true },
-        findings: [floorFinding(pack)],
-      });
+    // lockfile-sync: python + php declare the capability AND a verifiable
+    // sync check, so a one-root envelope tiers recipe. Ruby's sync check
+    // is a DECLARED skip: the executor could never confirm a resync
+    // (certain discard), so the order tiers agent with the pack's own
+    // skip reason disclosed; same doctrine for a yarn-lockfile envelope
+    // under the typescript pack.
+    const staleOrder = (pack: string, paths: string[]) => ({
+      ...draftBase,
+      id: `stale-lockfile:${pack}`,
+      class: 'stale-lockfile' as const,
+      envelope: { paths, manifests: true },
+      findings: [floorFinding(pack)],
+    });
+    const stale = (pack: string, paths: string[]) => assignTier(staleOrder(pack, paths)).tier;
     expect(stale('python', ['pyproject.toml', 'poetry.lock'])).toBe('recipe');
-    expect(stale('ruby', ['Gemfile', 'Gemfile.lock'])).toBe('recipe');
     expect(stale('php', ['composer.json', 'composer.lock'])).toBe('recipe');
+    const ruby = assignTier(staleOrder('ruby', ['Gemfile', 'Gemfile.lock']));
+    expect(ruby.tier).toBe('agent');
+    expect(ruby.capabilityExemption?.capability).toBe('resyncLockfile');
+    expect(ruby.capabilityExemption?.reason).toContain('could never be verified');
+    expect(ruby.capabilityExemption?.reason).toContain('bundler');
+    expect(stale('typescript', ['package.json', 'yarn.lock'])).toBe('agent');
+    expect(stale('typescript', ['package.json', 'package-lock.json'])).toBe('recipe');
 
     // lint-autofix: ruff and rubocop declare fix modes; phpcs cannot
     // fix-and-verify in one run, a declared exemption.

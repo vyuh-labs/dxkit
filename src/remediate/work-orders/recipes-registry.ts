@@ -29,9 +29,9 @@ import { executeLintAutofix, lintPackOf } from '../recipes/lint-autofix';
 import { executeLockfileSync } from '../recipes/lockfile-sync';
 import { executeOverridePin } from '../recipes/override-pin';
 import {
-  isConcreteSemver,
   owningManifestRoot,
   packDeclaration,
+  pinVersionScheme,
   resolvePinCapability,
 } from '../recipes/shared';
 import type { RecipeExecuteContext, RecipeOutcome } from '../recipes/types';
@@ -70,6 +70,35 @@ function lintFileOf(order: WorkOrder): string | null {
 function lintOrderPack(order: WorkOrder): string | null {
   const first = order.findings[0]?.evidence;
   return first && first.type === 'custom-check' ? lintPackOf(first.check) : null;
+}
+
+/**
+ * Can the pack's declared sync check VERIFY a resync for this order?
+ * Order-intrinsic (declarations + the order's own envelope, no repo read):
+ * of the pack's install-strategy variants, the ones whose selector files
+ * the envelope names decide (all variants when the envelope names none).
+ * A DECLARED-SKIP sync check (bundler, pnpm, yarn) means the lockfile-sync
+ * executor could NEVER confirm the fix, so running the recipe is a certain
+ * discard: the order tiers agent instead, with the declared skip reason
+ * disclosed (4.4.7 review round). Only the declared skip decides here: a
+ * pack whose `lockfileCheck` does not derive from a strategy sync check
+ * (no syncCheck declared at all) stays on the recipe tier and the
+ * executor's verify remains the runtime authority, so this projection can
+ * never over-rule a verifiable check it cannot see (Rule 2.30).
+ */
+function resyncVerifiableForOrder(
+  pack: string,
+  order: WorkOrder,
+): { ok: true } | { ok: false; reason: string } {
+  const variants = getLanguage(pack as LanguageId)?.installStrategy?.variants() ?? [];
+  const inEnvelope = (f: string): boolean =>
+    order.envelope.paths.some((p) => p === f || p.endsWith(`/${f}`));
+  const matching = variants.filter((v) => v.when.some(inEnvelope));
+  const considered = matching.length > 0 ? matching : variants;
+  if (considered.some((v) => v.strategy.syncCheck?.kind === 'command')) return { ok: true };
+  const skip = considered.map((v) => v.strategy.syncCheck).find((c) => c?.kind === 'skipped');
+  if (skip?.kind === 'skipped') return { ok: false, reason: skip.reason };
+  return { ok: true };
 }
 
 /** A pack's declared exemption for one capability, shaped for the order's
@@ -146,11 +175,26 @@ export const RECIPE_REGISTRY: readonly RecipeDeclaration[] = [
         declaration !== undefined &&
         declaration.kind === 'capability' &&
         owningManifestRoot(order, declaration.provider.manifestFiles) !== null &&
-        getLanguage(pack as LanguageId)?.correctness?.lockfileCheck !== undefined
+        getLanguage(pack as LanguageId)?.correctness?.lockfileCheck !== undefined &&
+        resyncVerifiableForOrder(pack, order).ok
       );
     },
     execute: executeLockfileSync,
-    packExemption: (order) => exemptionOf(floorPackOf(order), 'resyncLockfile'),
+    packExemption: (order) => {
+      const pack = floorPackOf(order);
+      const declared = exemptionOf(pack, 'resyncLockfile');
+      if (declared !== null || pack === null) return declared;
+      // A declared capability whose verify is a declared skip: the certain
+      // discard is disclosed on the order with the pack's own reason.
+      const verifiable = resyncVerifiableForOrder(pack, order);
+      return verifiable.ok
+        ? null
+        : {
+            pack,
+            capability: 'resyncLockfile',
+            reason: `a resync here could never be verified: ${verifiable.reason}`,
+          };
+    },
   },
   {
     id: 'override-pin',
@@ -159,22 +203,25 @@ export const RECIPE_REGISTRY: readonly RecipeDeclaration[] = [
       'pin a fixed version through a pack-declared override when no direct upgrade path exists',
     implemented: true,
     // Needs a known CONCRETE fixed version for EVERY advisory in the order
-    // (a range-shaped fixed string cannot be pinned verbatim), an owning
+    // under the owning pack's declared version grammar (a range-shaped
+    // fixed string cannot be pinned verbatim), an owning
     // pack that declares the pin capability, one owning root under its
     // manifests, and an install command the frame can run; an advisory with
     // no fix is agent (or human) territory.
     matches: (order) => {
       if (order.constraints.install === undefined || order.findings.length === 0) return false;
       const resolved = resolvePinCapability(order);
-      return (
-        resolved.kind === 'capability' &&
-        resolved.rootDir !== null &&
-        order.findings.every(
-          (f) =>
-            f.evidence.type === 'dep-vuln' &&
-            typeof f.evidence.fixedVersion === 'string' &&
-            isConcreteSemver(f.evidence.fixedVersion),
-        )
+      if (resolved.kind !== 'capability' || resolved.rootDir === null) return false;
+      // The owning pack's version grammar decides what is pinnable (Rule 6:
+      // x.y.z semver is an npm fact; RubyGems security releases are
+      // 4-segment, PyPI releases may be 2-segment). Same scheme the
+      // executor's pick reads, so tier and runtime cannot diverge.
+      const scheme = pinVersionScheme(resolved.provider);
+      return order.findings.every(
+        (f) =>
+          f.evidence.type === 'dep-vuln' &&
+          typeof f.evidence.fixedVersion === 'string' &&
+          scheme.concrete(f.evidence.fixedVersion),
       );
     },
     execute: executeOverridePin,

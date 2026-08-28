@@ -31,7 +31,7 @@ import type { ExecutionRequirement } from '../execution';
 import { resolveTolerances } from '../install/tolerances';
 import { pythonInstallStrategy } from './python-install';
 import { pythonRemediation } from './python-remediation';
-import { PY_MODULE_DIST_ALIASES } from './python-dist-names';
+import { normalizePyDistName, PY_MODULE_DIST_ALIASES } from './python-dist-names';
 import type {
   CoverageResult,
   DepVulnFinding,
@@ -1252,7 +1252,9 @@ export function pySitePackagesDirs(cwd: string): string[] {
  *  lowercase-with-underscores. Regex extraction, biased toward capturing
  *  MORE names (an over-captured token can only suppress a finding). */
 export function pyDeclaredDeps(cwd: string): Set<string> {
-  const norm = (n: string): string => n.toLowerCase().replace(/-/g, '_');
+  // The ONE name fold (PEP 503, python-dist-names.ts), shared with the
+  // alias table so spelling variants need no duplicate entries.
+  const norm = normalizePyDistName;
   const out = new Set<string>();
   let entries: string[] = [];
   try {
@@ -1363,12 +1365,10 @@ export function pyResolutionCheck(ctx: CorrectnessContext): ResolutionCheckResul
             isFile(path.join(d, `${top}.py`)) ||
             isFile(path.join(d, `${top}.pyi`)),
         ) || resolvePyImportRaw(rel, spec, cwd, roots) !== null;
-      const normTop = top.toLowerCase().replace(/-/g, '_');
+      const normTop = normalizePyDistName(top);
       const declaredHit =
         declared.has(normTop) ||
-        (PY_MODULE_DIST_ALIASES[top] ?? []).some((d) =>
-          declared.has(d.toLowerCase().replace(/-/g, '_')),
-        );
+        (PY_MODULE_DIST_ALIASES[top] ?? []).some((d) => declared.has(normalizePyDistName(d)));
       if (installed || declaredHit) resolvedTops.add(top);
       else unresolved.set(top, rel);
     }

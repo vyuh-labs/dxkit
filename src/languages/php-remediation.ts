@@ -111,6 +111,16 @@ const phpPinTransitive: PinTransitiveProvider = {
       kind: 'plan',
       edit: { file: 'composer.json', transform: composerRequireTransform(ctx.pkg, ctx.version) },
       revert: `remove the "require" entry for '${ctx.pkg}' from ${at}composer.json and re-run the lock resync`,
+      // Deliberate churn, disclosed on the ledger: composer has no scoped
+      // lock-writing resync dxkit can name, so the full `composer update`
+      // may also refresh unrelated packages within their declared
+      // constraints. The re-audit and the run guardrail check the whole
+      // tree, so nothing rides in unchecked; the diff is just wider.
+      notes: [
+        'the composer lock resync (composer update) may also refresh unrelated packages in ' +
+          'composer.lock within their declared constraints; the re-audit and the guardrail ' +
+          'check the whole tree',
+      ],
     };
   },
   execution: () => PHP_REMEDIATION_EXECUTION,

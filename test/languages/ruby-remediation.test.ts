@@ -78,6 +78,23 @@ describe('pinTransitive: the Gemfile explicit-entry pin', () => {
   });
 });
 
+describe('the ruby pin-version grammar (RubyGems 4-segment security releases)', () => {
+  const scheme = pin.versions!;
+  it('accepts up to five numeric segments (7.0.8.7, the rails-family fix shape); refuses ranges and prereleases', () => {
+    for (const ok of ['1.16.5', '7.0.8.7', '6.1.7.10', '3.2']) {
+      expect(scheme.concrete(ok), ok).toBe(true);
+    }
+    for (const bad of ['>= 7.0.8', '~> 7.0', '7.0.8.rc1', '7.x', '*', '']) {
+      expect(scheme.concrete(bad), bad).toBe(false);
+    }
+  });
+  it('orders numerically, never lexicographically (6.1.7.10 outranks 6.1.7.9)', () => {
+    expect(scheme.compare('6.1.7.10', '6.1.7.9')).toBeGreaterThan(0);
+    expect(scheme.compare('7.0.8', '7.0.8.7')).toBeLessThan(0);
+    expect(scheme.compare('7.0.8.7', '7.0.8.7')).toBe(0);
+  });
+});
+
 describe('declareDependency: the gem rail, probe parsing, bundle add', () => {
   it('the rail rejects flag shapes and nested require paths', () => {
     expect(isValidGemName('nokogiri')).toBe(true);

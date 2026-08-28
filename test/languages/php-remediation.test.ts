@@ -41,6 +41,9 @@ describe('pinTransitive: the composer exact-version require pin', () => {
     expect(out.text.endsWith('\n')).toBe(true);
     expect(out.text).toContain('  "require"'); // two-space style preserved
     expect(plan.revert).toContain('guzzlehttp/psr7');
+    // The deliberate-churn disclosure rides the plan onto the ledger:
+    // composer has no scoped lock resync, and the ledger says so.
+    expect(plan.notes?.join(' ')).toContain('unrelated packages');
   });
 
   it('refuses a direct dependency (require or require-dev) and non-JSON text', () => {

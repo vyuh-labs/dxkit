@@ -31,6 +31,7 @@ import {
   osvBlockTier,
   packStrategyAt,
   pickPinVersion,
+  pinVersionScheme,
   resolvePinCapability,
   runResyncInstall,
 } from './shared';
@@ -90,17 +91,18 @@ export async function executeOverridePin(
     };
   }
 
-  // The pin: the highest known CONCRETE fixed version clears every advisory
-  // at once. Prerelease-aware (1.2.3 outranks 1.2.3-beta.1); a range-shaped
-  // fixed string refuses rather than guesses (the registry's `matches`
-  // already tiers such orders to the agent, so this is the defensive rail).
-  const pin = pickPinVersion(fixedVersions);
+  // The pin: the highest known CONCRETE fixed version (under the owning
+  // pack's declared version grammar, the same scheme the registry's
+  // `matches` graded) clears every advisory at once. A range-shaped fixed
+  // string refuses rather than guesses (the planner already tiers such
+  // orders to the agent, so this is the defensive rail).
+  const pin = pickPinVersion(fixedVersions, pinVersionScheme(provider));
   if (pin === null) {
     return {
       kind: 'refused',
       reason:
-        `the known fixed versions for '${pkg}' are not all concrete semver values ` +
-        `(${fixedVersions.join(', ')}); a range cannot be pinned verbatim`,
+        `the known fixed versions for '${pkg}' are not all concrete versions this ` +
+        `ecosystem can pin verbatim (${fixedVersions.join(', ')})`,
     };
   }
 
@@ -109,7 +111,9 @@ export async function executeOverridePin(
   const plan = provider.plan({ cwd: ctx.cwd, rootDir, pkg, version: pin });
   if (plan.kind === 'refused') return { kind: 'refused', reason: plan.reason };
 
-  const notes: string[] = [];
+  // Pack-declared side-effect disclosures ride the ledger (composer's lock
+  // resync may refresh unrelated packages).
+  const notes: string[] = [...(plan.notes ?? [])];
 
   // $0 pre-check: would the pinned version itself carry a block-tier
   // advisory? A null answer (network) is disclosed and the re-audit verify

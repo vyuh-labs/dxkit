@@ -3,7 +3,7 @@
  * mapping rail, the per-manager pin plans as pure transforms on real
  * manifest fixtures (applied / refused / adversarial), the version-probe
  * parser total over garbage, and the per-manager install command. No
- * network, no spawns — everything here is the pure half of the seam.
+ * network, no spawns: everything here is the pure half of the seam.
  */
 import { describe, it, expect, afterEach } from 'vitest';
 import * as fs from 'fs';
@@ -87,9 +87,11 @@ describe('the import → distribution mapping (one table, the declare rail)', ()
   });
 
   it('refuses ambiguous aliases and injection shapes (false-negative bias)', () => {
-    expect(pyDistForImport('cv2')).toBeNull(); // three real distributions
+    expect(pyDistForImport('cv2')).toBeNull(); // two real distributions
     expect(pyDistForImport('google')).toBeNull();
     expect(pyDistForImport('Crypto')).toBeNull(); // pycryptodome vs pycrypto
+    expect(pyDistForImport('psycopg2')).toBeNull(); // the source dist vs -binary
+    expect(pyDistForImport('snowflake')).toBeNull(); // connector vs snowpark
     for (const bad of ['', '-x', '--index-url=https://evil', 'a b', 'a\nb', './missing']) {
       expect(pyDistForImport(bad), JSON.stringify(bad)).toBeNull();
       expect(declare.validSpecifier(bad), JSON.stringify(bad)).toBe(false);
@@ -146,7 +148,7 @@ describe('pinTransitive: the poetry + pipenv explicit-entry pins', () => {
     if (plan.kind !== 'plan') throw new Error(plan.reason);
     const out = plan.edit.transform(POETRY_PYPROJECT);
     if (!('text' in out)) throw new Error(out.refused);
-    expect(out.text).toContain('[tool.poetry.dependencies]\nurllib3 = "2.5.0"');
+    expect(out.text).toContain('[tool.poetry.dependencies]\n"urllib3" = "2.5.0"');
     expect(plan.revert).toContain('tool.poetry.dependencies');
   });
 
@@ -173,7 +175,7 @@ describe('pinTransitive: the poetry + pipenv explicit-entry pins', () => {
     expect(plan.edit.file).toBe('Pipfile');
     const out = plan.edit.transform(PIPFILE);
     if (!('text' in out)) throw new Error(out.refused);
-    expect(out.text).toContain('[packages]\nurllib3 = "==2.5.0"');
+    expect(out.text).toContain('[packages]\n"urllib3" = "==2.5.0"');
 
     const direct = planAt({ 'Pipfile.lock': '', Pipfile: PIPFILE }, 'requests');
     if (direct.kind !== 'plan') throw new Error(direct.reason);
@@ -181,6 +183,47 @@ describe('pinTransitive: the poetry + pipenv explicit-entry pins', () => {
     const dev = planAt({ 'Pipfile.lock': '', Pipfile: PIPFILE }, 'pytest');
     if (dev.kind !== 'plan') throw new Error(dev.reason);
     expect(dev.edit.transform(PIPFILE)).toHaveProperty('refused');
+  });
+
+  it('quotes dotted names always, so a dotted pin never parses as a dotted TOML key', () => {
+    const applied = planAt(
+      { 'poetry.lock': '', 'pyproject.toml': POETRY_PYPROJECT },
+      'zope.interface',
+      '6.4.1',
+    );
+    if (applied.kind !== 'plan') throw new Error(applied.reason);
+    const out = applied.edit.transform(POETRY_PYPROJECT);
+    if (!('text' in out)) throw new Error(out.refused);
+    expect(out.text).toContain('[tool.poetry.dependencies]\n"zope.interface" = "6.4.1"');
+
+    // A dotted DIRECT dependency still refuses, whichever quoting the
+    // manifest used for its key.
+    const dotted = POETRY_PYPROJECT.replace(
+      'requests = "^2.31"',
+      'requests = "^2.31"\n"ruamel.yaml" = "^0.18"',
+    );
+    const direct = planAt({ 'poetry.lock': '', 'pyproject.toml': dotted }, 'ruamel.yaml');
+    if (direct.kind !== 'plan') throw new Error(direct.reason);
+    expect(direct.edit.transform(dotted)).toHaveProperty('refused');
+
+    const pipenv = planAt({ 'Pipfile.lock': '', Pipfile: PIPFILE }, 'ruamel.yaml', '0.18.6');
+    if (pipenv.kind !== 'plan') throw new Error(pipenv.reason);
+    const pout = pipenv.edit.transform(PIPFILE);
+    if (!('text' in pout)) throw new Error(pout.refused);
+    expect(pout.text).toContain('[packages]\n"ruamel.yaml" = "==0.18.6"');
+    const pipfileDotted = PIPFILE.replace('requests = "*"', 'requests = "*"\n"ruamel.yaml" = "*"');
+    const pdirect = planAt({ 'Pipfile.lock': '', Pipfile: pipfileDotted }, 'ruamel.yaml');
+    if (pdirect.kind !== 'plan') throw new Error(pdirect.reason);
+    expect(pdirect.edit.transform(pipfileDotted)).toHaveProperty('refused');
+  });
+
+  it('uv: a PEP 735 [dependency-groups] entry is a direct dependency too (what uv add --dev writes)', () => {
+    const withGroups = UV_PYPROJECT + '\n[dependency-groups]\ndev = [\n    "pytest>=8.0",\n]\n';
+    const plan = planAt({ 'uv.lock': '', 'pyproject.toml': withGroups }, 'pytest', '8.3.0');
+    if (plan.kind !== 'plan') throw new Error(plan.reason);
+    const out = plan.edit.transform(withGroups);
+    expect(out).toHaveProperty('refused');
+    if ('refused' in out) expect(out.refused).toContain('direct dependency');
   });
 
   it('refuses a requirements-only root, an empty root, and injection-shaped tokens', () => {
@@ -201,6 +244,34 @@ describe('pinTransitive: the poetry + pipenv explicit-entry pins', () => {
   });
 });
 
+describe('the python pin-version grammar (PEP 440 releases, 2-segment included)', () => {
+  const scheme = pin.versions!;
+  it('accepts plain releases of any segment count; refuses ranges and unorderable markers', () => {
+    for (const ok of ['2.31', '2.5.0', '1.26.19', '4', '1.2.3.4']) {
+      expect(scheme.concrete(ok), ok).toBe(true);
+    }
+    for (const bad of [
+      '>=2.5',
+      '^2.5.0',
+      '~2.5',
+      '2.*',
+      '*',
+      '2.31.post1',
+      '2.31rc1',
+      '1!2.0',
+      '2.5.0+local',
+      '',
+    ]) {
+      expect(scheme.concrete(bad), bad).toBe(false);
+    }
+  });
+  it('orders numerically, missing segments as zero', () => {
+    expect(scheme.compare('2.31', '2.9')).toBeGreaterThan(0);
+    expect(scheme.compare('2.31', '2.31.0')).toBe(0);
+    expect(scheme.compare('2.30.1', '2.31')).toBeLessThan(0);
+  });
+});
+
 describe('declareDependency: probe parsing and the per-manager install command', () => {
   it('parses pip index versions output (header line, then the fallback list), null on garbage', () => {
     expect(
@@ -218,6 +289,33 @@ describe('declareDependency: probe parsing and the per-manager install command',
   it('probes the DISTRIBUTION the alias table names, never the raw import', () => {
     const probe = declare.versionProbe({ cwd: os.tmpdir(), rootDir: '', specifier: 'yaml' });
     expect(probe).toEqual({ bin: 'pip', args: ['index', 'versions', 'pyyaml'] });
+  });
+
+  it('probes through uv itself on a uv-managed root (uv venvs ship without pip), pip elsewhere', () => {
+    const uvRoot = rootWith({ 'uv.lock': '', 'pyproject.toml': UV_PYPROJECT });
+    expect(declare.versionProbe({ cwd: uvRoot, rootDir: '', specifier: 'yaml' })).toEqual({
+      bin: 'uv',
+      args: ['pip', 'install', '--dry-run', '--no-deps', 'pyyaml'],
+    });
+    const poetryRoot = rootWith({ 'poetry.lock': '', 'pyproject.toml': POETRY_PYPROJECT });
+    expect(declare.versionProbe({ cwd: poetryRoot, rootDir: '', specifier: 'yaml' })).toEqual({
+      bin: 'pip',
+      args: ['index', 'versions', 'pyyaml'],
+    });
+    // uv's dry-run output parses through the same total parser.
+    expect(
+      declare.parseProbeOutput(
+        'Resolved 1 package in 49ms\nWould install 1 package\n + pyyaml==6.0.2\n',
+      ),
+    ).toBe('6.0.2');
+    // uv without a provisioned venv is an environment fact, never a
+    // verdict on the specifier.
+    expect(
+      declare.probeInfrastructure!(
+        'error: No virtual environment found; run `uv venv` to create an environment',
+      ),
+    ).toBe(true);
+    expect(declare.probeInfrastructure!('requirements are unsatisfiable')).toBe(false);
   });
 
   it('the install command follows the owning root strategy manager, dev section included', () => {

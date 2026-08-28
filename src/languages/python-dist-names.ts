@@ -9,38 +9,56 @@
  * consumers, per CLAUDE.md Rule 2.30.
  */
 
-/** Known import-name → distribution-name divergences. Multiple candidates
- *  mean the import is served by genuinely DIFFERENT distributions (or by
- *  spelling variants that fold together under PEP 503). Curated, biased
- *  small: an absent entry means "the import name IS the distribution
- *  name", the ecosystem's dominant convention. */
+/**
+ * Known import-name → distribution-name divergences. An entry is an
+ * INSTALL DECISION, not just an exemption: a single candidate means "this
+ * is THE distribution declaring the import installs" (the declare recipe
+ * acts on it), so a single candidate is declared only where the mapping is
+ * unambiguous in practice. Multiple candidates mean the import is served
+ * by genuinely DIFFERENT distributions; declare refuses those to the agent
+ * tier, and the resolution check exempts a declared ANY of them. All names
+ * compare under PEP 503 normalization, so spelling variants of one
+ * distribution need no duplicate entries. Curated, biased small: an
+ * absent entry means "the import name IS the distribution name", the
+ * ecosystem's dominant convention.
+ */
 export const PY_MODULE_DIST_ALIASES: Readonly<Record<string, readonly string[]>> = {
   yaml: ['pyyaml'],
   PIL: ['pillow'],
-  sklearn: ['scikit-learn', 'scikit_learn'],
+  sklearn: ['scikit-learn'],
   bs4: ['beautifulsoup4'],
-  cv2: ['opencv-python', 'opencv-python-headless', 'opencv_python'],
-  dotenv: ['python-dotenv', 'python_dotenv'],
-  dateutil: ['python-dateutil', 'python_dateutil'],
-  jose: ['python-jose', 'python_jose'],
+  cv2: ['opencv-python', 'opencv-python-headless'],
+  dotenv: ['python-dotenv'],
+  dateutil: ['python-dateutil'],
+  jose: ['python-jose'],
+  // A dist literally named "jwt" exists, but pyjwt is the overwhelmingly
+  // dominant provider of the `jwt` module; installing the niche homonym
+  // would be the wrong call far more often than this mapping is.
   jwt: ['pyjwt'],
+  // pycryptodome is the maintained drop-in, but pycrypto code still exists
+  // in the wild: two real distributions, so declare refuses.
   Crypto: ['pycryptodome', 'pycrypto'],
-  magic: ['python-magic', 'python_magic'],
+  magic: ['python-magic'],
   git: ['gitpython'],
   github: ['pygithub'],
-  docx: ['python-docx', 'python_docx'],
-  pptx: ['python-pptx', 'python_pptx'],
-  slugify: ['python-slugify', 'python_slugify'],
+  docx: ['python-docx'],
+  pptx: ['python-pptx'],
+  slugify: ['python-slugify'],
   MySQLdb: ['mysqlclient'],
-  psycopg2: ['psycopg2-binary', 'psycopg2_binary'],
+  // `import psycopg2` is genuinely served by two distinct distributions
+  // (the source dist and the -binary wheels), and which one a deployment
+  // wants is a real decision: declare refuses, the checker exempts both.
+  psycopg2: ['psycopg2', 'psycopg2-binary'],
   attr: ['attrs'],
   serial: ['pyserial'],
   usb: ['pyusb'],
   OpenSSL: ['pyopenssl'],
   wx: ['wxpython'],
   fitz: ['pymupdf'],
-  kafka: ['kafka-python', 'kafka_python'],
-  snowflake: ['snowflake-connector-python', 'snowflake_connector_python'],
+  kafka: ['kafka-python'],
+  // The connector and snowpark both own the `snowflake` namespace package:
+  // two real distributions, so declare refuses and either exempts.
+  snowflake: ['snowflake-connector-python', 'snowflake-snowpark-python'],
   google: ['protobuf', 'google-api-python-client', 'google-cloud-storage'],
 };
 

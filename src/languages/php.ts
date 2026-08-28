@@ -699,6 +699,10 @@ const phpInstallStrategy = declareInstallStrategy(
           // `composer update` is composer's own lock-writing resync (its
           // stale-lock error names it as the remedy): re-resolve within
           // the manifest's constraints, rewrite composer.lock, install.
+          // DELIBERATE churn: composer has no scoped resync dxkit can
+          // name, so unrelated packages may refresh within their declared
+          // constraints; the pin capability discloses this on the ledger
+          // and the re-audit + guardrail check the whole tree.
           resync: { primary: { bin: 'composer', args: ['update'] }, fallbacks: [] },
         },
         // `composer validate` checks the lock against composer.json by

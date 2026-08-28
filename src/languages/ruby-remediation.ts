@@ -29,8 +29,10 @@ import type {
   ManifestTextEdit,
   PinPlanResult,
   PinTransitiveProvider,
+  PinVersionScheme,
   RemediationSupport,
 } from './capabilities/remediation';
+import { compareNumericSegments } from './capabilities/remediation';
 
 /** Remediation commands run on the ambient ruby toolchain (bundler and gem
  *  ship with it), any host, no build. */
@@ -63,7 +65,14 @@ function escapeRegExp(s: string): string {
 }
 
 /** The explicit-entry pin as a PURE text transform: append the exact-
- *  version gem line at the Gemfile's top level. */
+ *  version gem line at the Gemfile's top level.
+ *
+ *  Documented residual: a Gemfile whose dependencies come through a
+ *  `gemspec` directive declares them in the .gemspec, which this transform
+ *  does not read, so a gem direct there is not refused here. The append is
+ *  still safe: an incompatible explicit pin fails the resync loudly
+ *  (bundler cannot resolve both constraints) and the runner discards the
+ *  diff; nothing lands silently wrong. */
 function gemfilePinTransform(pkg: string, version: string): ManifestTextEdit['transform'] {
   return (text) => {
     if (!/^\s*(source|gem|gemspec)\b/m.test(text)) {
@@ -85,9 +94,22 @@ function gemfilePinTransform(pkg: string, version: string): ManifestTextEdit['tr
   };
 }
 
+/**
+ * The ruby pin-version grammar (Rule 6): RubyGems security releases are
+ * routinely FOUR-segment (the rails family ships 7.0.8.7-style fixes, the
+ * highest-volume gem advisory class), which npm's x.y.z default would tier
+ * to the agent wholesale. Plain numeric release segments only; prerelease
+ * letters, ranges and wildcards refuse (false-negative bias).
+ */
+const rubyPinVersions: PinVersionScheme = {
+  concrete: (v) => /^\d+(\.\d+){0,4}$/.test(v),
+  compare: compareNumericSegments,
+};
+
 const rubyPinTransitive: PinTransitiveProvider = {
   manifestFiles: ['Gemfile'],
   osvEcosystem: 'RubyGems',
+  versions: rubyPinVersions,
   plan(ctx): PinPlanResult {
     // Rule 11: both tokens land in manifest text verbatim.
     if (!isValidGemName(ctx.pkg) || !GEM_VERSION.test(ctx.version)) {

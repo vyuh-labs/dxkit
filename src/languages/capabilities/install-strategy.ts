@@ -168,6 +168,16 @@ export type LockfileSyncCheck =
       readonly kind: 'command';
       readonly command: InstallCommand;
       readonly tolerates: readonly ToleranceClass[];
+      /**
+       * OPTIONAL classifier for a failure that is NOT lockfile drift, when
+       * the ecosystem's only check also validates other things (poetry
+       * check validates the whole pyproject alongside the lock). Returns
+       * the full disclosure sentence to print INSTEAD of the resync
+       * remedy, or null for a real drift. Pure; biased toward false
+       * negatives (uncertain output keeps the drift reading, since the
+       * frozen install would fail on it either way).
+       */
+      readonly classifyFailure?: (output: string) => string | null;
     }
   | { readonly kind: 'skipped'; readonly reason: string };
 

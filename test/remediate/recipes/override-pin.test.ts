@@ -13,6 +13,8 @@ import {
   isConcreteSemver,
   pickPinVersion,
 } from '../../../src/remediate/recipes/shared';
+import { rubyRemediation } from '../../../src/languages/ruby-remediation';
+import type { PinTransitiveProvider } from '../../../src/languages/capabilities/remediation';
 import { advisoryFinding, depFinding, fakeExec, makeCtx, makeOrder, tempRepo } from './helpers';
 
 const PKG = JSON.stringify({ name: 'fx', version: '1.0.0', dependencies: { top: '^1.0.0' } });
@@ -42,6 +44,48 @@ describe('the pin choice (semver precedence, prerelease rules included)', () => 
     expect(isConcreteSemver('>=4.1.0')).toBe(false);
     expect(isConcreteSemver('^4.1.0')).toBe(false);
     expect(pickPinVersion(['4.1.0', '>=4.1.1'])).toBeNull();
+  });
+
+  it('honors a pack-declared version grammar: RubyGems 4-segment fixes pick numerically', () => {
+    const scheme = (rubyRemediation.pinTransitive as { provider: PinTransitiveProvider }).provider
+      .versions!;
+    // The default x.y.z grammar refuses the rails-family fix shape...
+    expect(pickPinVersion(['6.1.7.10', '6.1.7.9'])).toBeNull();
+    // ...the owning pack's grammar pins it, ordered numerically.
+    expect(pickPinVersion(['6.1.7.10', '6.1.7.9'], scheme)).toBe('6.1.7.10');
+    expect(pickPinVersion(['7.0.8', '7.0.8.7'], scheme)).toBe('7.0.8.7');
+    expect(pickPinVersion(['7.0.8.7', '>= 7.0.8'], scheme)).toBeNull();
+  });
+});
+
+describe('override-pin recipe (php pack: composer require pin + churn disclosure)', () => {
+  const COMPOSER = JSON.stringify(
+    { name: 'acme/app', require: { 'guzzlehttp/guzzle': '^7.8' } },
+    null,
+    2,
+  );
+
+  it('applies through the composer declarations and carries the deliberate-churn note', async () => {
+    const cwd = tempRepo({ 'composer.json': COMPOSER + '\n', 'composer.lock': '{}' });
+    const { exec, calls } = fakeExec();
+    const order = makeOrder({
+      id: 'dep-advisory:guzzlehttp/psr7',
+      class: 'dep-advisory',
+      findings: [advisoryFinding('f1', 'guzzlehttp/psr7', 'GHSA-pppp', '2.7.1')],
+      envelope: { paths: ['composer.json', 'composer.lock'], manifests: true },
+    });
+    const outcome = await executeOverridePin(order, makeCtx(cwd, { exec }));
+    expect(outcome.kind).toBe('applied');
+    const manifest = JSON.parse(fs.readFileSync(path.join(cwd, 'composer.json'), 'utf8')) as {
+      require: Record<string, string>;
+    };
+    expect(manifest.require['guzzlehttp/psr7']).toBe('2.7.1');
+    expect(calls.some((c) => c.cmd.bin === 'composer' && c.cmd.args[0] === 'update')).toBe(true);
+    if (outcome.kind === 'applied') {
+      expect(outcome.changedFiles).toEqual(['composer.json', 'composer.lock']);
+      expect(outcome.notes?.join(' ')).toContain('unrelated packages');
+      expect(outcome.revert).toContain('guzzlehttp/psr7');
+    }
   });
 });
 
