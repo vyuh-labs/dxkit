@@ -305,18 +305,27 @@ export function unresolvedOrderIds(
     for (const id of scope.absentIds) {
       const pairs = json.pairs.filter((p) => p.priorId === id || p.currentId === id);
       if (pairs.length === 0) continue; // no pair on an observed kind: closed
-      if (pairs.some((p) => p.status === 'not_observed')) unobservedIds.push(id);
-      else if (pairs.some((p) => !CLOSED_STATUSES.has(p.status))) unresolved.push(id);
+      // Present-side evidence first: a pair carrying the id on the CURRENT
+      // side with a non-closed status means the finding is still here. A
+      // pair with NO current side is gone from the tree, but when its
+      // status is still not a closed one (`not_observed`, or the removed-
+      // direction `tooling_drift` demotion on a recall-drifted kind) the
+      // disappearance is unattributable: undecidable, never "still present".
+      if (pairs.some((p) => p.currentId !== undefined && !CLOSED_STATUSES.has(p.status))) {
+        unresolved.push(id);
+      } else if (pairs.some((p) => !CLOSED_STATUSES.has(p.status))) {
+        unobservedIds.push(id);
+      }
     }
     if (unresolved.length > 0) return { unresolved };
     if (unobservedIds.length > 0) {
       return {
         unresolved: [],
         undecidable:
-          `the gate run did not observe ${unobservedIds.length} of the order's target ` +
+          `the gate run could not verify ${unobservedIds.length} of the order's target ` +
           `finding(s) (${unobservedIds.join(', ')}): their file or check was outside what ` +
-          `this run scanned (an incremental scan covers changed files only), so they ` +
-          `cannot be read as closed`,
+          `this run scanned (an incremental scan covers changed files only), or recall ` +
+          `drift made their disappearance unattributable, so they cannot be read as closed`,
       };
     }
     return { unresolved: [] };

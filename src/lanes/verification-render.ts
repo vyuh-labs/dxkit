@@ -13,6 +13,7 @@ import {
   formatImpactCapNote,
   formatImpactExclusions,
   formatImpactHeadline,
+  formatImpactNotAttributable,
   formatImpactQuietLine,
   type ImpactSummary,
 } from '../baseline/impact';
@@ -99,6 +100,13 @@ export function renderGuardrailVerdict(
   if (!verdict) return [];
   const lines = [`Guardrail: **${verdict}**`, ''];
   if (impact) {
+    if (!impact.attributable) {
+      // A refused run (CANNOT GATE) cannot back a resolved claim: the
+      // one-liner replaces both the headline and the quiet line.
+      lines.push(`Impact: ${formatImpactNotAttributable()}`);
+      lines.push('');
+      return lines;
+    }
     if (impact.resolved > 0) {
       lines.push(`Impact: ${formatImpactHeadline(impact)}`);
       for (const note of impact.capNotes) lines.push(`- ${formatImpactCapNote(note)}`);

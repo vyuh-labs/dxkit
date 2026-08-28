@@ -66,6 +66,7 @@ describe('renderFloorVerification scope line', () => {
 
 function impact(over: Partial<ImpactSummary> = {}): ImpactSummary {
   return {
+    attributable: true,
     resolved: 0,
     resolvedByKind: [],
     added: 0,
@@ -111,7 +112,9 @@ describe('renderGuardrailVerdict impact line', () => {
       'Impact: -3 findings resolved (dep-vuln: 2 high, 1 medium) · +0 added by this change',
     );
     expect(text).toContain('security stays 40, capped by 8 baseline secrets committed');
-    expect(text).toContain('Not counted (cannot attribute to this change): 2 tooling drift.');
+    expect(text).toContain(
+      'Not counted (cannot attribute to this change): 2 demoted to tooling drift.',
+    );
   });
 
   it('a run that resolved nothing gets the one quiet line', () => {
@@ -119,6 +122,24 @@ describe('renderGuardrailVerdict impact line', () => {
     expect(text).toContain(
       'Impact: No debt impact: this change neither resolves nor adds findings.',
     );
+  });
+
+  it('a refused run (not attributable) gets the one-liner, never a resolved claim', () => {
+    const lines = renderGuardrailVerdict(
+      'CANNOT GATE',
+      impact({
+        attributable: false,
+        resolved: 3,
+        net: 3,
+        resolvedByKind: [
+          { kind: 'dep-vuln', count: 3, bySeverity: [{ severity: 'high', count: 3 }] },
+        ],
+      }),
+    );
+    const text = lines.join('\n');
+    expect(text).toContain('Guardrail: **CANNOT GATE**');
+    expect(text).toContain('Impact: Impact not attributable this run');
+    expect(text).not.toContain('findings resolved');
   });
 
   it('no impact summary renders the verdict line alone (backward compatible)', () => {

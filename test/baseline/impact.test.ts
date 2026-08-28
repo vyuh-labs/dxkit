@@ -16,6 +16,7 @@ import {
   formatImpactCapNote,
   formatImpactExclusions,
   formatImpactHeadline,
+  formatImpactNotAttributable,
   formatImpactQuietLine,
   type ImpactScoreInput,
 } from '../../src/baseline/impact';
@@ -103,6 +104,7 @@ describe('deriveImpact: the attributable finding delta', () => {
   it('a neutral change is all zeros, reported as zeros (never omitted)', () => {
     const impact = deriveImpact(input([pair('persisted'), pair('relocated')]));
     expect(impact).toEqual({
+      attributable: true,
       resolved: 0,
       resolvedByKind: [],
       added: 0,
@@ -134,6 +136,7 @@ describe('deriveImpact: the attributable finding delta', () => {
     const impact = deriveImpact(
       input([
         pair('config_drift'),
+        pair('newly_detected'),
         pair('newly_published_advisory'),
         pair('uncertain'),
         pair('probable_existing'),
@@ -143,6 +146,7 @@ describe('deriveImpact: the attributable finding delta', () => {
     expect(impact.resolved).toBe(0);
     expect(impact.excluded.map((e) => e.status).sort()).toEqual([
       'config_drift',
+      'newly_detected',
       'newly_published_advisory',
       'probable_existing',
       'uncertain',
@@ -189,6 +193,34 @@ describe('deriveImpact: the attributable finding delta', () => {
       requiredNotObserved: [],
     } as unknown as GuardrailCheckResult;
     expect(impact.resolved).toBe(verdictCounts(minimal).resolved);
+  });
+});
+
+describe('deriveImpact: the whole-run refusal flag (finding-level Rule 19 is not enough)', () => {
+  it('attributable is false while an attribution gap exists', () => {
+    const impact = deriveImpact({
+      ...input([pair('removed'), pair('removed')]),
+      attributionGaps: [{ kind: 'secret', rules: ['newSecret'], findingCount: 1 }],
+    });
+    expect(impact.attributable).toBe(false);
+    // The counts are still data (plainly flagged), never fabricated to zero.
+    expect(impact.resolved).toBe(2);
+  });
+
+  it('attributable is false while a required observation is missing', () => {
+    const impact = deriveImpact({
+      ...input([pair('removed')]),
+      requiredNotObserved: [{ reason: 'check x not observed', remedy: 'run it' }],
+    });
+    expect(impact.attributable).toBe(false);
+  });
+
+  it('attributable is true on a healthy run, gaps present-but-empty included', () => {
+    expect(deriveImpact(input([pair('removed')])).attributable).toBe(true);
+    expect(
+      deriveImpact({ ...input([pair('removed')]), attributionGaps: [], requiredNotObserved: [] })
+        .attributable,
+    ).toBe(true);
   });
 });
 
@@ -275,7 +307,7 @@ describe('the one impact phrasing', () => {
       input([pair('removed'), pair('not_observed'), pair('tooling_drift'), pair('tooling_drift')]),
     );
     expect(formatImpactExclusions(impact)).toBe(
-      'Not counted (cannot attribute to this change): 1 not re-verified this run, 2 tooling drift.',
+      'Not counted (cannot attribute to this change): 1 not re-verified this run, 2 demoted to tooling drift.',
     );
     expect(formatImpactExclusions(deriveImpact(input([pair('removed')])))).toBeNull();
   });
@@ -287,5 +319,35 @@ describe('the one impact phrasing', () => {
     expect(formatImpactQuietLine(deriveImpact(input([pair('added'), pair('added')])))).toBe(
       'No findings resolved by this change; the +2 it adds are reported with the guardrail findings.',
     );
+  });
+
+  it('quiet line: excluded delta pairs forbid the plain "no debt impact" claim', () => {
+    // An advisory wave: every delta pair is newly_published_advisory. The
+    // change did not add them, but "neither resolves nor adds" would read
+    // as a clean bill above blocking tables: say what could not be
+    // attributed instead.
+    const wave = deriveImpact(
+      input([pair('newly_published_advisory'), pair('newly_published_advisory')]),
+    );
+    expect(formatImpactQuietLine(wave)).toBe(
+      'No attributable debt impact; 2 findings could not be attributed to this change ' +
+        '(2 from advisories published after baseline capture).',
+    );
+    // A pure tooling-drift run reads the same shape.
+    const drift = deriveImpact(input([pair('tooling_drift')]));
+    expect(formatImpactQuietLine(drift)).toBe(
+      'No attributable debt impact; 1 finding could not be attributed to this change ' +
+        '(1 demoted to tooling drift).',
+    );
+    // Added-and-excluded: both facts ride the line.
+    const mixed = deriveImpact(input([pair('added'), pair('tooling_drift')]));
+    expect(formatImpactQuietLine(mixed)).toBe(
+      'No findings resolved by this change; the +1 it adds are reported with the guardrail ' +
+        'findings. Not counted (cannot attribute to this change): 1 demoted to tooling drift.',
+    );
+  });
+
+  it('the not-attributable one-liner claims nothing in either direction', () => {
+    expect(formatImpactNotAttributable()).toContain('no resolved or added claim');
   });
 });

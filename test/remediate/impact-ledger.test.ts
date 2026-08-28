@@ -14,6 +14,7 @@ import type { VerifyTreeResult } from '../../src/lanes/verify-tree';
 import type { ImpactSummary } from '../../src/baseline/impact';
 
 const IMPACT: ImpactSummary = {
+  attributable: true,
   resolved: 2,
   resolvedByKind: [{ kind: 'dep-vuln', count: 2, bySeverity: [{ severity: 'high', count: 2 }] }],
   added: 0,

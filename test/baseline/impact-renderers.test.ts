@@ -17,7 +17,7 @@
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { execFileSync } from 'child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { createBaseline } from '../../src/baseline/create';
@@ -32,6 +32,8 @@ import type { ImpactScoreInput } from '../../src/baseline/impact';
 import type { ClassifiedPair } from '../../src/gate/result';
 import type { BaselineEntry, FindingSeverity, FindingStatus } from '../../src/baseline/types';
 import { trustedLocalContext } from '../../src/analysis-trust';
+import { deriveImpact } from '../../src/baseline/impact';
+import { findTool, TOOL_DEFS } from '../../src/analyzers/tools/tool-registry';
 
 function git(dir: string, args: string[]): void {
   execFileSync('git', args, { cwd: dir, stdio: 'ignore' });
@@ -115,7 +117,11 @@ describe('the Impact section reaches every check surface', () => {
     expect(md).toContain(
       '-3 findings resolved (dep-vuln: 2 high, 1 medium) · +0 added by this change',
     );
-    // Above the fold: before the collapsed Resolved detail.
+    // Above the fold: directly after the summary sentence (which closes the
+    // heading block) and before the collapsed Resolved detail. This is the
+    // slot the attribution-gap banner also occupies on a refused run, so
+    // the position is part of the contract.
+    expect(md.indexOf('### Impact')).toBeGreaterThan(md.indexOf('3 resolved.'));
     expect(md.indexOf('### Impact')).toBeLessThan(md.indexOf('<summary>Resolved'));
   });
 
@@ -156,7 +162,7 @@ describe('the Impact section reaches every check surface', () => {
     });
     expect(md).toContain('-3 findings resolved');
     expect(md).toContain(
-      'Not counted (cannot attribute to this change): 1 not re-verified this run, 1 tooling drift.',
+      'Not counted (cannot attribute to this change): 1 not re-verified this run, 1 demoted to tooling drift.',
     );
   });
 
@@ -178,6 +184,7 @@ describe('the Impact section reaches every check surface', () => {
   it('json: the impact field is always present, zero reported as zero', () => {
     const neutral = renderJson(base);
     expect(neutral.impact).toEqual({
+      attributable: true,
       resolved: 0,
       resolvedByKind: [],
       added: 0,
@@ -230,4 +237,161 @@ describe('the Impact section reaches every check surface', () => {
     const json = renderJson({ ...base, pairs: [...base.pairs, ...RESOLVING_PAIRS] });
     expect(json.impact?.resolved).toBe(json.summary.resolved);
   });
+});
+
+// A synthetic attribution gap: the shape the refusal tier carries.
+const GAP = { kind: 'secret', rules: ['newSecret'], findingCount: 1 };
+
+describe('a refused run (CANNOT GATE) never renders a resolved claim (Rule 19 at run level)', () => {
+  let base: GuardrailCheckResult;
+  let dir: string;
+
+  beforeAll(async () => {
+    dir = makeRepo();
+    await createBaseline({ cwd: dir });
+    base = await runGuardrailCheck({ trust: trustedLocalContext(), cwd: dir });
+  }, 120_000);
+
+  afterAll(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  function refused(): GuardrailCheckResult {
+    return {
+      ...base,
+      pairs: [...base.pairs, ...RESOLVING_PAIRS],
+      attributionGaps: [GAP],
+    } as unknown as GuardrailCheckResult;
+  }
+
+  it('markdown: the one-liner replaces the section, ahead of the gap banner', () => {
+    const md = renderMarkdown(refused());
+    expect(md).not.toContain('findings resolved');
+    expect(md).not.toContain('### Impact');
+    expect(md).toContain('Impact not attributable this run');
+    // Ordering (the slot contract): after the verdict heading, before the
+    // attribution-gap banner it defers to.
+    expect(md.indexOf('Impact not attributable')).toBeGreaterThan(md.indexOf('## Guardrail'));
+    expect(md.indexOf('Impact not attributable')).toBeLessThan(md.indexOf('Cannot attribute'));
+  });
+
+  it('console: same suppression, same one-liner', () => {
+    const out = renderConsole(refused());
+    expect(out).not.toContain('findings resolved');
+    expect(out).toContain('Impact not attributable this run');
+  });
+
+  it('json: the impact field carries the counts flagged not attributable', () => {
+    const json = renderJson(refused());
+    expect(json.impact?.attributable).toBe(false);
+    expect(json.impact?.resolved).toBe(3);
+    expect(json.verdict.refused).toBe(true);
+  });
+
+  it('a missing required observation refuses the same way', () => {
+    const req = {
+      ...base,
+      pairs: [...base.pairs, ...RESOLVING_PAIRS],
+      requiredNotObserved: [{ check: 'x', reason: 'check x not observed', remedy: 'run it' }],
+    } as unknown as GuardrailCheckResult;
+    expect(renderMarkdown(req)).not.toContain('findings resolved');
+    expect(renderJson(req).impact?.attributable).toBe(false);
+  });
+});
+
+describe('the quiet line under unattributable delta pairs (advisory wave, tooling drift)', () => {
+  let base: GuardrailCheckResult;
+  let dir: string;
+
+  beforeAll(async () => {
+    dir = makeRepo();
+    await createBaseline({ cwd: dir });
+    base = await runGuardrailCheck({ trust: trustedLocalContext(), cwd: dir });
+  }, 120_000);
+
+  afterAll(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('an advisory wave never reads as "no debt impact" above its own blocking tables', () => {
+    const wave = {
+      ...base,
+      pairs: [
+        ...base.pairs,
+        pair('newly_published_advisory', { kind: 'dep-vuln', severity: 'high' }),
+        pair('newly_published_advisory', { kind: 'dep-vuln', severity: 'high' }),
+      ],
+    } as unknown as GuardrailCheckResult;
+    const md = renderMarkdown(wave);
+    expect(md).not.toContain('No debt impact');
+    expect(md).toContain('No attributable debt impact; 2 findings could not be attributed');
+    expect(md).toContain('from advisories published after baseline capture');
+  });
+
+  it('a pure tooling-drift run reads the same honest shape', () => {
+    const drift = {
+      ...base,
+      pairs: [...base.pairs, pair('tooling_drift', { kind: 'code' })],
+    } as unknown as GuardrailCheckResult;
+    const md = renderMarkdown(drift);
+    expect(md).not.toContain('No debt impact');
+    expect(md).toContain('No attributable debt impact; 1 finding could not be attributed');
+  });
+});
+
+// The end-to-end pin for the classifier fix (the removed direction of Rule
+// 19): a finding GONE on a kind whose recall drifted must never headline as
+// resolved. Needs a real secret scanner: the fixture plants a secret,
+// baselines it, deletes it, then strips the baseline's recall so every kind
+// drifts (exactly what a pre-Rule-19 baseline looks like).
+const gitleaksAvailable = findTool(TOOL_DEFS.gitleaks, process.cwd()).available;
+// Assembled at runtime so the dxkit repo's own secret scan never sees an
+// AKIA-shaped literal here; the fixture file the test writes carries the
+// full value, which is what the fixture's scan must find.
+const FAKE_AWS_KEY = ['AKIA', 'Q3EGRI', 'J7MZ4KX2B6'].join('');
+
+describe('a drifted kind cannot headline resolved findings (end to end)', () => {
+  it.skipIf(!gitleaksAvailable)(
+    'a secret gone under absent recall reads tooling_drift, never "-1 resolved"',
+    async () => {
+      const dir = makeRepo();
+      writeFileSync(
+        join(dir, 'src', 'config.js'),
+        `const key = '${FAKE_AWS_KEY}';\nmodule.exports = key;\n`,
+      );
+      git(dir, ['add', '.']);
+      git(dir, ['commit', '-q', '-m', 'add config']);
+      await createBaseline({ cwd: dir });
+      // The "fix" that is not a fix: the secret file disappears AND the
+      // baseline loses its recall evidence (a pre-Rule-19 baseline).
+      rmSync(join(dir, 'src', 'config.js'));
+      git(dir, ['add', '.']);
+      git(dir, ['commit', '-q', '-m', 'drop config']);
+      const baselinePath = join(dir, '.dxkit', 'baselines', 'main.json');
+      const file = JSON.parse(readFileSync(baselinePath, 'utf8')) as Record<string, unknown>;
+      delete file.recall;
+      writeFileSync(baselinePath, JSON.stringify(file, null, 2) + '\n');
+
+      const result = await runGuardrailCheck({ trust: trustedLocalContext(), cwd: dir });
+      const goneSecrets = result.pairs.filter(
+        (p) => p.kind === 'secret' && p.pair.currentId === undefined,
+      );
+      expect(goneSecrets.length).toBeGreaterThan(0);
+      // The classifier, not the impact module, makes the call: the pair is
+      // tooling_drift with a fixed verdict, so verdictCounts().resolved and
+      // impact.resolved agree by construction.
+      expect(goneSecrets.every((p) => p.classification.status === 'tooling_drift')).toBe(true);
+      expect(goneSecrets.every((p) => !p.classification.blocks && !p.classification.warns)).toBe(
+        true,
+      );
+      const impact = deriveImpact(result);
+      expect(impact.resolved).toBe(0);
+      expect(impact.excluded.some((e) => e.status === 'tooling_drift')).toBe(true);
+      const md = renderMarkdown(result);
+      expect(md).not.toMatch(/-\d+ findings? resolved/);
+      expect(md).toContain('No attributable debt impact');
+      rmSync(dir, { recursive: true, force: true });
+    },
+    120_000,
+  );
 });

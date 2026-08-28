@@ -66,6 +66,7 @@ import {
   formatImpactCapNote,
   formatImpactExclusions,
   formatImpactHeadline,
+  formatImpactNotAttributable,
   formatImpactQuietLine,
 } from './impact';
 import type { ImpactScoreInput, ImpactSummary } from './impact';
@@ -423,12 +424,18 @@ export function renderConsole(result: GuardrailCheckResult, opts?: CheckRenderOp
 
   // The Impact block (impact surface phase 1): what this change did to the
   // repo's debt, attribution-honest (only classifier-`removed` pairs count
-  // as resolved). Non-zero only: the summary footer already reports zero
+  // as resolved). A run that REFUSED to gate cannot back a resolved claim
+  // either, so it gets the not-attributable one-liner instead of any tally.
+  // Otherwise non-zero only: the summary footer already reports zero
   // resolved, so a neutral run gets no extra block here (the quiet line is
   // a PR-comment concern).
   {
     const impact = deriveImpact(result, opts?.impactScores);
-    if (impact.resolved > 0) {
+    if (!impact.attributable) {
+      lines.push(logger.bold('Impact'));
+      lines.push(`  ${formatImpactNotAttributable()}`);
+      lines.push('');
+    } else if (impact.resolved > 0) {
       lines.push(logger.bold('Impact'));
       lines.push(`  ${formatImpactHeadline(impact)}`);
       for (const note of impact.capNotes) lines.push(`  ${formatImpactCapNote(note)}`);
@@ -1839,10 +1846,16 @@ export function renderMarkdown(result: GuardrailCheckResult, opts?: CheckRenderO
   // change did to the repo's debt, resolved side first. Non-zero only (UX
   // call 1); a change that resolves nothing gets the one quiet line. The
   // added/blocking side stays with the existing finding tables below,
-  // Impact counts it but never re-lists it (one concept, one section).
+  // Impact counts it but never re-lists it (one concept, one section). A
+  // run that REFUSED to gate renders neither: a "-N resolved" beside a
+  // CANNOT GATE heading would claim exactly what the refusal says cannot
+  // be claimed, so the one-liner defers to the gap banner directly below.
   {
     const impact = deriveImpact(result, opts?.impactScores);
-    if (impact.resolved > 0) {
+    if (!impact.attributable) {
+      lines.push(`_${escapeMd(formatImpactNotAttributable())}_`);
+      lines.push('');
+    } else if (impact.resolved > 0) {
       lines.push('### Impact');
       lines.push('');
       lines.push(escapeMd(formatImpactHeadline(impact)));
