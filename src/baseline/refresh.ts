@@ -60,7 +60,7 @@ import type { BaselineEntry } from './types';
 import type { BaselineFile } from './baseline-file';
 import { isSanitized } from './sanitize';
 import { loadAnchorFromBranch } from './anchor';
-import { readFromAnchorRef } from './anchor-publish';
+import { invalidateAnchorReadMemo, readFromAnchorRef } from './anchor-publish';
 import { loadPolicyFromCwd, type BaselineSection } from './policy';
 import { resolveBaselineMode } from './modes';
 import { deferAdvisoryExpiryDate } from '../allowlist/categories';
@@ -236,6 +236,11 @@ function commitFileToDecisionBranch(
   const tree = git(['write-tree']).trim();
   const commit = git(['commit-tree', tree, '-p', 'HEAD', '-m', message]).trim();
   git(internalGitPushArgs(`${commit}:refs/heads/${ADVISORY_DECISION_BRANCH}`, { force: true }));
+  // This push can CREATE the decision ref, so the anchor reader's per-process
+  // absent-ref memo must forget it (the writer contract on the memo): the
+  // next refresh in this process re-reads the branch instead of treating
+  // every held-out advisory as brand new (which would roll its expiry).
+  invalidateAnchorReadMemo(ADVISORY_DECISION_BRANCH);
 }
 
 /** The decision PR's body: the advisory table + the two lanes, stated once. */

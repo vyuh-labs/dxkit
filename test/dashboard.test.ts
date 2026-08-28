@@ -233,6 +233,77 @@ describe('analyzeDashboard', () => {
     expect(result.html).toContain(path.basename(tmp));
   });
 
+  it('renders the overall-score trend sparkline in the hero from the snapshot history (impact P3)', () => {
+    write('health-audit-2026-05-11.md', '# Health');
+    write(
+      'health-audit-2026-05-11-detailed.json',
+      JSON.stringify({ summary: { overallScore: 24, rating: 'D' }, dimensions: {} }),
+    );
+    const historyEntry = (sha: string, overall: number, methodology: string) => ({
+      sha,
+      date: '2026-07-20T00:00:00.000Z',
+      dxkitVersion: '4.4.7',
+      methodology,
+      scores: {
+        overall,
+        security: 40,
+        quality: 60,
+        tests: 55,
+        documentation: 30,
+        maintainability: 70,
+        developerExperience: 65,
+      },
+    });
+    const result = analyzeDashboard(tmp, {
+      readHistory: () => [
+        historyEntry('aaa', 24, 'spec-v1'),
+        historyEntry('bbb', 24, 'spec-v1'),
+        historyEntry('ccc', 26, 'spec-v2'),
+      ],
+    });
+    expect(result.html).toContain('hero-trend');
+    // Two comparability segments joined by the gap marker, never one line.
+    expect(result.html).toContain('▂▂ ┊ ▃');
+    expect(result.html).toContain('Repo trend: overall 26');
+    // No history => no trend row, dashboard unaffected.
+    const bare = analyzeDashboard(tmp, { readHistory: () => [] });
+    expect(bare.html).not.toContain('hero-trend"');
+    // A throwing reader (offline, no anchor) degrades silently.
+    const offline = analyzeDashboard(tmp, {
+      readHistory: () => {
+        throw new Error('no anchor');
+      },
+    });
+    expect(offline.html).toContain('DXKit Dashboard');
+  });
+
+  it('resolves the reports anchor ref from policy for the trend read (custom anchorRef)', () => {
+    fs.mkdirSync(path.join(tmp, '.dxkit'), { recursive: true });
+    fs.writeFileSync(
+      path.join(tmp, '.dxkit', 'policy.json'),
+      JSON.stringify({ version: 1, mode: 'brownfield', reports: { anchorRef: 'custom-reports' } }),
+    );
+    const seen: Array<string | undefined> = [];
+    analyzeDashboard(tmp, {
+      readHistory: (_cwd, anchorRef) => {
+        seen.push(anchorRef);
+        return [];
+      },
+    });
+    expect(seen).toEqual(['custom-reports']);
+    // Without a policy override the default (undefined => dxkit-reports)
+    // reaches the reader.
+    fs.rmSync(path.join(tmp, '.dxkit', 'policy.json'));
+    seen.length = 0;
+    analyzeDashboard(tmp, {
+      readHistory: (_cwd, anchorRef) => {
+        seen.push(anchorRef);
+        return [];
+      },
+    });
+    expect(seen).toEqual([undefined]);
+  });
+
   it('embeds markdown as a JSON-safe payload that the client can render', () => {
     // The dashboard embeds report markdowns inside a <script type="application/json">
     // block. The implementation must escape `<` so the embedded content

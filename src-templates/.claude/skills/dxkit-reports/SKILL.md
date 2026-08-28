@@ -20,6 +20,7 @@ This skill runs dxkit analyzers and reads their output back to the user. It's th
 | "Bill of materials" | `npx vyuh-dxkit bom` | Licenses + dep vulnerabilities joined (15-col XLSX-ready output) |
 | "Run everything" | `npx vyuh-dxkit report` | Every analyzer in one shot, ~3-5 min |
 | "What has dxkit caught for us / ROI" | `npx vyuh-dxkit metrics` | Findings the gate blocked before merge, per week + by category (from the loop ledger) |
+| "How has the score moved over time" | `npx vyuh-dxkit report trend` | Per-dimension score-over-time sparklines since the first snapshot on record, from the on-merge snapshots; segmented at scoring-methodology boundaries so cross-version blips never read as real movement |
 | "Show me the dashboard" | `npx vyuh-dxkit dashboard` | Single HTML view of all reports — opens at `.dxkit/reports/dashboard.html`, incl. an interactive **Graph** tab (code structure) |
 | "What does this repo do / where is X" | `npx vyuh-dxkit explore <sub>` | Query the code graph: entry-points / hot-files / communities / file / feature / api-surface |
 | "Token-efficient context for a query" | `npx vyuh-dxkit context <query>` | Slim structural slice for an LLM (also a fix-time hint via `--graph-context`) |

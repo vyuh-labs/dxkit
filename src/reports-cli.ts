@@ -20,7 +20,18 @@ import {
   DEFAULT_REPORTS_REF,
   type SnapshotArtifact,
 } from './reports/snapshot';
-import type { ReportHistoryEntry } from './reports/history';
+import { SCORE_KEYS, type ReportFindingCounts, type ReportHistoryEntry } from './reports/history';
+import {
+  computeTrendContext,
+  debtRows,
+  dimensionRows,
+  formatTrendContext,
+  segmentHistory,
+  seriesRow,
+  sparkline,
+  TREND_DIMENSIONS,
+  type TrendSeriesRow,
+} from './reports/trend';
 import { renderHistoryMarkdown } from './reports/render';
 import {
   defaultGhExec,
@@ -233,15 +244,9 @@ export async function runReportSnapshot(opts: ReportSnapshotOptions): Promise<nu
   return 0;
 }
 
-const DIMS: Array<{ key: keyof ReportHistoryEntry['scores']; label: string }> = [
-  { key: 'overall', label: 'overall' },
-  { key: 'security', label: 'sec' },
-  { key: 'quality', label: 'qual' },
-  { key: 'tests', label: 'test' },
-  { key: 'documentation', label: 'docs' },
-  { key: 'maintainability', label: 'maint' },
-  { key: 'developerExperience', label: 'dx' },
-];
+// The dimension label table is TREND_DIMENSIONS (src/reports/trend.ts), the
+// ONE list derived from SCORE_KEYS; both the history table and the trend
+// renderer read it, so a new dimension appears in both or neither.
 
 function arrow(cur: number | null, prev: number | null | undefined): string {
   if (cur == null || prev == null) return ' ';
@@ -287,15 +292,158 @@ export function runReportHistory(opts: ReportHistoryCliOptions): number {
   }
   const shown = opts.limit && opts.limit > 0 ? history.slice(-opts.limit) : history;
   logger.info(`  ${anchorRef} · ${history.length} snapshot(s), showing ${shown.length}`);
-  logger.info('  ' + 'date'.padEnd(12) + DIMS.map((d) => d.label.padEnd(7)).join(''));
+  logger.info('  ' + 'date'.padEnd(12) + TREND_DIMENSIONS.map((d) => d.label.padEnd(7)).join(''));
   shown.forEach((e, i) => {
     const prev = i > 0 ? shown[i - 1] : undefined;
-    const cells = DIMS.map((d) => {
+    const cells = TREND_DIMENSIONS.map((d) => {
       const v = e.scores[d.key];
       const a = arrow(v, prev?.scores[d.key]);
       return `${v ?? '—'}${a}`.padEnd(7);
     });
     logger.info('  ' + e.date.slice(0, 10).padEnd(12) + cells.join(''));
   });
+  return 0;
+}
+
+// ─── `report trend` (impact P3, the #332 read surface) ────────────────────
+
+export interface ReportTrendCliOptions {
+  readonly cwd: string;
+  readonly anchorRef?: string;
+  readonly json?: boolean;
+  /** Injected history reader (tests); production reads the anchor. */
+  readonly readHistory?: (cwd: string, anchorRef?: string) => ReportHistoryEntry[];
+}
+
+/** Console line for one series row: sparkline + endpoints. Presentation
+ *  only; the series itself comes from the ONE trend core (`seriesRow` /
+ *  `dimensionRows` / `debtRows`), the same model `latest/impact.md`
+ *  renders. */
+function seriesLine(row: TrendSeriesRow): string {
+  const ends =
+    row.first === null || row.last === null
+      ? 'unmeasured'
+      : row.first === row.last
+        ? `${row.last} (flat)`
+        : `${row.first} -> ${row.last} (${row.last > row.first ? '+' : ''}${row.last - row.first})`;
+  const spark = sparkline(row.values, row.max !== undefined ? { max: row.max } : {});
+  return `    ${row.label.padEnd(8)} ${spark}  ${ends}`;
+}
+
+/** The finding-count keys, labeled for the secondary series. */
+const FINDING_SERIES: Array<{ key: keyof ReportFindingCounts; label: string }> = [
+  { key: 'secretsCritical', label: 'secrets' },
+  { key: 'securityHigh', label: 'sec-high' },
+  { key: 'depVulnsHigh', label: 'dep-high' },
+  { key: 'testGaps', label: 'testgaps' },
+];
+
+/**
+ * `vyuh-dxkit report trend [--json]`: the score-over-time series since the
+ * first snapshot on record (deliberately not "install":
+ * `reports.retain.history` can truncate the series, so the record's start is
+ * the only claim the data can back), read off the reports anchor via the ONE
+ * history reader. Honesty:
+ * the series is SEGMENTED at scoring-methodology / score-input boundaries
+ * (the projection's comparability discipline applied to a series); a line is
+ * never drawn across incomparable points, and the boundary renders with its
+ * reason. Sparklines use a fixed 0..100 scale for scores (a wiggle never
+ * reads as a mountain); finding counts scale to their own series maximum
+ * with the endpoint numbers carrying the truth.
+ */
+export function runReportTrend(opts: ReportTrendCliOptions): number {
+  const policy = readReportsPolicy(opts.cwd);
+  const anchorRef = opts.anchorRef ?? policy.anchorRef ?? DEFAULT_REPORTS_REF;
+  const read = opts.readHistory ?? readReportHistory;
+  const history = read(opts.cwd, anchorRef);
+  const segments = segmentHistory(history);
+  const context = computeTrendContext(history);
+  // The debt-over-time series: whole-history on purpose (finding counts are
+  // not scoring-methodology-dependent, so one series is honest); computed
+  // once for both output modes.
+  const debtSeries = debtRows(history);
+
+  if (opts.json) {
+    const payload = {
+      anchorRef,
+      snapshots: history.length,
+      ...(history.length > 0 ? { since: history[0].date } : {}),
+      segments: segments.map((seg) => ({
+        from: seg.entries[0].date,
+        to: seg.entries[seg.entries.length - 1].date,
+        snapshots: seg.entries.length,
+        ...(seg.methodology !== undefined ? { methodology: seg.methodology } : {}),
+        ...(seg.unverified ? { unverified: true } : {}),
+        ...(seg.boundary !== undefined ? { boundary: seg.boundary } : {}),
+        scores: Object.fromEntries(
+          SCORE_KEYS.map((key) => [key, seg.entries.map((e) => e.scores[key])]),
+        ),
+        ...(seg.entries.some((e) => e.findings !== undefined)
+          ? {
+              findings: Object.fromEntries(
+                FINDING_SERIES.filter(({ key }) =>
+                  seg.entries.some((e) => typeof e.findings?.[key] === 'number'),
+                ).map(({ key }) => [key, seg.entries.map((e) => e.findings?.[key] ?? null)]),
+              ),
+            }
+          : {}),
+      })),
+      ...(debtSeries.length > 0
+        ? { debt: Object.fromEntries(debtSeries.map((row) => [row.label, row.values])) }
+        : {}),
+      ...(context !== null ? { context } : {}),
+    };
+    process.stdout.write(JSON.stringify(payload) + '\n');
+    return 0;
+  }
+
+  logger.header('report trend (score over time)');
+  if (history.length === 0) {
+    logger.info(`  No snapshots on ${anchorRef} yet, so there is no trend to draw.`);
+    logger.info('  Run `vyuh-dxkit report snapshot` (or enable the on-merge reports');
+    logger.info('  workflow, policy.json:reports.onMerge) to start the series.');
+    return 0;
+  }
+  logger.info(
+    `  ${anchorRef} · ${history.length} snapshot(s) since ${history[0].date.slice(0, 10)}`,
+  );
+  segments.forEach((seg, i) => {
+    if (seg.boundary !== undefined) {
+      logger.info('');
+      logger.info(`  -- comparability boundary: ${seg.boundary} --`);
+    }
+    if (segments.length > 1 || seg.boundary !== undefined) {
+      const from = seg.entries[0].date.slice(0, 10);
+      const to = seg.entries[seg.entries.length - 1].date.slice(0, 10);
+      const method = seg.unverified
+        ? 'methodology unstamped, comparability unverified'
+        : `methodology ${seg.methodology}`;
+      logger.info(
+        `  segment ${i + 1}: ${from} -> ${to} (${seg.entries.length} snapshot(s), ${method})`,
+      );
+    }
+    for (const row of dimensionRows(seg.entries)) logger.info(seriesLine(row));
+    for (const { key, label } of FINDING_SERIES) {
+      const values = seg.entries.map((e) =>
+        typeof e.findings?.[key] === 'number' ? e.findings[key]! : null,
+      );
+      if (!values.some((v) => v !== null)) continue;
+      logger.info(seriesLine(seriesRow(key, label, values, { countScale: true })));
+    }
+  });
+  // An entry without a debt stamp (or without a kind) charts as a gap,
+  // never as zero.
+  if (debtSeries.length > 0) {
+    logger.info('');
+    logger.info('  debt over time (counts by kind):');
+    for (const row of debtSeries) logger.info(seriesLine(row));
+    if (history.some((e) => e.debt === undefined)) {
+      logger.info('    (snapshots without a debt stamp chart as gaps, not zero)');
+    }
+  }
+  if (context !== null) {
+    logger.info('');
+    logger.info(`  ${formatTrendContext(context)}`);
+  }
   return 0;
 }

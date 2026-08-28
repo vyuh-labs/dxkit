@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { deltaToken, renderHistoryMarkdown, renderTrendText } from '../../src/reports/render';
+import { renderImpactReportMarkdown } from '../../src/reports/impact-report';
 import type { ReportHistoryEntry, ReportScores } from '../../src/reports/history';
 
 const baseScores: ReportScores = {
@@ -106,5 +107,60 @@ describe('renderTrendText', () => {
   it('says nothing moved when scores are identical', () => {
     const lines = renderTrendText([entry('a'), entry('b')]);
     expect(lines.join('\n')).toContain('no dimension moved');
+  });
+});
+
+describe('latest-pair comparability parity (the #332 cross-version blip, all three consumers)', () => {
+  // The 0 -> 20 pair across a scoring-methodology bump: NO consumer of the
+  // latest-pair delta may claim movement across it, and each must name the
+  // boundary. renderHistoryMarkdown feeds the refresh workflow's job
+  // summary, renderTrendText feeds `metrics`, and the impact report is the
+  // published page: one boundary predicate, three surfaces, same story.
+  const acrossBoundary = [
+    entry('aaaa', { overall: 0 }, '2026-07-01'),
+    { ...entry('bbbb', { overall: 20 }, '2026-08-01'), methodology: 'spec-v2' },
+  ];
+
+  it('renderHistoryMarkdown suppresses the delta and names the boundary', () => {
+    const md = renderHistoryMarkdown(acrossBoundary);
+    expect(md).not.toContain('▲20');
+    expect(md).not.toContain('0 → 20');
+    expect(md).toContain('previous snapshot not comparable');
+    expect(md).toContain('scoring methodology changed');
+    // The per-dimension table shows no Previous side either.
+    expect(md).toContain('| Overall | — | 20 |');
+  });
+
+  it('renderTrendText (the metrics surface) suppresses the movement lines too', () => {
+    const lines = renderTrendText(acrossBoundary).join('\n');
+    expect(lines).not.toContain('▲');
+    expect(lines).not.toContain('moved:');
+    expect(lines).toContain('previous snapshot not comparable');
+  });
+
+  it('the impact report agrees (no movement claim, boundary named)', () => {
+    const md = renderImpactReportMarkdown(acrossBoundary);
+    expect(md).not.toContain('0 to 20');
+    expect(md).toContain('not comparable to the previous snapshot');
+  });
+
+  it('a comparable pair still renders its movement everywhere (no over-suppression)', () => {
+    const comparable = [
+      entry('aaaa', { overall: 10 }, '2026-07-01'),
+      entry('bbbb', { overall: 20 }, '2026-08-01'),
+    ];
+    expect(renderHistoryMarkdown(comparable)).toContain('**10 → 20** (▲10)');
+    expect(renderTrendText(comparable).join('\n')).toContain('10 → 20');
+    expect(renderImpactReportMarkdown(comparable)).toContain('overall 10 to 20');
+  });
+
+  it('score-input drift between the last two entries suppresses the same way', () => {
+    const drifted = [
+      { ...entry('aaaa', { overall: 10 }, '2026-07-01'), scoreInputs: ['gitleaks', 'semgrep'] },
+      { ...entry('bbbb', { overall: 20 }, '2026-08-01'), scoreInputs: ['semgrep'] },
+    ];
+    const md = renderHistoryMarkdown(drifted);
+    expect(md).not.toContain('▲10');
+    expect(md).toContain('tools behind the scores differ');
   });
 });

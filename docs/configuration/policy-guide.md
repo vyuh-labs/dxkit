@@ -411,15 +411,19 @@ disclosed as not comparable. After the merge, the reports lane updates the
 same comment with the actual movement beside the projection.
 
 **Default and why.** On (`true`): the marginal cost is a cache-hit re-score
-(measured around 20ms) plus one shallow fetch of the reports ref. Set
-`false` to drop the projection line and the snapshot read. With no snapshot
-history (reports.onMerge off), the section discloses that no projection was
-made instead of inventing a base. On a ref-based repo the projection is
-structurally unavailable (that mode gathers a trimmed analysis every run), so
-the JSON carries the disclosure quietly and no line is printed per PR. Scores
-are also compared only when the tools behind them match: a snapshot captured
-with a scanner this run lacks (or the reverse) is disclosed as not comparable
-rather than diffed.
+(measured around 20ms) plus one shallow fetch of the reports ref. That one
+fetch also feeds the Impact section's trend context line ("Repo trend:
+overall 24, flat since 2026-07-20 (16 snapshots)"), so `false` drops the
+projection line, the trend line, and the snapshot read together. With no
+snapshot history (reports.onMerge off), the section discloses that no
+projection was made instead of inventing a base. On a ref-based repo the
+projection is structurally unavailable (that mode gathers a trimmed analysis
+every run), so the JSON carries the disclosure quietly and no projection line
+is printed per PR; the trend line still renders there, since it describes
+published snapshots rather than a recomputed score. Scores are also compared
+only when the tools behind them match: a snapshot captured with a scanner
+this run lacks (or the reverse) is disclosed as not comparable rather than
+diffed.
 
 ## Graph refresh
 

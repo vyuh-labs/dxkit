@@ -145,14 +145,100 @@ export function announceAnchorNotPushed(anchorRef: string, reason: string | unde
   logger.ciAnnotate('warning', `dxkit could not publish the '${anchorRef}' side ref: ${why}`);
 }
 
+/** Bound on the anchor-read fetch: a depth-1 fetch of a tiny side ref
+ *  completes in seconds, so a stall is a stuck remote/auth handshake, and the
+ *  read is on latency-sensitive paths (the pre-push guardrail reads the
+ *  reports ref for the trend/projection): fail fast, fall back to local
+ *  refs, never hang the push. Mirrors the writer's 30s bound below. */
+const ANCHOR_READ_TIMEOUT_MS = 30_000;
+
+/** Per-process memo of side refs that could not be materialized AT ALL (the
+ *  fetch failed AND no local candidate ref exists): keyed cwd+ref, so a repo
+ *  with no reports history pays the fetch attempt once per process, not once
+ *  per read. Deliberately NOT a "file absent" memo (a missing file on an
+ *  existing ref is not cached: another path on the same ref must still read).
+ *  Invalidated by a publish to the same ref in this process; a ref another
+ *  process creates mid-run is picked up on the next process (accepted
+ *  staleness for a best-effort read). */
+const absentAnchorRefs = new Set<string>();
+
+/** Test-only: clear the absent-ref memo between cases. */
+export function _resetAnchorReadMemo(): void {
+  absentAnchorRefs.clear();
+}
+
+/**
+ * Drop the absent-ref memo for one anchor ref, across every cwd. EVERY
+ * writer that can create a side ref in-process must call this after its
+ * push (cwd-agnostic on purpose: a writer may push from a temp checkout
+ * while a reader reads from the main repo). Today's two writers:
+ * `publishFilesToAnchorRef` below, and the advisory-decision push in
+ * `refresh.ts`.
+ */
+export function invalidateAnchorReadMemo(anchorRef: string): void {
+  for (const key of [...absentAnchorRefs]) {
+    if (key.endsWith(`\u0000${anchorRef}`)) absentAnchorRefs.delete(key);
+  }
+}
+
+/** Injectable git executor for the anchor read (tests assert the exact
+ *  env/timeout discipline without a real remote). */
+export type AnchorReadExec = (
+  args: string[],
+  opts: {
+    readonly cwd: string;
+    readonly timeoutMs: number;
+    readonly env: NodeJS.ProcessEnv;
+    readonly maxBuffer: number;
+  },
+) => string;
+
+const defaultAnchorReadExec: AnchorReadExec = (args, opts) =>
+  execFileSync('git', args, {
+    cwd: opts.cwd,
+    stdio: ['ignore', 'pipe', 'ignore'],
+    encoding: 'utf8',
+    timeout: opts.timeoutMs,
+    env: opts.env,
+    maxBuffer: opts.maxBuffer,
+  }).toString();
+
 /**
  * Read a single file's content from an arbitrary side ref (`origin/<ref>` then
  * `<ref>`), best-effort. Returns `null` when the ref/file is unreachable (not
  * created yet, offline, wrong ref). Never throws. This is the generalized read
  * that `anchor.ts:anchorContentFromBranch` (baseline) and the reports layer both
- * use — one reader of a side ref, one write path below.
+ * use — one reader of a side ref, one write path below. The network step is
+ * BOUNDED (Rule 11's remote-read discipline): both git prompt paths disabled
+ * via `noPromptGitEnv` and a hard timeout, so an unreachable or stalled remote
+ * degrades to the local refs instead of hanging the caller (this read sits on
+ * the pre-push guardrail path).
  */
-export function readFromAnchorRef(cwd: string, anchorRef: string, relPath: string): string | null {
+export function readFromAnchorRef(
+  cwd: string,
+  anchorRef: string,
+  relPath: string,
+  _exec?: AnchorReadExec,
+): string | null {
+  const memoKey = `${cwd}\u0000${anchorRef}`;
+  if (absentAnchorRefs.has(memoKey)) return null;
+  const exec = _exec ?? defaultAnchorReadExec;
+  const execOpts = {
+    cwd,
+    timeoutMs: ANCHOR_READ_TIMEOUT_MS,
+    // BOTH prompt paths off (HTTPS credential prompt + SSH passphrase/host-key
+    // prompt) so an unauthenticated remote fails fast instead of blocking on
+    // input until the timeout, the same discipline as the writer below and
+    // remote-ref.ts.
+    env: { ...process.env, ...noPromptGitEnv({ cwd }) },
+    // D4d, the LIVE incident cause (found on the real repo): a large
+    // brownfield baseline (~19k findings ⇒ multi-MB JSON) blows
+    // execFileSync's default 1MiB maxBuffer — `git show` dies ENOBUFS
+    // with EMPTY stderr, the catch swallowed it, and the check silently
+    // gated against the stale tree copy while `origin/<anchorRef>` was
+    // sitting right there in the checkout.
+    maxBuffer: 256 * 1024 * 1024,
+  };
   // Fetch with an EXPLICIT refspec into a private local ref (D4d). A bare
   // `git fetch origin <ref>` only writes FETCH_HEAD when the clone's fetch
   // refspec doesn't map the ref — single-branch clones and actions/checkout
@@ -163,32 +249,30 @@ export function readFromAnchorRef(cwd: string, anchorRef: string, relPath: strin
   // private `refs/dxkit/` namespace never collides with user branches.
   const privateRef = `refs/dxkit/anchor/${anchorRef}`;
   try {
-    execFileSync(
-      'git',
-      ['fetch', '--depth=1', 'origin', `+refs/heads/${anchorRef}:${privateRef}`],
-      { cwd, stdio: 'ignore' },
-    );
+    exec(['fetch', '--depth=1', 'origin', `+refs/heads/${anchorRef}:${privateRef}`], execOpts);
   } catch {
     /* offline / no origin — fall through to whatever refs exist locally */
   }
-  for (const ref of [privateRef, `origin/${anchorRef}`, anchorRef]) {
+  const candidates = [privateRef, `origin/${anchorRef}`, anchorRef];
+  for (const ref of candidates) {
     try {
-      return execFileSync('git', ['show', `${ref}:${relPath}`], {
-        cwd,
-        stdio: ['ignore', 'pipe', 'ignore'],
-        encoding: 'utf8',
-        // D4d, the LIVE incident cause (found on the real repo): a large
-        // brownfield baseline (~19k findings ⇒ multi-MB JSON) blows
-        // execFileSync's default 1MiB maxBuffer — `git show` dies ENOBUFS
-        // with EMPTY stderr, the catch swallowed it, and the check silently
-        // gated against the stale tree copy while `origin/<anchorRef>` was
-        // sitting right there in the checkout.
-        maxBuffer: 256 * 1024 * 1024,
-      });
+      return exec(['show', `${ref}:${relPath}`], execOpts);
     } catch {
       /* try next ref form */
     }
   }
+  // Distinguish "ref absent" (memoize: nothing to read until something
+  // publishes) from "ref exists, file absent" (do NOT memoize: another
+  // relPath on the same ref must still read).
+  const refExists = candidates.some((ref) => {
+    try {
+      exec(['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], execOpts);
+      return true;
+    } catch {
+      return false;
+    }
+  });
+  if (!refExists) absentAnchorRefs.add(memoKey);
   return null;
 }
 
@@ -231,6 +315,10 @@ function resolveTip(
  */
 export function publishFilesToAnchorRef(opts: PublishToAnchorOptions): PublishResult {
   const { cwd, anchorRef } = opts;
+  // A publish (attempted or successful) invalidates the read memo: the ref
+  // may exist now, so the next read must probe again (ref-scoped: the
+  // publisher's cwd need not be the reader's).
+  invalidateAnchorReadMemo(anchorRef);
   const identity = opts.identity ?? DEFAULT_IDENTITY;
   // A short, SURFACED bound: a small baseline push completes in seconds, so a
   // stall is a stuck auth handshake, not slow transport. Kept low so a hang

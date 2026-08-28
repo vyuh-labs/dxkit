@@ -12,7 +12,14 @@
  * Pure (no I/O): the CLI + workflow read `report-history.jsonl` off the
  * `dxkit-reports` anchor and hand the parsed entries in.
  */
-import { SCORE_KEYS, latestDeltas, type ReportHistoryEntry, type ReportScores } from './history';
+import {
+  SCORE_KEYS,
+  latestDeltas,
+  scoreDeltas,
+  type ReportHistoryEntry,
+  type ReportScores,
+} from './history';
+import { describeTrendBoundary } from './trend';
 
 const DIM_LABELS: Record<keyof ReportScores, string> = {
   overall: 'Overall',
@@ -37,12 +44,39 @@ export function deltaToken(delta: number | null): string {
   return '=';
 }
 
+/**
+ * The latest snapshot pair, movement-honest: when the last two entries sit
+ * across a comparability boundary (methodology bump, score-input drift), the
+ * delta is SUPPRESSED (prev treated as absent) and the boundary reason is
+ * carried for the renderers to name. The same `describeTrendBoundary`
+ * predicate the trend segmentation and the impact report use, so the job
+ * summary can never print "0 → 20 (▲20)" beside an impact.md calling the
+ * same pair not comparable (the #332 cross-version blip, Rule 2's
+ * semantic-divergence class).
+ */
+function latestComparableDeltas(entries: readonly ReportHistoryEntry[]): {
+  prev?: ReportHistoryEntry;
+  cur?: ReportHistoryEntry;
+  deltas: ReturnType<typeof scoreDeltas>;
+  boundary: string | null;
+} {
+  const { prev, cur, deltas } = latestDeltas(entries);
+  const boundary =
+    prev !== undefined && cur !== undefined ? describeTrendBoundary(prev, cur) : null;
+  if (boundary === null)
+    return { ...(prev ? { prev } : {}), ...(cur ? { cur } : {}), deltas, boundary };
+  return { ...(cur ? { cur } : {}), deltas: scoreDeltas(undefined, cur!.scores), boundary };
+}
+
 /** Headline sentence for the latest merge's overall movement. */
 function overallHeadline(entries: readonly ReportHistoryEntry[]): string {
-  const { prev, cur, deltas } = latestDeltas(entries);
+  const { prev, cur, deltas, boundary } = latestComparableDeltas(entries);
   if (!cur) return 'No report snapshots yet.';
   const overall = deltas.find((d) => d.key === 'overall');
   const now = score(cur.scores.overall);
+  if (boundary !== null) {
+    return `Overall health: **${now}** (previous snapshot not comparable: ${boundary})`;
+  }
   if (!prev || !overall || overall.delta == null) {
     return `Overall health: **${now}**`;
   }
@@ -66,7 +100,7 @@ export function renderHistoryMarkdown(
   if (entries.length === 0) {
     return '### dxkit — score over time\n\n_No report snapshots on the `dxkit-reports` ref yet._\n';
   }
-  const { prev, cur, deltas } = latestDeltas(entries);
+  const { prev, cur, deltas } = latestComparableDeltas(entries);
   const lines: string[] = ['### dxkit — score over time', '', overallHeadline(entries), ''];
 
   // Per-dimension movement for the latest merge.
@@ -118,7 +152,7 @@ export function renderTrendText(
   opts: TrendRenderOptions = {},
 ): string[] {
   if (entries.length === 0) return [];
-  const { prev, cur, deltas } = latestDeltas(entries);
+  const { prev, cur, deltas } = latestComparableDeltas(entries);
   const out: string[] = [];
   out.push(overallHeadline(entries).replace(/\*\*/g, ''));
 

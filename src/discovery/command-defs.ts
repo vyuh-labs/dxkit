@@ -304,13 +304,18 @@ export const COMMANDS = [
     id: 'report',
     audience: 'user',
     group: 'assess',
-    summary: 'Full audit (report), or publish/read a score snapshot (report snapshot|history)',
+    summary:
+      'Full audit (report), or publish/read a score snapshot (report snapshot|history|trend)',
     typicalRuntime: '5-30 min',
     docsBlurb:
       'One command to run all analyzers and render the dashboard — the full-audit entry point. ' +
       '`report snapshot` publishes a per-merge score snapshot to the dxkit-reports ref; ' +
-      '`report history` renders the score-over-time trend (`--markdown` emits a "score moved X→Y" ' +
-      'block for a CI job summary or PR comment). Automate snapshots on merge with ' +
+      '`report history` renders the raw snapshot table (`--markdown` emits a "score moved X→Y" ' +
+      'block for a CI job summary or PR comment); `report trend` renders the ' +
+      'score-over-time series (per-dimension sparklines plus the per-kind debt counts, ' +
+      'segmented at scoring-methodology boundaries so movement is never claimed across ' +
+      'incomparable snapshots). Each snapshot also publishes `latest/impact.md`, the ' +
+      'shareable impact report, onto the reports ref. Automate snapshots on merge with ' +
       '`policy.json:reports.onMerge` (the dxkit-reports-refresh workflow).',
     skill: 'dxkit-reports',
     whenToRecommend: recommendReportsOnMerge,

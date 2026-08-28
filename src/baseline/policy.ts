@@ -211,8 +211,9 @@ export interface ImpactPolicy {
    * (projected)") from the run's own shared analysis against the latest
    * snapshot. Default TRUE: the spike measured the marginal cost at ~20ms
    * (a cache-hit re-score; the run's gather is reused, never repeated) plus
-   * one shallow fetch of the reports ref. Set false to drop the projection
-   * line and the snapshot read entirely.
+   * one shallow fetch of the reports ref. That fetch also feeds the Impact
+   * section's trend context line, so false drops the projection line, the
+   * trend line, and the snapshot read entirely.
    */
   readonly projectScores?: boolean;
 }

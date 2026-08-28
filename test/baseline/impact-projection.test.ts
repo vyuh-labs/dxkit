@@ -208,7 +208,7 @@ describe('gatherScoreProjection (IO wrapper seams)', () => {
     expect(out.scoreInputs?.map((s) => s.dimension)).toContain('security');
   });
 
-  it('no shared envelope => disclosed unavailable, and the history is NOT read (no fetch on a path that cannot project)', async () => {
+  it('no shared envelope => disclosed unavailable, with the trend still carried from the ONE history read', async () => {
     let read = 0;
     const out = await gatherScoreProjection(
       '/nowhere',
@@ -224,10 +224,13 @@ describe('gatherScoreProjection (IO wrapper seams)', () => {
     expect(out.projection.status).toBe('unavailable');
     if (out.projection.status !== 'unavailable') return;
     expect(out.projection.reason).toContain('no full shared analysis');
-    expect(read).toBe(0);
+    // The fetch is no longer wasted on this path (P3): it feeds the trend
+    // context, and it happens exactly once.
+    expect(read).toBe(1);
+    expect(out.trend?.overall).toBe(50);
   });
 
-  it('ref-based mode => quiet structural unavailable: JSON disclosure, no human line, no work', async () => {
+  it('ref-based mode => quiet structural unavailable: JSON disclosure, no human line, no peek; the trend rides the one history read', async () => {
     let peeked = 0;
     let read = 0;
     const out = await gatherScoreProjection(
@@ -252,8 +255,12 @@ describe('gatherScoreProjection (IO wrapper seams)', () => {
     expect(out.projection.quiet).toBe(true);
     // The human line is suppressed; the JSON keeps the disclosure.
     expect(formatScoreProjection(out.projection)).toBeNull();
+    // The envelope is never scored on this surface, but the trend context
+    // (a statement about published snapshots, not a recomputed score) is
+    // still carried, from exactly one history read.
     expect(peeked).toBe(0);
-    expect(read).toBe(0);
+    expect(read).toBe(1);
+    expect(out.trend?.snapshots).toBe(1);
     // A committed mode takes the normal path.
     const committed = await gatherScoreProjection(
       '/nowhere',
@@ -262,6 +269,43 @@ describe('gatherScoreProjection (IO wrapper seams)', () => {
       'committed-full',
     );
     expect(committed.projection.status).toBe('projected');
+  });
+
+  it('the projected path reads the history exactly ONCE and carries the trend beside the projection', async () => {
+    let read = 0;
+    const history = [
+      entry({ sha: 'older', date: '2026-07-20T00:00:00.000Z', scores: scores({ overall: 50 }) }),
+      entry(),
+    ];
+    const out = await gatherScoreProjection(
+      '/nowhere',
+      {},
+      {
+        peek: async () => ({ report }),
+        readHistory: () => {
+          read += 1;
+          return history;
+        },
+      },
+    );
+    expect(out.projection.status).toBe('projected');
+    // Single-fetch discipline (Rule 2): the projection base and the trend
+    // context share one read.
+    expect(read).toBe(1);
+    expect(out.trend).toBeDefined();
+    expect(out.trend?.totalSnapshots).toBe(2);
+    expect(out.trend?.sinceDate).toBe('2026-07-20');
+    expect(out.trend?.sinceFirstSnapshot).toBe(true);
+  });
+
+  it('empty history => no trend context (nothing is invented), disclosed unavailable projection', async () => {
+    const out = await gatherScoreProjection(
+      '/nowhere',
+      {},
+      { peek: async () => ({ report }), readHistory: () => [] },
+    );
+    expect(out.projection.status).toBe('unavailable');
+    expect(out.trend).toBeUndefined();
   });
 
   it('a throwing seam degrades to a disclosed unavailable, never an exception into the gate', async () => {

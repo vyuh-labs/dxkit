@@ -33,6 +33,21 @@ export interface ReportFindingCounts {
   readonly testGaps?: number;
 }
 
+/** The debt-series severity vocabulary (matches `FindingSeverity`). */
+export type DebtSeverity = 'critical' | 'high' | 'medium' | 'low';
+
+/**
+ * The per-merge debt snapshot (4.4.7): counts by finding KIND x severity,
+ * keyed on the durable `IdentityKind` names (`secret`, `code`, `dep-vuln`).
+ * Counts ONLY, never per-finding data: the reports ref is a shareable
+ * surface, so nothing secret-shaped, no file paths, no finding titles ride
+ * it (the committed-sanitized discipline). Additive: pre-4.4.7 lines lack
+ * it and chart as unmeasured, never as zero.
+ */
+export type ReportDebtCounts = Readonly<
+  Record<string, Readonly<Partial<Record<DebtSeverity, number>>>>
+>;
+
 /** One merge's snapshot line on the `dxkit-reports` anchor. */
 export interface ReportHistoryEntry {
   /** Merge commit SHA this snapshot was computed at — the entry's identity. */
@@ -64,6 +79,11 @@ export interface ReportHistoryEntry {
   readonly scoreInputs?: ReadonlyArray<string>;
   readonly scores: ReportScores;
   readonly findings?: ReportFindingCounts;
+  /** The debt-over-time series point (see `ReportDebtCounts`). Stamped by
+   *  the snapshot publisher from the run's canonical security aggregate;
+   *  absent on pre-4.4.7 entries and on runs where no aggregate was built
+   *  (absent means unmeasured, never zero). */
+  readonly debt?: ReportDebtCounts;
   /** Extension inventory entity counts (extension name → entity kind →
    *  count), captured from committed inventory.v1 snapshots at snapshot
    *  time. Additive: absent for repos without inventory extensions, and
@@ -107,6 +127,60 @@ export const SCORE_KEY_TO_DIMENSION = {
 
 /** The report-side dimension names the mapping targets. */
 export type ReportDimensionName = (typeof SCORE_KEY_TO_DIMENSION)[ScoreDimensionKey];
+
+/**
+ * Human-renderable description of score-input drift between two stamped
+ * input lists, or null when they match. Null when EITHER side is unstamped:
+ * a pre-stamping entry also lacks `methodology`, and that guard owns the
+ * disclosure for old entries; this one never claims drift it cannot see.
+ * The ONE score-input comparability comparator: the projection guard, the
+ * landed-comment skip, and the trend segmentation all call this.
+ */
+export function describeScoreInputsDrift(
+  base: ReadonlyArray<string> | undefined,
+  current: ReadonlyArray<string> | undefined,
+): string | null {
+  if (base === undefined || current === undefined) return null;
+  const baseSet = new Set(base);
+  const currentSet = new Set(current);
+  const gone = base.filter((t) => !currentSet.has(t));
+  const added = current.filter((t) => !baseSet.has(t));
+  if (gone.length === 0 && added.length === 0) return null;
+  const cap = (list: string[]): string =>
+    list.slice(0, 4).join(', ') + (list.length > 4 ? ` and ${list.length - 4} more` : '');
+  const parts: string[] = [];
+  if (gone.length > 0) parts.push(`at the base but not now: ${cap(gone)}`);
+  if (added.length > 0) parts.push(`now but not at the base: ${cap(added)}`);
+  return `the tools behind the scores differ (${parts.join('; ')})`;
+}
+
+const DEBT_SEVERITY_KEYS: ReadonlyArray<DebtSeverity> = ['critical', 'high', 'medium', 'low'];
+
+/**
+ * Validate a parsed line's `debt` stamp. Strict like `coerceScores`: a kind
+ * key that would break downstream rendering (table pipes, newlines, or any
+ * non-identifier shape) or a non-finite severity count drops the WHOLE debt
+ * object (the entry itself is kept; its debt reads as unmeasured). Unknown
+ * cell keys are ignored (forward compatibility); known severities must be
+ * finite numbers.
+ */
+function coerceDebt(raw: unknown): ReportDebtCounts | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const out: Record<string, Partial<Record<DebtSeverity, number>>> = {};
+  for (const [kind, cell] of Object.entries(raw as Record<string, unknown>)) {
+    if (!/^[A-Za-z0-9_.-]+$/.test(kind)) return null;
+    if (!cell || typeof cell !== 'object' || Array.isArray(cell)) return null;
+    const clean: Partial<Record<DebtSeverity, number>> = {};
+    for (const sev of DEBT_SEVERITY_KEYS) {
+      const v = (cell as Record<string, unknown>)[sev];
+      if (v === undefined) continue;
+      if (typeof v !== 'number' || !Number.isFinite(v)) return null;
+      clean[sev] = v;
+    }
+    out[kind] = clean;
+  }
+  return out;
+}
 
 function isFiniteNumberOrNull(v: unknown): v is number | null {
   return v === null || (typeof v === 'number' && Number.isFinite(v));
@@ -155,6 +229,10 @@ export function parseHistory(jsonl: string | null | undefined): ReportHistoryEnt
       ...(o.findings && typeof o.findings === 'object'
         ? { findings: o.findings as ReportFindingCounts }
         : {}),
+      ...(() => {
+        const debt = coerceDebt(o.debt);
+        return debt !== null ? { debt } : {};
+      })(),
       ...(o.inventory && typeof o.inventory === 'object'
         ? { inventory: o.inventory as Record<string, Record<string, number>> }
         : {}),
