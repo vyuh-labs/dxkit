@@ -122,7 +122,7 @@ const TREND: TrendContext = {
   from: 24,
   direction: 'flat',
   sinceDate: '2026-07-20',
-  sinceInstall: true,
+  sinceFirstSnapshot: true,
   snapshots: 16,
   totalSnapshots: 16,
   improvementOnRecord: false,

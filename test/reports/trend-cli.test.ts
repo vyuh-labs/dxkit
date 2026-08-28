@@ -200,7 +200,7 @@ describe('report trend (--json)', () => {
         boundary?: string;
         scores: Record<string, Array<number | null>>;
       }>;
-      context?: { sinceInstall: boolean; snapshots: number; totalSnapshots: number };
+      context?: { sinceFirstSnapshot: boolean; snapshots: number; totalSnapshots: number };
     };
     expect(payload.anchorRef).toBe('dxkit-reports');
     expect(payload.snapshots).toBe(2);
@@ -210,7 +210,7 @@ describe('report trend (--json)', () => {
     expect(payload.segments[1].boundary).toContain('scoring methodology changed');
     expect(payload.segments[0].scores.overall).toEqual([20]);
     expect(payload.segments[1].scores.overall).toEqual([40]);
-    expect(payload.context?.sinceInstall).toBe(false);
+    expect(payload.context?.sinceFirstSnapshot).toBe(false);
     expect(payload.context?.totalSnapshots).toBe(2);
   });
 

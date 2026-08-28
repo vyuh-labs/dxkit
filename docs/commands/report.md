@@ -38,11 +38,12 @@ Beyond the full audit, `report` carries the snapshot surface:
 ```bash
 vyuh-dxkit report snapshot           # publish this merge's scores to the dxkit-reports ref
 vyuh-dxkit report history [--json]   # the raw snapshot table (--markdown for a CI summary)
-vyuh-dxkit report trend [--json]     # the since-install series: per-dimension sparklines
+vyuh-dxkit report trend [--json]     # the score-over-time series: per-dimension sparklines
 ```
 
 `report trend` renders every dimension's score over time since the first
-snapshot (the install baseline), plus the debt-over-time series (finding
+snapshot on record (retention can truncate older snapshots, so the record's
+start is the claim), plus the debt-over-time series (finding
 counts by kind, stamped per merge from the run's security aggregate) where
 the snapshots carry one. The series is segmented wherever the scoring
 methodology or the score-relevant tool set changed between snapshots: a

@@ -1,6 +1,7 @@
 /**
  * The published impact report (`latest/impact.md` on the `dxkit-reports`
- * anchor, 4.4.7): the shareable score-trend + debt-over-time story, rendered
+ * anchor, 4.4.7): the shareable score-trend (since the first snapshot on
+ * record) + debt-over-time story, rendered
  * per merge by the snapshot publisher from the SAME folded history it writes.
  *
  * One renderer core, two presenters (Rule 2): every series here comes from
@@ -126,7 +127,8 @@ export function renderImpactReportMarkdown(entries: ReadonlyArray<ReportHistoryE
   const last = entries[entries.length - 1];
 
   lines.push(
-    `_Scores and finding counts per merge, since install (${first.date.slice(0, 10)}), ` +
+    `_Scores and finding counts per merge, since the first snapshot on record ` +
+      `(${first.date.slice(0, 10)}), ` +
       `${entries.length} snapshot${entries.length === 1 ? '' : 's'} through ` +
       `\`${last.sha.slice(0, 12)}\` (${last.date.slice(0, 10)}). Counts and scores only._`,
     '',
@@ -137,7 +139,7 @@ export function renderImpactReportMarkdown(entries: ReadonlyArray<ReportHistoryE
 
   lines.push(...latestMergeLines(segments), '');
 
-  lines.push('## Score trend since install', '');
+  lines.push('## Score trend', '');
   segments.forEach((seg, i) => {
     if (seg.boundary !== undefined) {
       lines.push(

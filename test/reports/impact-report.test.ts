@@ -51,7 +51,8 @@ describe('renderImpactReportMarkdown', () => {
       entry('aaaabbbbccccdddd', '2026-07-20T00:00:00.000Z', 24),
       entry('bbbbccccddddeeee', '2026-07-27T00:00:00.000Z', 24),
     ]);
-    expect(md).toContain('## Score trend since install');
+    expect(md).toContain('## Score trend');
+    expect(md).toContain('since the first snapshot on record');
     expect(md).toContain('Repo trend: overall 24, flat since 2026-07-20 (2 snapshots)');
     expect(md).toContain('Latest merge `bbbbccccdddd`: overall 24 to 24 (=)');
     expect(md).toContain('no dimension moved');

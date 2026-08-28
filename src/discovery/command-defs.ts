@@ -311,7 +311,7 @@ export const COMMANDS = [
       'One command to run all analyzers and render the dashboard — the full-audit entry point. ' +
       '`report snapshot` publishes a per-merge score snapshot to the dxkit-reports ref; ' +
       '`report history` renders the raw snapshot table (`--markdown` emits a "score moved X→Y" ' +
-      'block for a CI job summary or PR comment); `report trend` renders the since-install ' +
+      'block for a CI job summary or PR comment); `report trend` renders the ' +
       'score-over-time series (per-dimension sparklines plus the per-kind debt counts, ' +
       'segmented at scoring-methodology boundaries so movement is never claimed across ' +
       'incomparable snapshots). Each snapshot also publishes `latest/impact.md`, the ' +

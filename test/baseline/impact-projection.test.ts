@@ -295,7 +295,7 @@ describe('gatherScoreProjection (IO wrapper seams)', () => {
     expect(out.trend).toBeDefined();
     expect(out.trend?.totalSnapshots).toBe(2);
     expect(out.trend?.sinceDate).toBe('2026-07-20');
-    expect(out.trend?.sinceInstall).toBe(true);
+    expect(out.trend?.sinceFirstSnapshot).toBe(true);
   });
 
   it('empty history => no trend context (nothing is invented), disclosed unavailable projection', async () => {

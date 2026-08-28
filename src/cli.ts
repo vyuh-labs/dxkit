@@ -2410,7 +2410,7 @@ export async function run(argv: string[]): Promise<void> {
     case 'report': {
       // Subcommands: `report snapshot` publishes a per-merge score snapshot to
       // the `dxkit-reports` anchor; `report history` reads the raw table back;
-      // `report trend` renders the segmented since-install series (impact P3).
+      // `report trend` renders the segmented score-over-time series (impact P3).
       // All dispatch to reports-cli; a bare `report` runs the full audit below.
       const reportSub = positionals[1];
       if (reportSub === 'snapshot' || reportSub === 'history' || reportSub === 'trend') {

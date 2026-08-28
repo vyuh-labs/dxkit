@@ -98,7 +98,7 @@ export interface CheckRenderOptions {
    */
   readonly scoreProjection?: ScoreProjection;
   /**
-   * The since-install trend context (impact P3), read from the same history
+   * The trend context (impact P3), read from the same history
    * fetch as the projection. Rendered as ONE line inside an attributable
    * Impact section (the design's "Repo trend: overall 24, flat since ..."
    * sketch); carried on the JSON `impact.trend` field.

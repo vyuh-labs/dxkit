@@ -104,7 +104,7 @@ export interface ScoreProjectionGather {
   readonly projection: ScoreProjection;
   readonly scoreInputs?: ReadonlyArray<ImpactScoreInput>;
   /**
-   * The since-install trend context (impact P3), computed from the SAME
+   * The trend context (impact P3), computed from the SAME
    * history read the projection uses (one fetch per run, Rule 2). Present
    * whenever the history was read and non-empty, independent of whether a
    * projection was possible: the trend line describes snapshots the org has

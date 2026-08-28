@@ -147,7 +147,8 @@ export interface ImpactSummary {
    */
   readonly projection?: ScoreProjection;
   /**
-   * The since-install trend context (impact P3), when the surface read the
+   * The trend context (impact P3, since the first snapshot on record),
+   * when the surface read the
    * snapshot history this run (the projection gather's one fetch). A
    * statement about the repo's PUBLISHED record, not about this change, so
    * it is carried even on a refused run (data, plainly labeled); the
