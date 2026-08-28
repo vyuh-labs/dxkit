@@ -2081,7 +2081,7 @@ fi
 RULE_RECIPE_PM_TOKENS='npm|npx|pnpm|yarn|bun|pip|pip3|poetry|uv|bundler?|gem|composer|cargo|dotnet|nuget|mvn|gradle|gradlew|swift'
 RULE_RECIPE_PM_LITERAL=$({ \
   grep -rnE "'(${RULE_RECIPE_PM_TOKENS})'" src/remediate/recipes/ src/remediate/work-orders/recipes-registry.ts 2>/dev/null; \
-  grep -rnE "`[^`]*(^|[^a-zA-Z0-9_-])(${RULE_RECIPE_PM_TOKENS})([^a-zA-Z0-9_-]|$)" src/remediate/recipes/ src/remediate/work-orders/recipes-registry.ts 2>/dev/null; \
+  grep -rnE "\`[^\`]*(^|[^a-zA-Z0-9_-])(${RULE_RECIPE_PM_TOKENS})([^a-zA-Z0-9_-]|$)" src/remediate/recipes/ src/remediate/work-orders/recipes-registry.ts 2>/dev/null; \
 } | grep -E '\.ts:' | grep -v -E ':[[:space:]]*(//|\*)' | grep -v "// recipe-ecosystem-ok" | sort -u)
 if [ -n "$RULE_RECIPE_PM_LITERAL" ]; then
   echo "❌ Remediation-seam violation: package-manager literal inside the recipe executors:"
