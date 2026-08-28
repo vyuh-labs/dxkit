@@ -1796,6 +1796,7 @@ const pythonInstallStrategy = declareInstallStrategy(
 export const python: LanguageSupport = {
   id: 'python',
   displayName: 'Python',
+  purlType: 'pypi',
   commentSyntax: { lineComment: '#' },
   sourceExtensions: ['.py'],
   testFilePatterns: [...PY_TEST_FILE_PATTERNS],

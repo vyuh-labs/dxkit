@@ -530,6 +530,7 @@ const kotlinLintGateProvider: LintGateProvider = {
 export const kotlin: LanguageSupport = {
   id: 'kotlin',
   displayName: 'Kotlin (Android)',
+  purlType: 'maven',
   commentSyntax: { lineComment: '//', blockCommentStart: '/*', blockCommentEnd: '*/' },
 
   // `.kts` covers both Gradle build scripts and Kotlin scratch files; the

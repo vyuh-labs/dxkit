@@ -1038,6 +1038,7 @@ function detectGoVersion(cwd: string): string | undefined {
 export const go: LanguageSupport = {
   id: 'go',
   displayName: 'Go',
+  purlType: 'golang',
   commentSyntax: { lineComment: '//', blockCommentStart: '/*', blockCommentEnd: '*/' },
   sourceExtensions: ['.go'],
   testFilePatterns: ['*_test.go'],

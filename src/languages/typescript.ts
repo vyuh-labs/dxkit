@@ -2812,6 +2812,7 @@ function detectNodeVersion(cwd: string): string | undefined {
 export const typescript: LanguageSupport = {
   id: 'typescript',
   displayName: 'TypeScript / JavaScript',
+  purlType: 'npm',
   commentSyntax: { lineComment: '//', blockCommentStart: '/*', blockCommentEnd: '*/' },
   sourceExtensions: [...TS_JS_EXT],
   // Filename conventions for the JS/TS ecosystem. The `__tests__/`

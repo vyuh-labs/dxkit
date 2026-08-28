@@ -1060,6 +1060,7 @@ function detectRustVersion(cwd: string): string | undefined {
 export const rust: LanguageSupport = {
   id: 'rust',
   displayName: 'Rust',
+  purlType: 'cargo',
   commentSyntax: { lineComment: '//', blockCommentStart: '/*', blockCommentEnd: '*/' },
   sourceExtensions: ['.rs'],
   // Rust convention: tests live in the same file via #[cfg(test)] / #[test],

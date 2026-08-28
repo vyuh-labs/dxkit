@@ -287,6 +287,11 @@ function buildEntry(
   if (isTopLevel === undefined && !joinedFromBoth && vulns.length > 0) {
     isTopLevel = vulns.some((v) => !v.topLevelDep || v.topLevelDep.includes(lic.package));
   }
+  // Ecosystem provenance: the license row's stamped packId wins (the
+  // package universe comes from the license inventory); a vuln-only row
+  // falls back to the advisory's packId. Left unset when neither side
+  // carried provenance: consumers must treat unset as unknown.
+  const packId = lic.packId ?? vulns.map((v) => v.packId).find((p) => p !== undefined);
   return {
     package: lic.package,
     version: lic.version,
@@ -301,5 +306,6 @@ function buildEntry(
     upgradeAdvice: tieredAdvice ?? deriveTier1Resolution(vulns),
     joinedFromBoth,
     isTopLevel,
+    ...(packId !== undefined ? { packId } : {}),
   };
 }

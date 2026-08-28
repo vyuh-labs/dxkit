@@ -482,6 +482,7 @@ function detectJavaVersion(cwd: string): string | undefined {
 export const java: LanguageSupport = {
   id: 'java',
   displayName: 'Java',
+  purlType: 'maven',
   commentSyntax: { lineComment: '//', blockCommentStart: '/*', blockCommentEnd: '*/' },
 
   sourceExtensions: ['.java'],

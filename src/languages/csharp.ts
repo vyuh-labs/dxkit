@@ -1762,6 +1762,7 @@ function detectCsharpVersion(cwd: string): string | undefined {
 export const csharp: LanguageSupport = {
   id: 'csharp',
   displayName: 'C#',
+  purlType: 'nuget',
   commentSyntax: { lineComment: '//', blockCommentStart: '/*', blockCommentEnd: '*/' },
   sourceExtensions: ['.cs'],
   // Fixes the pattern gap: previously C# tests named `FooTests.cs` were missed

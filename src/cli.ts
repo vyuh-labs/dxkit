@@ -414,6 +414,8 @@ export async function run(argv: string[]): Promise<void> {
       output: { type: 'string', short: 'o' },
       xlsx: { type: 'boolean', default: false },
       filter: { type: 'string' },
+      // `bom --format cyclonedx`: SBOM interchange export.
+      format: { type: 'string' },
       all: { type: 'boolean', default: false },
       // learn: local assistant server + its port
       serve: { type: 'boolean', default: false },
@@ -2084,9 +2086,38 @@ export async function run(argv: string[]): Promise<void> {
       break;
     }
 
-    case 'bom': {
+    case 'bom':
+    case 'sbom': {
       const targetPath = resolveRepoPath(positionals[1]);
       const { analyzeBom, formatBomReport } = await import('./analyzers/bom');
+      const rawFormat = values.format as string | undefined;
+      if (rawFormat !== undefined && rawFormat !== 'cyclonedx') {
+        logger.fail(`Invalid --format value: ${rawFormat}. Expected 'cyclonedx'.`);
+        process.exit(1);
+      }
+      // Two output-shape flags cannot share one stdout: fail fast
+      // instead of silently privileging one document.
+      if (rawFormat === 'cyclonedx' && values.json) {
+        logger.fail(
+          'Cannot combine --json with --format cyclonedx: each defines the output document. ' +
+            'Use --format cyclonedx alone for the CycloneDX SBOM, or --json alone for the bom report schema.',
+        );
+        process.exit(1);
+      }
+      // Same for one --output path claimed by two writers: the xlsx
+      // export and the SBOM export would clobber each other.
+      if (rawFormat === 'cyclonedx' && values.xlsx && values.output) {
+        logger.fail(
+          'Cannot combine --xlsx and --format cyclonedx with one --output path: both would write it. ' +
+            'Run the two exports separately.',
+        );
+        process.exit(1);
+      }
+      // `--format cyclonedx` without --output streams the document to
+      // stdout, so progress chatter must ride stderr (same contract as
+      // --json output).
+      const cycloneDxToStdout = rawFormat === 'cyclonedx' && !values.output;
+      if (cycloneDxToStdout) logger.setJsonMode(true);
       logger.header('vyuh-dxkit bom');
       logger.info(`Analyzing ${targetPath}...`);
       const rawFilter = values.filter;
@@ -2102,7 +2133,23 @@ export async function run(argv: string[]): Promise<void> {
       });
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
 
-      if (values.json) {
+      // The CycloneDX SBOM is a pure projection of the SAME report (a
+      // renderer, not a second gather). Rendered once here: the disk
+      // side always persists it beside the markdown report (so the
+      // reports-snapshot lane publishes it with the other artifacts),
+      // `--format cyclonedx --output <file>` additionally writes it to
+      // an explicit path, and `--format cyclonedx` without --output
+      // streams it as the stdout (pipe-friendly, summary suppressed).
+      // Timestamp is the report's own analyzedAt (injected), so the
+      // same gather renders byte-identical output.
+      const { renderCycloneDx } = await import('./analyzers/bom/cyclonedx');
+      const cycloneDxJson = renderCycloneDx(report, {
+        timestamp: report.analyzedAt,
+        dxkitVersion: VERSION,
+      });
+      if (cycloneDxToStdout) {
+        process.stdout.write(cycloneDxJson);
+      } else if (values.json) {
         await emitJson(stampSchema(report, 'bom')); // slop-ok
       } else {
         const s = report.summary;
@@ -2153,7 +2200,10 @@ export async function run(argv: string[]): Promise<void> {
         const reportPath = path.join(reportDir, `bom-${date}.md`);
         fs.mkdirSync(reportDir, { recursive: true });
         fs.writeFileSync(reportPath, formatBomReport(report, elapsed));
-        if (!values.json) console.log(''); // slop-ok
+        // In cyclonedx stdout mode the document must stay the ONLY
+        // stdout, so the cosmetic spacer is suppressed with the rest
+        // of the chatter.
+        if (!values.json && !cycloneDxToStdout) console.log(''); // slop-ok
         logger.success(`Report saved to ${path.relative(targetPath, reportPath)}`);
 
         // D032 (2.4.7): detailed JSON + MD always written so dashboard finds fresh inputs.
@@ -2164,6 +2214,16 @@ export async function run(argv: string[]): Promise<void> {
         const bomDetailedMdPath = path.join(reportDir, `bom-${date}-detailed.md`);
         fs.writeFileSync(bomDetailedJsonPath, JSON.stringify(bomDetailed, null, 2));
         fs.writeFileSync(bomDetailedMdPath, formatBomDetailedMarkdown(bomDetailed, elapsed));
+
+        // CycloneDX SBOM: always persisted beside the markdown report
+        // (the D032 discipline: the reports-snapshot lane picks up the
+        // newest bom-*.cdx.json and publishes it as latest/sbom.cdx.json
+        // on the dxkit-reports ref).
+        const cycloneDxPath = path.join(reportDir, `bom-${date}.cdx.json`);
+        fs.writeFileSync(cycloneDxPath, cycloneDxJson);
+        if (rawFormat === 'cyclonedx') {
+          logger.success(`CycloneDX SBOM saved to ${path.relative(targetPath, cycloneDxPath)}`);
+        }
 
         if (values.detailed) {
           logger.success(
@@ -2183,6 +2243,22 @@ export async function run(argv: string[]): Promise<void> {
           fs.writeFileSync(xlsxPath, buf);
           logger.success(`XLSX saved to ${path.relative(targetPath, xlsxPath)}`);
         }
+      }
+
+      // `--format cyclonedx --output <file>`: explicit export path,
+      // honored regardless of --no-save (the reports-dir copy above is
+      // the lane surface; this one is the user's).
+      if (rawFormat === 'cyclonedx' && values.output) {
+        const sbomOutPath = path.resolve(values.output as string);
+        try {
+          fs.writeFileSync(sbomOutPath, cycloneDxJson);
+        } catch (err) {
+          logger.fail(
+            `Could not write CycloneDX SBOM to ${sbomOutPath}: ${(err as Error).message}`,
+          );
+          process.exit(1);
+        }
+        logger.success(`CycloneDX SBOM written to ${sbomOutPath}`);
       }
 
       // --fail-on-severity: BomReport.summary.bySeverity carries
