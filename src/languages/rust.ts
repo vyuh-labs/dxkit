@@ -1,5 +1,6 @@
 import { NO_TREE_INVARIANTS } from './capabilities/tree-invariants';
-import { plannedRemediationSupport } from './capabilities/remediation';
+import { rustRemediation } from './rust-remediation';
+import { rustInstallStrategy } from './rust-install';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -21,7 +22,10 @@ import type {
   CorrectnessCommand,
   CorrectnessContext,
   CorrectnessProvider,
+  LockfileCheck,
 } from './capabilities/correctness';
+import { lockfileCheckFromStrategy } from './capabilities/correctness';
+import { resolveTolerances } from '../install/tolerances';
 import type { ExecutionRequirement } from '../execution';
 import type {
   CoverageResult,
@@ -965,6 +969,15 @@ const rustCorrectnessProvider: CorrectnessProvider = {
     }
     return { label: 'affected-tests', bin: 'cargo', args: ['test'] };
   },
+
+  // The lockfile-sync floor check derives from the ONE install strategy
+  // through the ONE derivation (`lockfileCheckFromStrategy`), so the check
+  // and the install cannot disagree (Rule 2.30).
+  lockfileCheck(ctx: CorrectnessContext): LockfileCheck | null {
+    const strategy = rustInstallStrategy.strategy(ctx.cwd);
+    if (strategy === null) return null;
+    return lockfileCheckFromStrategy(strategy, ctx.tolerances ?? resolveTolerances(ctx.cwd));
+  },
 };
 
 /** clippy `--message-format short` line: `<file>:<line>:<col>: warning|error: <message>`.
@@ -1177,7 +1190,8 @@ export const rust: LanguageSupport = {
   },
 
   treeInvariants: NO_TREE_INVARIANTS,
-  remediation: plannedRemediationSupport('rust'),
+  installStrategy: rustInstallStrategy,
+  remediation: rustRemediation,
   correctness: rustCorrectnessProvider,
   lintGate: rustLintGateProvider,
 

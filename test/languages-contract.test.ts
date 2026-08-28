@@ -93,8 +93,10 @@ const RECALL_VERSION_EXEMPT: Readonly<Record<string, string>> = {
  * a strategy.
  */
 const INSTALL_STRATEGY_EXEMPT: Readonly<Record<string, string>> = {
-  go: 'go modules provision on demand (`go build` / `go test` download what go.sum records); there is no separate install step to declare, and the floor commands carry the toolchain.',
-  rust: 'cargo provisions on demand (`cargo build` / `cargo test` resolve Cargo.lock); there is no separate install step to declare.',
+  // go + rust graduated in 4.4.7 V3: their strategies exist for the frozen
+  // verification install and the lockfile-sync recipe (go mod tidy /
+  // cargo update --workspace), even though their builds also provision on
+  // demand.
   csharp:
     'the restore is a build-target decision (`dotnet restore <solution>`), and the pack derives the target and host per repo through its correctness floor (Rule 20); a root-level install declaration would guess a solution.',
   kotlin:
@@ -1268,6 +1270,15 @@ describe('remediation capabilities: a provider or a reasoned exemption, per pack
         if (first.kind === 'refused') {
           expect(first.reason.length).toBeGreaterThan(0);
           expect(first.reason).not.toContain(dir);
+        } else if (first.kind === 'command') {
+          // The tool-owned shape (go / cargo): a real argv, declared
+          // writes, revert prose, no machine path leaking anywhere.
+          expect(first.command.bin.length).toBeGreaterThan(0);
+          expect(first.writes.length).toBeGreaterThan(0);
+          for (const w of first.writes) expect(w).not.toContain('..');
+          expect(first.revert.length).toBeGreaterThan(0);
+          expect(first.revert).not.toContain(dir);
+          expect([first.command.bin, ...first.command.args].join(' ')).not.toContain(dir);
         } else {
           expect(first.edit.file.length).toBeGreaterThan(0);
           expect(first.edit.file).not.toContain('..');

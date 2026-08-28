@@ -6,8 +6,25 @@
  */
 import * as fs from 'fs';
 import * as path from 'path';
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { executeOverridePin } from '../../../src/remediate/recipes/override-pin';
+
+// The Rule 20 gate probes the REAL machine (`currentEnvironment` is not an
+// injected seam), so a test host without the go/rust/php toolchain would
+// turn every applied-path assertion into an environment refusal. The mock
+// reports every toolchain present and healthy; the gate's own behavior is
+// covered by the execution-platform and recipe-playbook tests.
+vi.mock('../../../src/execution', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../src/execution')>();
+  return {
+    ...actual,
+    currentEnvironment: () => ({
+      host: 'linux' as const,
+      hasToolchain: () => true,
+      toolchainProblem: () => null,
+    }),
+  };
+});
 import {
   compareConcreteSemver,
   isConcreteSemver,
@@ -224,5 +241,86 @@ describe('override-pin recipe', () => {
     );
     expect(outcome.kind).toBe('failed');
     if (outcome.kind === 'failed') expect(outcome.step).toBe('verify-audit');
+  });
+});
+
+describe('override-pin recipe (command plans: the tool-owned ecosystems, 4.4.7 V3)', () => {
+  const GO_MOD =
+    'module example.com/app\n\ngo 1.22\n\nrequire golang.org/x/text v0.3.7 // indirect\n';
+
+  function goOrder(fixedVersion = '0.3.8') {
+    return makeOrder({
+      id: 'dep-advisory:golang.org/x/text',
+      class: 'dep-advisory',
+      findings: [advisoryFinding('f1', 'golang.org/x/text', 'GHSA-gggg', fixedVersion)],
+      envelope: { paths: ['go.mod', 'go.sum'], manifests: true },
+    });
+  }
+
+  it('go: runs the pack-declared `go get` at the root, no separate resync, re-audits clean', async () => {
+    const cwd = tempRepo({ 'go.mod': GO_MOD, 'go.sum': '' });
+    const { exec, calls } = fakeExec();
+    const outcome = await executeOverridePin(goOrder(), makeCtx(cwd, { exec }));
+    expect(outcome.kind).toBe('applied');
+    // The ONE spawn is the tool's own pin command; the tool leaves the tree
+    // consistent, so no lock resync follows.
+    expect(calls.map((c) => [c.cmd.bin, ...c.cmd.args].join(' '))).toEqual([
+      'go get golang.org/x/text@v0.3.8',
+    ]);
+    expect(calls[0].cwd).toBe(cwd);
+    if (outcome.kind === 'applied') {
+      expect(outcome.changedFiles).toEqual(['go.mod', 'go.sum']);
+      expect(outcome.revert).toContain('go mod tidy');
+    }
+  });
+
+  it('go: a failing pin command is a named step failure (diff will be discarded)', async () => {
+    const cwd = tempRepo({ 'go.mod': GO_MOD, 'go.sum': '' });
+    const { exec } = fakeExec((cmd) => {
+      if (cmd.bin === 'go') return { code: 1, output: 'go: module not found' };
+    });
+    const outcome = await executeOverridePin(goOrder(), makeCtx(cwd, { exec }));
+    expect(outcome.kind).toBe('failed');
+    if (outcome.kind === 'failed') {
+      expect(outcome.step).toBe('apply-pin');
+      expect(outcome.output).toContain('module not found');
+    }
+  });
+
+  it('go: the OSV block-tier pre-check refuses BEFORE the command spawns ($0)', async () => {
+    const cwd = tempRepo({ 'go.mod': GO_MOD, 'go.sum': '' });
+    const { exec, calls } = fakeExec();
+    const outcome = await executeOverridePin(
+      goOrder(),
+      makeCtx(cwd, {
+        exec,
+        queryOsv: async () => [{ id: 'GO-2026-9999', database_specific: { severity: 'HIGH' } }],
+      }),
+    );
+    expect(outcome.kind).toBe('refused');
+    if (outcome.kind === 'refused') expect(outcome.reason).toContain('GO-2026-9999');
+    expect(calls).toHaveLength(0);
+  });
+
+  it('rust: runs `cargo update -p --precise` at the root and reports the lockfile as the one write', async () => {
+    const cwd = tempRepo({
+      'Cargo.toml': '[package]\nname = "fx"\n\n[dependencies]\ntop = "1.0"\n',
+      'Cargo.lock': '',
+    });
+    const { exec, calls } = fakeExec();
+    const order = makeOrder({
+      id: 'dep-advisory:smallvec',
+      class: 'dep-advisory',
+      findings: [advisoryFinding('f1', 'smallvec', 'RUSTSEC-2026-0001', '1.13.2')],
+      envelope: { paths: ['Cargo.toml', 'Cargo.lock'], manifests: true },
+    });
+    const outcome = await executeOverridePin(order, makeCtx(cwd, { exec }));
+    expect(outcome.kind).toBe('applied');
+    expect(calls.map((c) => [c.cmd.bin, ...c.cmd.args].join(' '))).toEqual([
+      'cargo update -p smallvec --precise 1.13.2',
+    ]);
+    if (outcome.kind === 'applied') {
+      expect(outcome.changedFiles).toEqual(['Cargo.lock']);
+    }
   });
 });
