@@ -22,6 +22,7 @@
 import type { AnalysisTrustContext } from '../analysis-trust';
 import type { CorrectnessFloorResult } from '../analyzers/correctness/run';
 import type { FloorBaseCheck } from '../analyzers/correctness/attribution';
+import type { ImpactSummary } from '../baseline/impact';
 
 /** Entry-floor run → the attribution comparator's base-check shape. */
 export function toFloorBaseChecks(floor: CorrectnessFloorResult): FloorBaseCheck[] {
@@ -56,6 +57,13 @@ export interface GuardrailGateResult {
    * unavailable, not consulted).
    */
   readonly blockingFindings?: readonly BlockingFinding[];
+  /**
+   * The finding-delta impact of the checked tree vs its baseline (impact
+   * surface phase 1), derived from the SAME check result as the verdict,
+   * zero extra computation. The lane ledgers render it beside the verdict
+   * line. Absent when the check did not run (there is no delta to claim).
+   */
+  readonly impact?: ImpactSummary;
 }
 
 /** One blocking finding, projected for per-order attribution. */
@@ -85,8 +93,12 @@ export async function guardrailVerdictFor(
   try {
     const { runGuardrailCheck } = await import('../baseline/check');
     const { verdictCounts } = await import('../baseline/check-renderers');
+    const { deriveImpact } = await import('../baseline/impact');
     const result = await runGuardrailCheck({ cwd, trust });
     const counts = verdictCounts(result);
+    // The finding-delta impact, from the same result the verdict came from
+    // (impact surface phase 1): the ledger's Impact line beside the verdict.
+    const impact = deriveImpact(result);
     // Name what blocked (capped): a lane's BLOCKED verdict must be
     // inspectable from its ledger — "the guardrail did not pass" with no
     // findings is a diagnosability black hole on an ephemeral runner.
@@ -132,6 +144,7 @@ export async function guardrailVerdictFor(
       passesGate: counts.exitCode === 0,
       ...(blocking.length > 0 ? { blocking } : {}),
       ...(blockingFindings.length > 0 ? { blockingFindings } : {}),
+      impact,
     };
   } catch (e) {
     return {

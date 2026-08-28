@@ -166,7 +166,9 @@ export interface ClassifyResult {
  *      `FindingStatus`.
  *   2. For `added`: check drift context. Scanner-version drift wins
  *      (more specific signal) over config drift; both demote to
- *      drift-bucket statuses regardless of severity.
+ *      drift-bucket statuses regardless of severity. For `removed`:
+ *      not-observed wins (dxkit did not look), then recall drift (the
+ *      tool moved), both meaning the disappearance is not "resolved".
  *   3. For `persisted` / `relocated`: check confidence against the
  *      per-severity threshold. Below threshold demotes to
  *      `'uncertain'`.
@@ -197,6 +199,29 @@ export function classify(
       detail: `${context.notObserved} — this baseline finding was not re-verified this run; not observed is not resolved`,
     });
     return { status: 'not_observed', blocks: false, warns: false, reasons };
+  }
+
+  // Removed-direction recall drift (Rule 19's cause 5/6 in the resolved
+  // direction, the sibling of the `added` demotion below): the kind's recall
+  // inputs moved between baseline and this run, so a disappearance has an
+  // explanation other than "the developer fixed it": a scanner bump that
+  // drops rules makes its findings vanish without anyone touching the code.
+  // "You resolved N findings" is a cause claim too, so the pair demotes to
+  // `tooling_drift` instead of counting as resolved. Fixed verdict like
+  // `not_observed` (never blocks, never warns: there is nothing on the
+  // current side to gate, and warning about an absence would only add noise
+  // on top of the envelope-drift disclosure that already names the kind and
+  // the input that moved). No `unattributableBlockRule` either: block rules
+  // exist to stop net-new findings, and this pair has no current side.
+  if (status === 'removed' && context.recallDrifted) {
+    reasons.push({
+      code: 'tooling-drift',
+      detail:
+        (context.recallDriftDetail ?? 'what dxkit can see for this kind changed between runs') +
+        ', so this baseline finding is gone but the disappearance cannot be attributed to ' +
+        'the diff; demoted, not counted as resolved',
+    });
+    return { status: 'tooling_drift', blocks: false, warns: false, reasons };
   }
 
   // Step 2: drift context can reclassify 'added'.

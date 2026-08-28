@@ -550,3 +550,44 @@ describe('baselineRefreshCron — the ONE cadence normalizer', () => {
     );
   });
 });
+
+describe('classify - removed-direction recall drift (the resolved side of Rule 19)', () => {
+  it('a removed pair on a drifted kind demotes to tooling_drift with a fixed verdict', () => {
+    // A scanner bump that drops rules makes findings VANISH without anyone
+    // touching the code: "you resolved N findings" is a cause claim, and
+    // this pair cannot back it. Fixed verdict: nothing exists on the current
+    // side to gate, so it neither blocks nor warns, and it never counts as
+    // resolved (the impact surface and verdictCounts both read the status).
+    const ctx: ClassifyContext = {
+      recallDrifted: true,
+      recallDriftDetail: 'semgrep 1.0.0 -> 1.2.0',
+    };
+    const result = classify(pair('removed'), DEFAULT_BROWNFIELD_POLICY, ctx);
+    expect(result.status).toBe('tooling_drift');
+    expect(result.blocks).toBe(false);
+    expect(result.warns).toBe(false);
+    // No refusal marker either: block rules exist to stop net-new findings,
+    // and a removed pair has no current side to certify.
+    expect(result.unattributableBlockRule).toBeUndefined();
+    expect(
+      result.reasons.some(
+        (r) => r.code === 'tooling-drift' && r.detail.includes('not counted as resolved'),
+      ),
+    ).toBe(true);
+    expect(result.reasons.some((r) => r.detail.includes('semgrep 1.0.0 -> 1.2.0'))).toBe(true);
+  });
+
+  it('not-observed outranks recall drift on a removed pair (dxkit did not look at all)', () => {
+    const ctx: ClassifyContext = {
+      recallDrifted: true,
+      notObserved: 'check "lint" was skipped (untrusted tree)',
+    };
+    const result = classify(pair('removed'), DEFAULT_BROWNFIELD_POLICY, ctx);
+    expect(result.status).toBe('not_observed');
+  });
+
+  it('an undrifted removed pair still reads removed (resolved), no over-demotion', () => {
+    const result = classify(pair('removed'), DEFAULT_BROWNFIELD_POLICY, {});
+    expect(result.status).toBe('removed');
+  });
+});

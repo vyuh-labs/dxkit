@@ -116,6 +116,7 @@ export function verificationDisclosures(
   changedFiles?: VerifyTreeResult['changedFiles'];
   guardrailVerdict: string;
   guardrailRan: boolean;
+  guardrailImpact?: NonNullable<GuardrailGateResult['impact']>;
 } {
   // The tolerance-resolution warnings (unknown policy entries, a policy
   // opt-out conflicting with observed repo config): the disclosure home the
@@ -130,6 +131,10 @@ export function verificationDisclosures(
     ...(verified.changedFiles ? { changedFiles: verified.changedFiles } : {}),
     guardrailVerdict: guardrail.verdict,
     guardrailRan: guardrail.ran,
+    // The finding-delta impact beside the verdict (impact surface phase 1),
+    // rendered by the shared ledger composer. Absent when the check did not
+    // run: a delta nobody measured is not claimed.
+    ...(guardrail.impact !== undefined ? { guardrailImpact: guardrail.impact } : {}),
   };
 }
 
