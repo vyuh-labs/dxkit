@@ -12,6 +12,7 @@ export type { Rating, CapTier, Deduction, CapApplied, TopAction, ScoreResult } f
 export type { PenaltyRule, CapRule, DimensionScoringSpec } from './spec';
 
 export { RATING_THRESHOLDS, CAP_TIERS, ratingFromScore } from './thresholds';
+export { SCORING_METHODOLOGY_VERSION } from './methodology';
 export { evaluateSpec } from './evaluator';
 export { formatTopActionLine, formatTopActionsBlock } from './format';
 export type { ScoreResultLike } from './format';

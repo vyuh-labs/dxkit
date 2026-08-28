@@ -143,6 +143,17 @@ export const POSTURE_KNOBS: readonly PostureKnob[] = [
     note: 'enabling installs the dxkit-reports-refresh managed workflow, which configure’s policy-only merge-write cannot place — so no planConfig; recommendReportsOnMerge surfaces it once the repo is actively gating.',
   },
   {
+    path: 'impact.projectScores',
+    command: 'guardrail',
+    requiresPlan: false,
+    requiresRecommend: false,
+    exemptionReason:
+      'a default-ON off-switch tuning the already-adopted guardrail comment (drop the projected ' +
+      'score line), not a capability a repo opts into (the Rule 16 tuning-field carve-out), ' +
+      'registered here so the exemption is declared, never a silent omission. Documented under ' +
+      '"Impact projection" in policy-guide.md and settable via `policy set`.',
+  },
+  {
     path: 'graph.refresh',
     command: 'update',
     requiresPlan: false,

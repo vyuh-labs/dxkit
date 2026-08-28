@@ -33,6 +33,7 @@ stanzas).
 | `flow.mode`                         | [#flow-mode](#flow-mode)                                 |
 | `flow.sources`                      | [#flow-sources](#flow-sources)                           |
 | `graph.refresh`                     | [#graph-refresh](#graph-refresh)                         |
+| `impact.projectScores`              | [#impact-projection](#impact-projection)                 |
 | `licenses.prohibited`               | [#prohibited-licenses](#prohibited-licenses)             |
 | `lint.blocking`                     | [#lint-gate](#lint-gate)                                 |
 | `lint.enabled`                      | [#lint-gate](#lint-gate)                                 |
@@ -397,6 +398,28 @@ on; a notification that could not be posted must never fail a baseline capture.
 every merge — the score-over-time series `vyuh-dxkit metrics` renders.
 
 **Default and why.** Off; enabling installs a managed workflow (`update`).
+
+## Impact projection
+
+**What it does.** `impact.projectScores` controls the projected score line in
+the guardrail PR comment's Impact section ("security 40 -> 46 (projected)").
+The current side is scored from the analysis the guardrail run already
+gathered (never a second gather); the base side is the latest published
+snapshot on the reports ref (the number the org has already seen). The two
+are compared only under the same scoring-methodology version; a mismatch is
+disclosed as not comparable. After the merge, the reports lane updates the
+same comment with the actual movement beside the projection.
+
+**Default and why.** On (`true`): the marginal cost is a cache-hit re-score
+(measured around 20ms) plus one shallow fetch of the reports ref. Set
+`false` to drop the projection line and the snapshot read. With no snapshot
+history (reports.onMerge off), the section discloses that no projection was
+made instead of inventing a base. On a ref-based repo the projection is
+structurally unavailable (that mode gathers a trimmed analysis every run), so
+the JSON carries the disclosure quietly and no line is printed per PR. Scores
+are also compared only when the tools behind them match: a snapshot captured
+with a scanner this run lacks (or the reverse) is disclosed as not comparable
+rather than diffed.
 
 ## Graph refresh
 

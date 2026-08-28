@@ -9,6 +9,29 @@ import {
   readReportHistory,
   type SnapshotSource,
 } from '../../src/reports/snapshot';
+import { SCORING_METHODOLOGY_VERSION } from '../../src/scoring/methodology';
+import { describeScoreInputsDrift, scoreToolInputs } from '../../src/reports/snapshot';
+
+describe('score-input comparability primitives (Rule 19 cause 5)', () => {
+  it('scoreToolInputs sorts, dedupes, and strips unavailable reasons', () => {
+    expect(
+      scoreToolInputs({
+        toolsUsed: ['semgrep', 'semgrep', ' cloc '],
+        toolsUnavailable: ['jscpd (timed out after 120s)', 'gitleaks'],
+      }),
+    ).toEqual(['!gitleaks', '!jscpd', 'cloc', 'semgrep']);
+    expect(scoreToolInputs({})).toEqual([]);
+  });
+
+  it('describeScoreInputsDrift names movement both directions, null on match or unstamped', () => {
+    expect(describeScoreInputsDrift(['a', 'b'], ['a', 'b'])).toBeNull();
+    expect(describeScoreInputsDrift(undefined, ['a'])).toBeNull();
+    expect(describeScoreInputsDrift(['a'], undefined)).toBeNull();
+    const drift = describeScoreInputsDrift(['gitleaks', 'semgrep'], ['grep-secrets', 'semgrep']);
+    expect(drift).toContain('at the base but not now: gitleaks');
+    expect(drift).toContain('now but not at the base: grep-secrets');
+  });
+});
 
 const source: SnapshotSource = {
   summary: { overallScore: 72 },
@@ -35,6 +58,23 @@ describe('reportToHistoryEntry', () => {
       developerExperience: 70,
     });
     expect(e.sha).toBe('abc');
+  });
+
+  it('stamps the scoring-methodology identity on every entry (impact P2)', () => {
+    const e = reportToHistoryEntry(source, { sha: 'abc', date: 'd', dxkitVersion: '4.4.7' });
+    expect(e.methodology).toBe(SCORING_METHODOLOGY_VERSION);
+  });
+
+  it('stamps the normalized score inputs (used tools + !unavailable, reasons stripped)', () => {
+    const e = reportToHistoryEntry(
+      {
+        ...source,
+        toolsUsed: ['semgrep', 'grep-secrets', 'cloc'],
+        toolsUnavailable: ['gitleaks (not installed on this runner)'],
+      },
+      { sha: 'abc', date: 'd', dxkitVersion: '4.4.7' },
+    );
+    expect(e.scoreInputs).toEqual(['!gitleaks', 'cloc', 'grep-secrets', 'semgrep']);
   });
 
   it('maps a missing/unmeasured dimension to null', () => {
@@ -100,6 +140,26 @@ describe('publishReportSnapshot', () => {
     }
     const history = readReportHistory(repo);
     expect(history.map((h) => h.sha)).toEqual(['c', 'd']);
+  });
+
+  it('returns the previous entry (the base the org saw) for the landed update', () => {
+    const first = publishReportSnapshot({
+      cwd: repo,
+      entry: reportToHistoryEntry(source, { sha: 'sha1', date: 'd1', dxkitVersion: '3.0.0' }),
+    });
+    expect(first.previousEntry).toBeUndefined();
+    const second = publishReportSnapshot({
+      cwd: repo,
+      entry: reportToHistoryEntry(source, { sha: 'sha2', date: 'd2', dxkitVersion: '3.0.0' }),
+    });
+    expect(second.previousEntry?.sha).toBe('sha1');
+    // An idempotent re-publish of the same SHA compares against the entry
+    // BEFORE it, never against itself.
+    const replay = publishReportSnapshot({
+      cwd: repo,
+      entry: reportToHistoryEntry(source, { sha: 'sha2', date: 'd2b', dxkitVersion: '3.0.0' }),
+    });
+    expect(replay.previousEntry?.sha).toBe('sha1');
   });
 
   it('re-publishing the same merge SHA replaces (idempotent), no dup line', () => {
