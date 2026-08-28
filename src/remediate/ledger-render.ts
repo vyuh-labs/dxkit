@@ -406,7 +406,7 @@ export function renderRemediateLedger(r: Omit<RemediateResult, 'ledger'>): strin
       r.floorSkipped,
     ),
   );
-  lines.push(...renderGuardrailVerdict(r.guardrailVerdict));
+  lines.push(...renderGuardrailVerdict(r.guardrailVerdict, r.guardrailImpact));
   if (r.scoreHinge) lines.push(renderScoreHinge(r.scoreHinge));
   lines.push(
     "_Agentic lane inside the verified frame: the agent's own claim of success is never " +

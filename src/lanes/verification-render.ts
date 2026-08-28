@@ -9,6 +9,13 @@
 import type { CorrectnessFloorResult } from '../analyzers/correctness/run';
 import type { AttributedFloorFailure } from '../analyzers/correctness/attribution';
 import { describeFloorSkip, type FloorSkip } from './verify-tree';
+import {
+  formatImpactCapNote,
+  formatImpactExclusions,
+  formatImpactHeadline,
+  formatImpactQuietLine,
+  type ImpactSummary,
+} from '../baseline/impact';
 
 /** One check line. A pass that carries a disclosure (a tolerated condition,
  *  4.4.5) shows it inline: a reader must never mistake "passed under a
@@ -76,7 +83,31 @@ export function renderFloorVerification(
   return lines;
 }
 
-/** The guardrail verdict line (omitted when the check did not run). */
-export function renderGuardrailVerdict(verdict: string | undefined): string[] {
-  return verdict ? [`Guardrail: **${verdict}**`, ''] : [];
+/**
+ * The guardrail verdict line (omitted when the check did not run), plus the
+ * finding-delta Impact line when the run computed one (impact surface phase
+ * 1). Non-zero only: a run that resolved findings names them (kind and
+ * severity, attribution-honest: the summary comes from the classifier's
+ * pair statuses, never a raw diff); a run that resolved nothing gets the one
+ * quiet line. Both lanes (dep-bump and remediate) render through here, so
+ * the impact grammar cannot fork between robots.
+ */
+export function renderGuardrailVerdict(
+  verdict: string | undefined,
+  impact?: ImpactSummary,
+): string[] {
+  if (!verdict) return [];
+  const lines = [`Guardrail: **${verdict}**`, ''];
+  if (impact) {
+    if (impact.resolved > 0) {
+      lines.push(`Impact: ${formatImpactHeadline(impact)}`);
+      for (const note of impact.capNotes) lines.push(`- ${formatImpactCapNote(note)}`);
+      const exclusions = formatImpactExclusions(impact);
+      if (exclusions) lines.push(`- ${exclusions}`);
+    } else {
+      lines.push(`Impact: ${formatImpactQuietLine(impact)}`);
+    }
+    lines.push('');
+  }
+  return lines;
 }

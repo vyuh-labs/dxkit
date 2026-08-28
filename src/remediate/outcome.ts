@@ -8,6 +8,7 @@ import type { AnalysisTrustContext } from '../analysis-trust';
 import type { CorrectnessFloorResult } from '../analyzers/correctness/run';
 import type { AttributedFloorFailure } from '../analyzers/correctness/attribution';
 import type { GuardrailGateResult } from '../lanes/verify';
+import type { ImpactSummary } from '../baseline/impact';
 import type { FloorSkip, InstallOutcome, VerifyTreeSeams } from '../lanes/verify-tree';
 import type { TreeInvariantOutcome } from '../lanes/tree-invariants';
 import type { FrameInvariantSeams } from './frame-invariants';
@@ -247,6 +248,11 @@ export interface RemediateResult {
    *  The executor's blocked-salvage decision requires a RAN verdict; a
    *  guardrail that never ran must not produce a draft claiming a block. */
   readonly guardrailRan?: boolean;
+  /** The finding-delta impact of the verified tree vs its baseline (impact
+   *  surface phase 1), from the same check that produced the verdict.
+   *  Rendered beside the verdict line in the ledger. Absent when the
+   *  guardrail did not run. */
+  readonly guardrailImpact?: ImpactSummary;
   /** The legacy task path's frame-invariant outcomes (the order paths
    *  carry them per record instead) — rendered in the ledger. */
   readonly frameInvariants?: {
