@@ -119,6 +119,11 @@ function droppedVerdict(d: Extract<OrderDisposition, { kind: 'dropped' }>): Orde
       return 'install-failed';
     case 'floor':
       return 'floor-red';
+    // A containment drop (4.4.7): the final guardrail attributed blocking
+    // findings to THIS order: the breaker counts it as this order's
+    // guardrail failure, never the run's.
+    case 'guardrail':
+      return 'guardrail-red';
   }
 }
 

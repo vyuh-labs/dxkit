@@ -10,7 +10,7 @@ import { describeTreeInvariantOutcome, type TreeInvariantOutcome } from '../lane
 import type { OrderDisposition } from './outcome';
 import { renderScoreHinge } from './score-hinge';
 import { recipeCounts, type RecipePhaseSummary } from './recipes/run-recipes';
-import type { OrdersPhaseSummary, RemediateResult } from './outcome';
+import type { GuardrailContainment, OrdersPhaseSummary, RemediateResult } from './outcome';
 
 /** The deterministic-recipe section: one line per order (applied / refused /
  *  failed with the reason), the tier split, and every disclosure: a $0
@@ -165,6 +165,22 @@ function renderOrdersSection(orders: OrdersPhaseSummary): string[] {
       lines.push(...renderInvariants(rec.invariants));
       lines.push(...renderInvariantDisclosures(rec.invariantDisclosures));
       lines.push(...renderDisposition(rec.disposition));
+      if (
+        rec.disposition?.kind === 'kept' &&
+        (rec.outcome === 'failed' || rec.outcome === 'partial')
+      ) {
+        // Driver-failure hygiene (4.4.7): a kept order whose driver failed
+        // or overran its budget lands on the VERIFICATION's evidence, never
+        // on any agent claim, and it is first in line for containment
+        // attribution if the final guardrail goes red. Disclosed per order.
+        lines.push(
+          `  - driver-failure disclosure: the driver reported this order's run ` +
+            (rec.outcome === 'failed' ? 'failed' : 'cut short (budget overrun)') +
+            `, but the committed work passed per-order verification and lands on that ` +
+            `evidence (the agent's claim counts for nothing); if the final guardrail goes ` +
+            `red, this order is first in line for containment attribution.`,
+        );
+      }
       lines.push(
         rec.doneAfterVerify
           ? `  - done (${rec.done.verifier} verifier, ${rec.done.absentIds} target id(s)): ` +
@@ -178,6 +194,36 @@ function renderOrdersSection(orders: OrdersPhaseSummary): string[] {
               `closure is arbitrated by the verification below and the next plan`,
       );
     }
+  }
+  lines.push('');
+  return lines;
+}
+
+/** Guardrail-red containment (4.4.7): what was attributed and dropped, or
+ *  why containment was refused: the reader sees exactly why an order the
+ *  run dispatched is not in the landing set. */
+function renderContainment(c: GuardrailContainment): string[] {
+  const lines: string[] = ['### Guardrail containment', ''];
+  if (c.refused !== undefined) {
+    lines.push(
+      `The final guardrail was red and per-order containment was attempted (bounded at ` +
+        `${c.maxRounds} unwind round(s)) but REFUSED: ${c.refused}. No order was dropped on ` +
+        `a guess; the whole attempt follows the guardrail-red salvage policy.`,
+      '',
+    );
+    return lines;
+  }
+  lines.push(
+    `The final guardrail was red; each blocking finding was attributed to one order ` +
+      `(envelope and committed-diff overlap), the attributed orders were dropped, and the ` +
+      `remainder re-verified green in ${c.rounds} of at most ${c.maxRounds} round(s).`,
+  );
+  for (const d of c.dropped) {
+    lines.push(
+      `- dropped \`${d.orderIds.join('`, `')}\` (${d.unit}, round ${d.round}): ` +
+        `attribution: ${d.evidence}`,
+    );
+    for (const b of d.blocking) lines.push(`  - blocking: ${b}`);
   }
   lines.push('');
   return lines;
@@ -311,6 +357,10 @@ export function renderRemediateLedger(r: Omit<RemediateResult, 'ledger'>): strin
 
   if (r.orders) {
     lines.push(...renderOrdersSection(r.orders));
+  }
+
+  if (r.containment) {
+    lines.push(...renderContainment(r.containment));
   }
 
   lines.push('### Verification', '');

@@ -17,6 +17,7 @@ import { readPolicySection } from '../../baseline/policy-text';
 import type { FindingSeverity } from '../../baseline/types';
 import type { DepVulnFinding } from '../../languages/capabilities/types';
 import { RECIPE_REGISTRY, type RecipeDeclaration } from '../work-orders/recipes-registry';
+import { packagesNamedBy } from '../work-orders/shared';
 import type { WorkOrder } from '../work-orders/types';
 import { partitionByEnvelope, pathInEnvelope } from './envelope';
 import type { RecipeGit } from './git';
@@ -138,11 +139,13 @@ export async function runRecipeOrders(
     extra?: Pick<RecipeOrderRecord, 'droppedPaths' | 'invariants' | 'invariantDisclosures'>,
   ) => {
     for (const order of group) {
+      const packages = packagesNamedBy(order.findings);
       records.push({
         orderId: order.id,
         class: String(order.class),
         recipe: order.recipe!,
         outcome,
+        ...(packages.length > 0 ? { packages } : {}),
         ...(extra ?? {}),
       });
     }

@@ -288,13 +288,17 @@ export async function executeTask(
   // RED draft — its own required guardrail check keeps it unmergeable, so
   // "nothing merges" holds while the work + blocking findings survive the
   // ephemeral runner and the next run can RESUME from them (guardrail-red
-  // was the outcome where the most valuable partial work died). Only a
-  // RAN-and-blocked verdict qualifies; an unrunnable guardrail never pushes.
+  // was the outcome where the most valuable partial work died).
   // Only a guardrail that actually RAN and blocked earns a red draft: an
   // unrunnable verification must never produce a draft PR claiming a
   // guardrail block that never happened (review fix 5).
+  // A failed containment restore leaves HEAD as a half-unwound tree no
+  // verification saw: never pushed as "the blocked attempt" (it stays local).
   const blockedSalvage =
-    result.outcome === 'guardrail-red' && salvage === 'draft-pr' && result.guardrailRan === true;
+    result.outcome === 'guardrail-red' &&
+    salvage === 'draft-pr' &&
+    result.guardrailRan === true &&
+    result.containment?.restoreFailed !== true;
   // Per-order landing (4.4.6): the kept orders of a partially-landed run
   // are verified work and land as a normal PR; the run stays non-clean so
   // the dropped orders (named in the ledger) are never read as done.
