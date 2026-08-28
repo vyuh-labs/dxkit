@@ -48,17 +48,18 @@ describe('pinTransitive: the composer exact-version require pin', () => {
 
   it('refuses a direct dependency (require or require-dev) and non-JSON text', () => {
     const direct = planPin('guzzlehttp/guzzle');
-    if (direct.kind !== 'plan') throw new Error(direct.reason);
+    if (direct.kind !== 'plan')
+      throw new Error(direct.kind === 'refused' ? direct.reason : direct.kind);
     const d = direct.edit.transform(COMPOSER_JSON);
     expect(d).toHaveProperty('refused');
     if ('refused' in d) expect(d.refused).toContain('dep-bump');
 
     const dev = planPin('phpunit/phpunit');
-    if (dev.kind !== 'plan') throw new Error(dev.reason);
+    if (dev.kind !== 'plan') throw new Error(dev.kind === 'refused' ? dev.reason : dev.kind);
     expect(dev.edit.transform(COMPOSER_JSON)).toHaveProperty('refused');
 
     const p = planPin();
-    if (p.kind !== 'plan') throw new Error(p.reason);
+    if (p.kind !== 'plan') throw new Error(p.kind === 'refused' ? p.reason : p.kind);
     for (const garbage of ['', 'not a manifest {', '42', '[]']) {
       expect(p.edit.transform(garbage)).toHaveProperty('refused');
     }

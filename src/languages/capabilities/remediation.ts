@@ -120,6 +120,30 @@ export type PinPlanResult =
        *  unrelated packages). Prose the ledger prints verbatim. */
       readonly notes?: readonly string[];
     }
+  | {
+      /**
+       * A tool-owned pin (4.4.7 V3): the ecosystem's OWN command applies
+       * the pin and writes the manifest/lockfile itself. The shape exists
+       * for the compiled ecosystems whose dependency files are
+       * tool-maintained formats a text transform must never touch: `go
+       * get pkg@version` rewrites go.mod + go.sum through the go tool,
+       * and `cargo update -p pkg --precise version` rewrites Cargo.lock
+       * through cargo. The executor runs the command at the owning root
+       * through the injected bounded exec and skips the separate lock
+       * resync: the tool's one command leaves the tree consistent, which
+       * is exactly why this shape is preferred over a hand edit there.
+       */
+      readonly kind: 'command';
+      readonly command: InstallCommand;
+      /** Root-relative files the command rewrites (the applied outcome's
+       *  changedFiles; the runner's envelope enforcement re-reads git for
+       *  ground truth). */
+      readonly writes: readonly string[];
+      /** How a human undoes the pin, rendered in ledger prose. */
+      readonly revert: string;
+      /** Pack-declared side-effect disclosures for the ledger. */
+      readonly notes?: readonly string[];
+    }
   | { readonly kind: 'refused'; readonly reason: string };
 
 /**
@@ -141,6 +165,64 @@ export interface PinVersionScheme {
   /** Total order over versions `concrete` accepted. */
   compare(a: string, b: string): number;
 }
+
+/** A CONCRETE semver (x.y.z with optional prerelease/build), never a range.
+ *  A range-shaped "fixed version" (`>=4.1.0`) cannot be pinned verbatim, so
+ *  orders carrying one tier to the agent instead of guessing. */
+const CONCRETE_SEMVER =
+  /^\d+\.\d+\.\d+(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$/;
+
+export function isConcreteSemver(version: string): boolean {
+  return CONCRETE_SEMVER.test(version);
+}
+
+/** Semver precedence for CONCRETE versions, prerelease rules included: a
+ *  release outranks its prereleases (1.2.3 > 1.2.3-beta.1), prerelease
+ *  identifiers compare numerically when numeric, bytewise otherwise, and a
+ *  longer identifier list wins over its prefix (semver.org section 11). */
+export function compareConcreteSemver(a: string, b: string): number {
+  const parse = (v: string) => {
+    const [core] = v.split('+');
+    const [nums, ...preParts] = core.split('-');
+    return {
+      nums: nums.split('.').map(Number),
+      pre: preParts.length > 0 ? preParts.join('-').split('.') : null,
+    };
+  };
+  const pa = parse(a);
+  const pb = parse(b);
+  for (let i = 0; i < 3; i++) {
+    if (pa.nums[i] !== pb.nums[i]) return pa.nums[i] - pb.nums[i];
+  }
+  if (pa.pre === null && pb.pre === null) return 0;
+  if (pa.pre === null) return 1;
+  if (pb.pre === null) return -1;
+  for (let i = 0; i < Math.max(pa.pre.length, pb.pre.length); i++) {
+    const x = pa.pre[i];
+    const y = pb.pre[i];
+    if (x === undefined) return -1;
+    if (y === undefined) return 1;
+    const xn = /^\d+$/.test(x);
+    const yn = /^\d+$/.test(y);
+    if (xn && yn) {
+      if (Number(x) !== Number(y)) return Number(x) - Number(y);
+    } else if (xn !== yn) {
+      return xn ? -1 : 1; // numeric identifiers rank below alphanumeric
+    } else if (x !== y) {
+      return x < y ? -1 : 1;
+    }
+  }
+  return 0;
+}
+
+/** The default pin-version grammar: the x.y.z semver shape. Packs whose
+ *  advisories carry other concrete forms declare their own scheme (Rule 6).
+ *  Lives beside `PinVersionScheme` so a pack composing on the semver order
+ *  (go's v-prefixed grammar) reads the ONE comparator, never a copy. */
+export const DEFAULT_PIN_VERSIONS: PinVersionScheme = {
+  concrete: isConcreteSemver,
+  compare: compareConcreteSemver,
+};
 
 /** Numeric dotted-segment comparison (missing segments read as 0): the
  *  shared comparator for release-only version schemes (RubyGems and PyPI

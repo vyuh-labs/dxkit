@@ -116,7 +116,7 @@ describe('pinTransitive: the uv override surface', () => {
   it('inserts into an existing [tool.uv] section instead of forking a second one', () => {
     const text = `${UV_PYPROJECT}\n[tool.uv]\ndev-dependencies = []\n`;
     const plan = planAt({ 'uv.lock': '', 'pyproject.toml': text });
-    if (plan.kind !== 'plan') throw new Error(plan.reason);
+    if (plan.kind !== 'plan') throw new Error(plan.kind === 'refused' ? plan.reason : plan.kind);
     const out = plan.edit.transform(text);
     if (!('text' in out)) throw new Error(out.refused);
     expect(out.text.match(/\[tool\.uv\]/g)).toHaveLength(1);
@@ -125,14 +125,14 @@ describe('pinTransitive: the uv override surface', () => {
 
   it('refuses a direct dependency, an existing override list, and garbage', () => {
     const plan = planAt({ 'uv.lock': '', 'pyproject.toml': UV_PYPROJECT }, 'requests', '2.32.0');
-    if (plan.kind !== 'plan') throw new Error(plan.reason);
+    if (plan.kind !== 'plan') throw new Error(plan.kind === 'refused' ? plan.reason : plan.kind);
     const direct = plan.edit.transform(UV_PYPROJECT);
     expect(direct).toHaveProperty('refused');
     if ('refused' in direct) expect(direct.refused).toContain('dep-bump');
 
     const withOverride = `${UV_PYPROJECT}\n[tool.uv]\noverride-dependencies = ["x==1.0"]\n`;
     const p2 = planAt({ 'uv.lock': '', 'pyproject.toml': withOverride });
-    if (p2.kind !== 'plan') throw new Error(p2.reason);
+    if (p2.kind !== 'plan') throw new Error(p2.kind === 'refused' ? p2.reason : p2.kind);
     expect(p2.edit.transform(withOverride)).toHaveProperty('refused');
 
     for (const garbage of ['', 'not a manifest {', '42']) {
@@ -145,7 +145,7 @@ describe('pinTransitive: the uv override surface', () => {
 describe('pinTransitive: the poetry + pipenv explicit-entry pins', () => {
   it('poetry: inserts the exact pin under [tool.poetry.dependencies]', () => {
     const plan = planAt({ 'poetry.lock': '', 'pyproject.toml': POETRY_PYPROJECT });
-    if (plan.kind !== 'plan') throw new Error(plan.reason);
+    if (plan.kind !== 'plan') throw new Error(plan.kind === 'refused' ? plan.reason : plan.kind);
     const out = plan.edit.transform(POETRY_PYPROJECT);
     if (!('text' in out)) throw new Error(out.refused);
     expect(out.text).toContain('[tool.poetry.dependencies]\n"urllib3" = "2.5.0"');
@@ -154,16 +154,16 @@ describe('pinTransitive: the poetry + pipenv explicit-entry pins', () => {
 
   it('poetry: refuses a direct dependency (main or group) and a table-less layout', () => {
     const plan = planAt({ 'poetry.lock': '', 'pyproject.toml': POETRY_PYPROJECT }, 'requests');
-    if (plan.kind !== 'plan') throw new Error(plan.reason);
+    if (plan.kind !== 'plan') throw new Error(plan.kind === 'refused' ? plan.reason : plan.kind);
     expect(plan.edit.transform(POETRY_PYPROJECT)).toHaveProperty('refused');
 
     const dev = planAt({ 'poetry.lock': '', 'pyproject.toml': POETRY_PYPROJECT }, 'pytest');
-    if (dev.kind !== 'plan') throw new Error(dev.reason);
+    if (dev.kind !== 'plan') throw new Error(dev.kind === 'refused' ? dev.reason : dev.kind);
     expect(dev.edit.transform(POETRY_PYPROJECT)).toHaveProperty('refused');
 
     const pep621 = '[project]\nname = "fx"\ndependencies = []\n';
     const p = planAt({ 'poetry.lock': '', 'pyproject.toml': pep621 });
-    if (p.kind !== 'plan') throw new Error(p.reason);
+    if (p.kind !== 'plan') throw new Error(p.kind === 'refused' ? p.reason : p.kind);
     const out = p.edit.transform(pep621);
     expect(out).toHaveProperty('refused');
     if ('refused' in out) expect(out.refused).toContain('[tool.poetry.dependencies]');
@@ -171,17 +171,18 @@ describe('pinTransitive: the poetry + pipenv explicit-entry pins', () => {
 
   it('pipenv: inserts the ==pin under [packages], refuses direct entries either section', () => {
     const plan = planAt({ 'Pipfile.lock': '', Pipfile: PIPFILE });
-    if (plan.kind !== 'plan') throw new Error(plan.reason);
+    if (plan.kind !== 'plan') throw new Error(plan.kind === 'refused' ? plan.reason : plan.kind);
     expect(plan.edit.file).toBe('Pipfile');
     const out = plan.edit.transform(PIPFILE);
     if (!('text' in out)) throw new Error(out.refused);
     expect(out.text).toContain('[packages]\n"urllib3" = "==2.5.0"');
 
     const direct = planAt({ 'Pipfile.lock': '', Pipfile: PIPFILE }, 'requests');
-    if (direct.kind !== 'plan') throw new Error(direct.reason);
+    if (direct.kind !== 'plan')
+      throw new Error(direct.kind === 'refused' ? direct.reason : direct.kind);
     expect(direct.edit.transform(PIPFILE)).toHaveProperty('refused');
     const dev = planAt({ 'Pipfile.lock': '', Pipfile: PIPFILE }, 'pytest');
-    if (dev.kind !== 'plan') throw new Error(dev.reason);
+    if (dev.kind !== 'plan') throw new Error(dev.kind === 'refused' ? dev.reason : dev.kind);
     expect(dev.edit.transform(PIPFILE)).toHaveProperty('refused');
   });
 
@@ -191,7 +192,8 @@ describe('pinTransitive: the poetry + pipenv explicit-entry pins', () => {
       'zope.interface',
       '6.4.1',
     );
-    if (applied.kind !== 'plan') throw new Error(applied.reason);
+    if (applied.kind !== 'plan')
+      throw new Error(applied.kind === 'refused' ? applied.reason : applied.kind);
     const out = applied.edit.transform(POETRY_PYPROJECT);
     if (!('text' in out)) throw new Error(out.refused);
     expect(out.text).toContain('[tool.poetry.dependencies]\n"zope.interface" = "6.4.1"');
@@ -203,24 +205,27 @@ describe('pinTransitive: the poetry + pipenv explicit-entry pins', () => {
       'requests = "^2.31"\n"ruamel.yaml" = "^0.18"',
     );
     const direct = planAt({ 'poetry.lock': '', 'pyproject.toml': dotted }, 'ruamel.yaml');
-    if (direct.kind !== 'plan') throw new Error(direct.reason);
+    if (direct.kind !== 'plan')
+      throw new Error(direct.kind === 'refused' ? direct.reason : direct.kind);
     expect(direct.edit.transform(dotted)).toHaveProperty('refused');
 
     const pipenv = planAt({ 'Pipfile.lock': '', Pipfile: PIPFILE }, 'ruamel.yaml', '0.18.6');
-    if (pipenv.kind !== 'plan') throw new Error(pipenv.reason);
+    if (pipenv.kind !== 'plan')
+      throw new Error(pipenv.kind === 'refused' ? pipenv.reason : pipenv.kind);
     const pout = pipenv.edit.transform(PIPFILE);
     if (!('text' in pout)) throw new Error(pout.refused);
     expect(pout.text).toContain('[packages]\n"ruamel.yaml" = "==0.18.6"');
     const pipfileDotted = PIPFILE.replace('requests = "*"', 'requests = "*"\n"ruamel.yaml" = "*"');
     const pdirect = planAt({ 'Pipfile.lock': '', Pipfile: pipfileDotted }, 'ruamel.yaml');
-    if (pdirect.kind !== 'plan') throw new Error(pdirect.reason);
+    if (pdirect.kind !== 'plan')
+      throw new Error(pdirect.kind === 'refused' ? pdirect.reason : pdirect.kind);
     expect(pdirect.edit.transform(pipfileDotted)).toHaveProperty('refused');
   });
 
   it('uv: a PEP 735 [dependency-groups] entry is a direct dependency too (what uv add --dev writes)', () => {
     const withGroups = UV_PYPROJECT + '\n[dependency-groups]\ndev = [\n    "pytest>=8.0",\n]\n';
     const plan = planAt({ 'uv.lock': '', 'pyproject.toml': withGroups }, 'pytest', '8.3.0');
-    if (plan.kind !== 'plan') throw new Error(plan.reason);
+    if (plan.kind !== 'plan') throw new Error(plan.kind === 'refused' ? plan.reason : plan.kind);
     const out = plan.edit.transform(withGroups);
     expect(out).toHaveProperty('refused');
     if ('refused' in out) expect(out.refused).toContain('direct dependency');
