@@ -165,7 +165,7 @@ describe('order-intrinsic feasibility lives in matches (an executor-certain refu
   it('lockfile-sync: a pack without a lockfileCheck, or an ambiguous root, tiers agent', () => {
     const ok = { id: 'stale-lockfile:typescript', class: 'stale-lockfile' as const };
     expect(tierOf({ ...ok, findings: [floorFinding('typescript')] })).toBe('recipe');
-    expect(tierOf({ ...ok, findings: [floorFinding('go')] })).toBe('agent');
+    expect(tierOf({ ...ok, findings: [floorFinding('swift')] })).toBe('agent');
     expect(
       tierOf({
         ...ok,
@@ -191,7 +191,8 @@ describe('order-intrinsic feasibility lives in matches (an executor-certain refu
   it('declare-dependency: an unsupported pack or a flag-shaped specifier tiers agent', () => {
     const ok = { id: 'unresolved-import:typescript:.', class: 'unresolved-import' as const };
     expect(tierOf({ ...ok, findings: [floorFinding('typescript', 'left-pad')] })).toBe('recipe');
-    // A pack whose declaration is a (planned) exemption tiers agent AND the
+    // A pack whose declaration is a reasoned exemption (go: the compiler is
+    // the resolution floor) tiers agent AND the
     // order carries the declared reason for the plan surface (4.4.7 V1).
     const go = assignTier({
       ...draftBase,
@@ -318,6 +319,119 @@ describe('order-intrinsic feasibility lives in matches (an executor-certain refu
     expect(lint('lint:php')).toBe('agent');
   });
 
+  it('the wave-2 packs tier through their declarations (go/rust/jvm/csharp/swift, 4.4.7 V3)', () => {
+    // override-pin: go and rust resolve through their declared manifests.
+    // Go's version grammar accepts bare AND v-prefixed semver plus
+    // pseudo-versions (what Go advisories and module proxies carry); rust
+    // rides the default x.y.z grammar. Ranges refuse everywhere.
+    const pin = (pack: string, paths: string[], fixedVersion: string) =>
+      tierOf({
+        id: 'dep-advisory:p',
+        class: 'dep-advisory' as const,
+        envelope: { paths, manifests: true },
+        findings: [
+          {
+            kind: 'dep-vuln',
+            id: 'a',
+            attribution: 'deferred' as const,
+            evidence: {
+              type: 'dep-vuln' as const,
+              package: 'golang.org/x/text',
+              advisoryId: 'GHSA-2',
+              fixedVersion,
+              pack,
+            },
+          },
+        ],
+      });
+    expect(pin('go', ['go.mod', 'go.sum'], '0.3.8')).toBe('recipe');
+    expect(pin('go', ['go.mod', 'go.sum'], 'v0.3.8')).toBe('recipe');
+    expect(pin('go', ['go.mod', 'go.sum'], 'v0.0.0-20240101000000-abcdefabcdef')).toBe('recipe');
+    expect(pin('go', ['go.mod', 'go.sum'], '>=0.3.8')).toBe('agent');
+    expect(pin('rust', ['Cargo.toml', 'Cargo.lock'], '1.0.195')).toBe('recipe');
+    expect(pin('rust', ['Cargo.toml', 'Cargo.lock'], '^1.0.195')).toBe('agent');
+    // The jvm/csharp/swift pins are declared exemptions, disclosed on the
+    // order with the pack's own reason.
+    for (const [pack, paths, word] of [
+      ['java', ['pom.xml'], 'build-file'],
+      ['kotlin', ['build.gradle.kts'], 'build-file'],
+      ['csharp', ['Directory.Packages.props'], 'XML'],
+      ['swift', ['Package.swift', 'Package.resolved'], 'override mechanism'],
+    ] as const) {
+      const order = assignTier({
+        ...draftBase,
+        id: `dep-advisory:${pack}`,
+        class: 'dep-advisory' as const,
+        envelope: { paths: [...paths], manifests: true },
+        findings: [
+          {
+            kind: 'dep-vuln',
+            id: 'a',
+            attribution: 'deferred' as const,
+            evidence: {
+              type: 'dep-vuln' as const,
+              package: 'p',
+              advisoryId: 'GHSA-3',
+              fixedVersion: '1.2.3',
+              pack,
+            },
+          },
+        ],
+      });
+      expect(order.tier, `${pack} pin should tier agent`).toBe('agent');
+      expect(order.capabilityExemption?.capability).toBe('pinTransitive');
+      expect(order.capabilityExemption?.reason).toContain(word);
+    }
+
+    // lockfile-sync: go and rust declare the capability AND a command sync
+    // check (go mod tidy -diff / cargo update --workspace --locked
+    // --dry-run), so a one-root envelope tiers recipe. The jvm packs carry
+    // the shared declared exemption.
+    const staleOrder = (pack: string, paths: string[]) => ({
+      ...draftBase,
+      id: `stale-lockfile:${pack}`,
+      class: 'stale-lockfile' as const,
+      envelope: { paths, manifests: true },
+      findings: [floorFinding(pack)],
+    });
+    expect(assignTier(staleOrder('go', ['go.mod', 'go.sum'])).tier).toBe('recipe');
+    expect(assignTier(staleOrder('rust', ['Cargo.toml', 'Cargo.lock'])).tier).toBe('recipe');
+    const jvm = assignTier(staleOrder('java', ['pom.xml']));
+    expect(jvm.tier).toBe('agent');
+    expect(jvm.capabilityExemption?.capability).toBe('resyncLockfile');
+    expect(jvm.capabilityExemption?.reason).toContain('maven has no lockfile');
+
+    // declare-dependency: the compiled packs are declared exemptions (the
+    // compiler is the resolution floor), disclosed on the order.
+    const declare = assignTier({
+      ...draftBase,
+      id: 'unresolved-import:rust:.',
+      class: 'unresolved-import' as const,
+      envelope: { paths: ['Cargo.toml', 'Cargo.lock'], manifests: true },
+      findings: [floorFinding('rust', 'serde')],
+    });
+    expect(declare.tier).toBe('agent');
+    expect(declare.capabilityExemption?.capability).toBe('declareDependency');
+    expect(declare.capabilityExemption?.reason).toContain('resolution floor');
+
+    // lint-autofix: golangci-lint and ktlint declare fix modes; clippy
+    // (whole-crate, dirty-tree rules), the dormant java gate, dotnet
+    // format and swiftlint's corrections report are declared exemptions.
+    const lint = (check: string) =>
+      tierOf({
+        id: 'lint-located:src/a',
+        class: 'lint-located' as const,
+        envelope: { paths: ['src/a'], manifests: false },
+        findings: [lintFinding(check)],
+      });
+    expect(lint('lint:go')).toBe('recipe');
+    expect(lint('lint:kotlin')).toBe('recipe');
+    expect(lint('lint:rust')).toBe('agent');
+    expect(lint('lint:java')).toBe('agent');
+    expect(lint('lint:csharp')).toBe('agent');
+    expect(lint('lint:swift')).toBe('agent');
+  });
+
   it('lint-autofix: a user check or a fixCommand-less pack tiers agent; a SLICED order stays recipe (grouped fix)', () => {
     const ok = {
       id: 'lint-located:src/a.ts',
@@ -327,7 +441,7 @@ describe('order-intrinsic feasibility lives in matches (an executor-certain refu
     };
     expect(tierOf({ ...ok, findings: [lintFinding('lint:typescript')] })).toBe('recipe');
     expect(tierOf({ ...ok, findings: [lintFinding('arch-rules')] })).toBe('agent');
-    expect(tierOf({ ...ok, findings: [lintFinding('lint:go')] })).toBe('agent');
+    expect(tierOf({ ...ok, findings: [lintFinding('lint:csharp')] })).toBe('agent');
     // The estate fix: 700 sliced orders on big files must not all go to the
     // agent at full budgets when one file-level --fix answers them.
     expect(
