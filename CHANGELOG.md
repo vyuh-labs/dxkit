@@ -5,6 +5,177 @@ All notable changes to `@vyuhlabs/dxkit` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.4.7] - 2026-08-28
+
+The first organic remediate run on a real estate (4.4.6) proved the core
+loop: eleven orders planned, nine override pins applied and verified per
+order, honest refusals on the two advisories the audit disputed, all at
+$0.32 of agent spend. It then lost everything at delivery, twice: the
+landing push fired 68 minutes after the App token was minted (GitHub caps
+installation tokens at one hour, and the verify phases scale with repo
+size), and one unverified leftover pin turned the final guardrail red for
+the whole run, dragging the nine green pins down with it. This release
+fixes both defects at root, brings the deterministic remediation tier to
+every language pack, adds a CycloneDX SBOM export, and puts the impact of
+every change (findings resolved, score movement, the trend since install)
+on the PR surface.
+
+### Fixed
+
+- **Two-phase landing: credential freshness is independent of task
+  duration.** Under the lane workflow, the remediate task step no longer
+  pushes anything. It runs everything through verification and PR-body
+  assembly, then writes one validated landing record; a post-task workflow
+  step mints a FRESH App token (its one-hour cap now starts at delivery
+  time) and runs the new `remediate land`, which validates the record,
+  refuses a checkout whose HEAD is not the recorded verified head (stale
+  or foreign commits are never pushed, remedy named), then pushes and
+  opens/updates the standing PR through the same landing primitive the
+  inline path uses. Salvage drafts and the order-outcome ledger rows (the
+  circuit breaker's memory) ride the same record, so a failed run's
+  evidence also lands under the fresh credential. The step is idempotent
+  (a re-run with no record is a disclosed no-op) and a failed push keeps
+  the record for retry. Local runs land inline, unchanged. With landing
+  decoupled from the task, the App-tier 45-minute agent clamp loses its
+  reason and relaxes to the plain budget default under the new workflow
+  (older installed workflows still landing inline keep the clamp until
+  `vyuh-dxkit update`, with the remedy named in the ledger).
+- **A red final guardrail is contained per order, not charged to the
+  run.** The unit of landing is the order, so the run-level guardrail
+  verdict no longer flips a whole run to salvage. When the final guardrail
+  blocks, each blocking finding is attributed to exactly one kept unit on
+  evidence, strongest first: direct evidence (the unit names the finding's
+  package, or its committed diff touches the finding's file) outranks
+  circumstantial overlap (envelope containment, a manifest touch), and a
+  driver-failed order is the first candidate only within one evidence
+  tier. Attributed units are unwound (their commit ranges reverted at the
+  tip, reasons recorded), the remainder is re-verified through the same
+  install + floor + guardrail seam, and the green subset lands as
+  `partially-landed` with the dropped orders named in the ledger and
+  counted against their own classes by the circuit breaker. A finding
+  with no overlap evidence, or one that stays ambiguous, REFUSES
+  containment and the branch is restored: an innocent order is never
+  dropped on a guess, and an unrunnable guardrail is never contained.
+- **Agent orders inheriting a failed recipe get investigation headroom.**
+  Both live agent orders on the organic run exhausted their derived turn
+  budget investigating advisories whose recipe had already failed. An
+  order that falls through from a failed or refused recipe now re-derives
+  its budget through the one formula with a declared fallthrough
+  multiplier, still clamped by the task's cap, the raise disclosed on the
+  order and in the ledger.
+
+### Added
+
+- **Deterministic remediation is pack-declared: every language pack now
+  answers the four recipe capabilities** (`resyncLockfile`,
+  `pinTransitive`, `declareDependency`, `lintFix`) through a required
+  `LanguageSupport.remediation` field: a real provider or a reasoned
+  exemption, never a silent omission (a pack that drops the field fails to
+  compile). The recipe executors keep only ecosystem-free logic and read
+  every ecosystem fact from the owning pack's declarations, so the tier
+  decision and the runtime refusal can never diverge. The fills, per
+  ecosystem's own mechanism: Python (uv override pins, poetry/pipenv
+  explicit-entry pins, the import-to-distribution table behind
+  `declareDependency`, ruff autofix), Ruby (bundler resync, Gemfile pins,
+  `bundle add` behind the gem-name rail, rubocop safe autocorrect), PHP
+  (composer resync + validate check, exact-version require pins), Go and
+  Rust (the tool-owned command shape: `go get pkg@version` and
+  `cargo update -p pkg --precise`, refusing direct dependencies, vendored
+  trees, and workspace shapes the tool would rewrite outside the
+  envelope), kotlin ktlint and go golangci-lint fix modes. JVM dependency
+  work, csharp, and swift carry declared exemptions stating the real
+  mechanism gap (rendered on the plan surface, not buried). Pinnable
+  version grammars are pack-declared too, so RubyGems 4-segment security
+  releases and PEP 440 releases tier correctly. The lanes guide's
+  coverage table is generated from the declarations
+  (`npm run docs:remediation-coverage`) and pinned by test against a
+  fresh render.
+- **CycloneDX SBOM export.** `vyuh-dxkit bom --format cyclonedx` (alias:
+  `sbom`) renders the existing license + vulnerability join into CycloneDX
+  1.5 JSON: one pure renderer over the one gather, no second lockfile or
+  license parse. Purl types come from the owning pack's declaration;
+  packs without a registry ecosystem omit the purl with a declared reason
+  rather than fabricating one. Deterministic output (injected timestamp,
+  stable ordering, byte-identity pinned), stdout-clean for piping, and the
+  newest export is published as `latest/sbom.cdx.json` on the reports ref
+  by the on-merge reports lane with no workflow change. SPDX format is
+  deferred, declared in the module doc.
+- **The Impact surface (#332): what a change actually did, on the PR.**
+  Three layers, all derived from data the gate already computes:
+  - _Finding deltas_: the guardrail PR comment, the JSON payload, and the
+    lane PR ledgers carry an Impact section when a change resolved
+    findings (by kind and severity, cap-aware: when a resolved finding
+    releases a score cap, the section says what the spec engine says it
+    unlocks). Neutral PRs get one quiet line, never a wall; a regressing
+    change's added findings stay in the existing tables. Resolved counts
+    only what the classifier attributes: a finding that disappeared under
+    tool drift, or was not observed on the current side, is excluded and
+    disclosed, and a refused run (CANNOT GATE) renders no resolved claim
+    at all.
+  - _Projected and landed scores_: the pre-merge comment projects
+    dimension score deltas from the same analysis the guardrail already
+    gathered (measured cost: milliseconds against an 80-second cold
+    gather, so it defaults on with the `impact.projectScores`
+    off-switch); after the merge, the reports lane updates the SAME
+    comment with the landed actuals beside the original projection.
+    Scores are compared only within one scoring methodology and one tool
+    posture: every snapshot stamps both, and a mismatch is disclosed as
+    not comparable, never diffed (the ruler moved, not the repo).
+  - _The trend_: `vyuh-dxkit report trend` renders score-over-time since
+    the first snapshot on record, segmented at every comparability
+    boundary; the PR Impact section carries a one-line trend context; the
+    dashboard hero gains the sparkline; every snapshot stamps a
+    debt-by-kind series (provenance-gated: a week the scanner was down
+    charts as a gap, never as "debt cleared"); and each publish renders a
+    shareable `latest/impact.md` impact report onto the reports ref.
+
+### Changed
+
+- **Resolved counts are stricter, because they are now attribution
+  claims.** The pair classifier applies recall-drift demotion to the
+  REMOVED direction too: a finding that vanished while the tool that
+  reports it changed (version, plugins, config) classifies
+  `tooling_drift`, is excluded from every resolved tally (console, JSON,
+  markdown, lane ledgers, the Impact section), and is disclosed with the
+  input that moved. "You fixed N findings" is a cause claim, and a
+  scanner that stopped seeing something is not a fix; repos with stable
+  tooling see identical numbers.
+- **`remediate plan` disclosures grew**: capability exemptions (which
+  pack, which capability, why) render on the plan summary lines, and
+  dep-vuln evidence records its producing pack.
+
+### Upgrade notes
+
+Run `vyuh-dxkit update` after upgrading. For an existing repo:
+
+- **Managed workflows are refreshed**: the remediate workflow gains the
+  two-phase landing steps (the deferred-landing env on the task step, the
+  fresh landing-token mint, the `remediate land` step), and the
+  reports-refresh workflow gains `pull-requests: write` plus the
+  `report snapshot --pr-comment` step that writes landed scores back to
+  the merged PR's guardrail comment. The refreshed templates and the CLI
+  move together: a pre-4.4.7 CLI rejects `--pr-comment` as an unknown
+  flag (a hard error in that lane), so if either is ever moved by hand,
+  move both.
+- **No re-baseline is needed.** No baseline, policy, or wire-format
+  migrations; the JSON payload and snapshot entries grow additive fields
+  only.
+- **Resolved counts can shrink, honestly.** After a linter or scanner
+  upgrade, disappearances that used to count as "resolved" are disclosed
+  as tooling drift until the tooling posture is stable again. Nothing
+  blocks from this; it only stops crediting fixes to tool churn.
+- **Score projection is on by default** in the guardrail PR comment (it
+  reuses the run's own analysis; measured in milliseconds). Set
+  `impact.projectScores: false` to turn it off; ref-based mode discloses
+  it as structurally unavailable in the JSON without a per-PR nag.
+- **Scheduled remediate behavior**: agent orders whose recipe failed run
+  under a larger disclosed turn budget, and a red final guardrail now
+  lands the contained green subset as `partially-landed` instead of
+  salvaging the whole run.
+
+SDK unchanged at 0.3.0 (verified byte-identical to the previous release);
+no SDK bump.
+
 ## [4.4.6] - 2026-08-27
 
 One structural fix from the first remediate run on a real estate whose
