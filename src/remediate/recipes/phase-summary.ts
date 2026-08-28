@@ -36,7 +36,9 @@ export type RecipeGroupVerification =
   | { readonly kind: 'kept'; readonly head: string }
   | {
       readonly kind: 'dropped';
-      readonly step: 'install' | 'floor';
+      /** `guardrail` marks a containment drop (4.4.7): the final guardrail
+       *  attributed blocking findings to the group after it was kept. */
+      readonly step: 'install' | 'floor' | 'guardrail';
       readonly reason: string;
       readonly droppedOrderIds: readonly string[];
     }

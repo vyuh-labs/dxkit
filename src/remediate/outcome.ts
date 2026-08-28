@@ -43,7 +43,10 @@ export type OrderDisposition =
   | { readonly kind: 'kept'; readonly head: string }
   | {
       readonly kind: 'dropped';
-      readonly step: 'tree-invariants' | 'install' | 'floor';
+      /** `guardrail` marks a containment drop (4.4.7): the FINAL guardrail
+       *  was red, its blocking findings attributed to this order, and the
+       *  order's commits were reverted so the remainder could land. */
+      readonly step: 'tree-invariants' | 'install' | 'floor' | 'guardrail';
       readonly reason: string;
     }
   | {
@@ -110,6 +113,45 @@ export interface OrdersPhaseSummary {
    *  order prompt as a negative constraint (resume policy: a guardrail-red
    *  attempt is never a resume anchor). */
   readonly priorBlockingApplied?: boolean;
+}
+
+/** One containment drop (guardrail-red containment, 4.4.7): the unit whose
+ *  commits were reverted because the final guardrail's blocking findings
+ *  attributed to it. */
+export interface ContainedDrop {
+  readonly unit: 'agent-order' | 'recipe-group';
+  readonly orderIds: readonly string[];
+  /** Which unwind round dropped it (1-based). */
+  readonly round: number;
+  /** Compact descriptions of the blocking findings attributed to this unit. */
+  readonly blocking: readonly string[];
+  /** The overlap evidence the attribution stands on, plus any tiebreak used
+   *  (Rule 19: a cause claim always names its evidence). */
+  readonly evidence: string;
+}
+
+/**
+ * Guardrail-red containment (4.4.7): when the FINAL guardrail over the
+ * landed head is red, the runner attributes each blocking finding to the
+ * order whose envelope and committed diff overlap it, reverts the
+ * attributed orders, re-verifies (install + floor) and re-runs the
+ * guardrail on the remainder, bounded to a small disclosed number of
+ * rounds. A red that attributes to NO order, is ambiguous, or survives the
+ * bound REFUSES containment (the branch is restored and the run follows
+ * the plain guardrail-red salvage policy): never a guess, never an
+ * unexplained red landed.
+ */
+export interface GuardrailContainment {
+  /** The disclosed bound on unwind rounds. */
+  readonly maxRounds: number;
+  /** Rounds actually executed (0 when refused before any unwind). */
+  readonly rounds: number;
+  /** The dropped units, empty when containment was refused (any reverts
+   *  already made were restored). */
+  readonly dropped: readonly ContainedDrop[];
+  /** Present when containment was attempted and REFUSED, with the reason;
+   *  the run then completes guardrail-red exactly as before this feature. */
+  readonly refused?: string;
 }
 
 export type RemediateOutcome =
@@ -244,6 +286,11 @@ export interface RemediateResult {
    *  agent run, per-order records with derived budgets, envelope
    *  enforcement drops, and done disclosures — rendered into the ledger. */
   readonly orders?: OrdersPhaseSummary;
+  /** Guardrail-red containment (4.4.7): present whenever the final
+   *  guardrail was red on an order-driven run and containment was
+   *  attempted: successful (the dropped units named) or refused (the
+   *  reason named). Rendered into the ledger either way. */
+  readonly containment?: GuardrailContainment;
   /** The verification ledger — PR body / job summary markdown. */
   readonly ledger: string;
 }
@@ -276,10 +323,12 @@ export interface RemediateGit {
    *  per-order DROP: an order whose commits did not verify is reverted
    *  wholesale, the tree left clean at the previously verified head). */
   resetTo(head: string): void;
-  /** Repo-relative paths the commits in base..HEAD changed (renames as
-   *  both sides): what an order's diff touched, for the frame's invariant
-   *  step. Throws when git cannot answer; the caller drops the order. */
-  changedPaths(baseHead: string): readonly string[];
+  /** Repo-relative paths the commits in base..head changed (renames as
+   *  both sides; `head` defaults to HEAD): what an order's diff touched,
+   *  for the frame's invariant step and containment's per-order ranges.
+   *  Throws when git cannot answer; the caller drops the order (or
+   *  refuses containment). */
+  changedPaths(baseHead: string, head?: string): readonly string[];
   /** Stage exactly these paths and commit them with the bot identity (the
    *  frame's own commit after re-establishing an invariant). */
   commitPaths(paths: readonly string[], message: string): void;
@@ -292,6 +341,12 @@ export interface RemediateGit {
    *  pre-existing dirt) untouched — the targeted revert for a recipe
    *  group's own commits. Never a hard reset over a dirty tree. */
   revertPaths(baseHead: string, paths: readonly string[]): void;
+  /** Revert the committed changes in `from..to` as ONE new commit at the
+   *  tip (bot identity, `message`): the containment unwind for a unit
+   *  that is no longer the tip, so later kept commits survive intact.
+   *  Throws on a conflict (after cleaning up its own in-progress state);
+   *  the caller then refuses containment and restores the branch. */
+  revertRange(from: string, to: string, message: string): void;
 }
 
 export interface RemediateRunOptions {
