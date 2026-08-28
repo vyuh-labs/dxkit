@@ -158,6 +158,21 @@ never the run as a whole. Cost note: per-order verification pays one
 clean worktree and install per agent order; orders are few and bounded
 by `remediate.maxOrdersPerRun`.
 
+When that final guardrail comes back red, the run is not simply
+abandoned: each blocking finding is attributed to exactly one kept unit
+on evidence, strongest first (the unit names the finding's package or
+its committed diff touches the finding's file, before any circumstantial
+envelope or manifest overlap; a driver-failed order is the first
+candidate only within one evidence tier). Attributed units are unwound
+(their commits reverted, reasons recorded), the remainder is re-verified
+through the same install + floor + guardrail seam, and the green subset
+lands as `partially-landed` with the dropped orders named in the ledger
+and counted by class. A finding with no overlap evidence, or one that
+stays ambiguous, refuses containment: the branch is restored and the run
+keeps the plain guardrail-red outcome with the refusal disclosed. An
+innocent order is never dropped on a guess, and an unrunnable guardrail
+is never contained.
+
 ## Salvage and resume
 
 `remediate.salvage` defaults to `auto`: the decision follows each task's
