@@ -8,31 +8,30 @@
  * installing a vulnerable phantom dependency and turning the gate red)
  * converted into a disclosed refusal.
  *
- * Scope this round: orders produced by the TypeScript/JavaScript pack. The
- * resolution-check contract makes bareness a producer fact; a project-path
- * identity (leading `./`) names a missing FILE, which no install can
- * declare, so such orders are refused with the reason (the registry's
- * `matches` already tiers them to the agent).
+ * Every ecosystem fact comes from the producing pack's declared
+ * `remediation.declareDependency` capability (Rule 6): the specifier rail,
+ * the registry version probe, the install command, the OSV ecosystem. A
+ * pack without the capability carries a declared exemption whose reason is
+ * this refusal (the registry's `matches` already tiers such orders to the
+ * agent, disclosed). A project-path identity (leading `./`) names a
+ * missing FILE, which no install can declare, so such orders are refused
+ * with the reason.
  */
 import * as path from 'path';
 import { runSingleResolutionCheck } from '../../analyzers/correctness/single-checks';
 import { isProjectPathIdentity } from '../../languages/capabilities/correctness';
 import { isTestSourceFile } from '../../analyzers/tools/walk-source-files';
-import { upgradeArgv, type DependencySection } from '../../package-manager';
 import type { FloorEvidence, WorkOrder } from '../work-orders/types';
 import {
+  ambiguousRootReason,
   execStepFailure,
-  isValidNpmPackageName,
-  nodePmAt,
+  exemptionReason,
   osvBlockTier,
-  owningManifestRoot,
+  owningManifestEntry,
+  packDeclaration,
+  packStrategyAt,
 } from './shared';
 import type { RecipeExecuteContext, RecipeOutcome } from './types';
-
-/** The packs whose resolution-check evidence this recipe can act on. Read
- *  by the registry's `matches` too, so an order from any other pack tiers
- *  to the agent instead of being tiered recipe and refused at runtime. */
-export const DECLARABLE_PACKS: readonly string[] = ['typescript'];
 
 interface Candidate {
   readonly specifier: string;
@@ -58,26 +57,28 @@ export async function executeDeclareDependency(
     return { kind: 'refused', reason: 'the order carries no unresolved-specifier evidence' };
   }
   const pack = (order.findings[0].evidence as FloorEvidence).pack;
-  if (!DECLARABLE_PACKS.includes(pack)) {
-    return {
-      kind: 'refused',
-      reason: `declare-dependency is implemented for the ${DECLARABLE_PACKS.join('/')} pack only this round (order came from '${pack}')`,
-    };
+  const declaration = packDeclaration(pack, 'declareDependency');
+  if (declaration === undefined) {
+    return { kind: 'refused', reason: `no registered language pack has the id '${pack}'` };
   }
+  if (declaration.kind === 'exemption') {
+    return { kind: 'refused', reason: exemptionReason(pack, declaration) };
+  }
+  const provider = declaration.provider;
   // Rule 11 argument-injection rail: a specifier is attacker-influencable
   // source text and flows into package-manager argv below. Anything outside
-  // the strict npm name shape (a leading dash, spaces, a URL) is refused
-  // BEFORE any argv exists; the registry's matches applies the same shape
-  // at planning time, so this is the defense-in-depth boundary.
-  const malformed = cands.filter((c) => !isValidNpmPackageName(c.specifier));
+  // the pack's declared name shape (a leading dash, spaces, a URL) is
+  // refused BEFORE any argv exists; the registry's matches applies the same
+  // shape at planning time, so this is the defense-in-depth boundary.
+  const malformed = cands.filter((c) => !provider.validSpecifier(c.specifier));
   if (malformed.length > 0) {
     return {
       kind: 'refused',
       reason:
         `${malformed.map((c) => `'${c.specifier}'`).join(', ')} ` +
         (malformed.length === 1
-          ? 'is not a valid npm package name'
-          : 'are not valid npm package names') +
+          ? `is not a valid ${provider.packageNameLabel}`
+          : `are not valid ${provider.packageNameLabel}s`) +
         '; refusing to hand it to the package manager',
     };
   }
@@ -91,17 +92,16 @@ export async function executeDeclareDependency(
         'restore or remove the import',
     };
   }
-  const rootDir = owningManifestRoot(order);
-  if (rootDir === null) {
+  const root = owningManifestEntry(order, provider.manifestFiles);
+  if (root === null) {
     return {
       kind: 'refused',
-      reason:
-        'the envelope does not name exactly one package.json, so the manifest to declare ' +
-        'into is ambiguous',
+      reason: ambiguousRootReason(provider.manifestFiles, 'the manifest to declare into'),
     };
   }
-  const lock = nodePmAt(ctx.cwd, rootDir);
-  if (lock === null) {
+  const rootDir = root.dir;
+  const strategy = packStrategyAt(pack, ctx.cwd, rootDir);
+  if (strategy === null || strategy.lockfile === null) {
     return {
       kind: 'refused',
       reason: `no lockfile exists at ${rootDir || 'the repo root'}, so declaring a dependency here cannot be lockfile-verified`,
@@ -112,14 +112,18 @@ export async function executeDeclareDependency(
   // Resolve + pre-check EVERY candidate before installing ANY: a refusal
   // must cost $0 and leave the tree untouched.
   const notes: string[] = [];
-  const resolved: Array<Candidate & { version: string; section: DependencySection }> = [];
+  const resolved: Array<Candidate & { version: string; dev: boolean }> = [];
   for (const c of cands) {
-    // `npm view` resolves the registry version the install would take,
-    // honoring the repo's own .npmrc (registry, scopes). npm ships with the
-    // Node runtime dxkit requires, so this holds for every node PM.
-    const view = ctx.exec({ bin: 'npm', args: ['view', c.specifier, 'version'] }, rootAbs);
+    // The pack's registry version probe resolves the version the install
+    // would take (honoring the repo's own registry configuration).
+    const probe = provider.versionProbe({ cwd: ctx.cwd, rootDir, specifier: c.specifier });
+    const view = ctx.exec({ bin: probe.bin, args: [...probe.args] }, rootAbs);
     if (!view.available) {
-      return { kind: 'failed', step: 'resolve-version', output: 'npm is not available here' };
+      return {
+        kind: 'failed',
+        step: 'resolve-version',
+        output: `${probe.bin} is not available here`,
+      };
     }
     if (view.timedOut || view.overflowed || view.code !== 0) {
       return {
@@ -129,14 +133,14 @@ export async function executeDeclareDependency(
           'private package, or something that should not be a dependency at all. Not installing',
       };
     }
-    const version = view.output.trim().split('\n').pop()?.trim() ?? '';
-    if (!/^\d/.test(version)) {
+    const version = provider.parseProbeOutput(view.output);
+    if (version === null) {
       return {
         kind: 'refused',
-        reason: `could not determine a concrete registry version for '${c.specifier}' (got '${version}')`,
+        reason: `could not determine a concrete registry version for '${c.specifier}' (got '${view.output.trim().split('\n').pop()?.trim() ?? ''}')`,
       };
     }
-    const known = await ctx.queryOsv(c.specifier, version, 'npm');
+    const known = await ctx.queryOsv(c.specifier, version, provider.osvEcosystem);
     if (known === null) {
       notes.push(
         `OSV pre-check for ${c.specifier}@${version} could not be reached; the guardrail verifies`,
@@ -153,18 +157,21 @@ export async function executeDeclareDependency(
         };
       }
     }
-    // Section: a package imported ONLY from test files is a devDependency.
-    const section: DependencySection =
-      c.importingFiles.length > 0 && c.importingFiles.every((f) => isTestSourceFile(f))
-        ? 'devDependencies'
-        : 'dependencies';
-    resolved.push({ ...c, version, section });
+    // A package imported ONLY from test files is a dev dependency.
+    const dev = c.importingFiles.length > 0 && c.importingFiles.every((f) => isTestSourceFile(f));
+    resolved.push({ ...c, version, dev });
   }
 
   for (const r of resolved) {
-    const [bin, ...args] = upgradeArgv(lock.pm, r.specifier, r.version, r.section);
-    const install = ctx.exec({ bin, args }, rootAbs);
-    const failure = execStepFailure('install', [bin, ...args].join(' '), install);
+    const cmd = provider.installCommand({
+      cwd: ctx.cwd,
+      rootDir,
+      specifier: r.specifier,
+      version: r.version,
+      dev: r.dev,
+    });
+    const install = ctx.exec({ bin: cmd.bin, args: [...cmd.args] }, rootAbs);
+    const failure = execStepFailure('install', [cmd.bin, ...cmd.args].join(' '), install);
     if (failure) return failure;
   }
 
@@ -189,8 +196,8 @@ export async function executeDeclareDependency(
       output: `still unresolved after install: ${unfixed.map((r) => `'${r.specifier}'`).join(', ')}`,
     };
   }
-  const manifestPath = rootDir ? `${rootDir}/package.json` : 'package.json';
-  const lockPath = rootDir ? `${rootDir}/${lock.lockfile}` : lock.lockfile;
+  const manifestPath = rootDir ? `${rootDir}/${root.file}` : root.file;
+  const lockPath = rootDir ? `${rootDir}/${strategy.lockfile}` : strategy.lockfile;
   return {
     kind: 'applied',
     changedFiles: [manifestPath, lockPath],

@@ -22,6 +22,7 @@ import { parseLocated, parseStructuredLocated } from '../../analyzers/custom-che
 import type { CustomCheckFinding } from '../../analyzers/custom-checks/types';
 import { getLanguage } from '../../languages';
 import type { LanguageId } from '../../languages/types';
+import { exemptionReason, packDeclaration } from './shared';
 import type { WorkOrder } from '../work-orders/types';
 import type { RecipeExecuteContext, RecipeOutcome } from './types';
 
@@ -48,6 +49,13 @@ export async function executeLintAutofix(
         `'${first.check}' is a user-declared check, and dxkit does not know its fixer; only ` +
         'pack lint gates have a declared fix mode',
     };
+  }
+  // The pack's declared lintFix capability (the rider over
+  // `lintGate.fixCommand`, Rule 2): an exemption refuses with the declared
+  // reason; the registry's `matches` already tiers such orders to the agent.
+  const declaration = packDeclaration(pack, 'lintFix');
+  if (declaration !== undefined && declaration.kind === 'exemption') {
+    return { kind: 'refused', reason: exemptionReason(pack, declaration) };
   }
   const provider = getLanguage(pack as LanguageId)?.lintGate;
   const fix = provider?.fixCommand?.({ cwd: ctx.cwd, files: [file] }) ?? null;

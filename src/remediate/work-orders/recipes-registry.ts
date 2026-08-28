@@ -12,17 +12,35 @@
  * `WORK_ORDER_CLASSES`); the contract test pins that every declared recipe
  * id is named there and vice versa. `matches` is consulted only for orders
  * of the recipe's own class.
+ *
+ * Every ecosystem fact `matches` consults comes from the packs' declared
+ * `remediation` capabilities (Rule 6): which packs can pin, declare, resync
+ * or lint-fix is a registry read, never a hardcoded pack list. When a
+ * recipe declines an order BECAUSE its owning pack declares the capability
+ * exempt, `packExemption` names the pack and the declared reason so the
+ * planner can disclose it on the order (never a silent agent tier).
  */
 import { isProjectPathIdentity } from '../../languages/capabilities/correctness';
 import { getLanguage } from '../../languages';
 import type { LanguageId } from '../../languages/types';
-import { DECLARABLE_PACKS, executeDeclareDependency } from '../recipes/declare-dependency';
+import type { RemediationCapabilityId } from '../../languages/capabilities/remediation';
+import { executeDeclareDependency } from '../recipes/declare-dependency';
 import { executeLintAutofix, lintPackOf } from '../recipes/lint-autofix';
 import { executeLockfileSync } from '../recipes/lockfile-sync';
 import { executeOverridePin } from '../recipes/override-pin';
-import { isConcreteSemver, isValidNpmPackageName, owningManifestRoot } from '../recipes/shared';
+import {
+  isConcreteSemver,
+  owningManifestRoot,
+  packDeclaration,
+  resolvePinCapability,
+} from '../recipes/shared';
 import type { RecipeExecuteContext, RecipeOutcome } from '../recipes/types';
-import { WORK_ORDER_CLASSES, type WorkOrder, type WorkOrderClass } from './types';
+import {
+  WORK_ORDER_CLASSES,
+  type CapabilityExemption,
+  type WorkOrder,
+  type WorkOrderClass,
+} from './types';
 
 // ---------------------------------------------------------------------------
 // Feasibility predicates for `matches` (4.4.5 review): every fact knowable
@@ -33,11 +51,6 @@ import { WORK_ORDER_CLASSES, type WorkOrder, type WorkOrderClass } from './types
 // lockfile is present, whether the package is a direct dependency, what the
 // registry and OSV answer).
 // ---------------------------------------------------------------------------
-
-/** The envelope names exactly one owning package.json root. */
-function hasOneManifestRoot(order: WorkOrder): boolean {
-  return owningManifestRoot(order) !== null;
-}
 
 /** The producing pack, when every finding is floor evidence from one pack. */
 function floorPackOf(order: WorkOrder): string | null {
@@ -53,6 +66,25 @@ function lintFileOf(order: WorkOrder): string | null {
   return first && first.type === 'custom-check' && first.file ? first.file : null;
 }
 
+/** The lint pack behind a lint-located order's check name, or null. */
+function lintOrderPack(order: WorkOrder): string | null {
+  const first = order.findings[0]?.evidence;
+  return first && first.type === 'custom-check' ? lintPackOf(first.check) : null;
+}
+
+/** A pack's declared exemption for one capability, shaped for the order's
+ *  plan disclosure, or null when the pack declares a real provider (or the
+ *  pack cannot be resolved at all). */
+function exemptionOf(
+  pack: string | null,
+  capability: RemediationCapabilityId,
+): CapabilityExemption | null {
+  if (pack === null) return null;
+  const declaration = packDeclaration(pack, capability);
+  if (declaration === undefined || declaration.kind !== 'exemption') return null;
+  return { pack, capability, reason: declaration.reason };
+}
+
 export interface RecipeDeclaration {
   readonly id: string;
   /** The work-order class this recipe serves. */
@@ -64,7 +96,8 @@ export interface RecipeDeclaration {
    *  equal `execute !== undefined` (pinned by the contract test). */
   readonly implemented: boolean;
   /** Does this recipe apply to THIS order? Pure over the order's findings and
-   *  evidence (a recipe never inspects the repo at planning time). */
+   *  evidence plus the packs' declared capabilities (a recipe never inspects
+   *  the repo at planning time). */
   readonly matches: (order: WorkOrder) => boolean;
   /** The deterministic executor (4.4.5), present iff `implemented`. Runs
    *  inside the remediate frame through the injected bounded exec under the
@@ -78,6 +111,12 @@ export interface RecipeDeclaration {
    *  linter runs), and any slice's done criterion is checkable against
    *  the one result. */
   readonly groupKey?: (order: WorkOrder) => string | null;
+  /** OPTIONAL: when `matches` declines an order BECAUSE the owning pack
+   *  declares the needed remediation capability as an exemption, name the
+   *  pack, the capability, and the declared reason (the planner discloses
+   *  it on the order). Null when the declining reason is anything else
+   *  (a range-shaped version, an ambiguous root). Pure. */
+  readonly packExemption?: (order: WorkOrder) => CapabilityExemption | null;
 }
 
 /** The class a recipe id serves, from the one table. */
@@ -95,39 +134,56 @@ export const RECIPE_REGISTRY: readonly RecipeDeclaration[] = [
     class: classServedBy('lockfile-sync'),
     summary: "reinstall with the repo's package manager so the lockfile follows the manifest",
     implemented: true,
-    // The producing pack must declare the frozen dry-run this recipe
-    // verifies with, and the envelope must name one owning root.
+    // The producing pack must declare the resync capability (which rides its
+    // install strategy) plus the frozen dry-run this recipe verifies with,
+    // and the envelope must name one owning root under the pack's declared
+    // manifest basenames.
     matches: (order) => {
       const pack = floorPackOf(order);
+      if (pack === null || order.constraints.install === undefined) return false;
+      const declaration = packDeclaration(pack, 'resyncLockfile');
       return (
-        order.constraints.install !== undefined &&
-        hasOneManifestRoot(order) &&
-        pack !== null &&
+        declaration !== undefined &&
+        declaration.kind === 'capability' &&
+        owningManifestRoot(order, declaration.provider.manifestFiles) !== null &&
         getLanguage(pack as LanguageId)?.correctness?.lockfileCheck !== undefined
       );
     },
     execute: executeLockfileSync,
+    packExemption: (order) => exemptionOf(floorPackOf(order), 'resyncLockfile'),
   },
   {
     id: 'override-pin',
     class: classServedBy('override-pin'),
-    summary: 'pin a fixed version through a pm-aware override when no direct upgrade path exists',
+    summary:
+      'pin a fixed version through a pack-declared override when no direct upgrade path exists',
     implemented: true,
     // Needs a known CONCRETE fixed version for EVERY advisory in the order
-    // (a range-shaped fixed string cannot be pinned verbatim), one owning
-    // root, and an install command the frame can run; an advisory with no
-    // fix is agent (or human) territory.
-    matches: (order) =>
-      order.constraints.install !== undefined &&
-      hasOneManifestRoot(order) &&
-      order.findings.length > 0 &&
-      order.findings.every(
-        (f) =>
-          f.evidence.type === 'dep-vuln' &&
-          typeof f.evidence.fixedVersion === 'string' &&
-          isConcreteSemver(f.evidence.fixedVersion),
-      ),
+    // (a range-shaped fixed string cannot be pinned verbatim), an owning
+    // pack that declares the pin capability, one owning root under its
+    // manifests, and an install command the frame can run; an advisory with
+    // no fix is agent (or human) territory.
+    matches: (order) => {
+      if (order.constraints.install === undefined || order.findings.length === 0) return false;
+      const resolved = resolvePinCapability(order);
+      return (
+        resolved.kind === 'capability' &&
+        resolved.rootDir !== null &&
+        order.findings.every(
+          (f) =>
+            f.evidence.type === 'dep-vuln' &&
+            typeof f.evidence.fixedVersion === 'string' &&
+            isConcreteSemver(f.evidence.fixedVersion),
+        )
+      );
+    },
     execute: executeOverridePin,
+    packExemption: (order) => {
+      const resolved = resolvePinCapability(order);
+      return resolved.kind === 'exemption'
+        ? { pack: resolved.pack, capability: 'pinTransitive', reason: resolved.reason }
+        : null;
+    },
   },
   {
     id: 'declare-dependency',
@@ -135,32 +191,35 @@ export const RECIPE_REGISTRY: readonly RecipeDeclaration[] = [
     summary:
       'declare and install a bare import, refusing with the reason when the candidate carries a block-tier advisory',
     implemented: true,
-    // Every finding must carry an unresolved specifier that is a VALID npm
-    // package name. Bareness is a producer fact (the resolutionCheck
-    // contract): a project-path identity (leading `./`, the ONE canonical
-    // discriminator `isProjectPathIdentity`) names a missing FILE, which no
-    // install can declare; the strict name shape additionally keeps a
-    // flag-shaped specifier out of the recipe tier (the executor re-checks
-    // it as the injection rail). Pack support and the owning root are
-    // order-intrinsic too; the frame must hold the install command.
+    // Every finding must carry an unresolved specifier that passes the
+    // owning pack's declared specifier rail. Bareness is a producer fact
+    // (the resolutionCheck contract): a project-path identity (leading
+    // `./`, the ONE canonical discriminator `isProjectPathIdentity`) names
+    // a missing FILE, which no install can declare; the pack's name shape
+    // additionally keeps a flag-shaped specifier out of the recipe tier
+    // (the executor re-checks it as the injection rail). Pack support and
+    // the owning root are declaration reads; the frame must hold the
+    // install command.
     matches: (order) => {
       const pack = floorPackOf(order);
+      if (pack === null || order.constraints.install === undefined) return false;
+      const declaration = packDeclaration(pack, 'declareDependency');
+      if (declaration === undefined || declaration.kind !== 'capability') return false;
+      const provider = declaration.provider;
       return (
-        order.constraints.install !== undefined &&
-        hasOneManifestRoot(order) &&
-        pack !== null &&
-        DECLARABLE_PACKS.includes(pack) &&
+        owningManifestRoot(order, provider.manifestFiles) !== null &&
         order.findings.length > 0 &&
         order.findings.every(
           (f) =>
             f.evidence.type === 'floor' &&
             typeof f.evidence.specifier === 'string' &&
             !isProjectPathIdentity(f.evidence.specifier) &&
-            isValidNpmPackageName(f.evidence.specifier),
+            provider.validSpecifier(f.evidence.specifier),
         )
       );
     },
     execute: executeDeclareDependency,
+    packExemption: (order) => exemptionOf(floorPackOf(order), 'declareDependency'),
   },
   {
     id: 'lint-autofix',
@@ -169,17 +228,18 @@ export const RECIPE_REGISTRY: readonly RecipeDeclaration[] = [
     implemented: true,
     // Every finding must carry a rule (an unparsed diagnostic cannot be
     // scoped to a fixer) and the check must be a PACK lint gate whose pack
-    // declares a fix mode. Sliced orders ARE eligible: the grouped
-    // execution (groupKey) runs the file-level fix once for all of a
-    // file's slices and evaluates each slice's done individually. Which
-    // rules the fixer actually closes stays the executor's runtime verify.
+    // declares the lintFix capability (the rider over the lint gate's
+    // fixCommand, pinned consistent by the contract test). Sliced orders
+    // ARE eligible: the grouped execution (groupKey) runs the file-level
+    // fix once for all of a file's slices and evaluates each slice's done
+    // individually. Which rules the fixer actually closes stays the
+    // executor's runtime verify.
     matches: (order) => {
       if (order.findings.length === 0) return false;
-      const first = order.findings[0].evidence;
-      const pack = first.type === 'custom-check' ? lintPackOf(first.check) : null;
+      const pack = lintOrderPack(order);
       return (
         pack !== null &&
-        getLanguage(pack as LanguageId)?.lintGate?.fixCommand !== undefined &&
+        packDeclaration(pack, 'lintFix')?.kind === 'capability' &&
         order.findings.every(
           (f) => f.evidence.type === 'custom-check' && typeof f.evidence.rule === 'string',
         )
@@ -187,6 +247,7 @@ export const RECIPE_REGISTRY: readonly RecipeDeclaration[] = [
     },
     execute: executeLintAutofix,
     groupKey: lintFileOf,
+    packExemption: (order) => exemptionOf(lintOrderPack(order), 'lintFix'),
   },
 ];
 
@@ -196,4 +257,19 @@ export function matchRecipe(
   registry: readonly RecipeDeclaration[] = RECIPE_REGISTRY,
 ): RecipeDeclaration | undefined {
   return registry.find((r) => r.class === order.class && r.matches(order));
+}
+
+/** The first declared pack exemption blocking a recipe of the order's
+ *  class, for the plan's disclosure (consulted only when no recipe
+ *  matched). */
+export function matchPackExemption(
+  order: WorkOrder,
+  registry: readonly RecipeDeclaration[] = RECIPE_REGISTRY,
+): CapabilityExemption | null {
+  for (const r of registry) {
+    if (r.class !== order.class || r.packExemption === undefined) continue;
+    const exemption = r.packExemption(order);
+    if (exemption !== null) return exemption;
+  }
+  return null;
 }

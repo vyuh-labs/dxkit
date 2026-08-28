@@ -1,18 +1,29 @@
 /**
  * Helpers the recipe executors share: the owning-manifest-root derivation
- * (from the order's own envelope, never a second discovery walk), the one
- * resync-install runner (the lock-writing install with its declared
- * fallback doctrine, executed through the injected bounded exec), the
- * strict npm-name and concrete-semver shapes the registry's `matches` and
- * the executors both read, and the ONE policy-driven block-tier filter for
- * the OSV pre-checks.
+ * (from the order's own envelope and the PACK-DECLARED manifest basenames,
+ * never a second discovery walk), the one resync-install runner (the
+ * lock-writing install with its declared fallback doctrine, executed
+ * through the injected bounded exec), the capability resolution the
+ * registry's `matches`, the plan disclosure, and the executors ALL read
+ * (one code path, Rule 2.30), the concrete-semver shape, and the ONE
+ * policy-driven block-tier filter for the OSV pre-checks.
+ *
+ * Nothing here knows an ecosystem: every manifest name, package-manager
+ * command, and override mechanism comes from the packs' `remediation`
+ * declarations (`src/languages/capabilities/remediation.ts`, Rule 6). The
+ * arch-check bans package-manager literals in this directory.
  */
 import * as path from 'path';
 import { tail, type CommandOutcome } from '../../analyzers/tools/bounded-exec';
 import { classifyOsvSeverity, type OsvVuln } from '../../analyzers/tools/osv';
 import type { FindingSeverity } from '../../baseline/types';
-import { detectLockfile } from '../../package-manager';
-import { nodeInstallStrategy } from '../../languages/node-install';
+import { getLanguage, languagesDeclaringRemediation, remediationSupport } from '../../languages';
+import type { LanguageId } from '../../languages/types';
+import type {
+  PinTransitiveProvider,
+  RemediationCapabilityId,
+  RemediationSupport,
+} from '../../languages/capabilities/remediation';
 import {
   installCommandText,
   type InstallStrategy,
@@ -20,21 +31,6 @@ import {
 import { describeInfrastructure, runInstall } from '../../install/run';
 import type { WorkOrder } from '../work-orders/types';
 import type { RecipeExecuteContext, RecipeOutcome } from './types';
-
-/**
- * A strict npm package-name shape (name, or @scope/name): lowercase-biased
- * URL-safe characters, first character alphanumeric. Load-bearing for the
- * Rule 11 argument-injection discipline, not just hygiene: an unresolved
- * "specifier" is attacker-influencable text from source code, and a
- * leading-dash value handed to a package-manager argv is a flag (a
- * `--registry=...` import would redirect the install). Everything outside
- * this shape is refused before any argv is built.
- */
-const NPM_PACKAGE_NAME = /^(@[a-z0-9][a-z0-9-._~]*\/)?[a-z0-9][a-z0-9-._~]*$/i;
-
-export function isValidNpmPackageName(name: string): boolean {
-  return name.length > 0 && name.length <= 214 && NPM_PACKAGE_NAME.test(name);
-}
 
 /** A CONCRETE semver (x.y.z with optional prerelease/build), never a range.
  *  A range-shaped "fixed version" (`>=4.1.0`) cannot be pinned verbatim, so
@@ -135,30 +131,143 @@ export function execStepFailure(
 
 /**
  * The dependency root an order's fix belongs to, derived from the order's
- * OWN envelope (the planner already scoped it): the directory of the one
- * `package.json` the envelope names. Two roots in one envelope means the
- * planner could not decide (the all-roots fallback); the recipe refuses
- * rather than guess which manifest to edit.
+ * OWN envelope (the planner already scoped it): the directory of the ONE
+ * envelope entry whose basename is among the pack-declared manifest
+ * basenames. Two roots in one envelope means the planner could not decide
+ * (the all-roots fallback); the recipe refuses rather than guess which
+ * manifest to edit.
  */
-export function owningManifestRoot(order: WorkOrder): string | null {
-  const dirs = new Set(
-    order.envelope.paths
-      .filter((p) => p === 'package.json' || p.endsWith('/package.json'))
-      .map((p) => (p === 'package.json' ? '' : p.slice(0, -'/package.json'.length))),
+export function owningManifestRoot(
+  order: WorkOrder,
+  manifestFiles: readonly string[],
+): string | null {
+  return owningManifestEntry(order, manifestFiles)?.dir ?? null;
+}
+
+/** The owning root WITH the manifest basename the envelope matched (the
+ *  file a dependency edit's `changedFiles` names). */
+export function owningManifestEntry(
+  order: WorkOrder,
+  manifestFiles: readonly string[],
+): { dir: string; file: string } | null {
+  const dirs = new Map<string, string>();
+  for (const p of order.envelope.paths) {
+    for (const f of manifestFiles) {
+      if (p === f) dirs.set('', f);
+      else if (p.endsWith(`/${f}`)) dirs.set(p.slice(0, -(f.length + 1)), f);
+    }
+  }
+  if (dirs.size !== 1) return null;
+  const [dir, file] = [...dirs.entries()][0];
+  return { dir, file };
+}
+
+/** The ONE refusal phrasing for an envelope that does not resolve one
+ *  owning root (shared by every dependency-shaped recipe). */
+export function ambiguousRootReason(manifestFiles: readonly string[], what: string): string {
+  return (
+    `the envelope does not name exactly one ${manifestFiles.join(' / ')}, so ` +
+    `${what} is ambiguous`
   );
-  return dirs.size === 1 ? [...dirs][0] : null;
 }
 
-/** The node package manager owning `rootDir` (repo-relative; '' = repo
- *  root), from the lockfile actually present (the ONE detector). */
-export function nodePmAt(cwd: string, rootDir: string): ReturnType<typeof detectLockfile> {
-  return detectLockfile(path.join(cwd, rootDir));
+/** The producing pack's install strategy at `rootDir` (repo-relative;
+ *  '' = repo root), through the pack's ONE install seam (Rule 2: the
+ *  resync command and the lockfile come from `installStrategy`, never a
+ *  second table in a recipe). */
+export function packStrategyAt(pack: string, cwd: string, rootDir: string): InstallStrategy | null {
+  return packInstallStrategy(pack)?.strategy(path.join(cwd, rootDir)) ?? null;
 }
 
-/** The node install strategy that applies at `rootDir` (repo-relative;
- *  '' = repo root), from the same file presence `nodePmAt` reads. */
-export function nodeStrategyAt(cwd: string, rootDir: string): InstallStrategy | null {
-  return nodeInstallStrategy.strategy(path.join(cwd, rootDir));
+/** A pack's install-strategy provider by evidence pack id (a plain string). */
+export function packInstallStrategy(pack: string) {
+  return getLanguage(pack as LanguageId)?.installStrategy;
+}
+
+/** A pack's remediation declaration for one capability, by evidence pack
+ *  id. Undefined only when no registered pack carries the id. */
+export function packDeclaration<K extends RemediationCapabilityId>(
+  pack: string,
+  capability: K,
+): RemediationSupport[K] | undefined {
+  return remediationSupport(pack)?.[capability];
+}
+
+/** How the executors and the registry's `matches` name a pack's declared
+ *  exemption in refusals and plan output (one phrasing). */
+export function exemptionReason(pack: string, exemption: { reason: string }): string {
+  return `the ${pack} pack declares this capability exempt: ${exemption.reason}`;
+}
+
+/**
+ * Resolve the `pinTransitive` capability serving a dependency-advisory
+ * order, the ONE resolution the registry's `matches`, the plan's exemption
+ * disclosure, and the override-pin executor all consume (Rule 2.30):
+ *
+ *   - when the order's dep-vuln evidence names exactly one producing pack,
+ *     that pack's declaration decides (capability or exemption);
+ *   - when the evidence names none (a baseline-debt advisory predating the
+ *     pack stamp), the unique registry pack DECLARING the capability whose
+ *     manifest basenames resolve an owning root in the envelope serves it;
+ *   - anything else is `unknown` (ambiguous evidence, or no declaring pack
+ *     matches the envelope), and the order stays on the agent tier.
+ *
+ * Pure over the order and the pack registry: no repo file is read, so the
+ * planner's tier decision stays order-intrinsic.
+ */
+export type PinResolution =
+  | {
+      readonly kind: 'capability';
+      readonly pack: string;
+      readonly provider: PinTransitiveProvider;
+      readonly rootDir: string | null;
+    }
+  | { readonly kind: 'exemption'; readonly pack: string; readonly reason: string }
+  | { readonly kind: 'unknown'; readonly reason: string };
+
+export function resolvePinCapability(order: WorkOrder): PinResolution {
+  const evidencePacks = new Set<string>();
+  for (const f of order.findings) {
+    if (f.evidence.type === 'dep-vuln' && f.evidence.pack !== undefined) {
+      evidencePacks.add(f.evidence.pack);
+    }
+  }
+  if (evidencePacks.size > 1) {
+    return {
+      kind: 'unknown',
+      reason: `the order's findings name more than one producing pack (${[...evidencePacks].sort().join(', ')})`,
+    };
+  }
+  if (evidencePacks.size === 1) {
+    const pack = [...evidencePacks][0];
+    const declaration = packDeclaration(pack, 'pinTransitive');
+    if (declaration === undefined) {
+      return { kind: 'unknown', reason: `no registered language pack has the id '${pack}'` };
+    }
+    if (declaration.kind === 'exemption') {
+      return { kind: 'exemption', pack, reason: declaration.reason };
+    }
+    return {
+      kind: 'capability',
+      pack,
+      provider: declaration.provider,
+      rootDir: owningManifestRoot(order, declaration.provider.manifestFiles),
+    };
+  }
+  const candidates = languagesDeclaringRemediation('pinTransitive').flatMap((l) => {
+    const declaration = l.remediation.pinTransitive;
+    if (declaration.kind !== 'capability') return [];
+    const rootDir = owningManifestRoot(order, declaration.provider.manifestFiles);
+    return rootDir === null ? [] : [{ pack: l.id, provider: declaration.provider, rootDir }];
+  });
+  if (candidates.length === 1) return { kind: 'capability', ...candidates[0] };
+  return {
+    kind: 'unknown',
+    reason:
+      candidates.length === 0
+        ? 'no pack declaring transitive pinning owns a manifest the envelope names'
+        : `the envelope matches more than one pack's manifest (${candidates.map((c) => c.pack).join(', ')})`,
+  };
 }
 
 /**

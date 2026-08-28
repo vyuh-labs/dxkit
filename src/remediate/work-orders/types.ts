@@ -112,6 +112,10 @@ export interface FloorEvidence {
 export interface DepAdvisoryEvidence {
   readonly type: 'dep-vuln';
   readonly package: string;
+  /** The producing language pack, when the finding's source records it
+   *  (live scans do; older baseline entries may not). What lets the
+   *  override-pin capability resolution name the owning pack directly. */
+  readonly pack?: string;
   readonly installedVersion?: string;
   readonly advisoryId: string;
   /** From the live scan when available; absent means "not known here". */
@@ -216,6 +220,21 @@ export interface WorkOrderBudget {
 
 export type WorkOrderTier = 'recipe' | 'agent';
 
+/**
+ * A pack's declared remediation exemption, surfaced on an agent-tier order
+ * of a recipe-served class: the deterministic fix exists as a recipe, but
+ * the owning pack declares the capability exempt (with the reason), so the
+ * order went to the agent tier. Disclosed in plan output, never silence
+ * (the DEFERRED_KINDS discipline).
+ */
+export interface CapabilityExemption {
+  readonly pack: string;
+  /** A remediation capability id (`resyncLockfile`, `pinTransitive`,
+   *  `declareDependency`, `lintFix`). */
+  readonly capability: string;
+  readonly reason: string;
+}
+
 export type WorkOrderProvenance =
   | { readonly source: 'entry-floor'; readonly check: string }
   | { readonly source: 'guardrail-blocking' }
@@ -262,6 +281,9 @@ export interface WorkOrder {
   readonly tier: WorkOrderTier;
   /** The matching recipe id when `tier` is `recipe`. */
   readonly recipe?: string;
+  /** Present on an agent-tier order whose class HAS a recipe but whose
+   *  owning pack declares the capability exempt (see the type). */
+  readonly capabilityExemption?: CapabilityExemption;
   /** The failing command's captured output tail, once per order (floor
    *  orders). Structured evidence lives on each finding. */
   readonly outputTail?: string;
