@@ -282,6 +282,19 @@ export function deriveImpact(
     });
   }
 
+  // A refused run (CANNOT GATE) may not carry a projected score claim any
+  // more than a resolved count: the renderers already suppress the line, but
+  // the JSON field would still hand an embedder 'projected' deltas to render
+  // on their own. Neutralize it to a disclosed unavailable instead.
+  const effectiveProjection: ScoreProjection | undefined =
+    projection !== undefined && !attributable
+      ? {
+          status: 'unavailable',
+          reason:
+            'the run could not attribute changes (CANNOT GATE), so no score movement can be claimed',
+        }
+      : projection;
+
   const resolved = resolvedPairs.length;
   return {
     attributable,
@@ -291,7 +304,7 @@ export function deriveImpact(
     net: resolved - added,
     excluded,
     capNotes,
-    ...(projection !== undefined ? { projection } : {}),
+    ...(effectiveProjection !== undefined ? { projection: effectiveProjection } : {}),
   };
 }
 

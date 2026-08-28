@@ -414,7 +414,12 @@ same comment with the actual movement beside the projection.
 (measured around 20ms) plus one shallow fetch of the reports ref. Set
 `false` to drop the projection line and the snapshot read. With no snapshot
 history (reports.onMerge off), the section discloses that no projection was
-made instead of inventing a base.
+made instead of inventing a base. On a ref-based repo the projection is
+structurally unavailable (that mode gathers a trimmed analysis every run), so
+the JSON carries the disclosure quietly and no line is printed per PR. Scores
+are also compared only when the tools behind them match: a snapshot captured
+with a scanner this run lacks (or the reverse) is disclosed as not comparable
+rather than diffed.
 
 ## Graph refresh
 

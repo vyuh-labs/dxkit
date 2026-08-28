@@ -350,6 +350,14 @@ describe('a refused run (CANNOT GATE) never renders a resolved claim (Rule 19 at
     expect(json.verdict.refused).toBe(true);
   });
 
+  it('json: a refused run neutralizes the projection: never projected deltas under CANNOT GATE', () => {
+    const json = renderJson(refused(), { scoreProjection: PROJECTED });
+    expect(json.impact?.projection?.status).toBe('unavailable');
+    expect(
+      json.impact?.projection?.status === 'unavailable' ? json.impact.projection.reason : undefined,
+    ).toContain('could not attribute');
+  });
+
   it('a missing required observation refuses the same way', () => {
     const req = {
       ...base,

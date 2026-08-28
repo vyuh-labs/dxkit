@@ -26,6 +26,7 @@ import {
   PROJECTION_DIMENSION_KEYS,
   type ImpactProjectionRecord,
 } from '../baseline/impact-projection';
+import { describeScoreInputsDrift } from './snapshot';
 
 /**
  * The guardrail PR comment's identity marker. The rendered workflow template
@@ -109,13 +110,32 @@ export function renderLandedSection(
     );
     return lines.join('\n');
   }
+  const inputsDrift = describeScoreInputsDrift(prev.scoreInputs, entry.scoreInputs);
+  if (inputsDrift !== null) {
+    lines.push(
+      `Scores not comparable across these snapshots: ${inputsDrift}. ` +
+        'The trend realigns from this snapshot on.',
+    );
+    return lines.join('\n');
+  }
   const deltas = scoreDeltas(prev.scores, entry.scores).filter((d) =>
     PROJECTION_DIMENSION_KEYS.includes(d.key),
   );
   const listed = deltas.filter(
     (d) => d.delta !== null && (d.delta !== 0 || projection?.scores[d.key] !== undefined),
   );
-  const parts = listed.map((d) => landedLine(d, projection?.scores[d.key]));
+  // A dimension that was projected but is UNMEASURED at merge keeps its
+  // calibration line: the projection made a claim, so the landed side says
+  // what became of it instead of silently dropping it.
+  const unmeasuredProjected = deltas.filter(
+    (d) => d.delta === null && projection?.scores[d.key] !== undefined,
+  );
+  const parts = [
+    ...listed.map((d) => landedLine(d, projection?.scores[d.key])),
+    ...unmeasuredProjected.map(
+      (d) => `${d.key} not measured at merge (projection was ${projection!.scores[d.key]!.to})`,
+    ),
+  ];
   const measured = deltas.filter((d) => d.delta !== null);
   if (parts.length === 0) parts.push('scores unchanged (actual)');
   else if (listed.length < measured.length) parts.push('other dimensions unchanged');
@@ -136,6 +156,12 @@ function withoutLandedSection(body: string): string {
 
 interface PrRef {
   readonly number: number;
+  readonly merge_commit_sha?: string | null;
+  readonly merged_at?: string | null;
+  readonly base?: {
+    readonly ref?: string;
+    readonly repo?: { readonly default_branch?: string };
+  };
 }
 interface CommentRef {
   readonly id: number;
@@ -150,17 +176,63 @@ interface CommentRef {
  */
 export function updateLandedComment(inputs: LandedCommentInputs): LandedCommentOutcome {
   const { slug, sha, exec } = inputs;
+
+  // Rule 19 cause 5, the cron-rewrite guard: a scheduled re-publish at the
+  // same sha can re-score under DIFFERENT tooling (a scanner gone, a
+  // fallback engaged). A landed line diffed across that boundary would
+  // attribute tooling drift to the merged PR, so the update becomes a
+  // disclosed skip and the comment (including any earlier, honest landed
+  // line) is left untouched.
+  const inputsDrift =
+    inputs.prev !== undefined
+      ? describeScoreInputsDrift(inputs.prev.scoreInputs, inputs.entry.scoreInputs)
+      : null;
+  if (inputsDrift !== null) {
+    return {
+      status: 'skipped',
+      reason:
+        `score inputs drifted between the snapshots (${inputsDrift}); updating the landed ` +
+        'line would attribute tooling drift to the pull request',
+    };
+  }
+
   let prNumber: number;
   try {
     const raw = exec(['api', `repos/${slug}/commits/${sha}/pulls`]);
     const prs = JSON.parse(raw) as ReadonlyArray<PrRef>;
-    if (!Array.isArray(prs) || prs.length === 0 || typeof prs[0]?.number !== 'number') {
+    const list = Array.isArray(prs) ? prs.filter((p) => typeof p?.number === 'number') : [];
+    if (list.length === 0) {
       return {
         status: 'skipped',
         reason: `no merged pull request found for ${sha.slice(0, 12)} (direct push or squash outside a PR)`,
       };
     }
-    prNumber = prs[0].number;
+    // The listing contains every PR whose commits INCLUDE the sha (rebase and
+    // fast-forward flows list several, order unspecified), so `[0]` can be
+    // the wrong PR. The merge-commit match is the authoritative association;
+    // failing that, exactly one merged candidate based on the default branch
+    // is accepted; anything else is a disclosed skip, never a guess.
+    const bySha = list.find((p) => p.merge_commit_sha === sha);
+    if (bySha !== undefined) {
+      prNumber = bySha.number;
+    } else {
+      const merged = list.filter(
+        (p) =>
+          typeof p.merged_at === 'string' &&
+          p.base?.ref !== undefined &&
+          p.base.ref === p.base.repo?.default_branch,
+      );
+      if (merged.length !== 1) {
+        return {
+          status: 'skipped',
+          reason:
+            `ambiguous pull-request association for ${sha.slice(0, 12)}: ${list.length} ` +
+            'containing PRs, no merge-commit match, and not exactly one merged ' +
+            'default-branch candidate',
+        };
+      }
+      prNumber = merged[0]!.number;
+    }
   } catch (err) {
     return {
       status: 'skipped',

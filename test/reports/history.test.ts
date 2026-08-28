@@ -99,6 +99,17 @@ describe('report history codec', () => {
     expect(unstamped[0].methodology).toBeUndefined();
   });
 
+  it('parses the scoreInputs stamp; a malformed one is dropped, not fatal', () => {
+    const stamped = parseHistory(
+      JSON.stringify({ sha: 'a', date: 'd', scores, scoreInputs: ['!gitleaks', 'semgrep'] }) + '\n',
+    );
+    expect(stamped[0].scoreInputs).toEqual(['!gitleaks', 'semgrep']);
+    const malformed = parseHistory(
+      JSON.stringify({ sha: 'a', date: 'd', scores, scoreInputs: [1, 'semgrep'] }) + '\n',
+    );
+    expect(malformed[0].scoreInputs).toBeUndefined();
+  });
+
   it('tolerates + preserves unknown/extra fields on a line', () => {
     const parsed = parseHistory(
       JSON.stringify({ ...entry('a'), futureField: { nested: 1 } }) + '\n',

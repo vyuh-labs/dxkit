@@ -101,6 +101,48 @@ describe('computeScoreProjection (pure core)', () => {
     expect(projection.reason).toContain('predates scoring-methodology stamping');
   });
 
+  it('score-input drift => not comparable, naming the moved input, both directions', () => {
+    const gone = computeScoreProjection({
+      current: scores({ security: 46 }),
+      methodology: SCORING_METHODOLOGY_VERSION,
+      inputs: ['grep-secrets', 'semgrep'],
+      history: [entry({ scoreInputs: ['gitleaks', 'semgrep'] })],
+    });
+    expect(gone.status).toBe('not-comparable');
+    if (gone.status !== 'not-comparable') return;
+    expect(gone.reason).toContain('gitleaks');
+    expect(gone.reason).toContain('grep-secrets');
+
+    const added = computeScoreProjection({
+      current: scores({ security: 46 }),
+      methodology: SCORING_METHODOLOGY_VERSION,
+      inputs: ['gitleaks', 'semgrep', '!osv-scanner'],
+      history: [entry({ scoreInputs: ['gitleaks', 'semgrep'] })],
+    });
+    expect(added.status).toBe('not-comparable');
+    if (added.status !== 'not-comparable') return;
+    expect(added.reason).toContain('!osv-scanner');
+  });
+
+  it('matching score inputs project; an unstamped side defers to the methodology guard', () => {
+    const matching = computeScoreProjection({
+      current: scores({ security: 46 }),
+      methodology: SCORING_METHODOLOGY_VERSION,
+      inputs: ['gitleaks', 'semgrep'],
+      history: [entry({ scoreInputs: ['gitleaks', 'semgrep'] })],
+    });
+    expect(matching.status).toBe('projected');
+    // A base entry without the stamp (methodology present, inputs absent:
+    // theoretical) never claims drift it cannot see.
+    const unstamped = computeScoreProjection({
+      current: scores({ security: 46 }),
+      methodology: SCORING_METHODOLOGY_VERSION,
+      inputs: ['gitleaks'],
+      history: [entry()],
+    });
+    expect(unstamped.status).toBe('projected');
+  });
+
   it('discloses an empty history as unavailable, never inventing a base', () => {
     const projection = computeScoreProjection({
       current: scores(),
@@ -181,8 +223,45 @@ describe('gatherScoreProjection (IO wrapper seams)', () => {
     );
     expect(out.projection.status).toBe('unavailable');
     if (out.projection.status !== 'unavailable') return;
-    expect(out.projection.reason).toContain('trimmed analysis');
+    expect(out.projection.reason).toContain('no full shared analysis');
     expect(read).toBe(0);
+  });
+
+  it('ref-based mode => quiet structural unavailable: JSON disclosure, no human line, no work', async () => {
+    let peeked = 0;
+    let read = 0;
+    const out = await gatherScoreProjection(
+      '/nowhere',
+      {},
+      {
+        peek: async () => {
+          peeked += 1;
+          return { report };
+        },
+        readHistory: () => {
+          read += 1;
+          return [entry()];
+        },
+      },
+      'ref-based',
+    );
+    expect(out.projection.status).toBe('unavailable');
+    if (out.projection.status !== 'unavailable') return;
+    expect(out.projection.reason).toContain('ref-based mode');
+    expect(out.projection.reason).toContain('impact.projectScores');
+    expect(out.projection.quiet).toBe(true);
+    // The human line is suppressed; the JSON keeps the disclosure.
+    expect(formatScoreProjection(out.projection)).toBeNull();
+    expect(peeked).toBe(0);
+    expect(read).toBe(0);
+    // A committed mode takes the normal path.
+    const committed = await gatherScoreProjection(
+      '/nowhere',
+      {},
+      { peek: async () => ({ report }), readHistory: () => [entry()] },
+      'committed-full',
+    );
+    expect(committed.projection.status).toBe('projected');
   });
 
   it('a throwing seam degrades to a disclosed unavailable, never an exception into the gate', async () => {
@@ -248,6 +327,9 @@ describe('formatScoreProjection (one phrasing)', () => {
     expect(formatScoreProjection({ status: 'unavailable', reason: 'no history' })).toBe(
       'scores not projected: no history',
     );
+    expect(
+      formatScoreProjection({ status: 'unavailable', reason: 'structural', quiet: true }),
+    ).toBeNull();
     expect(formatScoreProjection({ status: 'disabled', reason: 'off' })).toBeNull();
   });
 });

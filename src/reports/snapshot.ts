@@ -11,9 +11,12 @@ import {
   parseHistory,
   serializeHistory,
   foldEntry,
+  SCORE_KEY_TO_DIMENSION,
   type ReportHistoryEntry,
   type ReportScores,
   type ReportFindingCounts,
+  type ScoreDimensionKey,
+  type ReportDimensionName,
 } from './history';
 import {
   readFromAnchorRef,
@@ -33,17 +36,15 @@ export const REPORT_HISTORY_PATH = 'report-history.jsonl';
 export interface SnapshotSource {
   readonly summary: { readonly overallScore: number | null };
   readonly dimensions: Partial<
-    Record<
-      | 'testing'
-      | 'quality'
-      | 'documentation'
-      | 'security'
-      | 'maintainability'
-      | 'developerExperience',
-      { readonly score: number | null } | undefined
-    >
+    Record<ReportDimensionName, { readonly score: number | null } | undefined>
   >;
   readonly findings?: ReportFindingCounts;
+  /** Tools that ran for this report (mirrors `HealthReport.toolsUsed`). */
+  readonly toolsUsed?: ReadonlyArray<string>;
+  /** Tools attempted but unavailable (`HealthReport.toolsUnavailable`);
+   *  entries may carry a machine-phrased reason suffix that is stripped
+   *  before stamping. */
+  readonly toolsUnavailable?: ReadonlyArray<string>;
 }
 
 export interface SnapshotMeta {
@@ -67,20 +68,69 @@ function dimScore(src: SnapshotSource, key: keyof SnapshotSource['dimensions']):
  * projects" can never come from two different mappings.
  */
 export function scoresFromReport(src: SnapshotSource): ReportScores {
-  return {
+  const out = {
     overall: typeof src.summary.overallScore === 'number' ? src.summary.overallScore : null,
-    security: dimScore(src, 'security'),
-    quality: dimScore(src, 'quality'),
-    tests: dimScore(src, 'testing'),
-    documentation: dimScore(src, 'documentation'),
-    maintainability: dimScore(src, 'maintainability'),
-    developerExperience: dimScore(src, 'developerExperience'),
-  };
+  } as Record<keyof ReportScores, number | null>;
+  for (const key of Object.keys(SCORE_KEY_TO_DIMENSION) as ScoreDimensionKey[]) {
+    out[key] = dimScore(src, SCORE_KEY_TO_DIMENSION[key]);
+  }
+  return out as ReportScores;
+}
+
+/**
+ * The score-relevant tool inputs of a report, in the ONE normalized shape
+ * both comparability guards read (`computeScoreProjection` pre-merge,
+ * `renderLandedSection` / the landed skip post-merge): sorted unique tool
+ * names that ran, plus `!name` for a tool attempted but unavailable (the
+ * reason suffix is stripped: it can phrase machine specifics, and Rule 19
+ * bans machine-specific values in comparability inputs). Deterministic per
+ * environment; a difference between two environments is exactly the drift
+ * the guards must disclose.
+ */
+export function scoreToolInputs(src: {
+  readonly toolsUsed?: ReadonlyArray<string>;
+  readonly toolsUnavailable?: ReadonlyArray<string>;
+}): string[] {
+  const names = new Set<string>();
+  for (const tool of src.toolsUsed ?? []) {
+    const name = tool.trim();
+    if (name) names.add(name);
+  }
+  for (const tool of src.toolsUnavailable ?? []) {
+    const name = tool.split(' (')[0]!.trim();
+    if (name) names.add(`!${name}`);
+  }
+  return [...names].sort();
+}
+
+/**
+ * Human-renderable description of score-input drift between two stamped
+ * input lists, or null when they match. Null when EITHER side is unstamped:
+ * a pre-stamping entry also lacks `methodology`, and that guard owns the
+ * disclosure for old entries; this one never claims drift it cannot see.
+ */
+export function describeScoreInputsDrift(
+  base: ReadonlyArray<string> | undefined,
+  current: ReadonlyArray<string> | undefined,
+): string | null {
+  if (base === undefined || current === undefined) return null;
+  const baseSet = new Set(base);
+  const currentSet = new Set(current);
+  const gone = base.filter((t) => !currentSet.has(t));
+  const added = current.filter((t) => !baseSet.has(t));
+  if (gone.length === 0 && added.length === 0) return null;
+  const cap = (list: string[]): string =>
+    list.slice(0, 4).join(', ') + (list.length > 4 ? ` and ${list.length - 4} more` : '');
+  const parts: string[] = [];
+  if (gone.length > 0) parts.push(`at the base but not now: ${cap(gone)}`);
+  if (added.length > 0) parts.push(`now but not at the base: ${cap(added)}`);
+  return `the tools behind the scores differ (${parts.join('; ')})`;
 }
 
 /** Pure map from a scored report to the durable history entry. Stamps the
- *  scoring-methodology identity so later score comparisons can verify they
- *  compare like with like (impact P2 honesty constraint 4). */
+ *  scoring-methodology identity AND the score-input list so later score
+ *  comparisons can verify they compare like with like (impact P2 honesty
+ *  constraint 4 + Rule 19 cause 5). */
 export function reportToHistoryEntry(src: SnapshotSource, meta: SnapshotMeta): ReportHistoryEntry {
   return {
     sha: meta.sha,
@@ -88,6 +138,7 @@ export function reportToHistoryEntry(src: SnapshotSource, meta: SnapshotMeta): R
     dxkitVersion: meta.dxkitVersion,
     ...(meta.branch ? { branch: meta.branch } : {}),
     methodology: SCORING_METHODOLOGY_VERSION,
+    scoreInputs: scoreToolInputs(src),
     scores: scoresFromReport(src),
     ...(src.findings ? { findings: src.findings } : {}),
   };

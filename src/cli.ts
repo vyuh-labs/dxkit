@@ -3129,7 +3129,12 @@ export async function run(argv: string[]): Promise<void> {
         // outcome carries its reason. Default on; policy off-switch
         // `impact.projectScores: false`.
         const { gatherScoreProjection } = await import('./baseline/impact-projection');
-        const projected = await gatherScoreProjection(targetPath, result.policy);
+        const projected = await gatherScoreProjection(
+          targetPath,
+          result.policy,
+          undefined,
+          result.mode.mode,
+        );
         const renderOpts = {
           scoreProjection: projected.projection,
           ...(projected.scoreInputs !== undefined ? { impactScores: projected.scoreInputs } : {}),

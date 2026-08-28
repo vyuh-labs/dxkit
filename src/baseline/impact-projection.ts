@@ -36,14 +36,22 @@ import type { HealthReport } from '../analyzers/types';
 import { SCORING_METHODOLOGY_VERSION } from '../scoring/methodology';
 import {
   SCORE_KEYS,
+  SCORE_KEY_TO_DIMENSION,
   scoreDeltas,
   type ReportHistoryEntry,
   type ReportScores,
   type ScoreDelta,
+  type ScoreDimensionKey,
 } from '../reports/history';
-import { readReportHistory, scoresFromReport } from '../reports/snapshot';
+import {
+  describeScoreInputsDrift,
+  readReportHistory,
+  scoresFromReport,
+  scoreToolInputs,
+} from '../reports/snapshot';
 import type { ImpactScoreInput } from './impact';
 import type { ReportsPolicy } from './policy';
+import type { BaselineMode } from './modes';
 
 // ─── The projection model ─────────────────────────────────────────────────
 
@@ -73,7 +81,18 @@ export type ScoreProjection =
       readonly base: { readonly sha: string; readonly date: string };
     }
   | { readonly status: 'not-comparable'; readonly reason: string }
-  | { readonly status: 'unavailable'; readonly reason: string }
+  | {
+      readonly status: 'unavailable';
+      readonly reason: string;
+      /**
+       * True when the state is structural to the run's MODE (ref-based mode
+       * gathers a trimmed analysis on every run, so no run of this surface
+       * can ever project): the disclosure lives in the JSON, and the human
+       * line is suppressed instead of repeating a permanent, non-actionable
+       * sentence on every PR. Absent for actionable cases.
+       */
+      readonly quiet?: true;
+    }
   | { readonly status: 'disabled'; readonly reason: string };
 
 /** The projection plus the same-run score inputs for the cap-aware line
@@ -96,6 +115,11 @@ export function computeScoreProjection(args: {
   /** The methodology the current side was computed under (the running
    *  dxkit's `SCORING_METHODOLOGY_VERSION`). */
   readonly methodology: string;
+  /** The current side's score-relevant tool inputs (`scoreToolInputs`).
+   *  Compared against the base snapshot's stamp: drift (a degraded scanner,
+   *  an untrusted-mode skip) is disclosed as not comparable, never diffed
+   *  (Rule 19 cause 5 applied to scores). */
+  readonly inputs?: ReadonlyArray<string>;
   readonly history: ReadonlyArray<ReportHistoryEntry>;
 }): ScoreProjection {
   const base = args.history[args.history.length - 1];
@@ -121,6 +145,13 @@ export function computeScoreProjection(args: {
       reason:
         `the latest snapshot was scored under methodology '${base.methodology}' but this run ` +
         `scores under '${args.methodology}'; the next merge snapshot realigns`,
+    };
+  }
+  const inputsDrift = describeScoreInputsDrift(base.scoreInputs, args.inputs);
+  if (inputsDrift !== null) {
+    return {
+      status: 'not-comparable',
+      reason: `${inputsDrift}, so this run's scores cannot be diffed against the snapshot's; the next merge snapshot realigns`,
     };
   }
   return {
@@ -153,12 +184,29 @@ export async function gatherScoreProjection(
     readonly reports?: ReportsPolicy;
   },
   seams?: ScoreProjectionSeams,
+  mode?: BaselineMode,
 ): Promise<ScoreProjectionGather> {
   if (policy.impact?.projectScores === false) {
     return {
       projection: {
         status: 'disabled',
         reason: 'score projection is off for this repo (impact.projectScores: false)',
+      },
+    };
+  }
+  if (mode === 'ref-based') {
+    // Structural to the mode, quiet by design: ref-based mode trims the
+    // gather on EVERY run, so a per-PR sentence would repeat forever with
+    // nothing the PR author can do. The JSON keeps the disclosure; the
+    // off-switch (impact.projectScores: false) silences even that.
+    return {
+      projection: {
+        status: 'unavailable',
+        reason:
+          'ref-based mode gathers a trimmed analysis each run, so dimension scores are not ' +
+          'recomputed on this surface (committed baseline modes project; ' +
+          'impact.projectScores: false turns the projection off entirely)',
+        quiet: true,
       },
     };
   }
@@ -175,7 +223,7 @@ export async function gatherScoreProjection(
         projection: {
           status: 'unavailable',
           reason:
-            'this run gathered a trimmed analysis (no full shared envelope to score), ' +
+            'this run held no full shared analysis to score (a trimmed or partial gather), ' +
             'so dimension scores were not recomputed',
         },
       };
@@ -186,6 +234,7 @@ export async function gatherScoreProjection(
     const projection = computeScoreProjection({
       current: scoresFromReport(scored.report),
       methodology: SCORING_METHODOLOGY_VERSION,
+      inputs: scoreToolInputs(scored.report),
       history,
     });
     return { projection, scoreInputs };
@@ -209,19 +258,9 @@ export async function gatherScoreProjection(
  * history surface speak.
  */
 export function impactScoreInputsFromReport(report: HealthReport): ReadonlyArray<ImpactScoreInput> {
-  const dims: ReadonlyArray<
-    readonly [Exclude<keyof ReportScores, 'overall'>, keyof HealthReport['dimensions']]
-  > = [
-    ['security', 'security'],
-    ['quality', 'quality'],
-    ['tests', 'testing'],
-    ['documentation', 'documentation'],
-    ['maintainability', 'maintainability'],
-    ['developerExperience', 'developerExperience'],
-  ];
   const out: ImpactScoreInput[] = [];
-  for (const [name, dim] of dims) {
-    const d = report.dimensions[dim];
+  for (const name of Object.keys(SCORE_KEY_TO_DIMENSION) as ScoreDimensionKey[]) {
+    const d = report.dimensions[SCORE_KEY_TO_DIMENSION[name]];
     if (!d) continue;
     out.push({
       dimension: name,
@@ -246,7 +285,9 @@ export function impactScoreInputsFromReport(report: HealthReport): ReadonlyArray
  */
 export function formatScoreProjection(projection: ScoreProjection): string | null {
   if (projection.status === 'disabled') return null;
-  if (projection.status === 'unavailable') return `scores not projected: ${projection.reason}`;
+  if (projection.status === 'unavailable') {
+    return projection.quiet ? null : `scores not projected: ${projection.reason}`;
+  }
   if (projection.status === 'not-comparable') {
     return `scores not comparable this PR: ${projection.reason}`;
   }

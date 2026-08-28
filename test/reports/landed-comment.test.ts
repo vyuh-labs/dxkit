@@ -140,6 +140,28 @@ describe('renderLandedSection', () => {
     expect(section).not.toContain('projection was');
   });
 
+  it('score-input drift across snapshots is disclosed, never diffed (Rule 19 cause 5)', () => {
+    const section = renderLandedSection(
+      entry({ scoreInputs: ['!gitleaks', 'grep-secrets', 'semgrep'] }),
+      entry({ sha: 'baseentrysha0000', scoreInputs: ['gitleaks', 'semgrep'] }),
+      null,
+    );
+    expect(section).toContain('not comparable across these snapshots');
+    expect(section).toContain('gitleaks');
+    expect(section).not.toContain('(actual');
+  });
+
+  it('a projected dimension unmeasured at merge keeps its calibration line', () => {
+    const cur = entry({ scores: scores({ tests: null, security: 46, overall: 52 }) });
+    const projection = {
+      methodology: SCORING_METHODOLOGY_VERSION,
+      scores: { security: { from: 40, to: 46 }, tests: { from: 55, to: 60 } },
+    };
+    const section = renderLandedSection(cur, prev, projection);
+    expect(section).toContain('security 40 -> 46 (actual; projection was 46)');
+    expect(section).toContain('tests not measured at merge (projection was 60)');
+  });
+
   it('a methodology mismatch across snapshots is disclosed, never diffed', () => {
     const section = renderLandedSection(entry(), entry({ methodology: 'spec-v0' }), null);
     expect(section).toContain('not comparable across these snapshots');
@@ -165,7 +187,7 @@ describe('updateLandedComment', () => {
 
   it('patches the SAME guardrail comment: actual + the original projection, marker retained', () => {
     const { exec, patched } = ghSpy({
-      pulls: [{ number: 41 }],
+      pulls: [{ number: 41, merge_commit_sha: 'feedfacefeedface' }],
       comments: [
         { id: 7, body: 'someone elses comment' },
         { id: 9, body: guardrailCommentBody() },
@@ -186,12 +208,12 @@ describe('updateLandedComment', () => {
 
   it('a re-run replaces the landed section instead of stacking a second one', () => {
     const first = ghSpy({
-      pulls: [{ number: 41 }],
+      pulls: [{ number: 41, merge_commit_sha: 'feedfacefeedface' }],
       comments: [{ id: 9, body: guardrailCommentBody() }],
     });
     updateLandedComment(inputs(first.exec));
     const second = ghSpy({
-      pulls: [{ number: 41 }],
+      pulls: [{ number: 41, merge_commit_sha: 'feedfacefeedface' }],
       comments: [{ id: 9, body: first.patched[0]! }],
     });
     updateLandedComment(inputs(second.exec));
@@ -202,12 +224,90 @@ describe('updateLandedComment', () => {
 
   it('absent projection marker => actual-only landed line', () => {
     const { exec, patched } = ghSpy({
-      pulls: [{ number: 41 }],
+      pulls: [{ number: 41, merge_commit_sha: 'feedfacefeedface' }],
       comments: [{ id: 9, body: `${GUARDRAIL_COMMENT_MARKER}\nplain report\n` }],
     });
     updateLandedComment(inputs(exec));
     expect(patched[0]).toContain('security 40 -> 46 (actual)');
     expect(patched[0]).not.toContain('projection was');
+  });
+
+  it('the merge-commit match wins over listing order (rebase flows list several PRs)', () => {
+    const { exec, patched } = ghSpy({
+      pulls: [
+        {
+          number: 7,
+          merge_commit_sha: 'someothersha0000',
+          merged_at: '2026-08-27T00:00:00Z',
+          base: { ref: 'main', repo: { default_branch: 'main' } },
+        },
+        { number: 41, merge_commit_sha: 'feedfacefeedface' },
+      ],
+      comments: [{ id: 9, body: guardrailCommentBody() }],
+    });
+    const outcome = updateLandedComment(inputs(exec));
+    expect(outcome).toEqual({ status: 'updated', prNumber: 41 });
+    expect(patched).toHaveLength(1);
+  });
+
+  it('without a merge-commit match, two merged default-branch candidates => disclosed ambiguous skip', () => {
+    const candidate = (n: number) => ({
+      number: n,
+      merge_commit_sha: 'someothersha0000',
+      merged_at: '2026-08-27T00:00:00Z',
+      base: { ref: 'main', repo: { default_branch: 'main' } },
+    });
+    const { exec, patched } = ghSpy({
+      pulls: [candidate(7), candidate(8)],
+      comments: [{ id: 9, body: guardrailCommentBody() }],
+    });
+    const outcome = updateLandedComment(inputs(exec));
+    expect(outcome.status).toBe('skipped');
+    expect(outcome.reason).toContain('ambiguous pull-request association');
+    expect(patched).toHaveLength(0);
+  });
+
+  it('without a merge-commit match, exactly ONE merged default-branch candidate is accepted', () => {
+    const { exec, patched } = ghSpy({
+      pulls: [
+        {
+          number: 7,
+          merge_commit_sha: 'someothersha0000',
+          merged_at: '2026-08-27T00:00:00Z',
+          base: { ref: 'main', repo: { default_branch: 'main' } },
+        },
+        { number: 8, merge_commit_sha: 'unrelatedsha0000' },
+      ],
+      comments: [{ id: 9, body: guardrailCommentBody() }],
+    });
+    const outcome = updateLandedComment(inputs(exec));
+    expect(outcome).toEqual({ status: 'updated', prNumber: 7 });
+    expect(patched).toHaveLength(1);
+  });
+
+  it('the cron re-publish with drifted score inputs => disclosed skip, comment untouched', () => {
+    // Same merged sha, but the scheduled re-run scored under different
+    // tooling (gitleaks gone, the grep fallback engaged): the landed line
+    // must not be rewritten with movement the PR never caused.
+    let ghCalls = 0;
+    const exec: GhExec = () => {
+      ghCalls += 1;
+      throw new Error('gh must not be called on a drifted-inputs skip');
+    };
+    const outcome = updateLandedComment({
+      slug: 'acme/widgets',
+      sha: 'feedfacefeedface',
+      entry: entry({
+        scores: scores({ security: 12, overall: 30 }),
+        scoreInputs: ['!gitleaks', 'grep-secrets', 'semgrep'],
+      }),
+      prev: entry({ sha: 'baseentrysha0000', scoreInputs: ['gitleaks', 'semgrep'] }),
+      exec,
+    });
+    expect(outcome.status).toBe('skipped');
+    expect(outcome.reason).toContain('gitleaks');
+    expect(outcome.reason).toContain('tooling drift');
+    expect(ghCalls).toBe(0);
   });
 
   it('no merged PR for the sha => disclosed skip', () => {
@@ -218,7 +318,10 @@ describe('updateLandedComment', () => {
   });
 
   it('no guardrail comment on the PR => disclosed skip', () => {
-    const { exec } = ghSpy({ pulls: [{ number: 41 }], comments: [{ id: 7, body: 'hi' }] });
+    const { exec } = ghSpy({
+      pulls: [{ number: 41, merge_commit_sha: 'feedfacefeedface' }],
+      comments: [{ id: 7, body: 'hi' }],
+    });
     const outcome = updateLandedComment(inputs(exec));
     expect(outcome.status).toBe('skipped');
     expect(outcome.reason).toContain('no dxkit guardrail comment');
@@ -226,7 +329,7 @@ describe('updateLandedComment', () => {
 
   it('a PATCH refusal (missing pull-requests: write) => disclosed skip naming the scope, never a throw', () => {
     const { exec } = ghSpy({
-      pulls: [{ number: 41 }],
+      pulls: [{ number: 41, merge_commit_sha: 'feedfacefeedface' }],
       comments: [{ id: 9, body: guardrailCommentBody() }],
       patchError: 'HTTP 403: Resource not accessible by integration',
     });

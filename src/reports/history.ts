@@ -51,6 +51,17 @@ export interface ReportHistoryEntry {
    * on a pre-4.4.7 entry) is disclosed as not comparable, never diffed.
    */
   readonly methodology?: string;
+  /**
+   * The tool inputs the scores were computed from (Rule 19 cause 5 applied
+   * to scores): the sorted tool names that ran, plus `!name` for tools that
+   * were attempted but unavailable, produced by `scoreToolInputs`. Two
+   * snapshots (or a projection against one) are score-comparable only when
+   * these match: a gitleaks-absent grep fallback or an untrusted-mode skip
+   * changes what a score can see, and a delta across that boundary would
+   * attribute tooling drift to the code. Mismatch is disclosed, never
+   * diffed. Absent on pre-4.4.7 entries (which also lack `methodology`).
+   */
+  readonly scoreInputs?: ReadonlyArray<string>;
   readonly scores: ReportScores;
   readonly findings?: ReportFindingCounts;
   /** Extension inventory entity counts (extension name → entity kind →
@@ -72,6 +83,30 @@ export const SCORE_KEYS: ReadonlyArray<keyof ReportScores> = [
   'maintainability',
   'developerExperience',
 ];
+
+/** A durable score key that names a dimension (everything but `overall`). */
+export type ScoreDimensionKey = Exclude<keyof ReportScores, 'overall'>;
+
+/**
+ * The ONE durable-key to report-dimension mapping. Every consumer that
+ * bridges the two vocabularies (the snapshot publisher's `scoresFromReport`,
+ * the projection's `impactScoreInputsFromReport`) iterates THIS record, so a
+ * seventh dimension added to `ReportScores` fails to compile here instead of
+ * silently missing one consumer. The value is the report's dimension name
+ * (`tests` reads the report's `testing` dimension; the entry key stays
+ * `tests` for brevity + JSON stability).
+ */
+export const SCORE_KEY_TO_DIMENSION = {
+  security: 'security',
+  quality: 'quality',
+  tests: 'testing',
+  documentation: 'documentation',
+  maintainability: 'maintainability',
+  developerExperience: 'developerExperience',
+} as const satisfies Record<ScoreDimensionKey, string>;
+
+/** The report-side dimension names the mapping targets. */
+export type ReportDimensionName = (typeof SCORE_KEY_TO_DIMENSION)[ScoreDimensionKey];
 
 function isFiniteNumberOrNull(v: unknown): v is number | null {
   return v === null || (typeof v === 'number' && Number.isFinite(v));
@@ -113,6 +148,9 @@ export function parseHistory(jsonl: string | null | undefined): ReportHistoryEnt
       dxkitVersion: typeof o.dxkitVersion === 'string' ? o.dxkitVersion : 'unknown',
       ...(typeof o.branch === 'string' ? { branch: o.branch } : {}),
       ...(typeof o.methodology === 'string' ? { methodology: o.methodology } : {}),
+      ...(Array.isArray(o.scoreInputs) && o.scoreInputs.every((t) => typeof t === 'string')
+        ? { scoreInputs: o.scoreInputs as string[] }
+        : {}),
       scores,
       ...(o.findings && typeof o.findings === 'object'
         ? { findings: o.findings as ReportFindingCounts }
