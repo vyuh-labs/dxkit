@@ -115,8 +115,46 @@ export type PinPlanResult =
       readonly edit: ManifestTextEdit;
       /** How a human undoes the pin, rendered in ledger prose. */
       readonly revert: string;
+      /** Pack-declared side-effect disclosures the executor carries onto an
+       *  applied outcome's notes (composer's lock resync may refresh
+       *  unrelated packages). Prose the ledger prints verbatim. */
+      readonly notes?: readonly string[];
     }
   | { readonly kind: 'refused'; readonly reason: string };
+
+/**
+ * The ecosystem's version grammar for pinning (Rule 6): which "fixed
+ * version" strings a pack can pin VERBATIM, and how two of them order.
+ * Consumed by the registry's `matches` (a non-concrete fixed version tiers
+ * the order to the agent instead of guessing a range's meaning) and by the
+ * pick of the highest fixed version. Absent, the default is npm's x.y.z
+ * semver shape; ecosystems whose advisories carry other concrete forms
+ * (RubyGems 4-segment security releases, PyPI two-segment releases)
+ * declare their own. Both members are pure and deterministic; `concrete`
+ * biases toward false NEGATIVES (a form the comparator cannot order
+ * confidently is refused, never guessed).
+ */
+export interface PinVersionScheme {
+  /** Is `version` a concrete, pinnable version (never a range, wildcard,
+   *  or an unorderable marker)? */
+  concrete(version: string): boolean;
+  /** Total order over versions `concrete` accepted. */
+  compare(a: string, b: string): number;
+}
+
+/** Numeric dotted-segment comparison (missing segments read as 0): the
+ *  shared comparator for release-only version schemes (RubyGems and PyPI
+ *  concrete releases order this way). */
+export function compareNumericSegments(a: string, b: string): number {
+  const as = a.split('.').map(Number);
+  const bs = b.split('.').map(Number);
+  for (let i = 0; i < Math.max(as.length, bs.length); i++) {
+    const x = as[i] ?? 0;
+    const y = bs[i] ?? 0;
+    if (x !== y) return x - y;
+  }
+  return 0;
+}
 
 export interface PinTransitiveProvider {
   /** Manifest basenames naming the owning root in an envelope (the edit
@@ -125,6 +163,9 @@ export interface PinTransitiveProvider {
   readonly manifestFiles: readonly string[];
   /** OSV ecosystem name for the candidate pre-check (`npm`, `PyPI`, ...). */
   readonly osvEcosystem: string;
+  /** The ecosystem's pinnable-version grammar; absent = the x.y.z semver
+   *  default. */
+  readonly versions?: PinVersionScheme;
   /** Plan the pin at a root: a pure decision (may READ repo files, writes
    *  nothing) yielding the edit + revert prose, or a refusal with the
    *  reason (an override mechanism the pack does not implement yet). */
@@ -173,6 +214,15 @@ export interface DeclareDependencyProvider {
   /** The concrete version out of the probe's output, or null when the
    *  output does not name one. Pure and total over untrusted output. */
   parseProbeOutput(output: string): string | null;
+  /**
+   * Does a FAILED probe's output have an INFRASTRUCTURE shape specific to
+   * this ecosystem's tooling (uv's "No virtual environment found"), so the
+   * executor reports a named failure instead of refusing the specifier as
+   * "likely a typo"? Extends the executor's generic tool-CLI set (unknown
+   * command, command not found). Pure; biased toward false negatives (a
+   * real not-found must never read as infrastructure). Optional.
+   */
+  probeInfrastructure?(output: string): boolean;
   /** The install command declaring `specifier@version` into the manifest
    *  (the dev section when `dev`). */
   installCommand(ctx: DeclareInstallContext): InstallCommand;

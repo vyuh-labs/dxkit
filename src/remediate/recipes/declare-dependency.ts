@@ -135,7 +135,28 @@ export async function executeDeclareDependency(
         output: `${probe.bin} is not available here`,
       };
     }
-    if (view.timedOut || view.overflowed || view.code !== 0) {
+    if (view.timedOut || view.overflowed) {
+      return {
+        kind: 'failed',
+        step: 'resolve-version',
+        output: `${probe.bin} ${view.timedOut ? 'timed out' : 'overflowed the capture buffer'}`,
+      };
+    }
+    if (view.code !== 0) {
+      // An infrastructure-shaped probe failure (an old CLI without the
+      // probe subcommand, an unprovisioned environment) is a named failure
+      // of THIS run, never a verdict on the specifier: the generic tool-CLI
+      // shapes here, plus whatever the pack declares (Rule 6).
+      const infrastructure =
+        /unknown command|no such command|command not found|is not recognized/i.test(view.output) ||
+        (provider.probeInfrastructure?.(view.output) ?? false);
+      if (infrastructure) {
+        return {
+          kind: 'failed',
+          step: 'resolve-version',
+          output: `${probe.bin} cannot answer a version probe here: ${view.output.trim().split('\n')[0] ?? ''}`,
+        };
+      }
       return {
         kind: 'refused',
         reason:

@@ -1242,6 +1242,20 @@ describe('remediation capabilities: a provider or a reasoned exemption, per pack
       const p = declaration.provider;
       expect(p.manifestFiles.length).toBeGreaterThan(0);
       expect(p.osvEcosystem.length).toBeGreaterThan(0);
+      // A declared version grammar is deterministic, total over garbage,
+      // refuses range/wildcard shapes (never guessed), and its comparator
+      // is reflexive on an accepted version.
+      if (p.versions !== undefined) {
+        for (const bad of ['>=1.2.3', '^1.2.3', '~1.2', '1.x', '*', '', 'latest']) {
+          expect(p.versions.concrete(bad), `${lang.id}: concrete(${JSON.stringify(bad)})`).toBe(
+            false,
+          );
+          expect(p.versions.concrete(bad)).toBe(p.versions.concrete(bad));
+        }
+        for (const v of ['1.2.3', '1.2', '1.2.3.4']) {
+          if (p.versions.concrete(v)) expect(p.versions.compare(v, v)).toBe(0);
+        }
+      }
       const req = p.execution(os.tmpdir());
       expect(req.hosts.length).toBeGreaterThan(0);
       for (const t of req.toolchains) expect(Object.keys(TOOLCHAIN_DEFS)).toContain(t);

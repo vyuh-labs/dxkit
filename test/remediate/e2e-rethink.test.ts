@@ -209,6 +209,8 @@ const offlineLedgerExec: OrderLedgerExec = () => {
 interface EstateRun {
   readonly repo: string;
   readonly taskId: string;
+  /** The active packs (defaults to the node estate's typescript pack). */
+  readonly packs?: typeof TS_PACKS;
   readonly driver: ReturnType<typeof stubDriver>['driver'];
   readonly entryFloor?: CorrectnessFloorResult;
   readonly scan?: DepVulnFinding[];
@@ -228,6 +230,7 @@ interface EstateRun {
  *  real-ledger scenario overrides it deliberately. */
 async function runOnEstate(o: EstateRun): Promise<RemediateResult> {
   const exec = o.exec ?? lockWritingExec(o.repo);
+  const packs = o.packs ?? TS_PACKS;
   const opts: RemediateRunOptions = {
     cwd: o.repo,
     trust: trustedLocalContext(),
@@ -247,7 +250,7 @@ async function runOnEstate(o: EstateRun): Promise<RemediateResult> {
     ...(o.explicitDispatch ? { explicitDispatch: true } : {}),
     // The frame's invariant step runs the REAL collector over the real
     // node pack on the estate; only the package manager is faked.
-    frameInvariants: { packs: TS_PACKS, exec: (o.frameExec ?? exec).exec },
+    frameInvariants: { packs, exec: (o.frameExec ?? exec).exec },
     runRecipePhase: (phase: RecipePhaseOptions) =>
       runRecipePhaseForTask({
         ...phase,
@@ -256,7 +259,7 @@ async function runOnEstate(o: EstateRun): Promise<RemediateResult> {
         queryOsv: async () => [],
         auditDepVulns: async () => [],
         gather: {
-          packs: TS_PACKS,
+          packs,
           scanDepVulns: async () => o.scan ?? [],
           now: NOW,
           history: [],
@@ -339,6 +342,130 @@ describe('e2e a: a recipe-only plan lands verified at $0', () => {
     expect(exec.calls.some((c) => c.cmd.bin === 'npm')).toBe(true);
     expect(git(repo, ['log', '--oneline'])).toContain('lockfile-sync recipe');
     expect(r.ledger).toContain('stale-lockfile:typescript');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// a2. The recipe tier is language-parametric (4.4.7 V2): the same recipe-only
+//     $0 landing on a NON-JS repo, the matrix discipline (a fix that only
+//     works for one stack fails here). The driver still throws on contact.
+// ---------------------------------------------------------------------------
+
+const PY_PACKS = [getLanguage('python')!];
+
+const PY_PYPROJECT = `[project]
+name = "fixture"
+version = "1.0.0"
+dependencies = [
+    "requests>=2.31",
+]
+`;
+
+/** A python (uv) estate: pyproject + uv.lock, remediate enabled, the same
+ *  committed baseline + deferred allowlist shape as the node estate. */
+function pyEstate(): string {
+  return fixtureRepo({
+    'pyproject.toml': PY_PYPROJECT,
+    'uv.lock': 'version = 1\n',
+    'app.py': 'print("hello")\n',
+    '.dxkit/policy.json': policyJson(),
+    '.dxkit/baselines/main.json': baselineJson(),
+    '.dxkit/allowlist.json': DEFERRED_ALLOWLIST,
+  });
+}
+
+/** The python estate's exec fake: `uv sync` (the pack's declared resync)
+ *  rewrites the lockfile; `uv lock --check` (the declared sync check)
+ *  passes cleanly. */
+function uvLockWritingExec(repo: string): ReturnType<typeof fakeExec> {
+  return fakeExec((cmd, execCwd) => {
+    if (cmd.bin === 'uv' && cmd.args[0] === 'sync') {
+      fs.appendFileSync(path.join(execCwd ?? repo, 'uv.lock'), '\n');
+    }
+  });
+}
+
+describe('e2e a2: a recipe-only plan lands verified at $0 on a python repo', () => {
+  it('deferred advisory with a fixed version: the uv override pin applies, resyncs, commits; the driver is never touched', async () => {
+    const repo = pyEstate();
+    const { driver, runs } = stubDriver(); // throws on contact
+    const exec = uvLockWritingExec(repo);
+    const r = await runOnEstate({
+      repo,
+      packs: PY_PACKS,
+      taskId: 'fix-vulns',
+      driver,
+      exec,
+      scan: [
+        {
+          id: 'GHSA-py',
+          package: 'urllib3',
+          installedVersion: '2.0.7',
+          tool: 'osv-scanner',
+          packId: 'python',
+          severity: 'high',
+          reachable: true,
+          fingerprint: 'dead000011112222',
+          fixedVersion: '2.5.0',
+        },
+      ],
+    });
+
+    expect(runs).toHaveLength(0);
+    expect(r.outcome).toBe('verified');
+    expect(r.recipes?.records.map((rec) => [rec.orderId, rec.outcome.kind])).toEqual([
+      ['dep-advisory:urllib3', 'applied'],
+    ]);
+    expect(r.envelope).toBeUndefined(); // nothing was spent
+    // The fix is REAL: the override landed in pyproject.toml in a commit
+    // made by the recipe, and the resync ran through uv, never npm.
+    const manifest = git(repo, ['show', 'HEAD:pyproject.toml']);
+    expect(manifest).toContain('[tool.uv]');
+    expect(manifest).toContain('override-dependencies = ["urllib3==2.5.0"]');
+    expect(exec.calls.some((c) => c.cmd.bin === 'uv' && c.cmd.args[0] === 'sync')).toBe(true);
+    expect(exec.calls.every((c) => c.cmd.bin !== 'npm')).toBe(true);
+    expect(git(repo, ['log', '--oneline'])).toContain('override-pin recipe');
+  });
+
+  it('stale uv lockfile: lockfile-sync resyncs with uv, verifies with the pack sync check, commits; zero driver invocations', async () => {
+    const repo = pyEstate();
+    const { driver, runs } = stubDriver();
+    const staleEntry: CorrectnessFloorResult = {
+      ran: true,
+      blocks: true,
+      checks: [
+        {
+          pack: 'python',
+          label: LOCKFILE_SYNC_LABEL,
+          bin: 'uv',
+          args: ['lock', '--check'],
+          status: 'fail',
+          output: 'The lockfile at `uv.lock` needs to be updated',
+        },
+      ],
+    };
+    const exec = uvLockWritingExec(repo);
+    const r = await runOnEstate({
+      repo,
+      packs: PY_PACKS,
+      taskId: 'fix-build',
+      driver,
+      entryFloor: staleEntry,
+      exec,
+    });
+
+    expect(runs).toHaveLength(0);
+    expect(r.outcome).toBe('verified');
+    expect(r.recipes?.records.map((rec) => [rec.orderId, rec.outcome.kind])).toEqual([
+      ['stale-lockfile:python', 'applied'],
+    ]);
+    // The resync AND the verify both went through the python pack's
+    // declared commands (uv sync, then uv lock --check).
+    const uvCalls = exec.calls.filter((c) => c.cmd.bin === 'uv').map((c) => c.cmd.args[0]);
+    expect(uvCalls).toContain('sync');
+    expect(uvCalls).toContain('lock');
+    expect(git(repo, ['log', '--oneline'])).toContain('lockfile-sync recipe');
+    expect(r.ledger).toContain('stale-lockfile:python');
   });
 });
 
