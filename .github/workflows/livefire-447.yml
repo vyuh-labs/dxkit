@@ -1,0 +1,336 @@
+# TEMPORARY live-fire validation for the 4.4.7 rendered workflow surfaces:
+# the two-phase landing steps (deferred-landing env, the fresh landing-token
+# mint with its abort guard, the `remediate land` step), the reports-refresh
+# --pr-comment wiring, and the standing 4.4.5 surfaces (install chain, plan
+# job, guardrail install/scan). Renders the templates through the real
+# generator path on the runner, EXECUTES the rendered step bodies, and then
+# exercises the landing leg for real: a missing record's disclosed no-op, a
+# stale record's refusal, and a valid record's push + standing PR against
+# this repo (auto-cleaned). Removed in a follow-up commit before the release
+# PR merges (the c8ef847/32db408 pattern).
+name: livefire 447
+on:
+  push:
+    branches: ['447/release-prep']
+  workflow_dispatch:
+permissions:
+  contents: write
+  pull-requests: write
+jobs:
+  rendered-surfaces:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      # ---- The lane-token steps, byte-for-byte as the one definition
+      # (src/lanes/lane-token.ts) renders them, exercised in a real Actions
+      # context. Expected on a repo without the App tier: every mint step
+      # skipped (the disclosed skip), the disclose step prints the
+      # missing-secret notice. The render step below additionally asserts
+      # the rendered remediate workflow carries exactly these steps.
+      - name: Mint the lane token (GitHub App, when configured)
+        id: dxkit-app-token
+        if: ${{ vars.DXKIT_APP_ID != '' }}
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.DXKIT_APP_ID }}
+          private-key: ${{ secrets.DXKIT_APP_PRIVATE_KEY }}
+
+      - name: Disclose token mode
+        env:
+          DXKIT_APP_SET: ${{ vars.DXKIT_APP_ID != '' }}
+          DXKIT_BOT_TOKEN_SET: ${{ secrets.DXKIT_BOT_TOKEN != '' }}
+        run: |
+          if [ "${DXKIT_APP_SET}" = "true" ]; then
+            echo "token tier: GitHub App (short-lived, minted this run)"
+          elif [ "${DXKIT_BOT_TOKEN_SET}" = "true" ]; then
+            echo "token tier: DXKIT_BOT_TOKEN (PAT)"
+          else
+            echo "::notice title=lane PRs run no checks::This lane pushes with the default GITHUB_TOKEN, and GitHub never triggers workflows for such pushes - the PR it opens will show no checks. Preferred fix: a GitHub App (set the DXKIT_APP_ID variable + the DXKIT_APP_PRIVATE_KEY secret - no billed seat, short-lived per-run tokens). A DXKIT_BOT_TOKEN PAT secret with repo scope also works."
+          fi
+
+      # The landing-time mint (two-phase landing, 4.4.7), byte-for-byte from
+      # LANE_TOKEN_LAND_STEPS: on this repo the App tier is unset, so the
+      # expected live behavior is a SKIPPED step (the disclosed skip the
+      # land step's credential chain then falls back through).
+      - name: Mint the landing token (App tier, fresh for delivery)
+        id: dxkit-app-token-land
+        if: ${{ !cancelled() && vars.DXKIT_APP_ID != '' }}
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.DXKIT_APP_ID }}
+          private-key: ${{ secrets.DXKIT_APP_PRIVATE_KEY }}
+
+      - name: Build dxkit
+        run: |
+          npm ci
+          npm run build
+
+      - name: Render the workflows through the generator path
+        run: |
+          export DXKIT_ROOT="$GITHUB_WORKSPACE"
+          export LIVEFIRE_OUT="$RUNNER_TEMP/livefire-out"
+          node - <<'EOF'
+          const fs = require('fs');
+          const os = require('os');
+          const path = require('path');
+          const { execFileSync } = require('child_process');
+          const dxkitRoot = process.env.DXKIT_ROOT;
+          const outDir = process.env.LIVEFIRE_OUT;
+          const { createRequire } = require('module');
+          const yaml = createRequire(path.join(dxkitRoot, 'package.json'))('js-yaml');
+          const ship = require(path.join(dxkitRoot, 'dist', 'ship-installers.js'));
+
+          // Stage the scratch consumer repo the generator renders for.
+          const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-livefire-'));
+          const write = (rel, content) => {
+            const abs = path.join(scratch, rel);
+            fs.mkdirSync(path.dirname(abs), { recursive: true });
+            fs.writeFileSync(abs, content);
+          };
+          write('package.json', JSON.stringify({ name: 'livefire-consumer', version: '1.0.0' }) + '\n');
+          write('package-lock.json', '{"lockfileVersion":3}\n');
+          write('src/index.ts', 'export const a = 1;\n');
+          write('.dxkit/policy.json', JSON.stringify({ remediate: { enabled: true, tasks: ['fix-build', 'fix-vulns'] } }) + '\n');
+          write('.dxkit/baselines/main.json', JSON.stringify({
+            schemaVersion: 'dxkit-baseline/v1', name: 'main', createdAt: '2026-08-01T00:00:00.000Z',
+            repo: { commitSha: 'base', branch: 'main', dirty: false },
+            analysis: { dxkitVersion: 'test', toolchainHash: 'x' }, tools: {}, saltMode: 'none',
+            findings: [],
+            floorDebt: { capturedAtCommit: 'base', capturedAt: '2026-08-01T00:00:00.000Z', checks: [
+              { pack: 'typescript', label: 'typecheck', command: 'npx tsc --noEmit', status: 'fail', output: 'stored tail' },
+            ] },
+          }) + '\n');
+          const git = (args) => execFileSync('git', args, { cwd: scratch, encoding: 'utf8' });
+          git(['init', '-q', '-b', 'main']);
+          git(['-c', 'user.name=t', '-c', 'user.email=t@t', 'add', '-A']);
+          git(['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'base']);
+
+          // Render through the ONE workflow writer.
+          const r1 = ship.installCiRemediate(scratch, {});
+          const r2 = ship.installCiGuardrails(scratch, {});
+          const r3 = ship.installCiReportsRefresh(scratch, {});
+          const fail = (msg) => { console.error('LIVEFIRE FAIL: ' + msg); process.exit(1); };
+          if (r1.installed.length !== 1 || r2.installed.length !== 1 || r3.installed.length !== 1)
+            fail('render did not install all three workflows: ' + JSON.stringify({ r1, r2, r3 }));
+          const readWf = (name) =>
+            fs.readFileSync(path.join(scratch, '.github', 'workflows', name), 'utf8');
+          const remediateText = readWf('dxkit-remediate.yml');
+          const guardrailText = readWf('dxkit-guardrails.yml');
+          const reportsText = readWf('dxkit-reports-refresh.yml');
+
+          // The rendered YAML parses and carries no leftover placeholder.
+          for (const [name, text] of [['dxkit-remediate.yml', remediateText], ['dxkit-guardrails.yml', guardrailText], ['dxkit-reports-refresh.yml', reportsText]]) {
+            if (/__DXKIT_[A-Z_]+__/.test(text)) fail(name + ' still carries a placeholder');
+            yaml.load(text);
+          }
+          const remediate = yaml.load(remediateText);
+          const guardrail = yaml.load(guardrailText);
+          const reports = yaml.load(reportsText);
+          if (!remediate.jobs.plan || !remediate.jobs.remediate) fail('remediate is missing plan/remediate jobs');
+          const stepBy = (steps, name) => steps.find((s) => s.name === name);
+          const planSteps = remediate.jobs.plan.steps;
+          const installStep = stepBy(planSteps, 'Install dependencies + dxkit');
+          if (!installStep || !installStep.run.includes('corepack enable'))
+            fail('plan job install chain is not the rendered one-definition chain');
+          const planStep = stepBy(planSteps, 'Compute the task matrix');
+          if (!planStep) fail('plan job has no matrix step');
+          if (!planStep.run.includes('pausedClasses') || !planStep.run.includes('matrixDisclosures'))
+            fail('plan step lacks the scheduler-memory disclosures');
+
+          // ---- The 4.4.7 two-phase landing surfaces.
+          const taskSteps = remediate.jobs.remediate.steps;
+          const names = taskSteps.map((s) => s.name || (s.uses || ''));
+          const runTask = taskSteps.find((s) => s.run && s.run.includes('remediate --task'));
+          if (!runTask) fail('task job has no run-task step');
+          if (runTask.env.DXKIT_DEFERRED_LANDING !== '1')
+            fail('task step does not set the deferred-landing env');
+          const landMint = stepBy(taskSteps, 'Mint the landing token (App tier, fresh for delivery)');
+          if (!landMint) fail('task job lacks the fresh landing-token mint');
+          if (!String(landMint.if).includes('!cancelled()'))
+            fail('landing mint is not abort-guarded with !cancelled()');
+          const landStep = stepBy(taskSteps, 'Land the deferred work (fresh credential)');
+          if (!landStep) fail('task job lacks the land step');
+          if (!landStep.run.includes('remediate land')) fail('land step does not run remediate land');
+          if (!landStep.run.includes('unset-all') || !landStep.run.includes('ls-remote'))
+            fail('land step lacks the single-writer credential install');
+          const order = ['Run task', 'Mint the landing token (App tier, fresh for delivery)', 'Land the deferred work (fresh credential)', 'Collect the attempt diff'];
+          const idx = order.map((prefix) => names.findIndex((n) => String(n).startsWith(prefix)));
+          if (idx.some((i) => i < 0) || !idx.every((v, i) => i === 0 || v > idx[i - 1]))
+            fail('two-phase step ordering is wrong: ' + JSON.stringify(names));
+
+          // ---- The reports-refresh landed-comment surfaces (I2).
+          if (reports.permissions['pull-requests'] !== 'write')
+            fail('reports-refresh lacks pull-requests: write');
+          if (!reportsText.includes('--pr-comment'))
+            fail('reports-refresh lacks the report snapshot --pr-comment step');
+
+          // ---- The guardrail surfaces (unchanged from 4.4.5, re-pinned).
+          const gSteps = guardrail.jobs.guardrail.steps;
+          const gInstall = stepBy(gSteps, 'Install dependencies + dxkit');
+          if (!gInstall || !gInstall.run.includes('corepack enable'))
+            fail('guardrail install chain is not the rendered one-definition chain');
+          const stripComments = (s) => s.replace(/^\s*#.*$/gm, '').trim();
+          if (stripComments(gInstall.run) !== stripComments(installStep.run))
+            fail('guardrail and remediate install chains differ (must be the one definition)');
+
+          // Extract the executable step bodies for the later steps. The
+          // expression markers are assembled so this workflow file itself
+          // never contains them for contexts that do not exist here.
+          fs.mkdirSync(outDir, { recursive: true });
+          const expr = (inner) => '$' + '{{ ' + inner + ' }}';
+          fs.writeFileSync(path.join(outDir, 'install-deps.sh'), gInstall.run);
+          fs.writeFileSync(path.join(outDir, 'plan-step.sh'), planStep.run);
+          fs.writeFileSync(path.join(outDir, 'tools-step.sh'), stepBy(gSteps, 'Install scanner tools').run);
+          fs.writeFileSync(path.join(outDir, 'anchor-step.sh'), stepBy(gSteps, 'Detect baseline anchor transport').run);
+          let scan = stepBy(gSteps, 'Run guardrail check').run;
+          scan = scan
+            .split(expr('steps.trust.outputs.flag')).join('')
+            .split(expr('steps.anchor.outputs.transport')).join('$LIVEFIRE_ANCHOR_TRANSPORT');
+          fs.writeFileSync(path.join(outDir, 'scan-step.sh'), scan);
+          // The land step body, with this livefire's task substituted for
+          // the matrix expression, exactly as a matrix row would render it.
+          const land = landStep.run.split(expr('matrix.task')).join('fix-vulns');
+          fs.writeFileSync(path.join(outDir, 'land-step.sh'), land);
+          fs.writeFileSync(path.join(outDir, 'scratch-path'), scratch);
+          console.log('LIVEFIRE RENDER OK');
+          EOF
+
+      - name: Execute the rendered install chain against this repo
+        run: bash "$RUNNER_TEMP/livefire-out/install-deps.sh"
+
+      # This repo IS @vyuhlabs/dxkit, so `vyuh-dxkit` cannot resolve from its
+      # own node_modules; the shim points the rendered step bodies at the
+      # local build, mirroring how dxkit-self-guardrail.yml invokes it.
+      - name: Shim vyuh-dxkit onto the local build
+        run: |
+          mkdir -p node_modules/.bin
+          printf '#!/usr/bin/env bash\nexec node "%s/dist/index.js" "$@"\n' "$GITHUB_WORKSPACE" > node_modules/.bin/vyuh-dxkit
+          chmod +x node_modules/.bin/vyuh-dxkit
+
+      - name: Execute the rendered plan job step against the consumer repo
+        run: |
+          OUT="$RUNNER_TEMP/livefire-out"
+          SC=$(cat "$OUT/scratch-path")
+          mkdir -p "$SC/node_modules/.bin"
+          cp node_modules/.bin/vyuh-dxkit "$SC/node_modules/.bin/vyuh-dxkit"
+          cd "$SC"
+          export DISPATCH_TASK=""
+          PLAN_OUTPUT="$OUT/plan-outputs.txt"
+          : > "$PLAN_OUTPUT"
+          GITHUB_OUTPUT="$PLAN_OUTPUT" bash "$OUT/plan-step.sh"
+          echo "--- plan job outputs ---"
+          cat "$PLAN_OUTPUT"
+          grep -q '^tasks=\[' "$PLAN_OUTPUT" || { echo "::error::plan step emitted no tasks output"; exit 1; }
+          grep -q '^any=true' "$PLAN_OUTPUT" || { echo "::error::expected a non-empty matrix (the staged floor debt mints a fix-build order)"; exit 1; }
+          echo "PLAN STEP OK"
+
+      - name: Execute the rendered scanner-tools step against this repo
+        run: bash "$RUNNER_TEMP/livefire-out/tools-step.sh"
+
+      - name: Execute the rendered anchor + guardrail scan steps against this repo
+        env:
+          # The branch's actual base, as the PR against release/4.4.7 will
+          # exercise it: not the default branch, so the rendered body takes
+          # the ref-based arm.
+          DXKIT_PR_BASE: release/4.4.7
+        run: |
+          OUT="$RUNNER_TEMP/livefire-out"
+          STEP_OUTPUT="$OUT/guardrail-outputs.txt"
+          : > "$STEP_OUTPUT"
+          GITHUB_OUTPUT="$STEP_OUTPUT" bash "$OUT/anchor-step.sh"
+          export LIVEFIRE_ANCHOR_TRANSPORT=$(grep '^transport=' "$STEP_OUTPUT" | cut -d= -f2)
+          echo "anchor transport: $LIVEFIRE_ANCHOR_TRANSPORT"
+          GITHUB_OUTPUT="$STEP_OUTPUT" bash "$OUT/scan-step.sh"
+          echo "--- guardrail step outputs ---"
+          cat "$STEP_OUTPUT"
+          echo "--- guardrail report (tail) ---"
+          tail -40 guardrail-report.md || true
+
+      # ---- THE NEW LEG: the rendered land step, executed for real on the
+      # runner, all three directions. The credential chain here is the
+      # fallback (App unset, mint skipped above): the default token, exactly
+      # what the rendered expression resolves to on this repo.
+      - name: Rendered land step, direction 1 - no record is a disclosed no-op
+        env:
+          GH_TOKEN: ${{ steps.dxkit-app-token-land.outputs.token || secrets.DXKIT_BOT_TOKEN || github.token }}
+          DXKIT_LANE_TOKEN: ${{ steps.dxkit-app-token-land.outputs.token || secrets.DXKIT_BOT_TOKEN || github.token }}
+        run: |
+          OUT=$(bash "$RUNNER_TEMP/livefire-out/land-step.sh")
+          echo "$OUT"
+          echo "$OUT" | grep -q "nothing to land" || { echo "::error::expected the disclosed no-record no-op"; exit 1; }
+          echo "LAND DIRECTION 1 (no record => disclosed no-op): OK"
+
+      - name: Rendered land step, direction 2 - a stale head refuses, never pushes
+        env:
+          GH_TOKEN: ${{ steps.dxkit-app-token-land.outputs.token || secrets.DXKIT_BOT_TOKEN || github.token }}
+          DXKIT_LANE_TOKEN: ${{ steps.dxkit-app-token-land.outputs.token || secrets.DXKIT_BOT_TOKEN || github.token }}
+        run: |
+          node -e "
+            const { writeLandingRecord, LANDING_RECORD_SCHEMA } = require('./dist/remediate/landing-record.js');
+            writeLandingRecord(process.cwd(), {
+              schema: LANDING_RECORD_SCHEMA, task: 'fix-vulns', action: 'land',
+              branch: 'dxkit/remediate-fix-vulns',
+              head: 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef',
+              outcome: 'verified', defaultBranch: '447/release-prep',
+              prTitle: 'stale (must never open)', prBody: 'stale', draft: false, orderRows: [],
+            });
+          "
+          set +e
+          OUT=$(bash "$RUNNER_TEMP/livefire-out/land-step.sh" 2>&1)
+          CODE=$?
+          set -e
+          echo "$OUT"
+          [ "$CODE" -ne 0 ] || { echo "::error::a stale record must exit non-zero"; exit 1; }
+          echo "$OUT" | grep -q "refusing to land" || { echo "::error::expected the stale-head refusal"; exit 1; }
+          if git ls-remote --heads origin dxkit/remediate-fix-vulns | grep -q .; then
+            echo "::error::the stale record pushed a branch"
+            exit 1
+          fi
+          rm -f .dxkit/cache/remediate-landing-fix-vulns.json
+          echo "LAND DIRECTION 2 (stale head => refusal, no push): OK"
+
+      - name: Rendered land step, direction 3 - a valid record lands (push + standing PR)
+        env:
+          GH_TOKEN: ${{ steps.dxkit-app-token-land.outputs.token || secrets.DXKIT_BOT_TOKEN || github.token }}
+          DXKIT_LANE_TOKEN: ${{ steps.dxkit-app-token-land.outputs.token || secrets.DXKIT_BOT_TOKEN || github.token }}
+        run: |
+          HEAD_SHA=$(git rev-parse HEAD)
+          node -e "
+            const { writeLandingRecord, LANDING_RECORD_SCHEMA } = require('./dist/remediate/landing-record.js');
+            writeLandingRecord(process.cwd(), {
+              schema: LANDING_RECORD_SCHEMA, task: 'fix-vulns', action: 'land',
+              branch: 'dxkit/remediate-fix-vulns',
+              head: process.argv[1],
+              outcome: 'verified', defaultBranch: '447/release-prep',
+              prTitle: 'chore: dxkit 4.4.7 livefire, two-phase landing leg (auto-closed)',
+              prBody: 'Temporary livefire validation of the remediate land step (4.4.7 two-phase landing). Auto-closed by the same workflow run.',
+              draft: false, orderRows: [],
+            });
+          " "$HEAD_SHA"
+          git config user.name "dxkit-livefire"
+          git config user.email "livefire@invalid"
+          bash "$RUNNER_TEMP/livefire-out/land-step.sh"
+          git ls-remote --heads origin dxkit/remediate-fix-vulns | grep -q . || { echo "::error::the landing pushed no branch"; exit 1; }
+          [ ! -f .dxkit/cache/remediate-landing-fix-vulns.json ] || { echo "::error::a successful landing must clear the record"; exit 1; }
+          echo "LAND DIRECTION 3 (valid record => branch pushed, record cleared): OK"
+
+      - name: Clean up the livefire landing (close PR, delete branch)
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          PR=$(gh pr list --head dxkit/remediate-fix-vulns --state open --json number -q '.[0].number' || true)
+          if [ -n "$PR" ]; then
+            gh pr close "$PR" --comment "livefire validation complete (auto-closed)" || true
+            echo "closed livefire PR #$PR"
+          fi
+          git push --no-verify origin ":refs/heads/dxkit/remediate-fix-vulns" || true
+          echo "cleanup done"
