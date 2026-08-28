@@ -90,6 +90,32 @@ describe('report history codec', () => {
     expect(parsed.map((e) => e.sha)).toEqual(['a', 'b']);
   });
 
+  it('round-trips the debt series and tolerates old lines without it (4.4.7)', () => {
+    const debt = {
+      secret: { critical: 1, high: 0, medium: 0, low: 0 },
+      code: { critical: 0, high: 2, medium: 5, low: 0 },
+      'dep-vuln': { critical: 0, high: 0, medium: 0, low: 0 },
+    };
+    const withDebt = parseHistory(
+      serializeHistory([{ ...entry('a'), debt }]) +
+        // A pre-4.4.7 line (the coarse 4-field findings shape, no debt).
+        JSON.stringify({
+          sha: 'old',
+          date: 'd',
+          scores,
+          findings: { secretsCritical: 1, depVulnsHigh: 2 },
+        }) +
+        '\n',
+    );
+    expect(withDebt).toHaveLength(2);
+    expect(withDebt[0].debt).toEqual(debt);
+    // The old line still parses fully: findings kept, debt simply absent.
+    expect(withDebt[1].debt).toBeUndefined();
+    expect(withDebt[1].findings).toEqual({ secretsCritical: 1, depVulnsHigh: 2 });
+    // And the debt survives a second round-trip.
+    expect(parseHistory(serializeHistory(withDebt))[0].debt).toEqual(debt);
+  });
+
   it('parses the methodology stamp and omits it when absent (pre-4.4.7 lines)', () => {
     const stamped = parseHistory(
       JSON.stringify({ sha: 'a', date: 'd', scores, methodology: 'spec-v1' }) + '\n',

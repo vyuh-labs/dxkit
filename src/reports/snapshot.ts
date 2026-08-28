@@ -12,12 +12,15 @@ import {
   serializeHistory,
   foldEntry,
   SCORE_KEY_TO_DIMENSION,
+  type DebtSeverity,
+  type ReportDebtCounts,
   type ReportHistoryEntry,
   type ReportScores,
   type ReportFindingCounts,
   type ScoreDimensionKey,
   type ReportDimensionName,
 } from './history';
+import { renderImpactReportMarkdown, IMPACT_REPORT_PATH } from './impact-report';
 import {
   readFromAnchorRef,
   publishFilesToAnchorRef,
@@ -45,6 +48,25 @@ export interface SnapshotSource {
    *  entries may carry a machine-phrased reason suffix that is stripped
    *  before stamping. */
   readonly toolsUnavailable?: ReadonlyArray<string>;
+  /** The run's canonical security aggregate severity buckets (G_v4_8 read
+   *  discipline: consumed by bucket NAME, never recomputed). Structural
+   *  subset of `SecurityAggregate`; `HealthReport.capabilities` satisfies
+   *  it. Feeds the debt-over-time series stamp. */
+  readonly capabilities?: {
+    readonly securityAggregate?: {
+      readonly secretsBySeverity: SeverityBuckets;
+      readonly codeBySeverity: SeverityBuckets;
+      readonly depBySeverity: SeverityBuckets;
+    };
+  };
+}
+
+/** Structural view of the aggregator's `SeverityCounts`. */
+export interface SeverityBuckets {
+  readonly critical: number;
+  readonly high: number;
+  readonly medium: number;
+  readonly low: number;
 }
 
 export interface SnapshotMeta {
@@ -103,35 +125,47 @@ export function scoreToolInputs(src: {
   return [...names].sort();
 }
 
+// `describeScoreInputsDrift` (the ONE score-input comparability comparator)
+// lives beside the entry codec in history.ts (it compares entry STAMPS, and
+// keeping it there keeps the trend module free of a snapshot->trend import
+// cycle); re-exported here so every existing consumer keeps its import path.
+export { describeScoreInputsDrift } from './history';
+
 /**
- * Human-renderable description of score-input drift between two stamped
- * input lists, or null when they match. Null when EITHER side is unstamped:
- * a pre-stamping entry also lacks `methodology`, and that guard owns the
- * disclosure for old entries; this one never claims drift it cannot see.
+ * The debt-over-time stamp: kind x severity counts read straight off the
+ * run's canonical `SecurityAggregate` buckets (Rule 2: no new gather, no
+ * recount; the ONE aggregator already computed them). Keys are the durable
+ * `IdentityKind` names. Raw buckets, deliberately (what exists, before any
+ * allowlist adjustment) so the series charts the debt itself. All four
+ * severities are always present, zero as zero: a cleared kind must chart
+ * as 0, distinguishable from an unmeasured (absent) stamp. Counts only,
+ * never per-finding data (the reports ref is a shareable surface).
  */
-export function describeScoreInputsDrift(
-  base: ReadonlyArray<string> | undefined,
-  current: ReadonlyArray<string> | undefined,
-): string | null {
-  if (base === undefined || current === undefined) return null;
-  const baseSet = new Set(base);
-  const currentSet = new Set(current);
-  const gone = base.filter((t) => !currentSet.has(t));
-  const added = current.filter((t) => !baseSet.has(t));
-  if (gone.length === 0 && added.length === 0) return null;
-  const cap = (list: string[]): string =>
-    list.slice(0, 4).join(', ') + (list.length > 4 ? ` and ${list.length - 4} more` : '');
-  const parts: string[] = [];
-  if (gone.length > 0) parts.push(`at the base but not now: ${cap(gone)}`);
-  if (added.length > 0) parts.push(`now but not at the base: ${cap(added)}`);
-  return `the tools behind the scores differ (${parts.join('; ')})`;
+export function debtFromAggregate(aggregate: {
+  readonly secretsBySeverity: SeverityBuckets;
+  readonly codeBySeverity: SeverityBuckets;
+  readonly depBySeverity: SeverityBuckets;
+}): ReportDebtCounts {
+  const cell = (b: SeverityBuckets): Readonly<Record<DebtSeverity, number>> => ({
+    critical: b.critical,
+    high: b.high,
+    medium: b.medium,
+    low: b.low,
+  });
+  return {
+    secret: cell(aggregate.secretsBySeverity),
+    code: cell(aggregate.codeBySeverity),
+    'dep-vuln': cell(aggregate.depBySeverity),
+  };
 }
 
 /** Pure map from a scored report to the durable history entry. Stamps the
  *  scoring-methodology identity AND the score-input list so later score
  *  comparisons can verify they compare like with like (impact P2 honesty
- *  constraint 4 + Rule 19 cause 5). */
+ *  constraint 4 + Rule 19 cause 5), plus the debt-over-time counts when the
+ *  run built the canonical security aggregate (absent means unmeasured). */
 export function reportToHistoryEntry(src: SnapshotSource, meta: SnapshotMeta): ReportHistoryEntry {
+  const aggregate = src.capabilities?.securityAggregate;
   return {
     sha: meta.sha,
     date: meta.date,
@@ -141,6 +175,7 @@ export function reportToHistoryEntry(src: SnapshotSource, meta: SnapshotMeta): R
     scoreInputs: scoreToolInputs(src),
     scores: scoresFromReport(src),
     ...(src.findings ? { findings: src.findings } : {}),
+    ...(aggregate !== undefined ? { debt: debtFromAggregate(aggregate) } : {}),
   };
 }
 
@@ -192,6 +227,13 @@ export function publishReportSnapshot(opts: PublishSnapshotOptions): PublishSnap
 
   const files = [
     { path: REPORT_HISTORY_PATH, content: serializeHistory(folded) },
+    // The published impact report (4.4.7): rendered HERE, from the folded
+    // history this publish is writing, so it can never go stale relative to
+    // the series beside it, and the one anchor read feeds both. It cannot
+    // ride `collectArtifacts` (which picks up pre-rendered analyzer files):
+    // its input IS the folded history, which only exists at this point.
+    // Deterministic for identical input; counts and scores only.
+    { path: IMPACT_REPORT_PATH, content: renderImpactReportMarkdown(folded) },
     ...(opts.artifacts ?? []).map((a) => ({ path: `latest/${a.path}`, content: a.content })),
   ];
 

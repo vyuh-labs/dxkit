@@ -86,6 +86,34 @@ describe('reportToHistoryEntry', () => {
     expect(e.scores.security).toBe(90);
     expect(e.scores.quality).toBeNull();
   });
+
+  it('stamps the debt-over-time counts from the canonical aggregate buckets (4.4.7), zero as zero', () => {
+    const e = reportToHistoryEntry(
+      {
+        ...source,
+        capabilities: {
+          securityAggregate: {
+            secretsBySeverity: { critical: 2, high: 0, medium: 0, low: 0 },
+            codeBySeverity: { critical: 0, high: 3, medium: 7, low: 1 },
+            depBySeverity: { critical: 0, high: 0, medium: 0, low: 0 },
+          },
+        },
+      },
+      { sha: 'abc', date: 'd', dxkitVersion: '4.4.7' },
+    );
+    expect(e.debt).toEqual({
+      secret: { critical: 2, high: 0, medium: 0, low: 0 },
+      code: { critical: 0, high: 3, medium: 7, low: 1 },
+      // Zero debt is stamped as zero: distinguishable from an unmeasured
+      // (absent) stamp.
+      'dep-vuln': { critical: 0, high: 0, medium: 0, low: 0 },
+    });
+  });
+
+  it('a run with no aggregate stamps NO debt (unmeasured, never fabricated zero)', () => {
+    const e = reportToHistoryEntry(source, { sha: 'abc', date: 'd', dxkitVersion: '4.4.7' });
+    expect(e.debt).toBeUndefined();
+  });
 });
 
 describe('publishReportSnapshot', () => {
@@ -125,6 +153,11 @@ describe('publishReportSnapshot', () => {
     const history = readReportHistory(repo);
     expect(history).toHaveLength(1);
     expect(history[0].scores.overall).toBe(72);
+    // The published impact report rides the same publish, rendered from the
+    // folded history (retrieval path: latest/impact.md on the reports ref).
+    const impactMd = git(bare, 'show', 'dxkit-reports:latest/impact.md');
+    expect(impactMd).toContain('# dxkit impact report');
+    expect(impactMd).toContain('sha1'.slice(0, 12));
   });
 
   it('accumulates across merges + retains only the most recent N', () => {
