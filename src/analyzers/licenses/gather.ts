@@ -19,7 +19,23 @@
 import { detectActiveLanguages } from '../../languages';
 import { PER_PACK_REGISTRY } from '../../languages/capabilities/descriptors';
 import type { LicensesResult } from '../../languages/capabilities/types';
+import type { LanguageId } from '../../types';
 import { DEFAULT_PROVIDER_DEADLINE_MS, withDeadline } from '../tools/deadline';
+
+/**
+ * Stamp the producing pack's id onto every finding in a per-pack success
+ * envelope. The ONE place ecosystem provenance attaches to license
+ * findings (providers never populate `packId`, the same aggregation-owns-
+ * the-stamp discipline as the dep-vuln `fingerprint`). Pure; exported for
+ * tests. A finding that already carries a packId keeps it (idempotent on
+ * re-aggregation of an already-stamped envelope).
+ */
+export function stampLicensePackId(envelope: LicensesResult, packId: LanguageId): LicensesResult {
+  return {
+    ...envelope,
+    findings: envelope.findings.map((f) => (f.packId ? f : { ...f, packId })),
+  };
+}
 
 /**
  * Shared primitive for availability-aware licenses aggregation. Used
@@ -81,7 +97,7 @@ export async function gatherLicensesWithAvailability(cwd: string): Promise<{
     }
     const outcome = r.value;
     if (outcome.kind === 'success') {
-      successEnvelopes.push(outcome.envelope);
+      successEnvelopes.push(stampLicensePackId(outcome.envelope, activePacks[i].id));
     } else if (outcome.kind === 'unavailable' && !firstUnavailable) {
       firstUnavailable = { pack: activePacks[i].id, reason: outcome.reason };
     }

@@ -270,6 +270,15 @@ export interface LicenseFinding {
    * can't read the manifest/lockfile — the bom filter treats unset as
    * "don't know" and passes the row through rather than dropping it. */
   isTopLevel?: boolean;
+
+  /** The language pack whose licenses provider produced this finding,
+   * the row's ecosystem provenance (mirror of `DepVulnFinding.packId`).
+   * Stamped ONCE by the cross-pack licenses aggregation in
+   * `gatherLicensesWithAvailability`: providers never populate it, the
+   * same discipline as the dep-vuln `fingerprint`. Consumers (the BoM
+   * join, the CycloneDX SBOM export's purl derivation) read it to know
+   * which ecosystem a package name belongs to without guessing. */
+  packId?: LanguageId;
 }
 
 /**

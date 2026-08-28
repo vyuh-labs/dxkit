@@ -233,6 +233,24 @@ export interface LanguageSupport {
   id: LanguageId;
   displayName: string;
 
+  /**
+   * The package-url (purl) type for this pack's package ecosystem, per the
+   * purl spec's type registry: 'npm', 'pypi', 'golang', 'cargo', 'nuget',
+   * 'maven', 'gem', 'composer', ... Consumed by the CycloneDX SBOM export
+   * to derive a `pkg:<type>/...` purl for each BoM row from the row's
+   * `packId` provenance (Rule 6: the ecosystem fact lives on the pack,
+   * never a hardcoded npm assumption in a renderer).
+   *
+   * OMIT when no purl can be derived honestly from a bare
+   * `(package, version)` pair: swift purls need the source-host namespace
+   * (which our gathers do not carry) and ABAP has no registered purl type.
+   * A pack without `purlType` yields components with a bom-ref only, and
+   * the omission is disclosed in a component property, never fabricated.
+   * Every declared value must be supported by the ONE purl builder
+   * (`src/analyzers/bom/purl.ts`), pinned by the contract test.
+   */
+  purlType?: string;
+
   sourceExtensions: string[];
   /**
    * jscpd `--formats-exts` entries this pack needs (e.g. `'abap:abap'`)

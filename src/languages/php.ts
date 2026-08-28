@@ -698,6 +698,7 @@ const phpInstallStrategy = declareInstallStrategy(
 export const php: LanguageSupport = {
   id: 'php',
   displayName: 'PHP',
+  purlType: 'composer',
   commentSyntax: { lineComment: '//', blockCommentStart: '/*', blockCommentEnd: '*/' },
   sourceExtensions: ['.php'],
   testFilePatterns: [...PHP_TEST_FILE_PATTERNS],
