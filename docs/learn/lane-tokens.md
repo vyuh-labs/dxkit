@@ -65,15 +65,25 @@ the tier that actually resolved.
 ## The one-hour lifetime, and how the lanes handle it
 
 GitHub hard-caps App installation tokens at one hour, with no
-longer-lived form. The remediation lane can run an agent for tens of
-minutes, so it takes three precautions:
+longer-lived form. The remediation lane can run for well over an hour
+(the agent budget plus a verify tail that scales with repo size), so it
+takes three precautions:
 
 - it **re-mints** the token immediately before the agent task, so the
-  hour starts at agent launch rather than at job start;
-- it **clamps the agent's wall-clock budget to 45 minutes** on the App
-  tier (disclosed in the run's envelope, never silent), so the landing
-  push always fits inside the token. Runs needing a longer wall clock
-  belong on the PAT tier;
+  working credential's hour starts at agent launch rather than at job
+  start;
+- it **lands in two phases**: the task step performs no pushes and
+  instead writes a landing record (the verified head, the assembled PR,
+  the order-ledger rows), and a post-task step mints a FRESH token and
+  runs `remediate land`, whose credential starts its hour at delivery
+  time. The land step refuses a checkout whose HEAD is no longer the
+  recorded verified head, so stale or foreign commits are never pushed;
+  a salvage draft from a failed task still lands through the same
+  record. Because delivery no longer depends on a token minted before
+  the task, the agent's wall-clock budget is not clamped to the token
+  lifetime (workflows installed before 4.4.7 still land inline and keep
+  the 45-minute App-tier clamp until `vyuh-dxkit update` refreshes
+  them);
 - it treats the credential like any other delivery precondition: the
   workflow installs exactly **one** credential (the checkout persists
   none), asserts that exactly one exists, and **proves it with a live

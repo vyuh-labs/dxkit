@@ -206,8 +206,16 @@ run artifact for inspection. The other tasks in a matrix run are isolated
 Read the task's job summary first — it names the outcome. The shapes:
 
 - **`guardrail-red` / floor failed** — the frame held: the agent's change
-  did not verify, so nothing merges. The attempt's diff is attached to the
-  run as an artifact (Actions run page, Artifacts section). Under
+  did not verify, so nothing merges. Before giving up on a red final
+  guardrail, the run tries containment: blocking findings are attributed
+  to the responsible order on evidence (package naming, committed-diff
+  overlap), the attributed orders are reverted, the remainder is
+  re-verified, and the green subset lands as `partially-landed` with the
+  dropped orders named. Only when a finding cannot be attributed without
+  guessing does the whole run stay red (the refusal is disclosed; an
+  innocent order is never dropped on a guess). The attempt's diff is
+  attached to the run as an artifact (Actions run page, Artifacts
+  section). Under
   `draft-pr` salvage a guardrail-blocked attempt is additionally pushed as
   a red draft PR titled "do not merge" (its own guardrail check keeps it
   unmergeable), so the work and the blocking findings survive the runner;
@@ -217,9 +225,10 @@ Read the task's job summary first — it names the outcome. The shapes:
   `remediate.pauseAfterFailures` consecutive failures the class is paused
   instead of retried (see the circuit breaker above).
 - **`partially-landed`**: some orders verified and landed (a PR is
-  open for them); the others were dropped at their own verification
-  with the reason in the job summary, and stay open for the next firing.
-  The job is red so the dropped orders are not read as done.
+  open for them); the others were dropped, at their own verification or
+  by guardrail-red containment, with the reason in the job summary, and
+  stay open for the next firing. The job is red so the dropped orders
+  are not read as done.
 - **`recipes-refused`**: every order the task selected was recipe-tier,
   every recipe refused or failed, and the agent tier landed nothing for
   them. The orders remain open and the per-order reasons are in the job
