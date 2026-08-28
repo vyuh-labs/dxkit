@@ -90,6 +90,15 @@ describe('report history codec', () => {
     expect(parsed.map((e) => e.sha)).toEqual(['a', 'b']);
   });
 
+  it('parses the methodology stamp and omits it when absent (pre-4.4.7 lines)', () => {
+    const stamped = parseHistory(
+      JSON.stringify({ sha: 'a', date: 'd', scores, methodology: 'spec-v1' }) + '\n',
+    );
+    expect(stamped[0].methodology).toBe('spec-v1');
+    const unstamped = parseHistory(JSON.stringify({ sha: 'a', date: 'd', scores }) + '\n');
+    expect(unstamped[0].methodology).toBeUndefined();
+  });
+
   it('tolerates + preserves unknown/extra fields on a line', () => {
     const parsed = parseHistory(
       JSON.stringify({ ...entry('a'), futureField: { nested: 1 } }) + '\n',

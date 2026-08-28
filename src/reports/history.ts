@@ -43,6 +43,14 @@ export interface ReportHistoryEntry {
   readonly dxkitVersion: string;
   /** Branch the merge landed on (default branch), for multi-branch repos. */
   readonly branch?: string;
+  /**
+   * Scoring-methodology identity the scores were computed under
+   * (`SCORING_METHODOLOGY_VERSION` at publish time). Score comparisons
+   * (the guardrail's pre-merge projection and the post-merge landed line)
+   * happen only between matching versions; a mismatch (or an absent stamp
+   * on a pre-4.4.7 entry) is disclosed as not comparable, never diffed.
+   */
+  readonly methodology?: string;
   readonly scores: ReportScores;
   readonly findings?: ReportFindingCounts;
   /** Extension inventory entity counts (extension name → entity kind →
@@ -104,6 +112,7 @@ export function parseHistory(jsonl: string | null | undefined): ReportHistoryEnt
       date: o.date,
       dxkitVersion: typeof o.dxkitVersion === 'string' ? o.dxkitVersion : 'unknown',
       ...(typeof o.branch === 'string' ? { branch: o.branch } : {}),
+      ...(typeof o.methodology === 'string' ? { methodology: o.methodology } : {}),
       scores,
       ...(o.findings && typeof o.findings === 'object'
         ? { findings: o.findings as ReportFindingCounts }

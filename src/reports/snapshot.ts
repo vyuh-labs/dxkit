@@ -20,6 +20,7 @@ import {
   publishFilesToAnchorRef,
   type PublishResult,
 } from '../baseline/anchor-publish';
+import { SCORING_METHODOLOGY_VERSION } from '../scoring/methodology';
 
 /** Default side ref for report snapshots (kept distinct from the baseline anchor
  *  `dxkit-baselines` so report churn/retention never touches the baseline). */
@@ -57,11 +58,16 @@ function dimScore(src: SnapshotSource, key: keyof SnapshotSource['dimensions']):
   return typeof v === 'number' && Number.isFinite(v) ? v : null;
 }
 
-/** Pure map from a scored report to the durable history entry. The `tests` field
- *  reads the report's `testing` dimension (the dimension is named `testing`; the
- *  entry field stays `tests` for brevity + JSON stability). */
-export function reportToHistoryEntry(src: SnapshotSource, meta: SnapshotMeta): ReportHistoryEntry {
-  const scores: ReportScores = {
+/**
+ * The ONE map from a scored report's dimensions to the durable `ReportScores`
+ * shape (the `tests` field reads the report's `testing` dimension; the entry
+ * field stays `tests` for brevity + JSON stability). Both the snapshot
+ * publisher and the guardrail's score projection (impact surface P2) read
+ * through this, so "the number the org has seen" and "the number a PR
+ * projects" can never come from two different mappings.
+ */
+export function scoresFromReport(src: SnapshotSource): ReportScores {
+  return {
     overall: typeof src.summary.overallScore === 'number' ? src.summary.overallScore : null,
     security: dimScore(src, 'security'),
     quality: dimScore(src, 'quality'),
@@ -70,12 +76,19 @@ export function reportToHistoryEntry(src: SnapshotSource, meta: SnapshotMeta): R
     maintainability: dimScore(src, 'maintainability'),
     developerExperience: dimScore(src, 'developerExperience'),
   };
+}
+
+/** Pure map from a scored report to the durable history entry. Stamps the
+ *  scoring-methodology identity so later score comparisons can verify they
+ *  compare like with like (impact P2 honesty constraint 4). */
+export function reportToHistoryEntry(src: SnapshotSource, meta: SnapshotMeta): ReportHistoryEntry {
   return {
     sha: meta.sha,
     date: meta.date,
     dxkitVersion: meta.dxkitVersion,
     ...(meta.branch ? { branch: meta.branch } : {}),
-    scores,
+    methodology: SCORING_METHODOLOGY_VERSION,
+    scores: scoresFromReport(src),
     ...(src.findings ? { findings: src.findings } : {}),
   };
 }
@@ -105,6 +118,13 @@ export interface PublishSnapshotResult {
   /** History length after the fold (what was written). */
   readonly historyCount: number;
   readonly anchorRef: string;
+  /**
+   * The most recent PRIOR entry (a different sha than the one just folded):
+   * the base the org had already seen before this snapshot. The post-merge
+   * landed-comment update diffs the new entry against exactly this.
+   * Undefined on the first-ever snapshot.
+   */
+  readonly previousEntry?: ReportHistoryEntry;
 }
 
 /**
@@ -116,6 +136,7 @@ export interface PublishSnapshotResult {
 export function publishReportSnapshot(opts: PublishSnapshotOptions): PublishSnapshotResult {
   const anchorRef = opts.anchorRef ?? DEFAULT_REPORTS_REF;
   const existing = parseHistory(readFromAnchorRef(opts.cwd, anchorRef, REPORT_HISTORY_PATH));
+  const previousEntry = [...existing].reverse().find((e) => e.sha !== opts.entry.sha);
   const folded = foldEntry(existing, opts.entry, opts.retainHistory ?? 0);
 
   const files = [
@@ -131,7 +152,12 @@ export function publishReportSnapshot(opts: PublishSnapshotOptions): PublishSnap
     ...(opts.identity ? { identity: opts.identity } : {}),
     ...(opts.timeoutMs !== undefined ? { timeoutMs: opts.timeoutMs } : {}),
   });
-  return { publish, historyCount: folded.length, anchorRef };
+  return {
+    publish,
+    historyCount: folded.length,
+    anchorRef,
+    ...(previousEntry ? { previousEntry } : {}),
+  };
 }
 
 /** Read the full history back off the anchor (the `report history` consumer). */

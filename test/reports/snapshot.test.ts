@@ -9,6 +9,7 @@ import {
   readReportHistory,
   type SnapshotSource,
 } from '../../src/reports/snapshot';
+import { SCORING_METHODOLOGY_VERSION } from '../../src/scoring/methodology';
 
 const source: SnapshotSource = {
   summary: { overallScore: 72 },
@@ -35,6 +36,11 @@ describe('reportToHistoryEntry', () => {
       developerExperience: 70,
     });
     expect(e.sha).toBe('abc');
+  });
+
+  it('stamps the scoring-methodology identity on every entry (impact P2)', () => {
+    const e = reportToHistoryEntry(source, { sha: 'abc', date: 'd', dxkitVersion: '4.4.7' });
+    expect(e.methodology).toBe(SCORING_METHODOLOGY_VERSION);
   });
 
   it('maps a missing/unmeasured dimension to null', () => {
@@ -100,6 +106,26 @@ describe('publishReportSnapshot', () => {
     }
     const history = readReportHistory(repo);
     expect(history.map((h) => h.sha)).toEqual(['c', 'd']);
+  });
+
+  it('returns the previous entry (the base the org saw) for the landed update', () => {
+    const first = publishReportSnapshot({
+      cwd: repo,
+      entry: reportToHistoryEntry(source, { sha: 'sha1', date: 'd1', dxkitVersion: '3.0.0' }),
+    });
+    expect(first.previousEntry).toBeUndefined();
+    const second = publishReportSnapshot({
+      cwd: repo,
+      entry: reportToHistoryEntry(source, { sha: 'sha2', date: 'd2', dxkitVersion: '3.0.0' }),
+    });
+    expect(second.previousEntry?.sha).toBe('sha1');
+    // An idempotent re-publish of the same SHA compares against the entry
+    // BEFORE it, never against itself.
+    const replay = publishReportSnapshot({
+      cwd: repo,
+      entry: reportToHistoryEntry(source, { sha: 'sha2', date: 'd2b', dxkitVersion: '3.0.0' }),
+    });
+    expect(replay.previousEntry?.sha).toBe('sha1');
   });
 
   it('re-publishing the same merge SHA replaces (idempotent), no dup line', () => {
