@@ -226,8 +226,14 @@ function renderDisposition(d: OrderDisposition | undefined): string[] {
 export function renderOrdersSection(orders: OrdersPhaseSummary): string[] {
   const lines: string[] = ['### Work-order dispatches (one order per agent run)', ''];
   lines.push(
-    `Queued ${orders.queued} agent-tier order(s); per-run cap ${orders.cap} ` +
-      `(\`remediate.maxOrdersPerRun\`).`,
+    orders.cap <= 0
+      ? // The agent tier was disabled by policy (#393): the section names
+        // the policy and the count so the open queue is never mistaken for
+        // a dispatch that happened.
+        `Agent tier disabled by policy (\`remediate.maxOrdersPerRun: 0\`); ${orders.queued} ` +
+          'agent-tier order(s) not dispatched (each listed below, still open).'
+      : `Queued ${orders.queued} agent-tier order(s); per-run cap ${orders.cap} ` +
+          `(\`remediate.maxOrdersPerRun\`).`,
   );
   if (orders.priorBlockingApplied) {
     lines.push(

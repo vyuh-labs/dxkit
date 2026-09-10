@@ -84,11 +84,19 @@ export function deriveScheduledMatrix(input: ScheduledMatrixInput): ScheduledMat
   }
 
   const enabled = new Set<string>(config.tasks);
+  // `remediate.maxOrdersPerRun: 0` disables the agent tier (#393): an order
+  // only the agent tier could dispatch (agent-tier by plan, or any order
+  // once recipes are off, which routes every order to the agent) earns no
+  // job, the same "spawns no job" line a paused-only task gets.
+  const agentTierOff = config.maxOrdersPerRun <= 0;
+  const agentOnly = (tier: 'recipe' | 'agent'): boolean =>
+    agentTierOff && (tier === 'agent' || !config.recipes.enabled);
 
   // Value-ordered tasks from the OPEN orders: the plan's order IS the value
   // order, so the first open order of a task fixes the task's rank.
   const orderedTasks: RemediateTaskId[] = [];
   const pausedOnly = new Map<string, number>(); // task -> paused order count
+  const agentTierOnly = new Map<string, number>(); // task -> undispatchable-by-policy count
   const unroutableClasses = new Set<string>();
   for (const order of plan.orders) {
     const cls = String(order.class);
@@ -102,6 +110,10 @@ export function deriveScheduledMatrix(input: ScheduledMatrixInput): ScheduledMat
     if (!enabled.has(task)) continue;
     if (order.paused) {
       pausedOnly.set(task, (pausedOnly.get(task) ?? 0) + 1);
+      continue;
+    }
+    if (agentOnly(order.tier)) {
+      agentTierOnly.set(task, (agentTierOnly.get(task) ?? 0) + 1);
       continue;
     }
     if (!orderedTasks.includes(task)) orderedTasks.push(task);
@@ -130,10 +142,26 @@ export function deriveScheduledMatrix(input: ScheduledMatrixInput): ScheduledMat
     if (orderedTasks.includes(task)) continue;
     noOpenOrders.push(task);
     const paused = pausedOnly.get(task);
+    const agentOff = agentTierOnly.get(task);
+    // Every reason the task's open orders are undispatchable is named; a
+    // task can carry both shapes at once.
+    const reasons = [
+      ...(agentOff !== undefined
+        ? [
+            `${agentOff} open order(s) need the agent tier, which is disabled by policy ` +
+              '(remediate.maxOrdersPerRun: 0; raise it to dispatch them)',
+          ]
+        : []),
+      ...(paused !== undefined
+        ? [
+            `${paused} order(s) are PAUSED by the circuit breaker (see the plan's pause ` +
+              'disclosures)',
+          ]
+        : []),
+    ];
     disclosures.push(
-      paused !== undefined
-        ? `matrix: '${task}' spawns no job: its only open order(s) are PAUSED by the ` +
-            `circuit breaker (${paused} order(s); see the plan's pause disclosures)`
+      reasons.length > 0
+        ? `matrix: '${task}' spawns no job: ${reasons.join('; ')}`
         : `matrix: '${task}' spawns no job: no open work orders (nothing to spend on, $0)`,
     );
   }

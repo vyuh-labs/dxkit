@@ -36,7 +36,7 @@ import { armGateForDriver } from './agent-trust';
 import { clampBudgetToTokenLifetime, unenforceableCapsFor } from './budget-notes';
 import { healthHingeScores } from './score-hinge';
 import { salvageForTask } from './config';
-import { recipeTierStep } from './recipes/complete';
+import { recipeTierStep, workOrderPlanApplies } from './recipes/complete';
 import { dispatchQueuedOrders } from './orders-phase';
 import { runLegacyTaskPath } from './legacy-task-run';
 import type { AgentEnvelope, RemediateResult, RemediateRunOptions } from './outcome';
@@ -199,28 +199,45 @@ export async function runRemediateTask(opts: RemediateRunOptions): Promise<Remed
   const hasRecipeCommits = agentBase !== baseHead;
 
   opts.onPhase?.('agent');
-  // Order-driven dispatch (section 3C): with a queue in hand the agent tier
-  // receives ONE rendered work order per run; null keeps the legacy path.
-  const ordered = await dispatchQueuedOrders(opts, {
-    taskId: task.id,
-    driver,
-    choice,
-    runBudget: budget,
-    envelopeBase,
-    git,
-    baseHead,
-    agentBase,
-    entryFloor,
-    runFloor,
-    recipes: tier.recipes,
-    effectiveSalvage,
-  });
-  if (ordered) return finish(ordered);
+  // THE path decision (#393), one predicate: does a work-order plan apply
+  // to this task? Yes: the agent tier receives ONE rendered work order per
+  // run from the queue (section 3C), and an empty queue is a $0 no-op,
+  // never a fallback to an open-ended prompt. No (an open-ended task, or a
+  // failed plan): the legacy single-prompt path, named as such in the
+  // ledger so a reader can tell which path ran.
+  const plan = workOrderPlanApplies(task.id, tier.recipes);
+  if (plan.applies) {
+    const ordered = await dispatchQueuedOrders(opts, {
+      taskId: task.id,
+      driver,
+      choice,
+      runBudget: budget,
+      envelopeBase,
+      git,
+      baseHead,
+      agentBase,
+      entryFloor,
+      runFloor,
+      recipes: tier.recipes,
+      effectiveSalvage,
+    });
+    if (ordered) return finish(ordered);
+    return finish({
+      outcome: 'no-op',
+      task: task.id,
+      ...recipesDisclosure,
+      floor: entryFloor,
+      note:
+        'nothing to do: the work-order plan selects no open order for this task, so there ' +
+        'is nothing for the agent tier to dispatch; no agent was spawned ($0).',
+    });
+  }
 
   // The legacy single-prompt tail (split to `legacy-task-run.ts` at the
   // module-size bar): the open-ended task prompt with the SAME frame
   // contract, tool policy and post-agent invariant step an order dispatch
-  // gets, then the one tree verification.
+  // gets, then the one tree verification. Every exit carries the path's
+  // name and the reason no plan applied.
   return runLegacyTaskPath(
     opts,
     {
@@ -240,6 +257,6 @@ export async function runRemediateTask(opts: RemediateRunOptions): Promise<Remed
       hasRecipeCommits,
       recipesDisclosure,
     },
-    finish,
+    (r) => finish({ ...r, legacyTaskPath: plan.reason }),
   );
 }

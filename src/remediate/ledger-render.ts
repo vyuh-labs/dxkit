@@ -113,6 +113,15 @@ function renderLedgerLines(
   let collapsed = false;
   const lines: string[] = ['## dxkit agentic remediation', ''];
   lines.push(`Task: **${r.task ?? '(none)'}** — outcome: **${r.outcome}**`);
+  if (r.legacyTaskPath) {
+    // The legacy path names itself (#393): an order-driven run and a
+    // single-prompt run must never read identically in the ledger.
+    lines.push(
+      '',
+      'Agent path: legacy single-prompt task run: no work-order plan applies to this task ' +
+        `(${r.legacyTaskPath}).`,
+    );
+  }
   if (r.partial)
     lines.push(
       '',

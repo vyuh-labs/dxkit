@@ -6,6 +6,7 @@ import { renderFloorVerification } from '../../src/lanes/verification-render';
 import type { AgentDriver, AgentRunResult } from '../../src/remediate/driver';
 import type { RemediateConfig } from '../../src/remediate/config';
 import { DEFAULT_REMEDIATE_BUDGET } from '../../src/remediate/config';
+import { emptyRecipePhase } from '../../src/remediate/recipes/run-recipes';
 import type { CorrectnessFloorResult } from '../../src/analyzers/correctness/run';
 import type { AnalysisTrustContext } from '../../src/analysis-trust';
 
@@ -244,6 +245,9 @@ function base(driver: AgentDriver, extra: Partial<Parameters<typeof runRemediate
       }),
       changedFiles: () => ['src/a.ts'],
     },
+    // The legacy single-prompt path is the vehicle here; a class-selecting
+    // task takes it only when no work-order plan applies (#393).
+    runRecipePhase: async () => emptyRecipePhase(),
     ...extra,
   };
 }

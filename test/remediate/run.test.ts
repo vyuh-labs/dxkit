@@ -3,6 +3,7 @@ import { runRemediateTask, type RemediateGit } from '../../src/remediate/run';
 import type { AgentDriver, AgentRunResult } from '../../src/remediate/driver';
 import type { RemediateConfig } from '../../src/remediate/config';
 import { resolveRemediateConfig, DEFAULT_REMEDIATE_BUDGET } from '../../src/remediate/config';
+import { emptyRecipePhase } from '../../src/remediate/recipes/run-recipes';
 import type { CorrectnessFloorResult } from '../../src/analyzers/correctness/run';
 import type { AnalysisTrustContext } from '../../src/analysis-trust';
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'fs';
@@ -122,6 +123,12 @@ function base(driver: AgentDriver, extra: Partial<Parameters<typeof runRemediate
     // frozen install; both are seamed here so no git repo or package manager
     // is needed. The floor + guardrail seams above are forwarded into it.
     verifySeams: FAKE_TREE,
+    // This suite exercises the frame's verification arms through the LEGACY
+    // single-prompt path. A class-selecting task only takes that path when
+    // no work-order plan applies (#393), so the recipe phase is seamed to
+    // the documented plan-less shape (no `agentOrders`); a built plan, even
+    // an empty one, would complete the run at $0 before any agent spawns.
+    runRecipePhase: async () => emptyRecipePhase(),
     ...extra,
   };
 }

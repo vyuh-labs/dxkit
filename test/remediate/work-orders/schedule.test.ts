@@ -120,6 +120,55 @@ describe('deriveScheduledMatrix', () => {
     expect(m.noOpenOrders).toEqual(['fix-vulns']);
   });
 
+  it('maxOrdersPerRun: 0 disables the agent tier: a task whose only open orders are agent-tier spawns no job, disclosed; a recipe-tier order still earns its job (#393)', () => {
+    const m = deriveScheduledMatrix({
+      config: config({ maxOrdersPerRun: 0, tasks: ['fix-vulns', 'fix-build'] }),
+      plan: plan([
+        order('a', 'dep-advisory'), // agent-tier by default
+        order('b', 'stale-lockfile', { tier: 'recipe' }),
+      ]),
+    });
+    expect(m.source).toBe('orders');
+    expect(m.run).toEqual(['fix-build']);
+    expect(m.noOpenOrders).toEqual(['fix-vulns']);
+    const line = m.disclosures.find((d) => d.includes("'fix-vulns' spawns no job"));
+    expect(line).toContain('1 open order(s) need the agent tier, which is disabled by policy');
+    expect(line).toContain('remediate.maxOrdersPerRun: 0');
+  });
+
+  it('with recipes ALSO disabled every order needs the agent tier, so a cap of 0 spawns nothing (#393)', () => {
+    const m = deriveScheduledMatrix({
+      config: config({ maxOrdersPerRun: 0, recipes: { enabled: false }, tasks: ['fix-build'] }),
+      plan: plan([order('b', 'stale-lockfile', { tier: 'recipe' })]),
+    });
+    expect(m.run).toEqual([]);
+    expect(m.noOpenOrders).toEqual(['fix-build']);
+    expect(m.disclosures.some((d) => d.includes('disabled by policy'))).toBe(true);
+  });
+
+  it('a paused order and an agent-only order on one task are BOTH named in its no-job line', () => {
+    const m = deriveScheduledMatrix({
+      config: config({ maxOrdersPerRun: 0, tasks: ['fix-vulns'] }),
+      plan: plan([
+        order('a', 'dep-advisory', { paused: { reason: 'streak', unpause: 'policy change' } }),
+        order('b', 'dep-advisory'),
+      ]),
+    });
+    expect(m.run).toEqual([]);
+    const line = m.disclosures.find((d) => d.includes("'fix-vulns' spawns no job"));
+    expect(line).toContain('disabled by policy');
+    expect(line).toContain('PAUSED by the circuit breaker');
+  });
+
+  it('maxOrdersPerRun: 1 leaves the matrix untouched (the cap bounds dispatch, never the job)', () => {
+    const m = deriveScheduledMatrix({
+      config: config({ maxOrdersPerRun: 1, tasks: ['fix-vulns'] }),
+      plan: plan([order('a', 'dep-advisory')]),
+    });
+    expect(m.run).toEqual(['fix-vulns']);
+    expect(m.noOpenOrders).toEqual([]);
+  });
+
   it('DEGRADED evidence falls back to the static policy list, disclosed; healthy zero orders stays a legitimate no-job firing', () => {
     // A fail-open gather (unreadable baseline, no floor evidence) yields
     // zero orders that prove nothing: spawning nothing weekly on that

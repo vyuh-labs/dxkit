@@ -782,8 +782,14 @@ disclosed and deferred to the next firing.
 
 **Default and why.** `3`: enough to close several small orders in one firing
 while keeping each dispatch scoped and the run inside its wall clock. `0`
-turns order-driven dispatch off and restores the single open-ended task
-prompt (the pre-4.4.5 shape).
+disables the agent tier: recipes only. A task with a work-order plan completes
+from the recipe tier and spawns no agent; every agent-tier order (and every
+recipe order that refused or failed) is listed in the ledger as not dispatched
+with the policy named, and the scheduled matrix spawns no job for a task whose
+open orders all need the agent tier. The legacy single-prompt agent runs only
+for a task no work-order plan applies to (an open-ended task such as
+`improve-tests`, or a failed plan), never as a fallback for `0`, and its ledger
+names the path.
 
 **Interactions.** Per-order budgets are clamped to the run's remaining
 [budget](#remediate-budget); the total never exceeds the task's caps. Where

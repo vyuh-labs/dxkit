@@ -128,8 +128,8 @@ merge through the same required checks as human PRs.
 - **Remediation lane governance**: `remediate.recipes.enabled` (default
   on; the deterministic $0 recipe tier runs before any agent, off routes
   every order to the agent), `remediate.maxOrdersPerRun` (default 3; how
-  many work orders one firing may hand to the agent, 0 restores the
-  single task-prompt run), and `remediate.pauseAfterFailures` (default 2;
+  many work orders one firing may hand to the agent, 0 disables the
+  agent tier so only recipes run), and `remediate.pauseAfterFailures` (default 2;
   the circuit breaker pauses a work-order class after this many
   consecutive failed firings instead of re-spending on it, 0 disables).
 

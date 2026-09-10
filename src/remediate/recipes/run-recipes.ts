@@ -91,12 +91,10 @@ export interface RecipePhaseOptions {
  * discarded).
  */
 export async function runRecipePhaseForTask(opts: RecipePhaseOptions): Promise<RecipePhaseSummary> {
-  // Nothing consumes a plan when BOTH consumers are off: recipes disabled
-  // and order dispatch off (maxOrdersPerRun 0) — do not pay the planning
-  // gathers for a result nobody reads.
-  if (!opts.config.recipes.enabled && opts.config.maxOrdersPerRun <= 0) {
-    return emptyRecipePhase({ disabled: true });
-  }
+  // The plan is built even when BOTH tiers are off (recipes disabled and
+  // `maxOrdersPerRun: 0`): the runner's path decision reads it (#393), and
+  // the ledger discloses every order the policy left undispatched. Skipping
+  // it here handed such a run to the legacy single-prompt agent.
   let plan;
   try {
     plan = await planRepoWorkOrders(opts.cwd, opts.config, {
