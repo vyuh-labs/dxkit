@@ -57,6 +57,176 @@ export interface AcquiredPrior {
   anchorSource?: AnchorSourceDisclosure;
 }
 
+/** The side-branch anchor reader (`loadAnchorFromBranch`'s shape), injectable
+ *  so a test can stand in an anchor without a remote. */
+export type AnchorReader = typeof loadAnchorFromBranch;
+
+export interface CommittedPriorReadOptions {
+  /** Baseline name under `.dxkit/baselines/<name>.json` (default `main`). */
+  readonly name?: string;
+  /** Explicit baseline file path; overrides `name`. */
+  readonly baselinePath?: string;
+  /** The policy's `baseline` section; read from the repo when omitted. */
+  readonly section?: BaselineSection;
+  /** Test seam: the anchor reader (default `loadAnchorFromBranch`). */
+  readonly anchorReader?: AnchorReader;
+}
+
+/** A prior that EXISTS but could not be parsed: not the same thing as no
+ *  prior at all (#388). A refresh over it would grandfather every advisory
+ *  pending a decision as ordinary debt, so callers must tell the two apart. */
+export interface CommittedPriorUnreadable {
+  /** Which copy was chosen and failed to parse. */
+  readonly source: 'anchor' | 'tree';
+  /** The file that failed to parse (a temp materialization for `anchor`). */
+  readonly path: string;
+  /** The parse error, as `readBaselineFile` raised it. */
+  readonly error: Error;
+}
+
+/** What `readCommittedPrior` answers. Exactly one of three states:
+ *  `prior` set (read), both null (no prior exists), or `unreadable` set
+ *  (a prior exists but could not be parsed). */
+export interface CommittedPriorRead {
+  /** The logical tree path (display + the missing-file remedy). */
+  readonly baselinePath: string;
+  /** The prior, or null when none was read. */
+  readonly prior: AcquiredPrior | null;
+  /** Set when the chosen copy exists but could not be parsed. */
+  readonly unreadable: CommittedPriorUnreadable | null;
+}
+
+/**
+ * The ONE read of "the effective committed prior for this repo" (#387; Rule
+ * 2.30). Under the `branch` anchor transport the side branch is the source
+ * of truth and the committed tree copy is whatever the last LOCAL capture
+ * wrote, so every reader of the committed baseline resolves it here:
+ * the anchor first, the tree copy second, the fallback DISCLOSED. The
+ * guardrail's `acquirePrior`, the refresh lane's prior read and the
+ * remediation planner all consume this; a second reader that opens the tree
+ * path directly is the bug that had the planner minting orders for debt the
+ * default branch had already paid.
+ *
+ * Returns `prior: null, unreadable: null` when neither exists (after a
+ * hydrate attempt) and `unreadable` when the copy it chose exists but cannot
+ * be parsed; never throws for either, so a caller cannot confuse "no prior"
+ * with "a prior I could not read". Never runs a scan.
+ */
+export function readCommittedPrior(
+  cwd: string,
+  opts: CommittedPriorReadOptions = {},
+): CommittedPriorRead {
+  const baselinePath =
+    opts.baselinePath ?? pathForBaseline(cwd, opts.name ?? DEFAULT_BASELINE_NAME);
+  const section = opts.section ?? safeBaselineSection(cwd);
+  const anchorRef = section?.anchorRef ?? DEFAULT_ANCHOR_REF;
+  const readAnchor = opts.anchorReader ?? loadAnchorFromBranch;
+  // Scoped to the `branch` anchor transport: the source-of-truth anchor lives
+  // on the side branch (the refresh only updates that, so a committed tree copy
+  // goes stale). Read it from there, read-only and into a temp file, so a LOCAL
+  // read matches CI instead of a stale tree copy. Returns null for `tree` (the
+  // tree copy IS the source of truth) and `cache` (CI-only, no local side
+  // branch), and when the side branch is not created yet / we are offline; all
+  // of which fall through to the on-disk copy below.
+  const fromBranch = readAnchor(cwd, baselinePath, section);
+  if (fromBranch) {
+    // Keep `baselinePath` as the logical tree path for display; read the fresh
+    // side-branch anchor from the temp file.
+    const anchor = parseBaseline(fromBranch, 'anchor');
+    if ('unreadable' in anchor) return { baselinePath, prior: null, unreadable: anchor.unreadable };
+    return {
+      baselinePath,
+      prior: {
+        baseline: anchor.baseline,
+        baselinePath,
+        anchorSource: {
+          used: 'anchor',
+          anchorRef,
+          note: `baseline read from the '${anchorRef}' side branch (anchor transport)`,
+        },
+      },
+      unreadable: null,
+    };
+  }
+  if (!fs.existsSync(baselinePath)) {
+    // No on-disk copy: materialize a `branch` anchor at the tree path if we can
+    // (a bootstrap where the side branch became reachable between the two
+    // calls, or a non-'branch' transport with a genuinely missing file).
+    const hydrated = hydrateAnchorFromBranch(cwd, baselinePath, section);
+    if (!hydrated) return { baselinePath, prior: null, unreadable: null };
+  }
+  // D4d disclosure: with the `branch` transport, reaching this line means the
+  // side branch could NOT be read and the caller proceeds on the tree copy,
+  // possibly stale (the refresh only updates the side branch). Fail-open, but
+  // never silent: the incident's footer cited the stale tree SHA with nothing
+  // saying the anchor read failed.
+  const anchorSource: AnchorSourceDisclosure | undefined =
+    section?.anchor === 'branch'
+      ? {
+          used: 'tree-fallback',
+          anchorRef,
+          note:
+            `anchor transport 'branch': the '${anchorRef}' side branch could not be read ` +
+            `(not created yet, offline, or unfetchable) — gating against the committed tree ` +
+            `copy, which may be STALE. If this repo's refresh publishes the anchor, ` +
+            `investigate with \`${dxkitCli('doctor')}\`.`,
+        }
+      : undefined;
+  const tree = parseBaseline(baselinePath, 'tree');
+  if ('unreadable' in tree) return { baselinePath, prior: null, unreadable: tree.unreadable };
+  return {
+    baselinePath,
+    prior: {
+      baseline: tree.baseline,
+      baselinePath,
+      ...(anchorSource ? { anchorSource } : {}),
+    },
+    unreadable: null,
+  };
+}
+
+/** The one parse of a chosen copy: a failure is carried as `unreadable`
+ *  (which copy, where, why), never a thrown-and-swallowed absence. */
+function parseBaseline(
+  file: string,
+  source: CommittedPriorUnreadable['source'],
+): { baseline: BaselineFile } | { unreadable: CommittedPriorUnreadable } {
+  try {
+    return { baseline: readBaselineFile(file) };
+  } catch (err) {
+    const error = err instanceof Error ? err : new Error(String(err));
+    return { unreadable: { source, path: file, error } };
+  }
+}
+
+/**
+ * Shared phrasing of WHICH prior a committed read used (Rule 2: the planner's
+ * header, its plan disclosure and the lane ledger print this one line). Names
+ * the anchor branch and its capture date, or the tree copy with its capture
+ * environment, and says when the tree copy is a fallback for an unreachable
+ * anchor (a `capturedIn: local` copy is the stale-install-day shape).
+ */
+export function describePriorSource(prior: AcquiredPrior): string {
+  const { baseline, anchorSource } = prior;
+  const date = baseline.createdAt ? baseline.createdAt.slice(0, 10) : 'unknown date';
+  if (anchorSource?.used === 'anchor') {
+    return `anchor branch '${anchorSource.anchorRef}' captured ${date}`;
+  }
+  const where =
+    baseline.capturedIn === 'local'
+      ? `captured locally ${date}`
+      : baseline.capturedIn === 'ci'
+        ? `captured in CI ${date}`
+        : `captured ${date}`;
+  if (anchorSource?.used === 'tree-fallback') {
+    return (
+      `tree copy ${where} (anchor branch '${anchorSource.anchorRef}' unreachable: ` +
+      'not created yet, offline, or unfetchable; the tree copy may be STALE)'
+    );
+  }
+  return `tree copy ${where}`;
+}
+
 /**
  * The `fresh` prior (4.4.0 WP2): zero findings, with the CURRENT scan's
  * own envelope. Built AFTER the current gather (the engine calls this in
@@ -193,65 +363,22 @@ export async function acquirePrior(
     };
   }
   if (mode.mode !== 'ref-based') {
-    const baselinePath =
-      options.baselinePath ?? pathForBaseline(cwd, options.name ?? DEFAULT_BASELINE_NAME);
-    const section = safeBaselineSection(cwd);
-    const anchorRef = section?.anchorRef ?? DEFAULT_ANCHOR_REF;
-    // Scoped to the `branch` anchor transport: the source-of-truth anchor lives
-    // on the side branch (the refresh only updates that, so a committed tree copy
-    // goes stale). Read it from there — read-only, into a temp file — so a LOCAL
-    // check matches CI instead of gating against a stale tree copy. Returns null
-    // for `tree` (the tree copy IS the source of truth) and `cache` (CI-only, no
-    // local side branch), and when the side branch isn't created yet / we're
-    // offline — all of which fall through to the on-disk copy below.
-    const fromBranch = loadAnchorFromBranch(cwd, baselinePath, section);
-    if (fromBranch) {
-      // Keep `baselinePath` as the logical tree path for display; read the fresh
-      // side-branch anchor from the temp file.
-      return {
-        baseline: readBaselineFile(fromBranch),
-        baselinePath,
-        anchorSource: {
-          used: 'anchor',
-          anchorRef,
-          note: `baseline read from the '${anchorRef}' side branch (anchor transport)`,
-        },
-      };
+    // The committed prior: the ONE anchor-first-then-tree read shared with
+    // the refresh lane and the remediation planner (#387).
+    const read = readCommittedPrior(cwd, {
+      ...(options.name !== undefined ? { name: options.name } : {}),
+      ...(options.baselinePath !== undefined ? { baselinePath: options.baselinePath } : {}),
+    });
+    // A prior that exists but cannot be parsed refuses the gate exactly as
+    // the parse error always did; only an absent prior gets the capture remedy.
+    if (read.unreadable) throw read.unreadable.error;
+    if (!read.prior) {
+      throw new Error(
+        `baseline file not found: ${read.baselinePath}. ` +
+          `Run \`${dxkitCli('baseline create')}\` first to capture today's state.`,
+      );
     }
-    if (!fs.existsSync(baselinePath)) {
-      // No on-disk copy: materialize a `branch` anchor at the tree path if we can
-      // (a bootstrap where the side branch became reachable between the two
-      // calls, or a non-'branch' transport with a genuinely missing file).
-      const hydrated = hydrateAnchorFromBranch(cwd, baselinePath, section);
-      if (!hydrated) {
-        throw new Error(
-          `baseline file not found: ${baselinePath}. ` +
-            `Run \`${dxkitCli('baseline create')}\` first to capture today's state.`,
-        );
-      }
-    }
-    // D4d disclosure: with the `branch` transport, reaching this line means the
-    // side branch could NOT be read and the check gates against the tree copy —
-    // possibly stale (the refresh only updates the side branch). Fail-open, but
-    // never silent: the incident's footer cited the stale tree SHA with nothing
-    // saying the anchor read failed.
-    const anchorSource: AnchorSourceDisclosure | undefined =
-      section?.anchor === 'branch'
-        ? {
-            used: 'tree-fallback',
-            anchorRef,
-            note:
-              `anchor transport 'branch': the '${anchorRef}' side branch could not be read ` +
-              `(not created yet, offline, or unfetchable) — gating against the committed tree ` +
-              `copy, which may be STALE. If this repo's refresh publishes the anchor, ` +
-              `investigate with \`${dxkitCli('doctor')}\`.`,
-          }
-        : undefined;
-    return {
-      baseline: readBaselineFile(baselinePath),
-      baselinePath,
-      ...(anchorSource ? { anchorSource } : {}),
-    };
+    return read.prior;
   }
 
   if (!mode.ref) {
