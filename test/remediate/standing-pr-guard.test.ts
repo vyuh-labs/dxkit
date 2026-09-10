@@ -884,7 +884,7 @@ describe('parity: inline landing and deferred `remediate land` decide identicall
       'pr',
       seams(free.exec, {
         probeDelivery: attemptBlocked,
-        readBranchStates: (t, e) => readRemediateBranchStates(t, free.exec),
+        readBranchStates: (t) => readRemediateBranchStates(t, free.exec),
       }),
     );
     expect(proceeded.result.outcome).toBe('guardrail-red');
