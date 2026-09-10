@@ -244,19 +244,19 @@ with the violation). `vyuh-dxkit checks list` shows the declared rules.
 
 ## Finding statuses
 
-| Status                     | Meaning                                                                                                                                                           |
-| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `persisted`                | Same finding, same location — pre-existing debt                                                                                                                   |
-| `relocated`                | Same finding, moved (line drift, file rename)                                                                                                                     |
-| `removed`                  | Was in baseline, no longer scanned                                                                                                                                |
-| `fixed`                    | Intentionally suppressed via comment/ignore                                                                                                                       |
-| `added`                    | Net-new finding the developer just introduced                                                                                                                     |
-| `newly_published_advisory` | An added dep-vuln on a diff touching no dependency manifest — the advisory feed moved after baseline capture, not the PR. Gated by the `newAdvisories` tier below |
-| `tooling_drift`            | New on disk but the scanner version / ruleset changed                                                                                                             |
-| `config_drift`             | New on disk but `.dxkit-ignore` / dxkit config changed                                                                                                            |
-| `newly_detected`           | New but envelope signals can't tell whether tooling or developer caused it                                                                                        |
-| `probable_existing`        | Heuristic match below the confidence threshold                                                                                                                    |
-| `uncertain`                | Below every threshold; manual review                                                                                                                              |
+| Status                     | Meaning                                                                                                                                                                                                                                                                    |
+| -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `persisted`                | Same finding, same location — pre-existing debt                                                                                                                                                                                                                            |
+| `relocated`                | Same finding, moved (line drift, file rename)                                                                                                                                                                                                                              |
+| `removed`                  | Was in baseline, no longer scanned                                                                                                                                                                                                                                         |
+| `fixed`                    | Intentionally suppressed via comment/ignore                                                                                                                                                                                                                                |
+| `added`                    | Net-new finding the developer just introduced                                                                                                                                                                                                                              |
+| `newly_published_advisory` | An added dep-vuln whose package resolves as it did at baseline capture (the diff touches no manifest, no changed manifest line names the package, or its resolved version is the baseline's): the advisory feed moved, not the PR. Gated by the `newAdvisories` tier below |
+| `tooling_drift`            | New on disk but the scanner version / ruleset changed                                                                                                                                                                                                                      |
+| `config_drift`             | New on disk but `.dxkit-ignore` / dxkit config changed                                                                                                                                                                                                                     |
+| `newly_detected`           | New but envelope signals can't tell whether tooling or developer caused it                                                                                                                                                                                                 |
+| `probable_existing`        | Heuristic match below the confidence threshold                                                                                                                                                                                                                             |
+| `uncertain`                | Below every threshold; manual review                                                                                                                                                                                                                                       |
 
 ## Block rules
 

@@ -86,6 +86,51 @@ export function buildReachableIndex(aggregate: SecurityAggregate): Set<FindingId
   return out;
 }
 
+/**
+ * The prior side's resolved version per package (#382), the ONE source for
+ * "did this package's resolution move?" in the advisory-attribution question.
+ * Read from the prior entries' `installedVersion` (the baseline in committed
+ * mode, the ref-side gather in ref-based mode), never from a second lockfile
+ * read: a package the prior side recorded at the current version provably
+ * kept its resolution across the diff, whatever the manifest diff mentions.
+ * A package can legitimately resolve to several versions at once (nested
+ * copies), so the value is the SET of versions the prior side saw. A package
+ * with no prior entry (clean at capture) is simply absent; the consumer
+ * reads absence as "cannot prove unchanged", never as "unchanged".
+ */
+export function buildPriorResolvedVersionIndex(
+  entries: ReadonlyArray<BaselineEntry>,
+): ReadonlyMap<string, ReadonlySet<string>> {
+  const out = new Map<string, Set<string>>();
+  for (const e of entries) {
+    if (e.kind !== 'dep-vuln' || !('package' in e) || e.installedVersion === undefined) continue;
+    let versions = out.get(e.package);
+    if (!versions) {
+      versions = new Set();
+      out.set(e.package, versions);
+    }
+    versions.add(e.installedVersion);
+  }
+  return out;
+}
+
+/**
+ * The per-package attribution answer (#382) for one current-side dep-vuln:
+ * `true` when the prior side recorded the package at exactly this version,
+ * `false` when it recorded the package only at OTHER versions (the change
+ * moved it), `undefined` when there is no prior record or no current
+ * version to compare (unknown never demotes, Rule 19's evidence bias).
+ */
+export function priorResolutionUnchanged(
+  index: ReadonlyMap<string, ReadonlySet<string>>,
+  pkg: string,
+  installedVersion: string | undefined,
+): boolean | undefined {
+  const prior = index.get(pkg);
+  if (prior === undefined || prior.size === 0 || installedVersion === undefined) return undefined;
+  return prior.has(installedVersion);
+}
+
 export function diffEnvelopes(
   baseline: BaselineFile,
   current: CurrentScan,
