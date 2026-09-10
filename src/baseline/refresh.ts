@@ -48,6 +48,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { changedFilesTouchDependencyManifest, detectActiveLanguages } from '../languages';
+import { readCommittedPrior } from '../gate/prior';
 import { computeChangedFiles } from './changed-files';
 import { createBaseline } from './create';
 import {
@@ -59,7 +60,6 @@ import {
 import type { BaselineEntry } from './types';
 import type { BaselineFile } from './baseline-file';
 import { isSanitized } from './sanitize';
-import { loadAnchorFromBranch } from './anchor';
 import { invalidateAnchorReadMemo, readFromAnchorRef } from './anchor-publish';
 import { loadPolicyFromCwd, type BaselineSection } from './policy';
 import { resolveBaselineMode } from './modes';
@@ -126,10 +126,12 @@ function safeSection(cwd: string): BaselineSection | undefined {
 
 /**
  * The PRIOR effective baseline: the side-branch anchor when the transport is
- * `branch` and reachable, else the on-disk tree copy — the same precedence the
- * guardrail check applies, so the refresh diffs against what the gate was
- * actually using. MUST be read BEFORE the fresh capture overwrites the tree
- * copy. Null when neither exists (first capture).
+ * `branch` and reachable, else the on-disk tree copy: the ONE committed
+ * read the guardrail check and the remediation planner also use
+ * (`readCommittedPrior`, #387), so the refresh diffs against what the gate
+ * was actually using. MUST be read BEFORE the fresh capture overwrites the
+ * tree copy. Null when neither exists (first capture) or the chosen copy is
+ * unreadable (treated as absent, as before).
  */
 function loadPriorBaseline(
   cwd: string,
@@ -137,17 +139,14 @@ function loadPriorBaseline(
   section: BaselineSection | undefined,
 ): BaselineFile | null {
   try {
-    const fromBranch = loadAnchorFromBranch(cwd, treePath, section);
-    if (fromBranch) return readBaselineFile(fromBranch);
+    return (
+      readCommittedPrior(cwd, { baselinePath: treePath, ...(section ? { section } : {}) }).prior
+        ?.baseline ?? null
+    );
   } catch {
-    /* fall through to the tree copy */
+    /* unreadable prior, treated as absent */
+    return null;
   }
-  try {
-    if (fs.existsSync(treePath)) return readBaselineFile(treePath);
-  } catch {
-    /* unreadable tree copy — treat as absent */
-  }
-  return null;
 }
 
 function depVulnIds(file: BaselineFile): Set<string> {

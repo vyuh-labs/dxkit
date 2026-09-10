@@ -47,12 +47,8 @@ import {
 } from '../../languages';
 import { LOCKFILE_SYNC_LABEL } from '../../languages/capabilities/correctness';
 import type { LanguageSupport } from '../../languages/types';
-import {
-  DEFAULT_BASELINE_NAME,
-  pathForBaseline,
-  readBaselineFile,
-  type BaselineFile,
-} from '../../baseline/baseline-file';
+import { DEFAULT_BASELINE_NAME, type BaselineFile } from '../../baseline/baseline-file';
+import { describePriorSource, readCommittedPrior, type AnchorReader } from '../../gate/prior';
 import { failingFloorDebt, floorDebtToBaseChecks, type FloorDebt } from '../../baseline/floor-debt';
 import { readFloorBaseline } from '../../loop/floor-state';
 import { isSanitized } from '../../baseline/sanitize';
@@ -88,6 +84,11 @@ import {
 } from './breaker';
 
 export type FloorSource = 'live' | 'baseline-envelope' | 'loop-snapshot' | 'none';
+
+/** The disclosure line naming which prior the plan read (`prior: <source>`),
+ *  so a surface that prints `priorSource` in its header can skip the
+ *  duplicate in the disclosure list. */
+export const PRIOR_DISCLOSURE_PREFIX = 'prior: ';
 
 // The deferral join (deferred allowlist entries joined to a dependency
 // scan) lives in `./deferrals` (module-size split); its public shapes are
@@ -125,12 +126,19 @@ export interface GatherWorkOrderOptions {
   /** A task a human explicitly dispatched: its classes bypass any pause,
    *  disclosed (never silent). */
   readonly dispatchedTask?: string;
+  /** Injected side-branch anchor reader for the committed-prior read
+   *  (tests). Default: the ONE reader `loadAnchorFromBranch`. */
+  readonly anchorReader?: AnchorReader;
 }
 
 export interface GatheredWorkOrderInputs {
   readonly input: PlannerInput;
   readonly floorSource: FloorSource;
   readonly depScanSource: DepScanSource;
+  /** Which prior the debt came from (the shared `describePriorSource`
+   *  phrasing: the anchor branch and its capture date, or the tree copy
+   *  and why); null when no baseline exists or it was unreadable. */
+  readonly priorSource: string | null;
   /** Degraded reads, phrased for humans; empty when nothing degraded. */
   readonly disclosures: readonly string[];
   /** STRUCTURAL evidence degradation (an unreadable baseline, no floor
@@ -140,20 +148,35 @@ export interface GatheredWorkOrderInputs {
   readonly evidenceDegraded: string | null;
 }
 
+/**
+ * The planner's debt input is the prior the GUARDRAIL reads (#387): the ONE
+ * committed read `readCommittedPrior` (anchor branch first, tree copy
+ * second, fallback disclosed). Under the `branch` transport the tree copy is
+ * the last LOCAL capture (install day), so reading it directly planned
+ * orders for advisories the default branch had already fixed. Which prior
+ * was used is always disclosed (`prior: ...`, the shared phrasing).
+ */
 function readBaseline(
   cwd: string,
   name: string,
   disclosures: string[],
-): { baseline: BaselineFile | null; unreadable: boolean } {
-  const p = pathForBaseline(cwd, name);
+  anchorReader: AnchorReader | undefined,
+): { baseline: BaselineFile | null; unreadable: boolean; priorSource: string | null } {
   try {
-    return { baseline: fs.existsSync(p) ? readBaselineFile(p) : null, unreadable: false };
+    const read = readCommittedPrior(cwd, {
+      name,
+      ...(anchorReader ? { anchorReader } : {}),
+    });
+    if (!read.prior) return { baseline: null, unreadable: false, priorSource: null };
+    const priorSource = describePriorSource(read.prior);
+    disclosures.push(`${PRIOR_DISCLOSURE_PREFIX}${priorSource}`);
+    return { baseline: read.prior.baseline, unreadable: false, priorSource };
   } catch (err) {
     disclosures.push(
       `baseline '${name}' exists but could not be read (${err instanceof Error ? err.message : String(err)}); ` +
         'the plan proceeds WITHOUT the recorded backlog: floor attribution and debt are incomplete',
     );
-    return { baseline: null, unreadable: true };
+    return { baseline: null, unreadable: true, priorSource: null };
   }
 }
 
@@ -294,10 +317,11 @@ export async function gatherWorkOrderInputs(
 ): Promise<GatheredWorkOrderInputs> {
   const disclosures: string[] = [];
   const packs = opts.packs ?? detectActiveLanguages(cwd);
-  const { baseline, unreadable } = readBaseline(
+  const { baseline, unreadable, priorSource } = readBaseline(
     cwd,
     opts.baselineName ?? DEFAULT_BASELINE_NAME,
     disclosures,
+    opts.anchorReader,
   );
   const floor = gatherFloor(cwd, baseline, packs, opts);
   // Evidence health for the scheduled matrix (never for the plan itself:
@@ -347,6 +371,7 @@ export async function gatherWorkOrderInputs(
   return {
     floorSource: floor.source,
     depScanSource,
+    priorSource,
     disclosures,
     evidenceDegraded,
     input: {
@@ -392,6 +417,8 @@ export async function planRepoWorkOrders(
   plan: WorkOrderPlan;
   floorSource: FloorSource;
   depScanSource: DepScanSource;
+  /** Which prior the debt came from (see `GatheredWorkOrderInputs`). */
+  priorSource: string | null;
   disclosures: readonly string[];
   /** Structural evidence degradation (see `GatheredWorkOrderInputs`). */
   evidenceDegraded: string | null;
@@ -431,6 +458,7 @@ export async function planRepoWorkOrders(
     plan,
     floorSource: gathered.floorSource,
     depScanSource: gathered.depScanSource,
+    priorSource: gathered.priorSource,
     disclosures,
     evidenceDegraded: gathered.evidenceDegraded,
     pauses,
