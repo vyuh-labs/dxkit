@@ -3,209 +3,24 @@
  * markdown (the PR body / job step summary). Split from the runner
  * (`run.ts`) purely for module size; the runner is its only producer. The
  * type dependency is type-only, so there is no runtime cycle.
+ *
+ * ONE renderer, two outputs (#374, Rule 2.30): `renderRemediateLedger` is
+ * the FULL ledger (every order line; the committed run-ledger file and the
+ * job step summary), `renderRemediatePrBody` is the SUMMARY the PR body
+ * carries plus the link to that file. Both walk the same sections through
+ * `renderLedgerLines`; the mode only decides what the per-order sections
+ * collapse (`ledger-render-orders.ts`), so the two cannot drift in wording.
+ * The byte cap itself is downstream, at the one gh boundary
+ * (`openOrUpdateStandingPr`), so the summary is a size DISCIPLINE and the
+ * cap is the size GUARANTEE.
  */
 import { renderFloorVerification, renderGuardrailVerdict } from '../lanes/verification-render';
 import { describeInstall } from '../lanes/verify-tree';
-import { describeTreeInvariantOutcome, type TreeInvariantOutcome } from '../lanes/tree-invariants';
-import type { OrderDisposition } from './outcome';
+import { describeTreeInvariantOutcome } from '../lanes/tree-invariants';
 import { renderScoreHinge } from './score-hinge';
-import { recipeCounts, type RecipePhaseSummary } from './recipes/run-recipes';
-import type { GuardrailContainment, OrdersPhaseSummary, RemediateResult } from './outcome';
-
-/** The deterministic-recipe section: one line per order (applied / refused /
- *  failed with the reason), the tier split, and every disclosure: a $0
- *  refusal is only worth its price if the reader can see WHY. */
-function renderRecipeSection(recipes: RecipePhaseSummary): string[] {
-  const lines: string[] = ['### Deterministic recipes', ''];
-  if (recipes.disabled) {
-    lines.push('Recipes are disabled by policy (`remediate.recipes.enabled: false`).');
-    if (recipes.planError) {
-      // Disabled AND broken planning: both facts render — the disabled note
-      // must not hide why no order queue exists for the agent tier.
-      lines.push(
-        `Work-order planning failed (${recipes.planError}); no orders were queued for the ` +
-          'agent tier.',
-      );
-    }
-    lines.push(...renderPausedOrders(recipes));
-    lines.push('');
-    return lines;
-  }
-  if (recipes.planError) {
-    lines.push(
-      `Work-order planning failed (${recipes.planError}); no recipe ran, and the agent path ` +
-        'proceeded as before.',
-      '',
-    );
-    return lines;
-  }
-  const counts = recipeCounts(recipes);
-  lines.push(
-    `Selected orders: ${recipes.selectedRecipeTier} recipe-tier, ` +
-      `${recipes.selectedAgentTier} agent-tier` +
-      (recipes.records.length > 0
-        ? `: ${counts.applied} applied, ${counts.refused} refused, ${counts.failed} failed.`
-        : '.'),
-  );
-  for (const rec of recipes.records) {
-    const o = rec.outcome;
-    if (o.kind === 'applied') {
-      lines.push(
-        `- \`${rec.orderId}\` (${rec.recipe}): APPLIED, changed ${o.changedFiles.join(', ')}` +
-          (o.notes && o.notes.length > 0 ? ` (${o.notes.join('; ')})` : '') +
-          (o.revert ? `. To revert: ${o.revert}` : ''),
-      );
-    } else if (o.kind === 'refused') {
-      lines.push(`- \`${rec.orderId}\` (${rec.recipe}): refused, ${o.reason}`);
-    } else {
-      lines.push(`- \`${rec.orderId}\` (${rec.recipe}): FAILED at ${o.step}, ${o.output}`);
-    }
-    if (rec.droppedPaths && rec.droppedPaths.length > 0) {
-      lines.push(
-        `  - discarded out-of-envelope change(s), disclosed: ${rec.droppedPaths.join(', ')}`,
-      );
-    }
-    lines.push(...renderInvariants(rec.invariants));
-    lines.push(...renderInvariantDisclosures(rec.invariantDisclosures));
-    lines.push(...renderDisposition(rec.disposition));
-  }
-  if (recipes.groupVerification) {
-    const g = recipes.groupVerification;
-    const contained = recipes.records.filter(
-      (r) => r.disposition?.kind === 'dropped' && r.disposition.step === 'guardrail',
-    ).length;
-    lines.push(
-      g.kind === 'kept'
-        ? '- recipe group verified as one unit (install + floor); ' +
-            (contained > 0
-              ? `${contained} of its applied order(s) were later dropped by guardrail ` +
-                'containment (each says so above); the rest land'
-              : 'it lands')
-        : g.kind === 'dropped'
-          ? `- recipe group DROPPED before the agent tier at ${g.step}: ${g.reason} ` +
-            `(its own committed paths were reverted, other changes untouched; orders still ` +
-            `open: ${g.droppedOrderIds.join(', ')})`
-          : `- recipe group UNVERIFIABLE (verification infrastructure failed: ${g.reason}); ` +
-            'its commits stay on the branch, nothing lands',
-    );
-  }
-  for (const d of recipes.disclosures) lines.push(`- plan disclosure: ${d}`);
-  lines.push(...renderPausedOrders(recipes));
-  lines.push('');
-  return lines;
-}
-
-/** Circuit-breaker pauses (3F): a paused order is planned and selected but
- *  dispatched by NO tier — the ledger names each one, the reason, and what
- *  lifts the pause. Never a silent skip. */
-function renderPausedOrders(recipes: RecipePhaseSummary): string[] {
-  const paused = recipes.paused ?? [];
-  if (paused.length === 0) return [];
-  const lines: string[] = ['', '**Paused by the circuit breaker (not dispatched):**'];
-  for (const p of paused) {
-    lines.push(`- \`${p.orderId}\` (${p.class}, ${p.findings} finding(s)): ${p.reason}`);
-  }
-  lines.push(`- unpause: ${paused[0].unpause}`);
-  return lines;
-}
-
-/** The frame-owned invariants an order tripped, one line each (4.4.6). */
-function renderInvariants(outcomes: readonly TreeInvariantOutcome[] | undefined): string[] {
-  if (!outcomes || outcomes.length === 0) return [];
-  return outcomes.map((o) => `  - frame invariant: ${describeTreeInvariantOutcome(o)}`);
-}
-
-/** Collector/step disclosures for one order's invariant step. */
-function renderInvariantDisclosures(disclosures: readonly string[] | undefined): string[] {
-  if (!disclosures || disclosures.length === 0) return [];
-  return disclosures.map((d) => `  - frame invariant disclosure: ${d}`);
-}
-
-/** Where the order's commits ended up (4.4.6): kept, dropped, or
- *  unverifiable (infrastructure; commits preserved, nothing lands). */
-function renderDisposition(d: OrderDisposition | undefined): string[] {
-  if (!d) return [];
-  return [
-    d.kind === 'kept'
-      ? '  - landing: KEPT (verified on top of the previously verified head; lands)'
-      : d.kind === 'dropped'
-        ? `  - landing: DROPPED at ${d.step}, commits reverted, the order stays open: ${d.reason}`
-        : `  - landing: UNVERIFIABLE (verification infrastructure failed: ${d.reason}); ` +
-          'the commits stay on the branch, nothing lands',
-  ];
-}
-
-/** The order-driven agent section: one entry per order — derived budget
- *  (with its derivation) vs spend, envelope enforcement outcomes, and the
- *  done disclosure. The reviewer sees exactly what each dispatch was scoped
- *  to and what the runner dropped. */
-function renderOrdersSection(orders: OrdersPhaseSummary): string[] {
-  const lines: string[] = ['### Work-order dispatches (one order per agent run)', ''];
-  lines.push(
-    `Queued ${orders.queued} agent-tier order(s); per-run cap ${orders.cap} ` +
-      `(\`remediate.maxOrdersPerRun\`).`,
-  );
-  if (orders.priorBlockingApplied) {
-    lines.push(
-      'A prior BLOCKED attempt was not resumed; its blocking findings rode every order ' +
-        'prompt as a negative constraint.',
-    );
-  }
-  for (const rec of orders.records) {
-    lines.push('');
-    lines.push(`- \`${rec.orderId}\` (${rec.class}, ${rec.findings} finding(s)): ${rec.outcome}`);
-    if (rec.detail) lines.push(`  - ${rec.detail}`);
-    if (rec.outcome !== 'not-dispatched') {
-      lines.push(`  - budget (derived, became the driver budget): ${rec.budget.derivation}`);
-      if (rec.clamped) lines.push(`  - ${rec.clamped}`);
-      const spent = rec.spent;
-      lines.push(
-        `  - spent: ${spent?.costUsd !== undefined ? `$${spent.costUsd.toFixed(2)}` : 'cost not reported'} over ` +
-          `${spent?.turns !== undefined ? `${spent.turns} turns` : 'an unreported turn count'}`,
-      );
-      lines.push(
-        rec.droppedPaths && rec.droppedPaths.length > 0
-          ? `  - envelope enforcement DROPPED out-of-envelope or manifest-excluded ` +
-              `change(s), disclosed: ` +
-              rec.droppedPaths.join(', ')
-          : '  - envelope enforcement: every change stayed inside the order envelope',
-      );
-      lines.push(...renderInvariants(rec.invariants));
-      lines.push(...renderInvariantDisclosures(rec.invariantDisclosures));
-      lines.push(...renderDisposition(rec.disposition));
-      if (
-        rec.disposition?.kind === 'kept' &&
-        (rec.outcome === 'failed' || rec.outcome === 'partial')
-      ) {
-        // Driver-failure hygiene (4.4.7): a kept order whose driver failed
-        // or overran its budget lands on the VERIFICATION's evidence, never
-        // on any agent claim, and it is first in line for containment
-        // attribution if the final guardrail goes red. Disclosed per order.
-        lines.push(
-          `  - driver-failure disclosure: the driver reported this order's run ` +
-            (rec.outcome === 'failed' ? 'failed' : 'cut short (budget overrun)') +
-            `, but the committed work passed per-order verification and lands on that ` +
-            `evidence (the agent's claim counts for nothing); if the final guardrail goes ` +
-            `red, this order is first in line for containment attribution.`,
-        );
-      }
-      lines.push(
-        rec.doneAfterVerify
-          ? `  - done (${rec.done.verifier} verifier, ${rec.done.absentIds} target id(s)): ` +
-              `${rec.doneAfterVerify.closed} closed, ${rec.doneAfterVerify.open} still open` +
-              (rec.doneAfterVerify.undecided > 0
-                ? `, ${rec.doneAfterVerify.undecided} undecided (the producing check was ` +
-                  `not observed by the verification — not claimed closed)`
-                : '') +
-              ` per the verified floor`
-          : `  - done (${rec.done.verifier} verifier, ${rec.done.absentIds} target id(s)): ` +
-              `closure is arbitrated by the verification below and the next plan`,
-      );
-    }
-  }
-  lines.push('');
-  return lines;
-}
+import { renderOrdersSection, renderRecipeSection, type LedgerMode } from './ledger-render-orders';
+import type { RecipePhaseSummary } from './recipes/run-recipes';
+import type { GuardrailContainment, RemediateResult } from './outcome';
 
 /** Guardrail-red containment (4.4.7): what was attributed and dropped, or
  *  why containment was refused: the reader sees exactly why an order the
@@ -260,7 +75,42 @@ function renderRecipeContainmentCounts(recipes: RecipePhaseSummary | undefined):
     );
 }
 
+/** The full ledger: every order, one line each. */
 export function renderRemediateLedger(r: Omit<RemediateResult, 'ledger'>): string {
+  return renderLedgerLines(r, 'full').lines.join('\n');
+}
+
+/**
+ * The PR body (#374): the summary, plus where the full ledger lives. When
+ * summary mode collapsed nothing, the body IS the run's ledger verbatim
+ * (`r.ledger`, the contractual record) apart from the added link line, so
+ * a small run's PR reads exactly as before. `ledgerFile` is the committed
+ * run-ledger path on the branch, or null when it could not be written
+ * (the body then points at the job step summary).
+ */
+export function renderRemediatePrBody(
+  r: RemediateResult,
+  opts: { readonly ledgerFile: string | null },
+): string {
+  const summary = renderLedgerLines(r, 'summary');
+  const body = summary.collapsed ? summary.lines.join('\n') : r.ledger;
+  const where = opts.ledgerFile
+    ? `committed on this branch at \`${opts.ledgerFile}\``
+    : 'in the job step summary of the run that opened this PR';
+  return (
+    `${body}\n\n_Full ledger (every order, one line each): ${where}. This body is the summary; ` +
+    `it is capped to GitHub's PR body size._`
+  );
+}
+
+/** The ONE walk over the ledger's sections; the mode is threaded to the
+ *  per-order sections only. `collapsed` reports whether summary mode
+ *  shortened anything (see `renderRemediatePrBody`). */
+function renderLedgerLines(
+  r: Omit<RemediateResult, 'ledger'>,
+  mode: LedgerMode,
+): { readonly lines: string[]; readonly collapsed: boolean } {
+  let collapsed = false;
   const lines: string[] = ['## dxkit agentic remediation', ''];
   lines.push(`Task: **${r.task ?? '(none)'}** — outcome: **${r.outcome}**`);
   if (r.partial)
@@ -383,7 +233,9 @@ export function renderRemediateLedger(r: Omit<RemediateResult, 'ledger'>): strin
       r.recipes.planError ||
       (r.recipes.paused?.length ?? 0) > 0)
   ) {
-    lines.push(...renderRecipeSection(r.recipes));
+    const recipes = renderRecipeSection(r.recipes, mode);
+    lines.push(...recipes.lines);
+    collapsed = collapsed || recipes.collapsed;
   }
 
   if (r.orders) {
@@ -444,5 +296,5 @@ export function renderRemediateLedger(r: Omit<RemediateResult, 'ledger'>): strin
       'trusted — the entry-attributed floor and the guardrail ran before anything lands, ' +
       'and everything not verified is named above._',
   );
-  return lines.join('\n');
+  return { lines, collapsed };
 }

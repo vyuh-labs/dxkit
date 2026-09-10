@@ -76,6 +76,9 @@ export interface LandingRecord {
   /** Repo-relative delivery-ledger file the task step already wrote into
    *  the working tree (committed by the lander at land time). */
   readonly ledgerPath?: string;
+  /** Repo-relative full run-ledger file the task step wrote into the
+   *  working tree (#374), committed by the lander with the delivery ledger. */
+  readonly runLedgerPath?: string;
   /**
    * This run's order-outcome rows, carried IN the record: the compose step
    * (which reads the standing branch) and the push both move to land time,
@@ -208,6 +211,9 @@ export function readLandingRecord(cwd: string, taskId: string): LandingRecordRea
     if (typeof r.prBody !== 'string') return bad('no PR body recorded');
     if (r.ledgerPath !== undefined && !safeRepoRelativePath(r.ledgerPath)) {
       return bad(`ledger path '${String(r.ledgerPath)}' is not a safe repo-relative path`);
+    }
+    if (r.runLedgerPath !== undefined && !safeRepoRelativePath(r.runLedgerPath)) {
+      return bad(`run ledger path '${String(r.runLedgerPath)}' is not a safe repo-relative path`);
     }
     if (r.baseHead !== undefined && !HEX_SHA_RE.test(String(r.baseHead))) {
       return bad('baseHead is not a hex sha');

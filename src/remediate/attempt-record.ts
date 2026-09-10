@@ -122,6 +122,11 @@ export function landingRecordFields(d: Partial<LandingDisclosure>): Record<strin
     standingPreserved: d.standingPreserved ?? null,
     draftFlipped: d.draftFlipped ?? null,
     supersededAttemptPr: d.supersededAttemptPr ?? null,
+    // The branch was pushed but no PR exists (#374): the note, or null.
+    // Paired with `landed: false` by every writer, so the evidence step
+    // and `metrics` never read a PR-less branch as a delivery.
+    prMissing: d.prMissing ?? null,
+    bodyTruncated: d.bodyTruncated ?? null,
   };
 }
 

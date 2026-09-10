@@ -95,6 +95,12 @@ export type RemediateLandOutcome =
   /** Landed: the branch reached plus every disclosure the landing left
    *  (a preserved standing branch, a draft flip, a superseded attempt PR). */
   | ({ readonly outcome: 'landed' } & LandingDisclosure)
+  /** The branch was pushed but NO PR could be opened (#374): the work is
+   *  on the branch where no one will see it. Not "landed": the helper's
+   *  note (usual cause + manual remedy) is the error, exit non-zero, and
+   *  the attempt record reads `landed: false` with `prMissing` set. The
+   *  record is cleared (the push happened; the remedy is manual). */
+  | ({ readonly outcome: 'branch-pushed-no-pr'; readonly note: string } & LandingDisclosure)
   | { readonly outcome: 'rows-published' }
   /** Bookkeeping publish failed: disclosed warning, record kept for a
    *  manual retry; never fails the lane (parity with the inline path). */
@@ -102,8 +108,9 @@ export type RemediateLandOutcome =
   /** The push/PR failed: disclosed cause + remedy, record kept (retry). */
   | { readonly outcome: 'landing-failed'; readonly error: string };
 
-/** Exit-code truth for the CLI wrapper: refusals and push failures are
- *  non-zero; no-ops and bookkeeping warnings are zero. */
+/** Exit-code truth for the CLI wrapper: refusals, push failures and a
+ *  pushed branch with no PR are non-zero; no-ops and bookkeeping warnings
+ *  are zero. */
 export function landExitClean(result: RemediateLandOutcome): boolean {
   return (
     result.outcome === 'no-record' ||
@@ -199,12 +206,25 @@ export function runRemediateLand(
       ...(record.draft !== undefined ? { draft: record.draft } : {}),
       ...(record.ledgerPath ? { ledgerPath: record.ledgerPath } : {}),
       ...(orderLedgerRel ? { orderLedgerPath: orderLedgerRel } : {}),
+      ...(record.runLedgerPath ? { runLedgerPath: record.runLedgerPath } : {}),
     });
     // The same projection the inline path spreads (#372): the attempt
     // record (JSON) and this command's outcome carry every disclosure.
     const disclosure = landingDisclosure(landResult);
-    patchAttemptRecord(cwd, taskId, { landed: true, ...landingRecordFields(disclosure) });
     clearLandingRecord(cwd, taskId);
+    if (disclosure.prMissing) {
+      // Pushed, no PR (#374): the same shape the inline executor writes
+      // (`landed: false`, the note as `landingBlocked`), so the workflow's
+      // evidence step still uploads the attempt diff and nothing reads
+      // this run as a delivery.
+      patchAttemptRecord(cwd, taskId, {
+        landed: false,
+        landingBlocked: disclosure.prMissing,
+        ...landingRecordFields(disclosure),
+      });
+      return { outcome: 'branch-pushed-no-pr', note: disclosure.prMissing, ...disclosure };
+    }
+    patchAttemptRecord(cwd, taskId, { landed: true, ...landingRecordFields(disclosure) });
     return { outcome: 'landed', ...disclosure };
   } catch (err) {
     const failure = describeLandingFailure(err);
@@ -231,7 +251,7 @@ export function runRemediateLand(
     // so the retry refuses as stale instead of blessing a foreign commit.
     const observed = (seams.head ?? currentHead)(cwd);
     if (observed !== null && observed !== record.head && record.head !== null) {
-      const allowedPaths = [record.ledgerPath, orderLedgerRel].filter(
+      const allowedPaths = [record.ledgerPath, orderLedgerRel, record.runLedgerPath].filter(
         (p): p is string => typeof p === 'string' && p.length > 0,
       );
       if (isOwnBookkeepingCommit(cwd, observed, record.head, allowedPaths)) {
@@ -259,10 +279,12 @@ export function runRemediateLand(
   }
 }
 
-/** The CLI wrapper: report + truthful exit code. */
-export function runRemediateLandCli(cwd: string, taskId: string): void {
+/** The CLI wrapper: report + truthful exit code. `seams` are test-only
+ *  (production passes nothing), the same injection `runRemediateLand`
+ *  takes, so the report + exit-code layer is pinned end to end. */
+export function runRemediateLandCli(cwd: string, taskId: string, seams: LandCliSeams = {}): void {
   logger.header(`dxkit remediate land: ${taskId}`);
-  const result = runRemediateLand(cwd, taskId);
+  const result = runRemediateLand(cwd, taskId, seams);
   switch (result.outcome) {
     case 'no-record':
       logger.info(result.note);
@@ -271,6 +293,12 @@ export function runRemediateLandCli(cwd: string, taskId: string): void {
       for (const note of landingNotes(result)) logger.warn(note);
       if (result.prUrl) logger.success(`PR on ${result.landedBranch}: ${result.prUrl}`);
       else logger.success(`landed: ${result.landedBranch} pushed, PR updated`);
+      break;
+    case 'branch-pushed-no-pr':
+      // Not a success line (#374): the branch exists, the PR does not, and
+      // the note names the usual cause and the manual remedy.
+      for (const note of landingNotes(result)) logger.warn(note);
+      logger.fail(`not landed: ${result.note}`);
       break;
     case 'rows-published':
       logger.info('order-outcome rows published to the standing branch');
