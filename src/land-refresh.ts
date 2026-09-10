@@ -22,6 +22,7 @@
 import { execFileSync } from 'child_process';
 import { internalGitPushArgs } from './git-internal-push';
 import { noPromptGitEnv } from './git-no-prompt';
+import { capPrBody, describePrBodyTruncation } from './pr/body-cap';
 
 export type LandMode = 'pr' | 'push';
 
@@ -109,6 +110,9 @@ export interface LandRefreshResult {
    *  update returned it to draft (a salvage replaced that head): the
    *  disclosure, never silent. */
   readonly draftFlipped?: string;
+  /** The body handed to gh was cut to GitHub's size cap (#374): what was
+   *  cut and where the full record is. Disclosed, never silent. */
+  readonly bodyTruncated?: string;
 }
 
 /** The ONE machine-commit identity (Rule 2): the refresh lander, the
@@ -202,8 +206,23 @@ export function openOrUpdateStandingPr(
      *  lists a branch once): null = the caller knows there is none;
      *  absent = not read, list here. */
     readonly existing?: { readonly url: string; readonly isDraft?: boolean } | null;
+    /** Where the UNCUT record lives, named by the size guard's marker when
+     *  the body must be cut (#374): the remediate lane commits its full
+     *  ledger on the branch and names that file; absent = the job step
+     *  summary, which every lane writes. */
+    readonly fullRecord?: string;
   },
 ): LandRefreshResult {
+  // The ONE size guard (#374), at the one place a body reaches gh, so
+  // `create` and `edit` share it by construction and no consumer can hand
+  // GitHub a body its cap rejects. Byte-identical when the body fits.
+  const capped = capPrBody(opts.prBody, {
+    fullRecord: opts.fullRecord ?? 'the job step summary of the run that opened this PR',
+  });
+  const prBody = capped.body;
+  const bodyTruncated = capped.truncated
+    ? { bodyTruncated: describePrBodyTruncation(capped.truncated) }
+    : {};
   let parsed: Array<{ url: string; isDraft?: boolean }> = [];
   if (opts.existing !== undefined) {
     parsed = opts.existing === null ? [] : [opts.existing];
@@ -220,7 +239,7 @@ export function openOrUpdateStandingPr(
     }
   }
   if (parsed.length > 0) {
-    exec('gh', ['pr', 'edit', opts.branchName, '--title', opts.prTitle, '--body', opts.prBody], {
+    exec('gh', ['pr', 'edit', opts.branchName, '--title', opts.prTitle, '--body', prBody], {
       allowFail: true,
     });
     // Only creation takes `--draft`; an existing PR is converted explicitly.
@@ -241,6 +260,7 @@ export function openOrUpdateStandingPr(
       mode: 'pr',
       prUrl: parsed[0].url,
       ...(draftFlipped ? { draftFlipped } : {}),
+      ...bodyTruncated,
     };
   }
   const created = exec(
@@ -255,18 +275,19 @@ export function openOrUpdateStandingPr(
       '--title',
       opts.prTitle,
       '--body',
-      opts.prBody,
+      prBody,
       ...(opts.draft ? ['--draft'] : []),
     ],
     { allowFail: true },
   ).trim();
   if (created) {
     const url = created.split('\n').pop() ?? '';
-    return { outcome: 'pr-opened', mode: 'pr', ...(url ? { prUrl: url } : {}) };
+    return { outcome: 'pr-opened', mode: 'pr', ...(url ? { prUrl: url } : {}), ...bodyTruncated };
   }
   return {
     outcome: 'branch-pushed-no-pr',
     mode: 'pr',
+    ...bodyTruncated,
     note:
       `Pushed '${opts.branchName}' but could not open the PR (no gh CLI / not GitHub / ` +
       `no permission). Under GitHub Actions the usual cause is the repo/org setting ` +

@@ -26,7 +26,8 @@ import { remediateTaskById } from './tasks';
 import { runRemediateTask, type RemediateResult } from './run';
 import { landingDisclosure, landingEligibility, landingNotes, landRemediateHead } from './land';
 import { landingPreflightRefusal, type LandingPreflightSeams } from './landing-preflight';
-import { appendLaneEvent, LANE_LEDGER_SCHEMA_VERSION } from '../lanes/ledger';
+import { appendLaneEvent, LANE_LEDGER_SCHEMA_VERSION, writeRunLedger } from '../lanes/ledger';
+import { renderRemediatePrBody } from './ledger-render';
 import { orderOutcomeRows, publishOrderRows, writeLocalOrderLedger } from './order-outcomes';
 import { remediateStamp } from './work-orders/breaker';
 import {
@@ -65,6 +66,11 @@ export interface TaskRun {
   readonly standingPreserved?: string;
   readonly draftFlipped?: string;
   readonly supersededAttemptPr?: string;
+  /** The branch was pushed but no PR could be opened (#374): the note.
+   *  Always paired with `landed: false` and `landingBlocked`. */
+  readonly prMissing?: string;
+  /** The PR body was cut to GitHub's size cap (#374): the disclosure. */
+  readonly bodyTruncated?: string;
   /** Truthful per-task success: verified/no-op, or a landed salvage draft. */
   readonly clean: boolean;
 }
@@ -313,15 +319,23 @@ export async function executeTask(
         : partialLanding
           ? ' (partial: some orders dropped, see the ledger)'
           : '');
+  // The FULL ledger is committed on the branch beside the delivery ledger
+  // (#374): every order line lives there, the PR body carries the summary
+  // and names the file. Best-effort: with no file, the body names the job
+  // step summary (which always carries the full ledger).
+  const runLedgerRel = writeRunLedger(cwd, 'remediate', taskId, result.ledger);
   // The ONE lane PR-body assembler (#288): a generated, labeled
-  // diff-scoped narrative on top; the ledger VERBATIM below (the
-  // contractual record, never paraphrased). Fail-open to ledger-only.
+  // diff-scoped narrative on top; the ledger SUMMARY below (the
+  // contractual record, never paraphrased: the summary collapses only what
+  // the committed ledger lists in full, and is the ledger verbatim when
+  // nothing collapsed). Fail-open to ledger-only. The byte cap is applied
+  // once more downstream, at the gh boundary (`openOrUpdateStandingPr`).
   // The narrative range is the ATTEMPT's own commits (baseHead..HEAD) —
   // the lane advances the checked-out default branch, so a
   // defaultBranch..HEAD range would be empty by construction.
   const prBody = assembleLanePrBody({
     cwd,
-    ledger: result.ledger,
+    ledger: renderRemediatePrBody(result, { ledgerFile: runLedgerRel }),
     base: result.baseHead ?? defaultBranch,
   });
   if (deferred) {
@@ -336,6 +350,7 @@ export async function executeTask(
       prBody,
       draft,
       ledgerPath,
+      runLedgerPath: runLedgerRel,
       orderRows,
     });
     if (!outcome.deferred) {
@@ -379,6 +394,7 @@ export async function executeTask(
       draft,
       ledgerPath,
       ...(orderLedgerRel ? { orderLedgerPath: orderLedgerRel } : {}),
+      ...(runLedgerRel ? { runLedgerPath: runLedgerRel } : {}),
     });
   } catch (err) {
     // The landing failed; the outcome rows still matter to next week's
@@ -399,6 +415,21 @@ export async function executeTask(
   // attempt PR's own body (the lander). ONE projection, spread as is.
   const disclosure = landingDisclosure(landResult);
   for (const note of landingNotes(disclosure)) logger.warn(note);
+  if (disclosure.prMissing) {
+    // Pushed, no PR (#374): the work is on the branch where no one will
+    // see it, so this is a DISCLOSED landing failure, never a success
+    // (the class that shipped: "standing PR updated", exit 0, no PR). The
+    // delivery-ledger event already rides the branch; it reaches the
+    // default branch, and the Delivered count, only if a human opens the
+    // PR by hand and merges it, which is then a real delivery.
+    return finalizeTaskRun(cwd, taskId, {
+      result,
+      ...disclosure,
+      landed: false,
+      clean: false,
+      landingBlocked: disclosure.prMissing,
+    });
+  }
   return finalizeTaskRun(cwd, taskId, {
     result,
     ...disclosure,

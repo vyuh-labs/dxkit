@@ -74,6 +74,11 @@ export interface LandRemediateOptions {
    *  The landing marker is appended to it here (or to a fresh file when
    *  the run composed none). */
   readonly orderLedgerPath?: string;
+  /** Repo-relative FULL run ledger (`runLedgerPath`, #374): every order
+   *  line, committed in the same bookkeeping commit; the PR body carries
+   *  the summary and names this file, and the size guard's marker points
+   *  at it when even the summary must be cut. */
+  readonly runLedgerPath?: string;
   readonly exec?: Exec;
 }
 
@@ -212,6 +217,13 @@ export interface LandingDisclosure {
   readonly standingPreserved?: string;
   readonly draftFlipped?: string;
   readonly supersededAttemptPr?: string;
+  /** The branch was pushed but NO PR could be opened (#374): the helper's
+   *  note, naming the usual cause and the manual remedy. A landing that
+   *  carries this is not "landed": no one will see the work, so every
+   *  consumer reports it as a failure (non-zero exit, `landed: false`). */
+  readonly prMissing?: string;
+  /** The body handed to gh was cut to GitHub's size cap (#374). */
+  readonly bodyTruncated?: string;
 }
 
 export function landingDisclosure(r: LandRemediateResult): LandingDisclosure {
@@ -221,14 +233,21 @@ export function landingDisclosure(r: LandRemediateResult): LandingDisclosure {
     ...(r.preserved ? { standingPreserved: describePreservedStandingPr(r.preserved) } : {}),
     ...(r.draftFlipped ? { draftFlipped: r.draftFlipped } : {}),
     ...(r.supersededAttemptPr ? { supersededAttemptPr: r.supersededAttemptPr } : {}),
+    ...(r.outcome === 'branch-pushed-no-pr'
+      ? { prMissing: r.note ?? `pushed '${r.branch}' but could not open the PR` }
+      : {}),
+    ...(r.bodyTruncated ? { bodyTruncated: r.bodyTruncated } : {}),
   };
 }
 
-/** The lines a consumer prints for a disclosure (none on a plain landing). */
+/** The lines a consumer prints for a disclosure (none on a plain landing).
+ *  `prMissing` is deliberately NOT here: it is a failure, printed by each
+ *  consumer as one, never as a note under a success line. */
 export function landingNotes(d: LandingDisclosure): string[] {
   return [
     ...(d.standingPreserved ? [d.standingPreserved] : []),
     ...(d.draftFlipped ? [d.draftFlipped] : []),
+    ...(d.bodyTruncated ? [d.bodyTruncated] : []),
     ...(d.supersededAttemptPr
       ? [
           `attempt PR ${d.supersededAttemptPr} was closed as superseded by this landing on the ` +
@@ -315,6 +334,7 @@ export function landRemediateHead(opts: LandRemediateOptions): LandRemediateResu
     ...new Set([
       ...(opts.ledgerPath ? [opts.ledgerPath] : []),
       ...(opts.orderLedgerPath ? [opts.orderLedgerPath] : []),
+      ...(opts.runLedgerPath ? [opts.runLedgerPath] : []),
       ...(marker ? [marker] : []),
     ]),
   ];
@@ -381,6 +401,11 @@ export function landRemediateHead(opts: LandRemediateOptions): LandRemediateResu
     // the one a human may merge); otherwise as the caller decided.
     ...(preserved ? { draft: true } : opts.draft !== undefined ? { draft: opts.draft } : {}),
     ...(targetState?.pr !== undefined ? { existing: targetState.pr } : {}),
+    // Where the size guard's marker sends a reader when the body is cut
+    // (#374): the full ledger this landing commits on the target branch.
+    ...(opts.runLedgerPath
+      ? { fullRecord: `the committed ledger \`${opts.runLedgerPath}\` on '${target.branch}'` }
+      : {}),
   });
   const supersededAttemptPr =
     target.kind === 'standing'
