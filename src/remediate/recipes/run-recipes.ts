@@ -27,7 +27,7 @@
 import { makeCommandExec, type CommandExec } from '../../analyzers/tools/bounded-exec';
 import type { AnalysisTrustContext } from '../../analysis-trust';
 import type { CorrectnessFloorResult } from '../../analyzers/correctness/run';
-import type { FindingSeverity } from '../../baseline/types';
+import type { BrownfieldPolicy } from '../../baseline/policy';
 import type { DepVulnFinding } from '../../languages/capabilities/types';
 import type { RecipeDeclaration } from '../work-orders/recipes-registry';
 import type { OsvPackageQuery } from '../../analyzers/tools/osv';
@@ -42,7 +42,7 @@ import { realRecipeGit, type RecipeGit } from './git';
 // re-exported so consumers keep one import surface.
 export {
   cachedOsvQuery,
-  effectiveBlockSeverities,
+  effectiveGuardrailPolicy,
   groupRecipeOrders,
   runRecipeOrders,
   type RunRecipeOrdersDeps,
@@ -78,7 +78,7 @@ export interface RecipePhaseOptions {
   readonly gather?: GatherWorkOrderOptions;
   readonly queryOsv?: OsvPackageQuery;
   readonly auditDepVulns?: (cwd: string) => Promise<readonly DepVulnFinding[] | null>;
-  readonly blockSeverities?: ReadonlySet<FindingSeverity>;
+  readonly policy?: BrownfieldPolicy;
   readonly invariantStep?: TreeInvariantStep;
 }
 
@@ -155,7 +155,7 @@ export async function runRecipePhaseForTask(opts: RecipePhaseOptions): Promise<R
     ...(opts.registry ? { registry: opts.registry } : {}),
     ...(opts.queryOsv ? { queryOsv: opts.queryOsv } : {}),
     ...(opts.auditDepVulns ? { auditDepVulns: opts.auditDepVulns } : {}),
-    ...(opts.blockSeverities ? { blockSeverities: opts.blockSeverities } : {}),
+    ...(opts.policy ? { policy: opts.policy } : {}),
     ...(opts.invariantStep ? { invariantStep: opts.invariantStep } : {}),
   });
   // The agent queue, in plan (value) order: agent-tier orders plus every

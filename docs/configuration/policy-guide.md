@@ -725,9 +725,12 @@ in the derived budget.
 remediate run executes recipe-tier work orders deterministically BEFORE any
 agent spawns: a stale lockfile is re-synced with the repo's own package
 manager and confirmed by the frozen dry-run; a fixable transitive advisory
-is pinned through an npm override (the candidate version is OSV pre-checked,
-and a pin that would leave a block-tier advisory in place is refused with
-the advisory named); a net-new unresolved bare import is declared and
+is pinned through an npm override (the candidate version is OSV pre-checked
+against the guardrail's own block predicate for this repo's policy; an
+advisory on it with a known fixed version raises the pin to that version,
+bounded and disclosed in the ledger, and a pin that would still leave a
+blocking advisory in place is refused with the advisory and version
+named); a net-new unresolved bare import is declared and
 installed after the same OSV pre-check; a file's located lint findings run
 through the pack linter's own fix mode. Each recipe commits inside its
 order's envelope (out-of-envelope changes are discarded and disclosed), and
