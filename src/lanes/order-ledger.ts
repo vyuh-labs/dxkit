@@ -217,7 +217,16 @@ export interface OrderOutcomeRow {
  *  Distinct from the delivery ledger's file so `readLaneEvents` (which
  *  accepts only landed delivery events) and this reader never mix rows. */
 export function orderLedgerPath(lane: string, task: string): string {
-  return `${LANES_DIR.replace(/\\/g, '/')}/${lane}-${task}.orders.jsonl`;
+  return `${LANES_DIR.replace(/\\/g, '/')}/${lane}-${task}${ORDER_LEDGER_SUFFIX}`;
+}
+
+/** The file-kind discriminator (the ONE definition, Rule 2.30): two ledgers
+ *  share one directory, and a landing marker row carries every field the
+ *  delivery reader accepts plus `outcome: 'landed'`, so `readLaneEvents`
+ *  must skip order files by name or count one extra delivery per landing. */
+const ORDER_LEDGER_SUFFIX = '.orders.jsonl';
+export function isOrderLedgerFile(fileName: string): boolean {
+  return fileName.endsWith(ORDER_LEDGER_SUFFIX);
 }
 
 function isOrderRow(raw: unknown): raw is OrderOutcomeRow {
@@ -273,7 +282,7 @@ export function readLocalOrderRows(cwd: string): OrderOutcomeRow[] {
   const dir = path.join(cwd, LANES_DIR);
   let files: string[];
   try {
-    files = fs.readdirSync(dir).filter((f) => f.endsWith('.orders.jsonl'));
+    files = fs.readdirSync(dir).filter(isOrderLedgerFile);
   } catch {
     return [];
   }
