@@ -36,12 +36,14 @@ import type { ClassifiedPair, EnvelopeDrift } from './result';
 import {
   applyCustomCheckIntent,
   buildMaliciousIndex,
+  buildPriorResolvedVersionIndex,
   buildReachableIndex,
   buildSeverityIndex,
   describeEntryLocation,
   indexById,
   locatorFile,
   locatorLine,
+  priorResolutionUnchanged,
 } from './context';
 import { KIND_DEFAULT_SEVERITY, kindNotObservedReason } from './observation';
 
@@ -156,6 +158,17 @@ export function classifyPairs(input: ClassifyPairsInput): ClassifyPairsOutput {
     const needle = pkg.toLowerCase();
     return !manifestDiffLinesMemo.some((line) => line.toLowerCase().includes(needle));
   };
+
+  // The PER-PACKAGE tier (#382), the third and last answer to the same
+  // question: when the diff touched a manifest AND a changed manifest line
+  // mentions the package (fifteen override pins re-serialize a lockfile, so
+  // the per-finding tier above reads every package those lines name as
+  // "possibly changed"), the package's RESOLVED VERSION on the two sides is
+  // the decisive evidence. Identical ⇒ the change cannot have introduced the
+  // advisory; different ⇒ it may have; no prior record ⇒ cannot prove
+  // unchanged (the finding keeps `added`, disclosed). Built once from the
+  // prior entries, the ONE prior-side resolution source (Rule 2.30).
+  const priorResolvedVersions = buildPriorResolvedVersionIndex(baseline.findings);
 
   // Derived-membership attribution (the #25 class): for a kind whose per-file
   // finding set is computed from repo-global signals (DERIVED_MEMBERSHIP_KINDS
@@ -305,19 +318,29 @@ export function classifyPairs(input: ClassifyPairsInput): ClassifyPairsOutput {
       ...(customCheckBlocking !== undefined ? { customCheckBlocking } : {}),
       ...(notObserved !== undefined ? { notObserved } : {}),
       // Only asked for added dep-vuln pairs, so a run with none never pays the
-      // git diff (and other kinds never see the flags). Two tiers of the ONE
-      // attribution question (#283): the run-level fast path (no manifest
-      // touched at all), then the per-finding fallback (manifests touched,
-      // but no changed manifest line mentions THIS package).
+      // git diff (and other kinds never see the flags). Three tiers of the ONE
+      // attribution question (#283, #382): the run-level fast path (no
+      // manifest touched at all), then the per-finding fallback (manifests
+      // touched, but no changed manifest line mentions THIS package), then
+      // the per-package fallback (a changed line mentions it, but its
+      // resolved version is the prior side's). A sanitized entry carries no
+      // package name — per-finding attribution then has no subject and the
+      // pair keeps `added` (bias toward the conservative claim, never a blind
+      // demotion).
       ...(anchorEntry.kind === 'dep-vuln' && pair.status === 'added'
         ? manifestUntouched()
           ? { manifestUntouched: true }
-          : // A sanitized entry carries no package name — per-finding
-            // attribution then has no subject and the pair keeps `added`
-            // (bias toward the conservative claim, never a blind demotion).
-            'package' in anchorEntry && packageUntouchedByDiff(anchorEntry.package)
-            ? { packageUntouchedByDiff: true }
-            : {}
+          : !('package' in anchorEntry)
+            ? {}
+            : packageUntouchedByDiff(anchorEntry.package)
+              ? { packageUntouchedByDiff: true }
+              : resolutionContext(
+                  priorResolutionUnchanged(
+                    priorResolvedVersions,
+                    anchorEntry.package,
+                    anchorEntry.installedVersion,
+                  ),
+                )
         : {}),
     };
 
@@ -358,4 +381,12 @@ export function classifyPairs(input: ClassifyPairsInput): ClassifyPairsOutput {
   }
 
   return { pairs: classifiedPairs, blocks, warns, priorById, notObservedReasonFor };
+}
+
+/** The per-package answer as classifier context: a tri-state maps to a set
+ *  boolean or an ABSENT key (unknown never reaches the classifier as a value). */
+function resolutionContext(
+  unchanged: boolean | undefined,
+): Pick<ClassifyContext, 'packageResolutionUnchanged'> {
+  return unchanged === undefined ? {} : { packageResolutionUnchanged: unchanged };
 }

@@ -167,6 +167,47 @@ describe('classify — newly_published_advisory (D4 phase 1)', () => {
     expect(out.status).toBe('added');
   });
 
+  it('#382: the per-package tier: an unchanged resolution relabels even when the diff names the package', () => {
+    const out = classify(
+      addedPair,
+      DEFAULT_BROWNFIELD_POLICY,
+      ctx({ severity: 'medium', packageResolutionUnchanged: true }),
+    );
+    expect(out.status).toBe('newly_published_advisory');
+    const reason = out.reasons.find((r) => r.code === 'newly-published-advisory');
+    expect(reason!.detail).toContain('resolves to the same version as on the prior side');
+    // Same tier verdict as the other two tiers: medium warns, critical blocks.
+    expect(out.blocks).toBe(false);
+    expect(out.warns).toBe(true);
+    expect(
+      classify(
+        addedPair,
+        DEFAULT_BROWNFIELD_POLICY,
+        ctx({ severity: 'critical', packageResolutionUnchanged: true }),
+      ).blocks,
+    ).toBe(true);
+  });
+
+  it('#382: a CHANGED resolution keeps added and says so; an UNKNOWN one keeps added and says why', () => {
+    const changed = classify(
+      addedPair,
+      DEFAULT_BROWNFIELD_POLICY,
+      ctx({ packageResolutionUnchanged: false }),
+    );
+    expect(changed.status).toBe('added');
+    expect(changed.reasons.some((r) => r.code === 'resolution-changed')).toBe(true);
+
+    const unknown = classify(addedPair, DEFAULT_BROWNFIELD_POLICY, ctx({}));
+    expect(unknown.status).toBe('added');
+    expect(unknown.reasons.some((r) => r.code === 'resolution-unknown')).toBe(true);
+    // The disclosure is dep-vuln only: other kinds never carry it.
+    const secret = classify(addedPair, DEFAULT_BROWNFIELD_POLICY, {
+      kind: 'secret',
+      severity: 'high',
+    });
+    expect(secret.reasons.some((r) => r.code.startsWith('resolution-'))).toBe(false);
+  });
+
   it('only dep-vulns relabel — other kinds ignore the flag', () => {
     const out = classify(addedPair, DEFAULT_BROWNFIELD_POLICY, {
       kind: 'secret',
