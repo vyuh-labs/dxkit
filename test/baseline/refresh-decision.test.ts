@@ -14,12 +14,12 @@
  * capture itself is injected (`_capture`) — these tests exercise the decision
  * lane, not the analyzers. The decision branch is verified on a real bare
  * origin: entries, expiry carry-over across re-raises, and zero working-tree /
- * HEAD impact.
+ * HEAD impact. The degraded-capture refusal (#388) lives in
+ * `refresh-refusal.test.ts`; the shared fixtures in `refresh-harness.ts`.
  */
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { execFileSync } from 'child_process';
 import * as fs from 'fs';
-import * as os from 'os';
 import * as path from 'path';
 import {
   ADVISORY_DECISION_BRANCH,
@@ -27,93 +27,23 @@ import {
   runBaselineRefresh,
 } from '../../src/baseline/refresh';
 import { publishFilesToAnchorRef } from '../../src/baseline/anchor-publish';
-import { BASELINE_SCHEMA_VERSION, type BaselineFile } from '../../src/baseline/baseline-file';
-import type { AllowlistFile } from '../../src/allowlist/file';
+import type { BaselineFile } from '../../src/baseline/baseline-file';
 import { DEFER_ADVISORY_EXPIRY_DAYS } from '../../src/allowlist/categories';
+import type { OsvVuln } from '../../src/analyzers/tools/osv';
+import {
+  baselineFile,
+  captureWriting,
+  commitChange,
+  decisionAllowlist,
+  depVuln,
+  git,
+  makeRepoWithOrigin,
+  readTreeBaseline,
+  registerRefreshTmpCleanup,
+  writeTreeBaseline,
+} from './refresh-harness';
 
-const tmps: string[] = [];
-function git(cwd: string, ...args: string[]): string {
-  return execFileSync('git', args, { cwd, encoding: 'utf8' });
-}
-
-function makeRepoWithOrigin(): { repo: string; bare: string } {
-  const bare = mk('dxkit-refresh-bare-');
-  const repo = mk('dxkit-refresh-');
-  git(bare, 'init', '-q', '--bare', '-b', 'main');
-  git(repo, 'init', '-q', '-b', 'main');
-  git(repo, 'config', 'user.email', 't@e.com');
-  git(repo, 'config', 'user.name', 't');
-  git(repo, 'config', 'commit.gpgsign', 'false');
-  fs.writeFileSync(path.join(repo, 'package.json'), JSON.stringify({ name: 'fx', version: '1' }));
-  fs.writeFileSync(path.join(repo, 'src.js'), 'const a = 1;\n');
-  git(repo, 'add', '.');
-  git(repo, 'commit', '-q', '-m', 'initial');
-  git(repo, 'remote', 'add', 'origin', bare);
-  git(repo, 'push', '-q', 'origin', 'main');
-  return { repo, bare };
-}
-
-function mk(prefix: string): string {
-  const d = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-  tmps.push(d);
-  return d;
-}
-
-afterEach(() => {
-  for (const d of tmps.splice(0)) fs.rmSync(d, { recursive: true, force: true });
-});
-
-function depVuln(id: string, pkg: string, advisoryId: string) {
-  return { id, kind: 'dep-vuln' as const, package: pkg, installedVersion: '1.0.0', advisoryId };
-}
-
-function baselineFile(cwd: string, commitSha: string, findings: unknown[]): BaselineFile {
-  return {
-    schemaVersion: BASELINE_SCHEMA_VERSION,
-    name: 'main',
-    createdAt: '2026-07-20T00:00:00.000Z',
-    repo: { commitSha, branch: 'main', root: cwd },
-    analysis: {
-      dxkitVersion: 'test',
-      policyHash: '0'.repeat(16),
-      ignoreHash: '0'.repeat(16),
-      toolchainHash: '0'.repeat(16),
-      configHash: '0'.repeat(16),
-    },
-    tools: {},
-    saltMode: 'deterministic',
-    findings: findings as BaselineFile['findings'],
-  } as BaselineFile;
-}
-
-function writeTreeBaseline(repo: string, file: BaselineFile): string {
-  const p = path.join(repo, '.dxkit', 'baselines', 'main.json');
-  fs.mkdirSync(path.dirname(p), { recursive: true });
-  fs.writeFileSync(p, JSON.stringify(file));
-  return p;
-}
-
-/** A capture seam that writes `findings` as the fresh baseline. */
-function captureWriting(repo: string, findings: unknown[]) {
-  return async () => {
-    writeTreeBaseline(repo, baselineFile(repo, git(repo, 'rev-parse', 'HEAD').trim(), findings));
-  };
-}
-
-/** Commit a change so HEAD moves past the prior anchor. */
-function commitChange(repo: string, rel: string, content: string): void {
-  fs.writeFileSync(path.join(repo, rel), content);
-  git(repo, 'add', rel);
-  git(repo, 'commit', '-q', '-m', `change ${rel}`);
-}
-
-function decisionAllowlist(bare: string): AllowlistFile {
-  const raw = execFileSync('git', ['show', `${ADVISORY_DECISION_BRANCH}:.dxkit/allowlist.json`], {
-    cwd: bare,
-    encoding: 'utf8',
-  });
-  return JSON.parse(raw) as AllowlistFile;
-}
+registerRefreshTmpCleanup();
 
 describe('baseline refresh — the advisory decision lane', () => {
   it('holds newly published advisories OUT of the baseline and raises the decision branch', async () => {
@@ -203,12 +133,84 @@ describe('baseline refresh — the advisory decision lane', () => {
     // (prior baseline unchanged on the tree — the decision PR is unmerged).
     writeTreeBaseline(repo, baselineFile(repo, priorSha, []));
     const laterNow = new Date(firstNow.getTime() + 3 * 86_400_000);
-    await runBaselineRefresh({
+    const second = await runBaselineRefresh({
       cwd: repo,
       now: laterNow,
       _capture: captureWriting(repo, [depVuln('e'.repeat(16), 'immutable', 'GHSA-y')]),
     });
     expect(decisionAllowlist(bare).entries[0].expiresAt).toBe(firstExpiry);
+    // #389: still held out (pending), but never counted or announced as new
+    // again. "Known before the prior capture" includes the decision branch's
+    // carried hold-outs, so the predicate is idempotent day over day.
+    const firstDay = firstNow.toISOString().slice(0, 10);
+    expect(second.heldOut).toHaveLength(1);
+    expect(second.heldOut[0].pendingSince).toBe(firstDay);
+    expect(second.note).toContain('no newly published advisories since the prior capture');
+    expect(second.note).toContain(`1 still pending a decision (first raised ${firstDay})`);
+    expect(readTreeBaseline(repo).findings).toEqual([]);
+
+    // Day N+4: the feed moves again. ONE new advisory is announced as new; the
+    // pending one rides along, still pending, its expiry still the original.
+    writeTreeBaseline(repo, baselineFile(repo, priorSha, []));
+    const third = await runBaselineRefresh({
+      cwd: repo,
+      now: new Date(laterNow.getTime() + 86_400_000),
+      _capture: captureWriting(repo, [
+        depVuln('e'.repeat(16), 'immutable', 'GHSA-y'),
+        depVuln('1'.repeat(16), 'lodash', 'GHSA-z'),
+      ]),
+    });
+    expect(third.heldOut.map((a) => [a.advisoryId, a.pendingSince ?? 'new'])).toEqual([
+      ['GHSA-z', 'new'],
+      ['GHSA-y', firstDay],
+    ]);
+    expect(third.note).toMatch(/^1 newly published advisory held out/);
+    expect(third.note).toContain(`plus 1 still pending a decision (first raised ${firstDay})`);
+    const entries = decisionAllowlist(bare).entries;
+    expect(entries.find((e) => e.fingerprint === 'e'.repeat(16))?.expiresAt).toBe(firstExpiry);
+    expect(entries.map((e) => e.fingerprint).sort()).toEqual(['1'.repeat(16), 'e'.repeat(16)]);
+  }, 120_000);
+
+  // #389: an advisory absent from the prior anchor but OLDER than the prior
+  // capture by publication date is recorded debt that DISAPPEARED (a degraded
+  // capture published before the refusal existed). It is absorbed as
+  // pre-existing debt with the anomaly disclosed, never held out.
+  it('an advisory older than the prior capture is absorbed as debt with the anomaly disclosed, never held out', async () => {
+    const { repo } = makeRepoWithOrigin();
+    const priorSha = git(repo, 'rev-parse', 'HEAD').trim();
+    // The prior's `createdAt` is 2026-07-20 (see `baselineFile`).
+    writeTreeBaseline(repo, baselineFile(repo, priorSha, []));
+    commitChange(repo, 'src.js', 'const a = 5;\n');
+    const fetched: string[] = [];
+    const osvFetcher = async (id: string): Promise<OsvVuln | null> => {
+      fetched.push(id);
+      if (id === 'GHSA-l12-old') return { id, published: '2026-01-05T00:00:00Z' };
+      if (id === 'GHSA-l12-new') return { id, published: '2026-08-01T00:00:00Z' };
+      return null;
+    };
+    const result = await runBaselineRefresh({
+      cwd: repo,
+      osvFetcher,
+      _capture: captureWriting(repo, [
+        depVuln('2'.repeat(16), 'old-dep', 'GHSA-l12-old'),
+        depVuln('3'.repeat(16), 'new-dep', 'GHSA-l12-new'),
+        depVuln('4'.repeat(16), 'undated-dep', 'GHSA-l12-undated'),
+      ]),
+    });
+    // Only the candidate set is resolved (never the whole baseline).
+    expect(fetched.sort()).toEqual(['GHSA-l12-new', 'GHSA-l12-old', 'GHSA-l12-undated']);
+    // The new one and the undated one (unknown date reads as new, never as
+    // old) are held out; the old one stays in the baseline as debt.
+    expect(result.heldOut.map((a) => a.advisoryId).sort()).toEqual([
+      'GHSA-l12-new',
+      'GHSA-l12-undated',
+    ]);
+    expect(readTreeBaseline(repo).findings.map((f) => f.id)).toEqual(['2'.repeat(16)]);
+    expect(result.disclosures).toHaveLength(1);
+    expect(result.disclosures[0]).toContain('recorded debt disappeared from the prior anchor');
+    expect(result.disclosures[0]).toContain('GHSA-l12-old');
+    expect(result.disclosures[0]).toContain('degraded capture');
+    expect(result.note).toMatch(/^2 newly published advisories held out/);
   }, 120_000);
 
   it('no prior baseline → plain capture, disclosed', async () => {
@@ -311,6 +313,7 @@ describe('baseline refresh — the advisory decision lane', () => {
       _capture: captureWriting(repo, same),
     });
     expect(result.heldOut).toEqual([]);
+    expect(result.disclosures).toEqual([]);
     expect(result.note).toContain('no newly published advisories');
   }, 120_000);
 });
@@ -344,5 +347,51 @@ describe('decisionPrBody', () => {
     expect(body).toContain('Lane 1 — fix');
     expect(body).toContain('Lane 2 — defer');
     expect(body).toContain('held out of the refreshed baseline');
+    expect(body).toContain('## 1 newly published advisory needs a decision');
+    expect(body).toContain('New this refresh (1)');
+    expect(body).toContain('| new this refresh |');
+  });
+
+  // #389: the body tells "still pending (N, first raised <date>)" apart from
+  // "new this refresh (M)"; a pending advisory is never presented as new.
+  it('distinguishes still-pending advisories from ones new this refresh', () => {
+    const pending = {
+      fingerprint: 'b'.repeat(16),
+      package: 'fast-uri',
+      advisoryId: 'GHSA-pend',
+      pendingSince: '2026-07-22',
+    };
+    const fresh = { fingerprint: 'c'.repeat(16), package: 'svgo', advisoryId: 'GHSA-fresh' };
+    const entries = [
+      {
+        fingerprint: 'b'.repeat(16),
+        kind: 'dep-vuln' as const,
+        category: 'deferred' as const,
+        reason: 'r',
+        addedBy: 'dxkit-refresh',
+        addedAt: '2026-07-22',
+        expiresAt: '2026-07-29',
+      },
+      {
+        fingerprint: 'c'.repeat(16),
+        kind: 'dep-vuln' as const,
+        category: 'deferred' as const,
+        reason: 'r',
+        addedBy: 'dxkit-refresh',
+        addedAt: '2026-07-25',
+        expiresAt: '2026-08-01',
+      },
+    ];
+    const both = decisionPrBody([pending, fresh], entries);
+    expect(both).toContain('## 1 newly published advisory needs a decision (1 still pending)');
+    expect(both).toContain('New this refresh (1)');
+    expect(both).toContain('Still pending (1, first raised 2026-07-22)');
+    expect(both).toContain('| GHSA-pend | `' + 'b'.repeat(16) + '` | pending since 2026-07-22 |');
+    expect(both).toContain('| GHSA-fresh | `' + 'c'.repeat(16) + '` | new this refresh |');
+
+    const onlyPending = decisionPrBody([pending], entries.slice(0, 1));
+    expect(onlyPending).toContain('## 1 advisory still pending a decision');
+    expect(onlyPending).toContain('New this refresh: none.');
+    expect(onlyPending).not.toContain('newly published advisory needs');
   });
 });

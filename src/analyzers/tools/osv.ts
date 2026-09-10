@@ -58,6 +58,11 @@ export interface OsvVuln {
   summary?: string;
   details?: string;
   references?: Array<{ type?: string; url: string }>;
+  /** OSV `published`: when the advisory entered the feed (RFC 3339). The
+   * refresh lane's hold-out reads it to tell an advisory published BEFORE the
+   * prior capture (recorded debt that fell out of the anchor) from one the
+   * feed disclosed after it (#389). Additive; absent on records without it. */
+  published?: string;
 }
 
 /**
@@ -100,6 +105,19 @@ export interface OsvDetail {
   severity: Severity;
   cvssScore: number | null;
   fixedEvents: string[];
+  /** The record's `published` timestamp when it carried a parseable one;
+   * absent for an unknown id or a record without the field. The same cached
+   * fetch as severity + fix resolution (one lookup serves all three). */
+  published?: string;
+}
+
+/** The record's `published` timestamp, or undefined when absent or not a
+ *  parseable date. A malformed value must never read as "older than the prior
+ *  capture": unknown stays unknown, which the hold-out treats as new. */
+export function extractOsvPublished(vuln: OsvVuln): string | undefined {
+  const raw = vuln.published;
+  if (typeof raw !== 'string' || raw.length === 0) return undefined;
+  return Number.isNaN(Date.parse(raw)) ? undefined : raw;
 }
 
 /** Process-scoped cache so repeated lookups in a session don't re-query. */
@@ -274,11 +292,13 @@ export async function enrichOsv(
   const settled = await Promise.allSettled(
     toFetch.map(async (id) => {
       const vuln = await fetcher(id);
+      const published = vuln ? extractOsvPublished(vuln) : undefined;
       const detail: OsvDetail = vuln
         ? {
             severity: classifyOsvSeverity(vuln),
             cvssScore: extractOsvCvssScore(vuln),
             fixedEvents: extractOsvFixedEvents(vuln),
+            ...(published !== undefined ? { published } : {}),
           }
         : { severity: 'unknown', cvssScore: null, fixedEvents: [] };
       return [id, detail] as const;
