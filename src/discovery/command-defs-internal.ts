@@ -25,4 +25,12 @@ export const INTERNAL_COMMANDS = [
     group: 'internal',
     summary: 'Correctness-floor plumbing (snapshot / check) for the loop + hooks',
   },
+  {
+    id: 'install',
+    audience: 'internal',
+    group: 'internal',
+    summary:
+      'CI install-outcome plumbing (classify / comment) for the generated workflows: the ' +
+      'rendered dependency-install chain records how it ended, the comment step reads it',
+  },
 ] as const satisfies readonly CapabilityDescriptor[];

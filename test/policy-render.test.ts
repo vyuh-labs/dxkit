@@ -23,6 +23,7 @@ import { tmpdir } from 'os';
 
 import { resolvePolicyRender } from '../src/policy-render';
 import { installCiBaselineRefresh } from '../src/ship-installers';
+import { SHELL_FALLBACK_FN } from '../src/install/shell';
 
 let repo: string;
 
@@ -95,7 +96,7 @@ describe('resolvePolicyRender', () => {
   it('a dependencies.tolerate edit without a re-render drifts the workflow install chain', () => {
     installRefreshSurface();
     const before = readFileSync(join(repo, REFRESH_YML), 'utf8');
-    expect(before).toContain('npm ci || npm ci --legacy-peer-deps');
+    expect(before).toContain(`npm ci || ${SHELL_FALLBACK_FN} npm ci --legacy-peer-deps`);
     writeFileSync(
       join(repo, '.dxkit', 'policy.json'),
       JSON.stringify({ baseline: { anchor: 'branch' }, dependencies: { tolerate: [] } }),
@@ -110,7 +111,7 @@ describe('resolvePolicyRender', () => {
     const applied = resolvePolicyRender(repo, 'apply');
     expect(applied.ok).toBe(true);
     const after = readFileSync(join(repo, REFRESH_YML), 'utf8');
-    expect(after).not.toContain('npm ci || npm ci --legacy-peer-deps');
+    expect(after).not.toContain(`npm ci || ${SHELL_FALLBACK_FN} npm ci --legacy-peer-deps`);
     expect(after).toContain('npm ci');
   });
 

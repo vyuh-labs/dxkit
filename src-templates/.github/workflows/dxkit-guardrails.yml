@@ -318,15 +318,37 @@ __DXKIT_CI_RUNTIME_SETUP__
           # under `if: always()`, and a bare `cat` would turn that into a
           # `No such file` error that buries the real cause several steps up. A gate
           # that could not run says so, and names where to look.
+          #
+          # The install step records how its dependency-install chain ended,
+          # classified by dxkit's own install classifier (the same tolerance
+          # classes the remediate lane and the correctness floor read). A
+          # lockfile that does not record the manifest is the CHANGE's finding,
+          # not an infrastructure failure: `install comment` renders it as a
+          # BLOCK with the floor's own remedy; any other install failure keeps
+          # the "did not run" form, naming the commands that ran and their last
+          # lines. dxkit may not be in node_modules after a failed install, so
+          # the CLI is resolved from the tree, then PATH (the install step
+          # installs it globally as its last resort). No record (nothing could
+          # classify, or a failure outside the install) keeps the generic text.
           if [ ! -f guardrail-report.md ]; then
-            {
-              printf '%s\n' "$MARKER"
-              printf '### dxkit guardrails: did not run\n\n'
-              printf 'A step before the guardrail failed, so this PR was **not** gated.\n'
-              printf 'This is not a finding in your change.\n\n'
-              printf 'See the failing step in this job log.\n'
-            } > comment.md
-            echo "::error::dxkit guardrail did not run: an earlier step failed, so this PR was NOT gated. See the failing step in this job."
+            if [ -x ./node_modules/.bin/vyuh-dxkit ]; then DXKIT=./node_modules/.bin/vyuh-dxkit; elif command -v vyuh-dxkit >/dev/null 2>&1; then DXKIT=vyuh-dxkit; else DXKIT=""; fi
+            if [ -n "$DXKIT" ] && "$DXKIT" install comment > install-comment.md 2> install-annotation.txt; then
+              {
+                printf '%s\n' "$MARKER"
+                cat install-comment.md
+              } > comment.md
+              # The one-line `::error::` annotation the renderer wrote to stderr.
+              cat install-annotation.txt
+            else
+              {
+                printf '%s\n' "$MARKER"
+                printf '### dxkit guardrails: did not run\n\n'
+                printf 'A step before the guardrail failed, so this PR was **not** gated.\n'
+                printf 'This is not a finding in your change.\n\n'
+                printf 'See the failing step in this job log.\n'
+              } > comment.md
+              echo "::error::dxkit guardrail did not run: an earlier step failed, so this PR was NOT gated. See the failing step in this job."
+            fi
           else
             {
               printf '%s\n' "$MARKER"
