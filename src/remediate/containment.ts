@@ -187,6 +187,67 @@ function applyRecipeDrops(
   };
 }
 
+/** The effective values a completion carries after a containment attempt:
+ *  the contained remainder's, or the original verification's when nothing
+ *  was attempted or the attempt was refused (`containment` then names why). */
+export interface ContainmentAttempt {
+  readonly contained: boolean;
+  /** Present whenever containment was ATTEMPTED (contained or refused). */
+  readonly containment?: GuardrailContainment;
+  readonly verified: VerifyTreeResult;
+  readonly guardrail: GuardrailGateResult;
+  readonly recipes: RecipePhaseSummary;
+  readonly records: readonly OrderRunRecord[];
+  readonly head: string;
+}
+
+/**
+ * The ONE call-site shape for guardrail-red containment (4.4.8): given a
+ * completion's tree verification, attempt containment iff the guardrail
+ * RAN and did not pass, and hand back the effective values the completion
+ * should carry. BOTH completions route through it, the order-driven run
+ * (`orders-complete.ts`) and the recipe-only run (`recipes/complete.ts`),
+ * so a fix-lint run whose agent tier never starts gets the same per-order
+ * containment as one that dispatches an agent (#376 in a different coat:
+ * the whole verified autofix discarded because no agent order followed).
+ * An unrunnable guardrail is infrastructure, never contained; the
+ * completion's fail-closed arm keeps it.
+ */
+export async function containIfGuardrailRed(
+  opts: RemediateRunOptions,
+  c: Omit<ContainmentArgs, 'isManifestPath'> & {
+    readonly verified: VerifyTreeResult;
+    readonly head: string;
+    /** Injected for tests; production derives from the active packs. */
+    readonly isManifestPath?: (p: string) => boolean;
+  },
+): Promise<ContainmentAttempt> {
+  const { verified, head, isManifestPath, ...args } = c;
+  const untouched: ContainmentAttempt = {
+    contained: false,
+    verified,
+    guardrail: args.guardrail,
+    recipes: args.recipes,
+    records: args.records,
+    head,
+  };
+  if (!args.guardrail.ran || args.guardrail.passesGate) return untouched;
+  const outcome = await containGuardrailRed(opts, {
+    ...args,
+    isManifestPath: manifestPathProbe(opts.cwd, isManifestPath),
+  });
+  if (outcome.kind !== 'contained') return { ...untouched, containment: outcome.containment };
+  return {
+    contained: true,
+    containment: outcome.containment,
+    verified: outcome.verified,
+    guardrail: outcome.guardrail,
+    recipes: outcome.recipes,
+    records: outcome.records,
+    head: outcome.head,
+  };
+}
+
 /**
  * Contain a red final guardrail: attribute, unwind, re-verify, bounded.
  * Never throws; a refusal restores the branch and carries the reason.

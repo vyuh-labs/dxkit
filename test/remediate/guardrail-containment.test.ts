@@ -1147,6 +1147,91 @@ describe('per-order containment units (4.4.8, #376)', () => {
     ]);
   });
 
+  it('a recipe-only run (no agent orders) with a red in ONE file drops that order and lands N-1 as partially-landed', async () => {
+    // The live shape: the agent tier never starts (a dead agent key, or
+    // zero dispatched orders), so the recipe-only completion is the one
+    // verification. Three lint-autofix files, one commit each; red on b.
+    const git = fakeGit({
+      'head0..head1': ['src/a.ts'],
+      'head1..head2': ['src/b.ts'],
+      'head2..head3': ['src/c.ts'],
+    });
+    const r = await runWith({
+      orders: [],
+      git,
+      guardrails: [red([lintRed('src/b.ts')]), GREEN],
+      recipePhase: () => {
+        git.commit();
+        git.commit();
+        git.commit();
+        return summary([], {
+          ran: true,
+          selectedRecipeTier: 3,
+          records: [
+            lintRecord('src/a.ts', 'head1'),
+            lintRecord('src/b.ts', 'head2'),
+            lintRecord('src/c.ts', 'head3'),
+          ],
+        });
+      },
+    });
+    expect(r.outcome).toBe('partially-landed');
+    expect(r.orders).toBeUndefined();
+    expect(git.reverts.map((x) => [x.from, x.to])).toEqual([['head1', 'head2']]);
+    expect(r.head).toBe('head4');
+    expect(r.containment?.refused).toBeUndefined();
+    expect(r.containment?.dropped).toEqual([
+      expect.objectContaining({ unit: 'recipe-order', orderIds: ['lint-located:src/b.ts'] }),
+    ]);
+    expect((r.recipes?.records ?? []).map((x) => [x.orderId, x.disposition?.kind])).toEqual([
+      ['lint-located:src/a.ts', 'kept'],
+      ['lint-located:src/b.ts', 'dropped'],
+      ['lint-located:src/c.ts', 'kept'],
+    ]);
+    // The tier was verified as one unit at its own head; two of three land.
+    expect(r.recipes?.groupVerification).toEqual({ kind: 'kept', head: 'head3' });
+    expect(r.note).toContain('$0 run');
+    expect(r.note).toContain('lint-located:src/b.ts');
+    expect(r.ledger).toContain('lint-autofix: dropped 1 of 3 applied order(s); 2 land');
+    const rows = orderOutcomeRows(r, 'fix-vulns', {
+      timestamp: '2026-08-27T00:00:00Z',
+      stamp: { dxkitVersion: 'v', policyHash: 'h' },
+    });
+    expect(rows.map((row) => [row.orderId, row.outcome])).toEqual([
+      ['lint-located:src/a.ts', 'verified'],
+      ['lint-located:src/b.ts', 'guardrail-red'],
+      ['lint-located:src/c.ts', 'verified'],
+    ]);
+  });
+
+  it('a recipe-only run whose red cannot be attributed refuses, stays guardrail-red, and reverts nothing', async () => {
+    const git = fakeGit({ 'head0..head1': ['src/a.ts'] });
+    const finding = {
+      kind: 'secret',
+      description: '[secret] docs/readme.md:1 - added (no-prior-match)',
+      file: 'docs/readme.md',
+    };
+    const r = await runWith({
+      orders: [],
+      git,
+      guardrails: [red([finding])],
+      recipePhase: () => {
+        git.commit();
+        return summary([], {
+          ran: true,
+          selectedRecipeTier: 1,
+          records: [lintRecord('src/a.ts', 'head1')],
+        });
+      },
+    });
+    expect(r.outcome).toBe('guardrail-red');
+    expect(git.reverts).toEqual([]);
+    expect(r.containment?.refused).toContain("overlaps no kept order's envelope or committed");
+    expect(r.note).toContain('Containment was attempted and refused');
+    // A refused attempt leaves the tier's records as the phase recorded them.
+    expect(r.recipes?.records[0].disposition).toBeUndefined();
+  });
+
   it('an override-pin group with recorded per-order commits still drops as ONE unit on a red for one package', async () => {
     const git = fakeGit({
       'head0..head2': ['package.json', 'package-lock.json'],

@@ -76,7 +76,7 @@ function renderRecipeSection(recipes: RecipePhaseSummary): string[] {
     ).length;
     lines.push(
       g.kind === 'kept'
-        ? '- recipe group verified as one unit before the agent tier (install + floor); ' +
+        ? '- recipe group verified as one unit (install + floor); ' +
             (contained > 0
               ? `${contained} of its applied order(s) were later dropped by guardrail ` +
                 'containment (each says so above); the rest land'

@@ -9,8 +9,7 @@
  * with the legacy tail via the `verify.ts` phrasing helpers.
  */
 import { floorOrderDone } from '../loop/order-scope';
-import { containGuardrailRed, manifestPathProbe } from './containment';
-import type { GuardrailContainment } from './outcome';
+import { containIfGuardrailRed } from './containment';
 import type {
   AgentEnvelope,
   OrderDisposition,
@@ -201,38 +200,28 @@ export async function completeOrdersRun(
   // orders, re-verify the remainder (bounded rounds): the contained run
   // lands its green subset as `partially-landed`; a red that cannot be
   // attributed refuses honestly and keeps the plain guardrail-red path
-  // (branch restored). An unrunnable guardrail is infrastructure, never
-  // contained; the fail-closed arm below keeps it.
-  let effVerified = verified;
-  let effGuardrail = guardrail;
-  let effRecipes = args.recipes;
-  let effRecords: readonly OrderRunRecord[] = records;
-  let effHead = head;
-  let containment: GuardrailContainment | undefined;
-  let contained = false;
-  if (guardrail.ran && !guardrail.passesGate) {
-    const outcome = await containGuardrailRed(opts, {
-      git: args.git,
-      baseHead: args.baseHead,
-      agentBase: args.agentBase,
-      entryFloor: args.entryFloor,
-      runFloor: args.runFloor,
-      recipes: args.recipes,
-      records,
-      ordersById: new Map(dispatchList.map((o) => [o.id, o] as const)),
-      guardrail,
-      isManifestPath: manifestPathProbe(opts.cwd, args.isManifestPath),
-    });
-    containment = outcome.containment;
-    if (outcome.kind === 'contained') {
-      contained = true;
-      effVerified = outcome.verified;
-      effGuardrail = outcome.guardrail;
-      effRecipes = outcome.recipes;
-      effRecords = outcome.records;
-      effHead = outcome.head;
-    }
-  }
+  // (branch restored). The ONE call site shape, shared with the
+  // recipe-only completion (4.4.8).
+  const attempt = await containIfGuardrailRed(opts, {
+    git: args.git,
+    baseHead: args.baseHead,
+    agentBase: args.agentBase,
+    entryFloor: args.entryFloor,
+    runFloor: args.runFloor,
+    recipes: args.recipes,
+    records,
+    ordersById: new Map(dispatchList.map((o) => [o.id, o] as const)),
+    guardrail,
+    verified,
+    head,
+    ...(args.isManifestPath ? { isManifestPath: args.isManifestPath } : {}),
+  });
+  const { contained, containment } = attempt;
+  const effVerified = attempt.verified;
+  const effGuardrail = attempt.guardrail;
+  const effRecipes = attempt.recipes;
+  const effRecords: readonly OrderRunRecord[] = attempt.records;
+  const effHead = attempt.head;
   const containmentDisclosure = containment !== undefined ? { containment } : {};
 
   // Per-order done, judged from the FINAL verified floor for floor-verifier
@@ -357,7 +346,7 @@ function droppedStep(d: OrderDisposition | undefined): string {
 }
 
 /** `id (step: reason)` per dropped record, one phrasing for every note. */
-function describeDropped(
+export function describeDropped(
   records: readonly { readonly orderId: string; readonly disposition?: OrderDisposition }[],
 ): string {
   return records
