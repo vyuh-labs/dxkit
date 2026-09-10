@@ -182,6 +182,23 @@ describe('enrichOsv', () => {
     expect(result.get('UNKNOWN-1')?.cvssScore).toBeNull();
   });
 
+  // #389: the refresh lane's hold-out reads the record's `published` date to
+  // tell recorded debt that fell out of the anchor from a genuinely new
+  // advisory. Carried when parseable; a malformed value stays unknown rather
+  // than reading as "older than the prior capture".
+  it('carries the record published date when parseable, and drops a malformed one', async () => {
+    const fetcher = async (id: string): Promise<OsvVuln | null> => ({
+      id,
+      database_specific: { severity: 'LOW' },
+      published: id === 'GHSA-PUB-OK' ? '2026-03-04T05:06:07Z' : 'not a date',
+    });
+    const result = await enrichOsv(['GHSA-PUB-OK', 'GHSA-PUB-BAD'], fetcher);
+    expect(result.get('GHSA-PUB-OK')?.published).toBe('2026-03-04T05:06:07Z');
+    expect(result.get('GHSA-PUB-BAD')?.published).toBeUndefined();
+    const none = await enrichOsv(['UNKNOWN-2'], async () => null);
+    expect(none.get('UNKNOWN-2')?.published).toBeUndefined();
+  });
+
   it('returns null cvssScore when the OSV record lacks parseable CVSS vectors', async () => {
     const fetcher = async (id: string): Promise<OsvVuln | null> => ({
       id,

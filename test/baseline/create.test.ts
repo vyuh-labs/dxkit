@@ -77,6 +77,11 @@ describe('createBaseline (integration)', () => {
     expect(file.repo.commitSha).toMatch(/^[0-9a-f]{40}$/);
     expect(file.saltMode).toBe('deterministic');
     expect(file.findings).toEqual([]);
+    // The refresh lane's degraded-capture refusal (#388) reads the capture's
+    // observation evidence from the scan the file was projected from: the
+    // aggregate's per-source provenance and the custom-check seam record.
+    expect(result.scan?.aggregate.provenance).toBeDefined();
+    expect(result.scan?.customChecksUnobserved).toBeDefined();
   });
 
   it('uses the supplied --name to pick the filename', async () => {
