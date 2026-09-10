@@ -104,6 +104,24 @@ export interface ClassifyContext {
    *  changed-content index in `classify-pairs.ts` (Rule 2.30: never a second
    *  attribution table). Absent ⇒ no relabel — the finding keeps `added`. */
   readonly packageUntouchedByDiff?: boolean;
+  /** The third tier of the ONE advisory-attribution question (#382), decided
+   *  PER PACKAGE rather than per diff: whether the finding's package resolves
+   *  to the SAME version on the prior side as on the current side. `true` =
+   *  the prior side recorded this package at exactly the current
+   *  `installedVersion`, so the change cannot have introduced the advisory
+   *  even though the diff touched a manifest AND a changed manifest line
+   *  mentions the package (fifteen override pins for OTHER packages
+   *  re-serialize a lockfile; every line the pins touched read as "possibly
+   *  changed" under the per-finding tier and the untouched package was
+   *  blamed). `false` = the prior side recorded the package at a DIFFERENT
+   *  version (the change moved it, so it keeps developer attribution).
+   *  Absent = no prior record of this package's resolved version (it was
+   *  clean at capture, or no lockfile was readable), which is "cannot prove
+   *  unchanged", so the finding keeps `added` and the reason chain says why.
+   *  The prior-side version comes from ONE place, the prior entries'
+   *  `installedVersion` (`buildPriorResolvedVersionIndex` in
+   *  `src/gate/context.ts`), never a second lockfile read. */
+  readonly packageResolutionUnchanged?: boolean;
   /** True when an `added` dep-vuln is on a reachable code path. */
   readonly reachable?: boolean;
   /** For a `custom-check` finding: the user/pack-declared block intent
@@ -256,20 +274,25 @@ export function classify(
       }
     } else if (
       context.kind === 'dep-vuln' &&
-      (context.manifestUntouched || context.packageUntouchedByDiff)
+      (context.manifestUntouched ||
+        context.packageUntouchedByDiff ||
+        context.packageResolutionUnchanged === true)
     ) {
       // D4: the developer cannot be the cause of this added dep-vuln — either
       // the PR changed no dependency manifest at all (the run-level fast
       // path), or it did but no changed manifest line mentions THIS package
       // (#283's per-finding tier: a one-line bump PR must not be blamed for
-      // the whole advisory wave against packages it never touched). Either
-      // way the dependency's resolution is identical to the baseline's and
-      // the one input that moved is the advisory FEED (published after
-      // baseline capture). Recall is genuinely clean here (Rule 19's
-      // recallDrifted branch above wins when it isn't), so this is its own
-      // status — never "regression", never `tooling_drift`. The verdict is
-      // decided by the advisory TIER below (default: high/critical block,
-      // medium/low warn; malicious always blocks).
+      // the whole advisory wave against packages it never touched), or the
+      // package resolves to the SAME version on both sides (#382's per-package
+      // tier: a manifest change for OTHER packages cannot introduce an
+      // advisory on one whose resolution did not move). Either way the
+      // dependency's resolution is identical to the baseline's and the one
+      // input that moved is the advisory FEED (published after baseline
+      // capture). Recall is genuinely clean here (Rule 19's recallDrifted
+      // branch above wins when it isn't), so this is its own status — never
+      // "regression", never `tooling_drift`. The verdict is decided by the
+      // advisory TIER below (default: high/critical block, medium/low warn;
+      // malicious always blocks).
       status = 'newly_published_advisory';
       reasons.push({
         code: 'newly-published-advisory',
@@ -277,9 +300,13 @@ export function classify(
           (context.manifestUntouched
             ? 'not introduced by this PR — the diff touches no dependency manifest, so this ' +
               'advisory was published after the baseline was captured. '
-            : 'not introduced by this PR — the diff changes no manifest line mentioning this ' +
-              'package (its resolution is unchanged), so this advisory was published after ' +
-              'the baseline was captured. ') +
+            : context.packageUntouchedByDiff
+              ? 'not introduced by this PR — the diff changes no manifest line mentioning this ' +
+                'package (its resolution is unchanged), so this advisory was published after ' +
+                'the baseline was captured. '
+              : 'not introduced by this PR: the package resolves to the same version as on ' +
+                'the prior side (the manifest change was for other packages), so this ' +
+                'advisory was published after the baseline was captured. ') +
           'Fix the vulnerability to unblock, or defer time-boxed: vyuh-dxkit allowlist defer ' +
           '--from-last-check --reason="…"',
       });
@@ -350,6 +377,32 @@ export function classify(
         detail: `${context.kind} finding outside diff hunks — demoted from added to uncertain (likely scanner wobble, not a developer-introduced regression)`,
       });
     }
+  }
+
+  // Disclosure for the attributed case (Rule 19 in the other direction): an
+  // `added` dep-vuln that none of the three attribution tiers relabelled
+  // says WHICH evidence kept it on the developer: the prior side recorded
+  // the package at a different version (the change moved it), or there is
+  // no prior record of its resolved version at all (clean at capture, or no
+  // lockfile readable), which is "cannot prove unchanged", never "proved
+  // changed". Reason-only; the verdict is the ordinary `added` one.
+  if (status === 'added' && context.kind === 'dep-vuln') {
+    reasons.push(
+      context.packageResolutionUnchanged === false
+        ? {
+            code: 'resolution-changed',
+            detail:
+              'attributed to this change: the package resolves to a different version than ' +
+              'on the prior side, so the change may have introduced this advisory',
+          }
+        : {
+            code: 'resolution-unknown',
+            detail:
+              'attributed to this change: no prior record of this package at its current ' +
+              'resolved version (clean at capture, or no readable lockfile), so dxkit cannot ' +
+              'prove the change left it untouched',
+          },
+    );
   }
 
   // Step 3: confidence demotion for persisted/relocated pairs.

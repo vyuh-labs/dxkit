@@ -1145,7 +1145,8 @@ export function newlyPublishedAdvisoryNote(
   return [
     `${indent}${advisories.length} of the blocking finding${blocking.length === 1 ? '' : 's'} ` +
       `${advisories.length === 1 ? 'is a newly published advisory' : 'are newly published advisories'} — ` +
-      `not introduced by this PR (no dependency manifest changed; published after baseline capture).`,
+      `not introduced by this PR (the affected package resolves as it did at baseline capture; ` +
+      `published after baseline capture).`,
     `${indent}  · fix lane: upgrade/patch the dependency — that is what unblocks`,
     `${indent}  · defer lane (time-sensitive change): vyuh-dxkit allowlist defer --from-last-check --reason="…" ` +
       `(time-boxed; expires in ${DEFER_ADVISORY_EXPIRY_DAYS} days by default)`,
@@ -1168,8 +1169,8 @@ export function markdownNewlyPublishedAdvisoryNote(
         `${advisories.length === 1 ? 'is a newly published advisory' : 'are newly published advisories'}`;
   return [
     `> **${head}** — ` +
-      `not introduced by this PR: the diff touches no dependency manifest, so they were ` +
-      `published to the advisory feed after the baseline was captured. Two lanes: **fix** the ` +
+      `not introduced by this PR: the affected packages resolve exactly as they did at baseline ` +
+      `capture, so the advisories were published to the feed afterwards. Two lanes: **fix** the ` +
       `vulnerabilities (that is what unblocks), or **defer time-boxed** when the change is ` +
       'time-sensitive: `vyuh-dxkit allowlist defer --from-last-check --reason="…"` (expires in ' +
       `${DEFER_ADVISORY_EXPIRY_DAYS} days by default — the expiry forces the fix lane).`,
