@@ -18,7 +18,11 @@ import {
   type BrownfieldPolicy,
 } from '../../baseline/policy';
 import type { DepVulnFinding } from '../../languages/capabilities/types';
-import { RECIPE_REGISTRY, type RecipeDeclaration } from '../work-orders/recipes-registry';
+import {
+  RECIPE_REGISTRY,
+  containmentUnitOf,
+  type RecipeDeclaration,
+} from '../work-orders/recipes-registry';
 import { packagesNamedBy } from '../work-orders/shared';
 import type { WorkOrder } from '../work-orders/types';
 import { partitionByEnvelope, pathInEnvelope } from './envelope';
@@ -120,6 +124,28 @@ export function groupRecipeOrders(
   return groups;
 }
 
+/**
+ * Execution order for containment (4.4.8): every group whose recipe
+ * declares `containmentUnit: 'group'` runs (and commits) BEFORE any
+ * `'order'` group, stable within each. The containment unwind reverts one
+ * contiguous commit range per unit, and the group unit is "every
+ * group-recipe commit from the base": an `order` commit interleaved inside
+ * that range would be reverted with the group. Committing the group
+ * recipes first keeps their range contiguous by construction; the
+ * attribution side reads the same declaration and closes the chain over
+ * whatever order it finds.
+ */
+export function orderGroupsForContainment(
+  groups: readonly (readonly WorkOrder[])[],
+  registry: readonly RecipeDeclaration[],
+): (readonly WorkOrder[])[] {
+  const unitOf = (g: readonly WorkOrder[]) => containmentUnitOf(g[0].recipe ?? '', registry);
+  return [
+    ...groups.filter((g) => unitOf(g) === 'group'),
+    ...groups.filter((g) => unitOf(g) === 'order'),
+  ];
+}
+
 /** The commit-message order list, capped so a 40-slice file does not write
  *  a paragraph-long subject. */
 function nameOrders(ids: readonly string[]): string {
@@ -153,7 +179,10 @@ export async function runRecipeOrders(
   const recordAll = (
     group: readonly WorkOrder[],
     outcome: RecipeOutcome,
-    extra?: Pick<RecipeOrderRecord, 'droppedPaths' | 'invariants' | 'invariantDisclosures'>,
+    extra?: Pick<
+      RecipeOrderRecord,
+      'droppedPaths' | 'invariants' | 'invariantDisclosures' | 'commit'
+    >,
   ) => {
     for (const order of group) {
       const packages = packagesNamedBy(order.findings);
@@ -167,7 +196,7 @@ export async function runRecipeOrders(
       });
     }
   };
-  for (const group of groupRecipeOrders(orders, registry)) {
+  for (const group of orderGroupsForContainment(groupRecipeOrders(orders, registry), registry)) {
     const first = group[0];
     // Rule 17, decided at the ONE phase entry point: recipes run installs
     // and linters, so an untrusted tree refuses every order before any
@@ -380,14 +409,14 @@ export async function runRecipeOrders(
       const committed = [...new Set([...inside, ...invariants.changedPaths])].filter(
         (p) => !preDirty.has(p),
       );
-      deps.git.commitPaths(
+      const commit = deps.git.commitPaths(
         committed,
         `fix(${first.class}): ${nameOrders(applying.map((o) => o.id))} (${decl.id} recipe)`,
       );
       recordAll(
         applying,
         { kind: 'applied', changedFiles: committed },
-        { ...dropped, ...invariantsDisclosure },
+        { ...dropped, ...invariantsDisclosure, commit },
       );
       recordOpen();
     }

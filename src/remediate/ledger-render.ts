@@ -71,9 +71,16 @@ function renderRecipeSection(recipes: RecipePhaseSummary): string[] {
   }
   if (recipes.groupVerification) {
     const g = recipes.groupVerification;
+    const contained = recipes.records.filter(
+      (r) => r.disposition?.kind === 'dropped' && r.disposition.step === 'guardrail',
+    ).length;
     lines.push(
       g.kind === 'kept'
-        ? '- recipe group verified as one unit before the agent tier (install + floor); it lands'
+        ? '- recipe group verified as one unit (install + floor); ' +
+            (contained > 0
+              ? `${contained} of its applied order(s) were later dropped by guardrail ` +
+                'containment (each says so above); the rest land'
+              : 'it lands')
         : g.kind === 'dropped'
           ? `- recipe group DROPPED before the agent tier at ${g.step}: ${g.reason} ` +
             `(its own committed paths were reverted, other changes untouched; orders still ` +
@@ -203,7 +210,7 @@ function renderOrdersSection(orders: OrdersPhaseSummary): string[] {
 /** Guardrail-red containment (4.4.7): what was attributed and dropped, or
  *  why containment was refused: the reader sees exactly why an order the
  *  run dispatched is not in the landing set. */
-function renderContainment(c: GuardrailContainment): string[] {
+function renderContainment(c: GuardrailContainment, recipes?: RecipePhaseSummary): string[] {
   const lines: string[] = ['### Guardrail containment', ''];
   if (c.refused !== undefined) {
     lines.push(
@@ -226,8 +233,31 @@ function renderContainment(c: GuardrailContainment): string[] {
     );
     for (const b of d.blocking) lines.push(`  - blocking: ${b}`);
   }
+  lines.push(...renderRecipeContainmentCounts(recipes));
   lines.push('');
   return lines;
+}
+
+/** Per recipe, how much of its applied work containment dropped vs lands
+ *  (4.4.8: a file-scoped recipe drops one order at a time, so the reader
+ *  sees "dropped 7 of 218; 211 land", never a whole tier gone). */
+function renderRecipeContainmentCounts(recipes: RecipePhaseSummary | undefined): string[] {
+  if (!recipes) return [];
+  const byRecipe = new Map<string, { applied: number; dropped: number }>();
+  for (const r of recipes.records) {
+    if (r.outcome.kind !== 'applied') continue;
+    const row = byRecipe.get(r.recipe) ?? { applied: 0, dropped: 0 };
+    row.applied += 1;
+    if (r.disposition?.kind === 'dropped' && r.disposition.step === 'guardrail') row.dropped += 1;
+    byRecipe.set(r.recipe, row);
+  }
+  return [...byRecipe.entries()]
+    .filter(([, row]) => row.dropped > 0)
+    .map(
+      ([recipe, row]) =>
+        `- ${recipe}: dropped ${row.dropped} of ${row.applied} applied order(s); ` +
+        `${row.applied - row.dropped} land`,
+    );
 }
 
 export function renderRemediateLedger(r: Omit<RemediateResult, 'ledger'>): string {
@@ -361,7 +391,7 @@ export function renderRemediateLedger(r: Omit<RemediateResult, 'ledger'>): strin
   }
 
   if (r.containment) {
-    lines.push(...renderContainment(r.containment));
+    lines.push(...renderContainment(r.containment, r.recipes));
   }
 
   lines.push('### Verification', '');

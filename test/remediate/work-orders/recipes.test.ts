@@ -9,7 +9,11 @@ import {
   type FloorFailureInput,
   type PlannerInput,
 } from '../../../src/remediate/work-orders/planner';
-import { RECIPE_REGISTRY, matchRecipe } from '../../../src/remediate/work-orders/recipes-registry';
+import {
+  RECIPE_REGISTRY,
+  containmentUnitOf,
+  matchRecipe,
+} from '../../../src/remediate/work-orders/recipes-registry';
 import {
   WORK_ORDER_CLASSES,
   type WorkOrderClassDeclaration,
@@ -70,6 +74,7 @@ describe('recipe registry drives the tier (synthetic injection)', () => {
     const fake = {
       id: 'synthetic-fixer',
       class: 'synthetic-class',
+      containmentUnit: 'group' as const,
       summary: 't',
       implemented: false,
       matches: () => true,
@@ -85,6 +90,7 @@ describe('recipe registry drives the tier (synthetic injection)', () => {
     const fake = {
       id: 'floor-fixer',
       class: 'floor-failure',
+      containmentUnit: 'group' as const,
       summary: 't',
       implemented: false,
       matches: () => true,
@@ -117,7 +123,22 @@ describe('recipe registry drives the tier (synthetic injection)', () => {
     for (const r of RECIPE_REGISTRY) {
       expect(r.implemented).toBe(r.execute !== undefined);
       expect(r.implemented).toBe(true);
+      // Every recipe declares how containment reverts its work (4.4.8):
+      // a legal unit, never an omission the engine would have to guess.
+      expect(['group', 'order']).toContain(r.containmentUnit);
     }
+    // The manifest recipes share lockfile hunks and revert together; the
+    // linter autofix is one file per commit and reverts one order at a time
+    // (issue #376: 218 files were reverted for 7 files' findings).
+    expect(Object.fromEntries(RECIPE_REGISTRY.map((r) => [r.id, r.containmentUnit]))).toEqual({
+      'lockfile-sync': 'group',
+      'override-pin': 'group',
+      'declare-dependency': 'group',
+      'lint-autofix': 'order',
+    });
+    // An id the registry does not know reads as the conservative unit.
+    expect(containmentUnitOf('lint-autofix')).toBe('order');
+    expect(containmentUnitOf('no-such-recipe')).toBe('group');
     // a class with no producer carries a reason (the DEFERRED_KINDS discipline)
     for (const d of Object.values(WORK_ORDER_CLASSES) as WorkOrderClassDeclaration[]) {
       if (d.producers.includes('pending')) expect(d.pendingReason).toBeTruthy();

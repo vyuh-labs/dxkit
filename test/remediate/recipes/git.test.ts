@@ -43,8 +43,13 @@ describe('realRecipeGit', () => {
 
     // Commit only the named path; the user's dirt stays uncommitted.
     fs.writeFileSync(path.join(dir, 'tracked.txt'), 'fixed\n');
-    g.commitPaths(['tracked.txt'], 'fix(test): one order');
+    const committed = g.commitPaths(['tracked.txt'], 'fix(test): one order');
     expect(g.changedPaths()).toEqual(['other.txt']);
+    // The returned sha IS the new HEAD (the per-order commit containment
+    // reverts, 4.4.8).
+    expect(committed).toBe(
+      execFileSync('git', ['rev-parse', 'HEAD'], { cwd: dir, encoding: 'utf8' }).trim(),
+    );
     const log = execFileSync('git', ['log', '-1', '--format=%s %an'], {
       cwd: dir,
       encoding: 'utf8',
