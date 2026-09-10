@@ -19,6 +19,9 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { readJsonlFile } from '../jsonl';
+// The order ledger's file-kind discriminator (its module imports LANES_DIR
+// from here inside function bodies only, so the cycle is inert).
+import { isOrderLedgerFile } from './order-ledger';
 
 export const LANES_DIR = path.join('.dxkit', 'lanes');
 
@@ -113,7 +116,12 @@ export function readLaneEvents(cwd: string): LaneEvent[] {
   const dir = path.join(cwd, LANES_DIR);
   let files: string[];
   try {
-    files = fs.readdirSync(dir).filter((f) => f.endsWith('.jsonl'));
+    // Delivery-ledger files ONLY: the order ledger shares this directory
+    // (`<lane>-<task>.orders.jsonl`, told apart by the one discriminator in
+    // order-ledger.ts), and its landing marker rows carry every field this
+    // reader accepts plus `outcome: 'landed'`, so reading them here would
+    // count one extra delivery per landing in `metrics`.
+    files = fs.readdirSync(dir).filter((f) => f.endsWith('.jsonl') && !isOrderLedgerFile(f));
   } catch {
     return [];
   }

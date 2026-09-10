@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, readFileSync, appendFileSync } from 'fs';
+import { mkdtempSync, rmSync, readFileSync, appendFileSync, mkdirSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import {
@@ -10,6 +10,12 @@ import {
   LANE_LEDGER_SCHEMA_VERSION,
   type LaneEvent,
 } from '../../src/lanes/ledger';
+import {
+  isOrderLedgerFile,
+  landingRow,
+  orderLedgerPath,
+  serializeOrderRows,
+} from '../../src/lanes/order-ledger';
 
 /**
  * The delivered count is the sellable ROI number, so its integrity rules are
@@ -39,6 +45,39 @@ function event(partial: Partial<LaneEvent> & { lane: string }): LaneEvent {
     ...partial,
   } as LaneEvent;
 }
+
+describe('the delivery reader ignores order-ledger files (one directory, two concepts)', () => {
+  it('a landing marker in an orders file beside a real delivery ledger is not a delivery event', () => {
+    // The order ledger's landing marker (#372) carries every field the
+    // delivery reader accepts plus `outcome: 'landed'`; only the file kind
+    // tells the two apart, and that discriminator lives beside the two
+    // path builders, never as a string literal in the reader.
+    expect(isOrderLedgerFile(orderLedgerPath('remediate', 'fix-vulns'))).toBe(true);
+    expect(isOrderLedgerFile(laneLedgerPath('remediate', 'fix-vulns'))).toBe(false);
+    expect(isOrderLedgerFile(laneLedgerPath('dep-bump'))).toBe(false);
+
+    appendLaneEvent(repo, event({ lane: 'remediate', task: 'fix-vulns', costUsd: 1 }));
+    const before = computeDelivered(readLaneEvents(repo));
+    const marker = landingRow('fix-vulns', {
+      timestamp: '2026-07-02T00:00:00.000Z',
+      outcome: 'verified',
+      branch: 'dxkit/remediate-fix-vulns',
+      dxkitVersion: '4.4.8',
+      policyHash: 'h',
+    });
+    const ordersAbs = join(repo, orderLedgerPath('remediate', 'fix-vulns'));
+    mkdirSync(join(repo, '.dxkit', 'lanes'), { recursive: true });
+    writeFileSync(ordersAbs, serializeOrderRows([marker]), 'utf8');
+
+    const events = readLaneEvents(repo);
+    expect(events).toHaveLength(1);
+    expect(events[0].task).toBe('fix-vulns');
+    expect(events[0].costUsd).toBe(1);
+    // The metrics count is unchanged by the marker's presence.
+    expect(computeDelivered(events)).toEqual(before);
+    expect(computeDelivered(events).events).toBe(1);
+  });
+});
 
 describe('ledger files', () => {
   it('one file per standing-PR identity — lanes and tasks never share', () => {
