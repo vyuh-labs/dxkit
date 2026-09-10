@@ -9,7 +9,13 @@
 import type { CorrectnessFloorResult } from '../../analyzers/correctness/run';
 import { containIfGuardrailRed } from '../containment';
 import { describeDropped } from '../orders-complete';
-import type { RemediateGit, RemediateResult, RemediateRunOptions } from '../outcome';
+import { notDispatched } from '../orders-phase';
+import type {
+  OrdersPhaseSummary,
+  RemediateGit,
+  RemediateResult,
+  RemediateRunOptions,
+} from '../outcome';
 import type { RemediateTask } from '../tasks';
 import {
   installFailedNote,
@@ -17,9 +23,43 @@ import {
   verifyCommittedHead,
   verifyOrderHead,
 } from '../verify';
+import { classesSelectedBy } from '../work-orders/types';
 import { recipeCounts, runRecipePhaseForTask, type RecipePhaseSummary } from './run-recipes';
 
 type Partial = Omit<RemediateResult, 'ledger' | 'dispatch' | 'resume'>;
+
+/** The one phrasing of the policy that turns the agent tier off (#393):
+ *  every ledger line that names it reads the same. */
+export const AGENT_TIER_DISABLED_BY_POLICY =
+  'agent tier disabled by policy (remediate.maxOrdersPerRun: 0)';
+
+/**
+ * Does a work-order plan APPLY to this run? The ONE predicate behind the
+ * runner's path decision (#393): a plan applies when the task selects
+ * work-order classes AND the recipe phase built a plan (`agentOrders`
+ * present, even when empty). Only when NO plan applies does the runner
+ * take the legacy single-prompt path: an open-ended task (no classes to
+ * plan for), or a failed plan (fail-open, the `planError` disclosed).
+ * `remediate.maxOrdersPerRun` plays no part here: the cap decides how many
+ * orders the agent tier gets, never whether a plan exists.
+ */
+export function workOrderPlanApplies(
+  taskId: string,
+  recipes: RecipePhaseSummary,
+): { readonly applies: true } | { readonly applies: false; readonly reason: string } {
+  if (classesSelectedBy(taskId).length === 0) {
+    return { applies: false, reason: 'the task selects no work-order classes' };
+  }
+  if (recipes.agentOrders === undefined) {
+    return {
+      applies: false,
+      reason: recipes.planError
+        ? `work-order planning failed (${recipes.planError}); the agent path proceeded as before`
+        : 'no work-order plan was built',
+    };
+  }
+  return { applies: true };
+}
 
 /**
  * The frame's recipe-tier step: run the phase (never throwing past this
@@ -91,9 +131,38 @@ export async function recipeTierStep(
   // agent-tier orders plus every refused/failed recipe order — goes to the
   // orders phase ONE ORDER PER AGENT RUN, so a refused recipe never
   // dead-ends the run. The run completes here only when nothing is left.
-  const orderDispatch = opts.config.maxOrdersPerRun > 0 && recipes.agentOrders !== undefined;
-  if (orderDispatch) {
-    if ((recipes.agentOrders ?? []).length > 0) {
+  const planApplies = workOrderPlanApplies(args.task.id, recipes).applies;
+  const agentQueue = recipes.agentOrders ?? [];
+  if (planApplies && opts.config.maxOrdersPerRun <= 0) {
+    // `remediate.maxOrdersPerRun: 0` means RECIPES ONLY (#393): the agent
+    // tier is disabled by policy, so the run completes from the recipe
+    // tier right here, never on the legacy single-prompt path (which was
+    // the least scoped agent the lane has). Every order the queue held is
+    // disclosed `not-dispatched` with the policy named, so a reader sees
+    // exactly what stays open and why.
+    const orders: OrdersPhaseSummary | undefined =
+      agentQueue.length > 0
+        ? {
+            cap: 0,
+            queued: agentQueue.length,
+            records: agentQueue.map((o) => notDispatched(o, AGENT_TIER_DISABLED_BY_POLICY)),
+          }
+        : undefined;
+    const done = await completeRecipeOnlyRun(opts, {
+      taskId: args.task.id,
+      recipes,
+      baseHead: args.baseHead,
+      head: args.git.head(),
+      hasDiff: args.git.hasDiff(args.baseHead),
+      entryFloor: args.entryFloor,
+      runFloor: args.runFloor,
+      git: args.git,
+      ...(orders ? { orders } : {}),
+    });
+    return { recipes, done };
+  }
+  if (planApplies) {
+    if (agentQueue.length > 0) {
       const verified = await verifyRecipeGroup(opts, recipes, args);
       if (verified.groupVerification?.kind === 'unverifiable') {
         // The base the agent orders would build on cannot be verified:
@@ -118,9 +187,9 @@ export async function recipeTierStep(
       return { recipes: verified };
     }
   } else if (recipes.selectedAgentTier > 0) {
-    // No order queue (dispatch off, or a summary without a plan): the
-    // pre-order-dispatch shape — a mixed plan continues on the legacy
-    // task-prompt agent path.
+    // No plan applies yet agent-tier orders were counted (a summary without
+    // an order queue): the pre-order-dispatch shape, kept for older
+    // summaries; the runner's own predicate then takes the legacy path.
     return { recipes };
   }
   const done = await completeRecipeOnlyRun(opts, {
@@ -236,6 +305,11 @@ export interface RecipeOnlyArgs {
   readonly runFloor: () => CorrectnessFloorResult;
   /** The branch surface containment reverts through (4.4.8). */
   readonly git: RemediateGit;
+  /** The agent-tier queue this run did NOT dispatch because the agent tier
+   *  is disabled by policy (`remediate.maxOrdersPerRun: 0`, #393): every
+   *  order recorded `not-dispatched` with the policy named, disclosed on
+   *  every arm below. Absent on a plan that left nothing for the agent. */
+  readonly orders?: OrdersPhaseSummary;
   /** Injected for tests; production derives from the active packs. */
   readonly isManifestPath?: (path: string) => boolean;
 }
@@ -245,29 +319,37 @@ export async function completeRecipeOnlyRun(
   args: RecipeOnlyArgs,
 ): Promise<Partial> {
   const counts = recipeCounts(args.recipes);
-  const zeroDollar = 'No agent was spawned: every selected work order was recipe-tier ($0 run).';
+  const undispatched = args.orders ? { orders: args.orders } : {};
+  const zeroDollar = args.orders
+    ? `No agent was spawned: ${AGENT_TIER_DISABLED_BY_POLICY}; ${args.orders.queued} ` +
+      'agent-tier order(s) were not dispatched and remain open ($0 run).'
+    : 'No agent was spawned: every selected work order was recipe-tier ($0 run).';
   if (!args.hasDiff) {
-    // NOT a clean no-op: the orders exist, every recipe refused or failed,
-    // and no agent dispatch remains in this run to pick them up (the
-    // in-run fallback routes refused orders to the agent tier whenever
-    // `remediate.maxOrdersPerRun` allows it — reaching this arm means it
-    // did not). A green outcome here would let the scheduled lane loop
-    // forever over debt nothing is working; `recipes-refused` is non-clean
-    // by construction (the executor's clean set never contains it).
-    const dispatchOff = opts.config.maxOrdersPerRun <= 0;
+    // NOT a clean no-op: the orders exist, every recipe refused or failed
+    // (or none was selected), and no agent dispatch remains in this run to
+    // pick them up (the in-run fallback routes refused orders to the agent
+    // tier whenever `remediate.maxOrdersPerRun` allows it; reaching this
+    // arm means it did not). A green outcome here would let the scheduled
+    // lane loop forever over debt nothing is working; `recipes-refused` is
+    // non-clean by construction (the executor's clean set never contains
+    // it).
+    const remedy =
+      opts.config.maxOrdersPerRun <= 0
+        ? ' Raise remediate.maxOrdersPerRun to let the agent tier pick these orders up.'
+        : '';
     return {
       outcome: 'recipes-refused',
       task: args.taskId,
       floor: args.entryFloor,
       recipes: args.recipes,
+      ...undispatched,
       note:
-        `${zeroDollar} Every recipe declined: ${counts.refused} refused, ${counts.failed} ` +
-        'failed, nothing was fixed, and the orders remain open. Per-order reasons are in ' +
-        'the recipe section below; these orders need the agent tier or a human.' +
-        (dispatchOff
-          ? ' In-run agent dispatch is off (remediate.maxOrdersPerRun: 0); raise it to let ' +
-            'the agent tier pick these orders up.'
-          : ''),
+        (args.recipes.records.length === 0
+          ? `${zeroDollar} No recipe-tier order was selected, so nothing was fixed and the ` +
+            'orders remain open; they need the agent tier or a human.'
+          : `${zeroDollar} Every recipe declined: ${counts.refused} refused, ${counts.failed} ` +
+            'failed, nothing was fixed, and the orders remain open. Per-order reasons are in ' +
+            'the recipe section below; these orders need the agent tier or a human.') + remedy,
     };
   }
   const { verified, guardrail } = await verifyCommittedHead(opts, {
@@ -365,7 +447,7 @@ export async function completeRecipeOnlyRun(
 
 /** The result fields every recipe-only arm carries. */
 function disclose(
-  args: Pick<RecipeOnlyArgs, 'taskId' | 'recipes' | 'baseHead' | 'head'>,
+  args: Pick<RecipeOnlyArgs, 'taskId' | 'recipes' | 'baseHead' | 'head' | 'orders'>,
   verified: Awaited<ReturnType<typeof verifyCommittedHead>>['verified'],
   guardrail: Awaited<ReturnType<typeof verifyCommittedHead>>['guardrail'],
   opts: RemediateRunOptions,
@@ -373,6 +455,7 @@ function disclose(
   return {
     task: args.taskId,
     recipes: args.recipes,
+    ...(args.orders ? { orders: args.orders } : {}),
     ...verificationDisclosures(verified, guardrail, opts.cwd),
     baseHead: args.baseHead,
     head: args.head,

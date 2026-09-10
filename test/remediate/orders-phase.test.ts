@@ -6,8 +6,10 @@
  * enforcement drops out-of-envelope commits with disclosure; a dead CLI
  * stops the queue; the tool policy is applied through the driver's declared
  * mechanism and disclosed either way; and the ledger renders the per-order
- * sections. Open-ended tasks and order-less runs keep the legacy
- * task-prompt path byte-identical (pinned by the existing run tests).
+ * sections. Only a task no work-order plan applies to (an open-ended task,
+ * a failed or absent plan) takes the legacy task-prompt path, named in the
+ * ledger; `maxOrdersPerRun: 0` is recipes only and never spawns an agent
+ * for a planned task (#393).
  */
 import { describe, it, expect } from 'vitest';
 import * as fs from 'fs';
@@ -23,7 +25,7 @@ import type { RemediateConfig } from '../../src/remediate/config';
 import { DEFAULT_REMEDIATE_BUDGET } from '../../src/remediate/config';
 import type { CorrectnessFloorResult } from '../../src/analyzers/correctness/run';
 import { trustedLocalContext } from '../../src/analysis-trust';
-import type { RecipePhaseSummary } from '../../src/remediate/recipes/run-recipes';
+import { emptyRecipePhase, type RecipePhaseSummary } from '../../src/remediate/recipes/run-recipes';
 import { makeOrder } from './recipes/helpers';
 import type { WorkOrder } from '../../src/remediate/work-orders/types';
 import { orderRunDisallowedTools } from '../../src/remediate/tool-policy';
@@ -210,16 +212,89 @@ describe('order dispatch: one order per run, value order, cap honored', () => {
     expect(r.ledger).toContain('not-dispatched');
   });
 
-  it('maxOrdersPerRun: 0 keeps the legacy task-prompt path (order dispatch off)', async () => {
-    const driver = fakeDriver(() => ({}));
-    const orders = [agentOrder('floor-failure:a')];
+  it('maxOrdersPerRun: 0 disables the agent tier: a non-empty agent queue never reaches the driver, the run completes from the recipe tier, and the ledger names the policy (#393)', async () => {
+    // The $0 contract: a driver that THROWS on contact proves no agent of
+    // any shape (order-driven or the legacy single prompt) was spawned.
+    const driver = fakeDriver(() => {
+      throw new Error('the agent tier is disabled by policy; the driver must never be invoked');
+    });
+    const orders = [agentOrder('floor-failure:a'), agentOrder('floor-failure:b')];
     const r = await runRemediateTask(
       base(driver, orders, { config: config({ maxOrdersPerRun: 0 }) }),
+    );
+    expect(driver.runs).toHaveLength(0);
+    // The outcome comes from the recipe tier's completion (nothing was
+    // fixed, the orders stay open: non-clean by construction), never from
+    // the legacy path, and the ledger never names that path.
+    expect(r.outcome).toBe('recipes-refused');
+    expect(r.legacyTaskPath).toBeUndefined();
+    expect(r.ledger).not.toContain('legacy single-prompt');
+    expect(r.note).toContain('agent tier disabled by policy (remediate.maxOrdersPerRun: 0)');
+    expect(r.note).toContain('2 agent-tier order(s) were not dispatched');
+    // Every queued order is listed not-dispatched with the policy as the
+    // reason (the one `notDispatched` record shape).
+    expect(r.orders?.cap).toBe(0);
+    expect(r.orders?.queued).toBe(2);
+    expect(r.orders?.records.map((rec) => [rec.orderId, rec.outcome])).toEqual([
+      ['floor-failure:a', 'not-dispatched'],
+      ['floor-failure:b', 'not-dispatched'],
+    ]);
+    for (const rec of r.orders?.records ?? []) {
+      expect(rec.detail).toBe('agent tier disabled by policy (remediate.maxOrdersPerRun: 0)');
+    }
+    expect(r.ledger).toContain('Agent tier disabled by policy (`remediate.maxOrdersPerRun: 0`)');
+    expect(r.ledger).toContain('2 agent-tier order(s) not dispatched');
+    expect(r.ledger).toContain('`floor-failure:a` (floor-failure, 0 finding(s)): not-dispatched');
+  });
+
+  it('maxOrdersPerRun: 1 keeps the order-driven behaviour: exactly one order is dispatched, the rest disclosed beyond the cap', async () => {
+    const driver = fakeDriver(() => ({}));
+    const orders = [agentOrder('floor-failure:a'), agentOrder('floor-failure:b')];
+    const r = await runRemediateTask(
+      base(driver, orders, { config: config({ maxOrdersPerRun: 1 }) }),
+    );
+    expect(driver.runs).toHaveLength(1);
+    expect(driver.runs[0].prompt).toContain('Work order floor-failure:a');
+    expect(r.legacyTaskPath).toBeUndefined();
+    expect(r.orders?.records.map((rec) => [rec.orderId, rec.outcome])).toEqual([
+      ['floor-failure:b', 'not-dispatched'],
+      ['floor-failure:a', 'completed'],
+    ]);
+    expect(r.orders?.records[0].detail).toContain('maxOrdersPerRun: 1');
+  });
+
+  it('a class-selecting task whose plan selects nothing is a $0 no-op, never a fallback to the open-ended prompt (#393)', async () => {
+    const driver = fakeDriver(() => {
+      throw new Error('an empty plan must not spawn the legacy agent');
+    });
+    for (const cap of [0, 3]) {
+      const r = await runRemediateTask(
+        base(driver, [], { config: config({ maxOrdersPerRun: cap }) }),
+      );
+      expect(driver.runs).toHaveLength(0);
+      expect(r.outcome).toBe('no-op');
+      expect(r.note).toContain('selects no open order');
+      expect(r.legacyTaskPath).toBeUndefined();
+    }
+  });
+
+  it('an open-ended task (no work-order classes) takes the legacy path even under maxOrdersPerRun: 0, and the ledger names the path (#393)', async () => {
+    const driver = fakeDriver(() => ({}));
+    const r = await runRemediateTask(
+      base(driver, [], {
+        taskId: 'improve-tests',
+        config: config({ maxOrdersPerRun: 0, tasks: ['improve-tests'] }),
+      }),
     );
     expect(driver.runs).toHaveLength(1);
     // The legacy path sends the TASK prompt, not a work order.
     expect(driver.runs[0].prompt).not.toContain('Work order');
     expect(r.orders).toBeUndefined();
+    expect(r.legacyTaskPath).toBe('the task selects no work-order classes');
+    expect(r.ledger).toContain(
+      'Agent path: legacy single-prompt task run: no work-order plan applies to this task ' +
+        '(the task selects no work-order classes).',
+    );
   });
 
   it('a summary carrying no order queue (no plan) keeps the legacy path under the default cap', async () => {
@@ -238,6 +313,21 @@ describe('order dispatch: one order per run, value order, cap honored', () => {
     expect(driver.runs).toHaveLength(1);
     expect(driver.runs[0].prompt).not.toContain('Work order');
     expect(r.orders).toBeUndefined();
+    expect(r.legacyTaskPath).toBe('no work-order plan was built');
+  });
+
+  it('a FAILED plan keeps the fail-open legacy path, and the ledger names both the path and the failure (#393)', async () => {
+    const driver = fakeDriver(() => ({}));
+    const r = await runRemediateTask(
+      base(driver, [], {
+        runRecipePhase: async () => emptyRecipePhase({ planError: 'gather exploded' }),
+      }),
+    );
+    expect(driver.runs).toHaveLength(1);
+    expect(driver.runs[0].prompt).not.toContain('Work order');
+    expect(r.legacyTaskPath).toContain('work-order planning failed (gather exploded)');
+    expect(r.ledger).toContain('legacy single-prompt task run');
+    expect(r.ledger).toContain('gather exploded');
   });
 });
 
@@ -534,12 +624,14 @@ describe('starvation guard: a no-diff fallback run stays non-clean', () => {
   });
 });
 
-describe('the legacy path keeps the negative constraint (maxOrdersPerRun: 0)', () => {
+describe('the legacy path keeps the negative constraint (no work-order plan applies)', () => {
   it('priorBlocking is rendered into the legacy task prompt too, never silently dropped', async () => {
     const driver = fakeDriver(() => ({}));
     const r = await runRemediateTask(
       base(driver, [], {
-        config: config({ maxOrdersPerRun: 0 }),
+        // No plan in hand routes the class-selecting task to the legacy
+        // prompt (#393: a cap of 0 no longer does).
+        runRecipePhase: async () => emptyRecipePhase(),
         priorBlocking: '- [secret] src/config.ts',
       }),
     );

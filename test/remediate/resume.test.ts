@@ -16,6 +16,7 @@ import {
   serializeOrderRows,
 } from '../../src/lanes/order-ledger';
 import { runRemediateTask, type RemediateGit } from '../../src/remediate/run';
+import { emptyRecipePhase } from '../../src/remediate/recipes/run-recipes';
 import type { AgentDriver, AgentRunResult } from '../../src/remediate/driver';
 import type { RemediateConfig } from '../../src/remediate/config';
 import { DEFAULT_REMEDIATE_BUDGET } from '../../src/remediate/config';
@@ -335,6 +336,9 @@ describe('runRemediateTask — resumed attempts', () => {
       git: fakeGit(),
       entryFloor: GREEN,
       resume: { attempt: 1 },
+      // The resumed attempt rides the legacy single-prompt path; a
+      // class-selecting task reaches it only with no plan in hand (#393).
+      runRecipePhase: async () => emptyRecipePhase(),
       runFloor: () => RED, // only the verify side runs — entry came in
       runGuardrail: async () => ({ verdict: 'PASSED', ran: true, passesGate: true }),
       verifySeams: {
@@ -362,6 +366,7 @@ describe('runRemediateTask — resumed attempts', () => {
       git: fakeGit(),
       entryFloor: GREEN,
       resume: { attempt: 2 },
+      runRecipePhase: async () => emptyRecipePhase(),
       runFloor: () => GREEN,
       runGuardrail: async () => ({ verdict: 'PASSED', ran: true, passesGate: true }),
       verifySeams: {

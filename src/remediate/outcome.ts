@@ -168,7 +168,7 @@ export type RemediateOutcome =
   | 'partially-landed' // some orders verified and land, others were DROPPED (named); non-clean, a PR opens for the kept set
   | 'verification-unavailable' // per-order verification infrastructure failed; committed work KEPT on the branch, nothing lands
   | 'no-op' // agent ran TO COMPLETION, no diff (nothing to fix)
-  | 'recipes-refused' // recipe-only plan, every recipe refused/failed: nothing fixed, NOT clean
+  | 'recipes-refused' // the recipe tier fixed nothing (every recipe refused/failed, or none selected) and no agent dispatch remained: NOT clean
   | 'install-failed' // a clean checkout of the diff cannot be installed the way CI installs — never lands
   | 'floor-red' // diff breaks the net-new floor — never lands
   | 'guardrail-red' // guardrail blocked, refused, or could not run — never lands
@@ -340,8 +340,17 @@ export interface RemediateResult {
   readonly recipes?: RecipePhaseSummary;
   /** The order-driven agent phase (4.4.5, scoped agent): one order per
    *  agent run, per-order records with derived budgets, envelope
-   *  enforcement drops, and done disclosures — rendered into the ledger. */
+   *  enforcement drops, and done disclosures, rendered into the ledger.
+   *  On a run whose agent tier is disabled by policy
+   *  (`remediate.maxOrdersPerRun: 0`, #393) it holds the queue that was
+   *  NOT dispatched, every record `not-dispatched` with the policy named. */
   readonly orders?: OrdersPhaseSummary;
+  /** Present when the run took the LEGACY single-prompt task path (#393):
+   *  the reason no work-order plan applied to the task (an open-ended task,
+   *  a failed plan). Rendered as the ledger's path line, so a reader can
+   *  tell which agent path ran. Absent on every order-driven and
+   *  recipe-only run. */
+  readonly legacyTaskPath?: string;
   /** Guardrail-red containment (4.4.7): present whenever the final
    *  guardrail was red on an order-driven run and containment was
    *  attempted: successful (the dropped units named) or refused (the
