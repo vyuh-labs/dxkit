@@ -5,6 +5,8 @@ import * as os from 'os';
 import * as yaml from 'js-yaml';
 import {
   INSTALL_DEPS_PLACEHOLDER,
+  INSTALL_OUTCOME_LOG,
+  SHELL_FALLBACK_FN,
   defaultResolvedTolerances,
   renderInstallDependenciesShell,
 } from '../src/install';
@@ -99,7 +101,39 @@ describe('dependency-install block: one definition, rendered into every template
       // And it is still valid YAML with a real `run:` body.
       const parsed = yaml.load(out) as { jobs: Record<string, { steps: Array<{ run?: string }> }> };
       const runs = Object.values(parsed.jobs).flatMap((j) => j.steps.map((s) => s.run ?? ''));
-      expect(runs.some((r) => r.includes('npm ci || npm ci --legacy-peer-deps'))).toBe(true);
+      expect(
+        runs.some((r) => r.includes(`npm ci || ${SHELL_FALLBACK_FN} npm ci --legacy-peer-deps`)),
+      ).toBe(true);
+      // The rendered step captures the chain and hands the log to the ONE
+      // classifier (#381), then exits with the install's own code.
+      const install = runs.find((r) => r.includes('dxkit_install()'))!;
+      expect(install).toContain(`install classify --log ${INSTALL_OUTCOME_LOG}`);
+      expect(install).toContain('exit "$DXKIT_INSTALL_CODE"');
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  // A workflow installed BEFORE the chain classified its outcome (4.4.7) is a
+  // dxkit-managed file with different content: `update`'s re-render (the same
+  // writer, no --force) refreshes it, so the fix reaches every onboarded repo.
+  it('update refreshes an installed guardrails workflow that predates the classified chain', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-install-tpl-'));
+    try {
+      fs.writeFileSync(path.join(tmp, 'package.json'), '{"name":"x"}');
+      installCiGuardrails(tmp);
+      const dest = path.join(tmp, '.github', 'workflows', 'dxkit-guardrails.yml');
+      const current = fs.readFileSync(dest, 'utf8');
+      // Strip the classification back out: the pre-fix rendered shape.
+      const stale = current
+        .split('\n')
+        .filter((l) => !l.includes('install classify') && !l.includes('install comment'))
+        .join('\n');
+      expect(stale).not.toBe(current);
+      fs.writeFileSync(dest, stale, 'utf8');
+      const result = installCiGuardrails(tmp);
+      expect(result.installed).toContain(path.join('.github', 'workflows', 'dxkit-guardrails.yml'));
+      expect(fs.readFileSync(dest, 'utf8')).toBe(current);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

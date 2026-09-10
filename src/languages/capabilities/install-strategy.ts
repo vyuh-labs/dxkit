@@ -197,6 +197,10 @@ export interface InstallStrategy {
   /** The lockfile the strategy keys on (repo-root-relative basename), or
    *  null when the ecosystem installs from the manifest alone. */
   readonly lockfile: string | null;
+  /** The manifest the lockfile records (`package.json`), for the drift
+   *  remedy's wording; absent when the ecosystem has no single manifest
+   *  name worth naming. */
+  readonly manifest?: string;
   readonly modes: {
     readonly frozen: InstallPlan;
     /** Absent when the ecosystem has no lock-writing install dxkit can name
@@ -267,4 +271,52 @@ export function declareInstallStrategy(
 /** `[bin, ...args]` as one display string. */
 export function installCommandText(cmd: InstallCommand): string {
   return [cmd.bin, ...cmd.args].join(' ');
+}
+
+/** The strategy facts the drift remedy is phrased from: what a captured CI
+ *  install outcome records, so the phrasing needs no second strategy pick. */
+export interface LockfileDriftFacts {
+  readonly lockfile: string | null;
+  readonly manifest?: string;
+  /** The frozen primary's display text (what refused the tree). */
+  readonly frozen: string;
+  /** The lock-writing resync's display text, or null when the ecosystem
+   *  has none dxkit can name. */
+  readonly resync: string | null;
+}
+
+/** Project a strategy onto the facts the drift remedy reads. */
+export function lockfileDriftFacts(strategy: InstallStrategy): LockfileDriftFacts {
+  return {
+    lockfile: strategy.lockfile,
+    ...(strategy.manifest !== undefined ? { manifest: strategy.manifest } : {}),
+    frozen: installCommandText(strategy.modes.frozen.primary),
+    resync: strategy.modes.resync ? installCommandText(strategy.modes.resync.primary) : null,
+  };
+}
+
+/**
+ * The ONE phrasing of "the lockfile does not record the manifest": what the
+ * correctness floor's lockfile-sync check prints on a drift and what the
+ * guardrails workflow's PR comment prints when its install step died on the
+ * same shape. Manager-aware when the strategy is known (names the lockfile,
+ * the manifest, the frozen command that refused the tree and the
+ * lock-writing resync to run); the generic sentence otherwise.
+ */
+export function describeLockfileDrift(facts?: LockfileDriftFacts | null): string {
+  if (!facts || facts.lockfile === null) {
+    return (
+      'The lockfile does not satisfy the manifest: a frozen install (what CI runs before ' +
+      'any gate) fails on this tree. Re-run the package manager install so the lockfile ' +
+      'records the manifest, and commit both.'
+    );
+  }
+  const manifest = facts.manifest ?? 'the manifest';
+  const remedy = facts.resync
+    ? `Run \`${facts.resync}\` and commit ${facts.lockfile}.`
+    : `Re-run the package manager install so ${facts.lockfile} records ${manifest}, and commit both.`;
+  return (
+    `${facts.lockfile} is out of sync with ${manifest}: the frozen install CI runs before ` +
+    `any gate (\`${facts.frozen}\`) refuses this tree. ${remedy}`
+  );
 }

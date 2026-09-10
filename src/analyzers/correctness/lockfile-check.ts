@@ -12,6 +12,7 @@ import {
   type CorrectnessProvider,
   type LockfileCheck,
 } from '../../languages/capabilities/correctness';
+import { describeLockfileDrift } from '../../languages/capabilities/install-strategy';
 import { discoverPackDepRoots } from '../security/nested-dep-roots';
 import { tail, type CommandExec } from '../tools/bounded-exec';
 import type { CorrectnessCheckResult } from './run';
@@ -215,10 +216,10 @@ export function executeLockfileCheck(
         output:
           tail(attempt.output) +
           '\n' +
-          (classified ??
-            'The lockfile does not satisfy the manifest: a frozen install (what CI runs before ' +
-              'any gate) fails on this tree. Re-run the package manager install so the lockfile ' +
-              'records the manifest, and commit both.'),
+          // The ONE drift phrasing (shared with the guardrails workflow's
+          // install-outcome comment): the check carries no strategy, so the
+          // generic sentence.
+          (classified ?? describeLockfileDrift()),
       };
     }
     const [retry] = remaining.splice(idx, 1);

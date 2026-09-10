@@ -23,7 +23,21 @@ export {
 } from './tolerances';
 export {
   INSTALL_DEPS_PLACEHOLDER,
+  INSTALL_OUTCOME_RECORD,
+  INSTALL_OUTCOME_LOG,
+  NO_MANIFEST_INSTALL,
+  SHELL_FALLBACK_FN,
   ciInstallVariants,
+  ciInstallStrategy,
   renderInstallLine,
   renderInstallDependenciesShell,
 } from './shell';
+export {
+  classifyInstallLog,
+  readInstallOutcome,
+  writeInstallOutcome,
+  renderInstallOutcomeComment,
+  summarizeInstallOutcome,
+  type InstallOutcomeRecord,
+  type InstallOutcomeComment,
+} from './outcome';
