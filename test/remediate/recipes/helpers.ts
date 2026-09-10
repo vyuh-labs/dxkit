@@ -8,7 +8,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import type { CommandOutcome, RunnableCommand } from '../../../src/analyzers/tools/bounded-exec';
-import { newAdvisoryBlockSeverities } from '../../../src/baseline/policy-sections';
+import { DEFAULT_BROWNFIELD_POLICY } from '../../../src/baseline/policy';
 import { defaultResolvedTolerances } from '../../../src/install/tolerances';
 import { trustedLocalContext } from '../../../src/analysis-trust';
 import type { DepVulnFinding } from '../../../src/languages/capabilities/types';
@@ -62,8 +62,8 @@ export function makeCtx(
     trust: trustedLocalContext(),
     tolerances: defaultResolvedTolerances(),
     queryOsv: async () => [],
-    // The default policy tier through the ONE normalizer (crit + high).
-    blockSeverities: newAdvisoryBlockSeverities({}),
+    // The compiled default guardrail policy: every `added` finding blocks.
+    policy: DEFAULT_BROWNFIELD_POLICY,
     auditDepVulns: async () => [],
     ...overrides,
   };

@@ -69,16 +69,24 @@ function compareVersions(a: string, b: string): number {
  * installed version ⟹ the smallest fixed event (the conservative default).
  * No event above the installed version ⟹ undefined — never propose a
  * downgrade.
+ *
+ * `compare` is the version order the selection runs under: the numeric
+ * semver default, or a pack's declared pin grammar (the override-pin
+ * recipe's raise step, 4.4.8, selects under the OWNING pack's scheme so a
+ * v-prefixed or 4-segment ecosystem orders its fixes correctly). ONE
+ * selection algorithm either way; the comparator is the only thing a
+ * caller may vary.
  */
 export function selectFixVersion(
   fixedEvents: readonly string[],
   installedVersion: string | undefined,
+  compare: (a: string, b: string) => number = compareVersions,
 ): string | undefined {
   if (fixedEvents.length === 0) return undefined;
-  const sorted = [...fixedEvents].sort(compareVersions);
+  const sorted = [...fixedEvents].sort(compare);
   if (!installedVersion) return sorted[0];
   for (const v of sorted) {
-    if (compareVersions(v, installedVersion) > 0) return v;
+    if (compare(v, installedVersion) > 0) return v;
   }
   return undefined;
 }

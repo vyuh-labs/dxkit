@@ -15,7 +15,7 @@ import {
 import { REPO_WIDE_ENVELOPE } from '../../../src/remediate/work-orders/types';
 import {
   cachedOsvQuery,
-  effectiveBlockSeverities,
+  effectiveGuardrailPolicy,
   groupRecipeOrders,
   recipeCounts,
   runRecipeOrders,
@@ -518,17 +518,28 @@ describe('grouped execution (a file of lint slices is ONE fix attempt)', () => {
   });
 });
 
-describe('block-tier plumbing (Rule 2.30: the ONE policy normalizer)', () => {
-  it('effectiveBlockSeverities reads newAdvisories.blockSeverities through the canonical normalizer', () => {
+describe('block-predicate plumbing (Rule 2.30: the guardrail policy, one resolver)', () => {
+  it('effectiveGuardrailPolicy resolves the repo policy the guardrail check itself reads', () => {
+    // A preset base reaches the recipes exactly as it reaches the guardrail:
+    // security-only has an EMPTY generic block list (only its rules block).
     const cwd = tempRepo({
-      '.dxkit/policy.json': JSON.stringify({
-        newAdvisories: { blockSeverities: ['critical', 'high', 'medium'] },
-      }),
+      '.dxkit/policy.json': JSON.stringify({ extends: 'security-only' }),
     });
-    expect([...effectiveBlockSeverities(cwd)].sort()).toEqual(['critical', 'high', 'medium']);
-    // Absent policy: the same default the guardrail classifier uses.
-    const bare = tempRepo({});
-    expect([...effectiveBlockSeverities(bare)].sort()).toEqual(['critical', 'high']);
+    const preset = effectiveGuardrailPolicy(cwd);
+    expect(preset.block).toEqual([]);
+    expect(preset.blockRules.newCriticalDependencyVulnerability).toBe(true);
+    expect(preset.blockRules.newUntestedChangedSource).toBe(false);
+    // Absent policy: the compiled default, every `added` blocks.
+    expect(effectiveGuardrailPolicy(tempRepo({})).block).toEqual(['added']);
+  });
+
+  it('an unloadable policy falls back to the STRICTEST posture, never a looser one', () => {
+    // An unknown `extends` fails the guardrail itself; the recipes must not
+    // read that as "nothing blocks" and apply what the guardrail rejects.
+    const cwd = tempRepo({
+      '.dxkit/policy.json': JSON.stringify({ extends: 'no-such-base' }),
+    });
+    expect(effectiveGuardrailPolicy(cwd).block).toEqual(['added']);
   });
 
   it('cachedOsvQuery asks the network once per candidate within a run', async () => {

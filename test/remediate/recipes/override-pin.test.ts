@@ -30,6 +30,11 @@ import {
   isConcreteSemver,
   pickPinVersion,
 } from '../../../src/remediate/recipes/shared';
+import { MAX_PIN_RAISES } from '../../../src/remediate/recipes/override-pin';
+import { DEFAULT_BROWNFIELD_POLICY, type BrownfieldPolicy } from '../../../src/baseline/policy';
+import { policyForPreset } from '../../../src/baseline/presets';
+import { addedDepVulnVerdict } from '../../../src/baseline/candidate-verdict';
+import type { OsvVuln } from '../../../src/analyzers/tools/osv';
 import { rubyRemediation } from '../../../src/languages/ruby-remediation';
 import type { PinTransitiveProvider } from '../../../src/languages/capabilities/remediation';
 import { advisoryFinding, depFinding, fakeExec, makeCtx, makeOrder, tempRepo } from './helpers';
@@ -149,30 +154,297 @@ describe('override-pin recipe', () => {
     expect(fs.readFileSync(path.join(cwd, 'package.json'), 'utf8')).toBe(PKG);
   });
 
-  it('the block tier comes from POLICY through the one normalizer: medium refuses when the repo says so', async () => {
-    const mediumVuln = [{ id: 'GHSA-med', database_specific: { severity: 'MODERATE' } }];
-    // Default tier (critical + high): a medium advisory on the pin does NOT refuse.
-    const cwdA = tempRepo({ 'package.json': PKG, 'package-lock.json': '{}' });
-    const { exec: execA } = fakeExec();
-    const relaxed = await executeOverridePin(
+  // The pre-check's verdict IS the guardrail's (Rule 2.30, #371): every case
+  // below states the guardrail's own answer through `addedDepVulnVerdict`
+  // first, then asserts the recipe agrees. A finding the guardrail would
+  // block is refused before apply; one it would only warn on is not.
+  const SECURITY_ONLY: BrownfieldPolicy = policyForPreset(
+    'security-only',
+    DEFAULT_BROWNFIELD_POLICY,
+  ).policy;
+  const withNoFix = (id: string, severity: string): OsvVuln => ({
+    id,
+    database_specific: { severity },
+  });
+  async function precheck(policy: BrownfieldPolicy, vulns: OsvVuln[]) {
+    const cwd = tempRepo({ 'package.json': PKG, 'package-lock.json': '{}' });
+    const { exec, calls } = fakeExec();
+    const outcome = await executeOverridePin(
       pinOrder(),
-      makeCtx(cwdA, { exec: execA, queryOsv: async () => mediumVuln }),
+      makeCtx(cwd, { exec, policy, queryOsv: async () => vulns }),
     );
-    expect(relaxed.kind).toBe('applied');
-    // A repo whose policy blocks medium too: the SAME advisory now refuses.
-    const cwdB = tempRepo({ 'package.json': PKG, 'package-lock.json': '{}' });
-    const { exec: execB, calls } = fakeExec();
-    const strict = await executeOverridePin(
-      pinOrder(),
-      makeCtx(cwdB, {
-        exec: execB,
-        queryOsv: async () => mediumVuln,
-        blockSeverities: new Set(['critical', 'high', 'medium'] as const),
+    return { outcome, calls };
+  }
+
+  it('PARITY: a candidate the guardrail would block is refused; one it would only warn on is not', async () => {
+    // security-only: a HIGH advisory on an UNREACHABLE package warns (no
+    // generic `added` block; the high rule needs reachability).
+    const highUnreachable = addedDepVulnVerdict(SECURITY_ONLY, { severity: 'high' });
+    expect(highUnreachable.blocks).toBe(false);
+    expect(highUnreachable.warns).toBe(true);
+    const warned = await precheck(SECURITY_ONLY, [withNoFix('GHSA-high', 'HIGH')]);
+    expect(warned.outcome.kind).toBe('applied');
+    if (warned.outcome.kind === 'applied') {
+      // Disclosed, never silent: the advisory is still named in the ledger.
+      expect(warned.outcome.notes?.join(' ')).toContain('GHSA-high');
+    }
+    // security-only: a CRITICAL advisory blocks through its armed rule.
+    expect(addedDepVulnVerdict(SECURITY_ONLY, { severity: 'critical' }).blocks).toBe(true);
+    const refused = await precheck(SECURITY_ONLY, [withNoFix('GHSA-crit', 'CRITICAL')]);
+    expect(refused.outcome.kind).toBe('refused');
+    if (refused.outcome.kind === 'refused') {
+      // The ledger names which advisory on which version drove the refusal.
+      expect(refused.outcome.reason).toContain('GHSA-crit on 4.1.1');
+    }
+    expect(refused.calls).toHaveLength(0);
+  });
+
+  it('PARITY: the default policy blocks EVERY added dep-vuln, so a medium advisory refuses too', async () => {
+    expect(addedDepVulnVerdict(DEFAULT_BROWNFIELD_POLICY, { severity: 'medium' }).blocks).toBe(
+      true,
+    );
+    const { outcome, calls } = await precheck(DEFAULT_BROWNFIELD_POLICY, [
+      withNoFix('GHSA-med', 'MODERATE'),
+    ]);
+    expect(outcome.kind).toBe('refused');
+    if (outcome.kind === 'refused') expect(outcome.reason).toContain('GHSA-med');
+    expect(calls).toHaveLength(0);
+  });
+
+  it('PARITY: reachability reaches the predicate from the order (security-only high + reachable blocks)', async () => {
+    expect(addedDepVulnVerdict(SECURITY_ONLY, { severity: 'high', reachable: true }).blocks).toBe(
+      true,
+    );
+    const cwd = tempRepo({ 'package.json': PKG, 'package-lock.json': '{}' });
+    const { exec, calls } = fakeExec();
+    const reachableOrder = makeOrder({
+      id: 'dep-advisory:js-yaml',
+      class: 'dep-advisory',
+      findings: [
+        {
+          ...advisoryFinding('f1', 'js-yaml', 'GHSA-aaaa', '4.1.1'),
+          evidence: {
+            type: 'dep-vuln',
+            package: 'js-yaml',
+            advisoryId: 'GHSA-aaaa',
+            fixedVersion: '4.1.1',
+            reachable: true,
+          },
+        },
+      ],
+    });
+    const outcome = await executeOverridePin(
+      reachableOrder,
+      makeCtx(cwd, {
+        exec,
+        policy: SECURITY_ONLY,
+        queryOsv: async () => [withNoFix('GHSA-high', 'HIGH')],
       }),
     );
-    expect(strict.kind).toBe('refused');
-    if (strict.kind === 'refused') expect(strict.reason).toContain('GHSA-med');
+    expect(outcome.kind).toBe('refused');
+    if (outcome.kind === 'refused') expect(outcome.reason).toContain('GHSA-high');
     expect(calls).toHaveLength(0);
+  });
+
+  it('newAdvisories.blockSeverities: [] no longer disarms the pre-check (the #371 class)', async () => {
+    // The post-capture advisory tier is a DIFFERENT knob; the guardrail
+    // still blocks an `added` dep-vuln the change introduced.
+    const disarmedTier: BrownfieldPolicy = {
+      ...DEFAULT_BROWNFIELD_POLICY,
+      newAdvisories: { blockSeverities: [] },
+    };
+    expect(addedDepVulnVerdict(disarmedTier, { severity: 'high' }).blocks).toBe(true);
+    const { outcome, calls } = await precheck(disarmedTier, [withNoFix('GHSA-5p4m', 'HIGH')]);
+    expect(outcome.kind).toBe('refused');
+    if (outcome.kind === 'refused') expect(outcome.reason).toContain('GHSA-5p4m');
+    expect(calls).toHaveLength(0);
+  });
+
+  it('a malicious-package advisory refuses under every posture, at any severity', async () => {
+    expect(addedDepVulnVerdict(SECURITY_ONLY, { severity: 'low', malicious: true }).blocks).toBe(
+      true,
+    );
+    const { outcome } = await precheck(SECURITY_ONLY, [withNoFix('MAL-2026-0001', 'LOW')]);
+    expect(outcome.kind).toBe('refused');
+    if (outcome.kind === 'refused') expect(outcome.reason).toContain('MAL-2026-0001');
+  });
+
+  // ---- the raise walk (#371) ------------------------------------------
+  /** An OSV record whose one affected range is `[introduced, fixed)`. */
+  const withFix = (id: string, severity: string, introduced: string, fixed: string): OsvVuln => ({
+    id,
+    database_specific: { severity },
+    affected: [{ ranges: [{ type: 'SEMVER', events: [{ introduced }, { fixed }] }] }],
+  });
+  /** OSV answers keyed by the queried version; unknown versions are clean. */
+  const osvByVersion = (table: Record<string, OsvVuln[]>) => {
+    const queried: string[] = [];
+    const queryOsv = async (_pkg: string, version: string) => {
+      queried.push(version);
+      return table[version] ?? [];
+    };
+    return { queried, queryOsv };
+  };
+
+  it("RAISES the pin to the advisory's fixed version and re-checks; the note says so", async () => {
+    const cwd = tempRepo({ 'package.json': PKG, 'package-lock.json': '{}' });
+    const { exec } = fakeExec();
+    // The order's own fixes pick 4.1.1; that version carries a HIGH advisory
+    // fixed in 4.3.1 (the js-yaml shape from the issue).
+    const osv = osvByVersion({ '4.1.1': [withFix('GHSA-5p4m', 'HIGH', '4.0.0', '4.3.1')] });
+    const outcome = await executeOverridePin(
+      pinOrder(),
+      makeCtx(cwd, { exec, queryOsv: osv.queryOsv }),
+    );
+    expect(outcome.kind).toBe('applied');
+    expect(osv.queried).toEqual(['4.1.1', '4.3.1']);
+    const pkg = JSON.parse(fs.readFileSync(path.join(cwd, 'package.json'), 'utf8'));
+    expect(pkg.overrides['js-yaml']).toBe('4.3.1');
+    if (outcome.kind === 'applied') {
+      expect(outcome.notes).toContain('raised from 4.1.1 to 4.3.1: GHSA-5p4m on 4.1.1');
+    }
+  });
+
+  it('raises to the HIGHEST fix across several advisories on the pin, under the pack scheme', async () => {
+    const cwd = tempRepo({ 'package.json': PKG, 'package-lock.json': '{}' });
+    const { exec } = fakeExec();
+    // Two advisories on 4.1.1: one fixed in 4.2.0, one in 4.3.1; a backport
+    // event below the pin (3.14.2) is never a raise target.
+    const a = withFix('GHSA-one', 'HIGH', '4.0.0', '4.2.0');
+    const b: OsvVuln = {
+      id: 'GHSA-two',
+      database_specific: { severity: 'HIGH' },
+      affected: [
+        { ranges: [{ type: 'SEMVER', events: [{ introduced: '0' }, { fixed: '3.14.2' }] }] },
+        { ranges: [{ type: 'SEMVER', events: [{ introduced: '4.0.0' }, { fixed: '4.3.1' }] }] },
+      ],
+    };
+    const osv = osvByVersion({ '4.1.1': [a, b] });
+    const outcome = await executeOverridePin(
+      pinOrder(),
+      makeCtx(cwd, { exec, queryOsv: osv.queryOsv }),
+    );
+    expect(outcome.kind).toBe('applied');
+    expect(osv.queried).toEqual(['4.1.1', '4.3.1']);
+    if (outcome.kind === 'applied') {
+      expect(outcome.notes).toContain(
+        'raised from 4.1.1 to 4.3.1: GHSA-one on 4.1.1, GHSA-two on 4.1.1',
+      );
+    }
+  });
+
+  it('walks hop by hop when the raised version carries its own advisory', async () => {
+    const cwd = tempRepo({ 'package.json': PKG, 'package-lock.json': '{}' });
+    const { exec } = fakeExec();
+    const osv = osvByVersion({
+      '4.1.1': [withFix('GHSA-a', 'HIGH', '4.0.0', '4.2.0')],
+      '4.2.0': [withFix('GHSA-b', 'HIGH', '4.2.0', '4.3.1')],
+    });
+    const outcome = await executeOverridePin(
+      pinOrder(),
+      makeCtx(cwd, { exec, queryOsv: osv.queryOsv }),
+    );
+    expect(outcome.kind).toBe('applied');
+    expect(osv.queried).toEqual(['4.1.1', '4.2.0', '4.3.1']);
+    if (outcome.kind === 'applied') {
+      expect(outcome.notes).toEqual([
+        'raised from 4.1.1 to 4.2.0: GHSA-a on 4.1.1',
+        'raised from 4.2.0 to 4.3.1: GHSA-b on 4.2.0',
+      ]);
+    }
+  });
+
+  it('a blocking advisory with NO concrete fix above the pin refuses, naming advisory + version', async () => {
+    const cwd = tempRepo({ 'package.json': PKG, 'package-lock.json': '{}' });
+    const { exec, calls } = fakeExec();
+    // A range whose only fixed event is BELOW the pin (a backport), so no
+    // version this recipe can pick clears it.
+    const osv = osvByVersion({ '4.1.1': [withFix('GHSA-nofix', 'HIGH', '0', '3.14.2')] });
+    const outcome = await executeOverridePin(
+      pinOrder(),
+      makeCtx(cwd, { exec, queryOsv: osv.queryOsv }),
+    );
+    expect(outcome.kind).toBe('refused');
+    if (outcome.kind === 'refused') {
+      expect(outcome.reason).toContain('GHSA-nofix on 4.1.1');
+      expect(outcome.reason).toContain('no concrete fixed version above 4.1.1');
+    }
+    expect(calls).toHaveLength(0);
+    expect(fs.readFileSync(path.join(cwd, 'package.json'), 'utf8')).toBe(PKG);
+  });
+
+  it('a raise that lands on an unfixable blocking advisory refuses and discloses the raise chain', async () => {
+    const cwd = tempRepo({ 'package.json': PKG, 'package-lock.json': '{}' });
+    const { exec, calls } = fakeExec();
+    const osv = osvByVersion({
+      '4.1.1': [withFix('GHSA-a', 'HIGH', '4.0.0', '4.2.0')],
+      '4.2.0': [withFix('GHSA-b', 'HIGH', '0', '3.14.2')],
+    });
+    const outcome = await executeOverridePin(
+      pinOrder(),
+      makeCtx(cwd, { exec, queryOsv: osv.queryOsv }),
+    );
+    expect(outcome.kind).toBe('refused');
+    if (outcome.kind === 'refused') {
+      expect(outcome.reason).toContain('GHSA-b on 4.2.0');
+      expect(outcome.reason).toContain('raised from 4.1.1 to 4.2.0: GHSA-a on 4.1.1');
+    }
+    expect(calls).toHaveLength(0);
+  });
+
+  it(`is bounded: after ${MAX_PIN_RAISES} raises the walk refuses rather than continuing`, async () => {
+    const cwd = tempRepo({ 'package.json': PKG, 'package-lock.json': '{}' });
+    const { exec, calls } = fakeExec();
+    // Every version carries a further advisory with a fix: an endless ladder.
+    const osv = osvByVersion({
+      '4.1.1': [withFix('GHSA-1', 'HIGH', '4.0.0', '4.2.0')],
+      '4.2.0': [withFix('GHSA-2', 'HIGH', '4.2.0', '4.3.0')],
+      '4.3.0': [withFix('GHSA-3', 'HIGH', '4.3.0', '4.4.0')],
+      '4.4.0': [withFix('GHSA-4', 'HIGH', '4.4.0', '4.5.0')],
+      '4.5.0': [withFix('GHSA-5', 'HIGH', '4.5.0', '4.6.0')],
+    });
+    const outcome = await executeOverridePin(
+      pinOrder(),
+      makeCtx(cwd, { exec, queryOsv: osv.queryOsv }),
+    );
+    expect(outcome.kind).toBe('refused');
+    expect(osv.queried).toHaveLength(MAX_PIN_RAISES + 1);
+    if (outcome.kind === 'refused') {
+      expect(outcome.reason).toContain(`after ${MAX_PIN_RAISES} raises`);
+      expect(outcome.reason).toContain('GHSA-4');
+    }
+    expect(calls).toHaveLength(0);
+  });
+
+  it('a warn-tier advisory with a fix still raises (the re-audit demands a clean package)', async () => {
+    const cwd = tempRepo({ 'package.json': PKG, 'package-lock.json': '{}' });
+    const { exec } = fakeExec();
+    const securityOnly = policyForPreset('security-only', DEFAULT_BROWNFIELD_POLICY).policy;
+    // High + unreachable warns under security-only, so this would not
+    // refuse; but it has a fix, so the pin walks past it instead of applying
+    // a version the verify would then report.
+    const osv = osvByVersion({ '4.1.1': [withFix('GHSA-warn', 'HIGH', '4.0.0', '4.3.1')] });
+    const outcome = await executeOverridePin(
+      pinOrder(),
+      makeCtx(cwd, { exec, policy: securityOnly, queryOsv: osv.queryOsv }),
+    );
+    expect(outcome.kind).toBe('applied');
+    expect(osv.queried).toEqual(['4.1.1', '4.3.1']);
+  });
+
+  it('a null OSV answer on a raised hop stays a disclosed note, never read as clean', async () => {
+    const cwd = tempRepo({ 'package.json': PKG, 'package-lock.json': '{}' });
+    const { exec } = fakeExec();
+    const queryOsv = async (_pkg: string, version: string) =>
+      version === '4.1.1' ? [withFix('GHSA-a', 'HIGH', '4.0.0', '4.3.1')] : null;
+    const outcome = await executeOverridePin(pinOrder(), makeCtx(cwd, { exec, queryOsv }));
+    expect(outcome.kind).toBe('applied');
+    if (outcome.kind === 'applied') {
+      expect(outcome.notes).toEqual([
+        'raised from 4.1.1 to 4.3.1: GHSA-a on 4.1.1',
+        'OSV pre-check for js-yaml@4.3.1 could not be reached; the re-audit verifies',
+      ]);
+    }
   });
 
   it('a range-shaped fixed version refuses at runtime too (the defensive rail behind matches)', async () => {

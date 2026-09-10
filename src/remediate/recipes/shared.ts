@@ -5,8 +5,8 @@
  * lock-writing install with its declared fallback doctrine, executed
  * through the injected bounded exec), the capability resolution the
  * registry's `matches`, the plan disclosure, and the executors ALL read
- * (one code path, Rule 2.30), the concrete-semver shape, and the ONE
- * policy-driven block-tier filter for the OSV pre-checks.
+ * (one code path, Rule 2.30), the concrete-semver shape, and the OSV
+ * pre-checks' block filter, which asks the guardrail's own predicate.
  *
  * Nothing here knows an ecosystem: every manifest name, package-manager
  * command, and override mechanism comes from the packs' `remediation`
@@ -16,7 +16,9 @@
 import * as path from 'path';
 import { tail, type CommandOutcome } from '../../analyzers/tools/bounded-exec';
 import { classifyOsvSeverity, type OsvVuln } from '../../analyzers/tools/osv';
-import type { FindingSeverity } from '../../baseline/types';
+import { isMaliciousAdvisory } from '../../analyzers/security/malicious';
+import { wouldBlockAddedDepVuln, type CandidateDepVuln } from '../../baseline/candidate-verdict';
+import type { BrownfieldPolicy } from '../../baseline/policy';
 import { getLanguage, languagesDeclaringRemediation, remediationSupport } from '../../languages';
 import type { LanguageId } from '../../languages/types';
 import type {
@@ -70,23 +72,49 @@ export function pickPinVersion(
   return versions.reduce((best, v) => (scheme.compare(v, best) > 0 ? v : best));
 }
 
-/**
- * The ONE policy-driven block-tier filter for the recipes' OSV pre-checks
- * (Rule 2.30): which advisories on a candidate version REFUSE the recipe is
- * the same question the guardrail's new-advisory classifier answers, so the
- * tier comes from the same normalized policy set
- * (`newAdvisoryBlockSeverities`), never a re-derived high-or-critical
- * literal. `unknown` OSV severities pass (false-negative bias; the re-audit
- * and the guardrail stay the backstop).
- */
-export function osvBlockTier(
-  vulns: readonly OsvVuln[],
-  blockSeverities: ReadonlySet<FindingSeverity>,
-): OsvVuln[] {
-  return vulns.filter((v) => {
-    const s = classifyOsvSeverity(v);
-    return s !== 'unknown' && blockSeverities.has(s);
+/** What the recipe knows about the candidate PACKAGE beyond what OSV says
+ *  about the version: reachability is a property of the repo's import graph,
+ *  so the order's own findings answer it (any reachable advisory on the
+ *  package means the package is reachable). Absent = not known here. */
+export interface OsvCandidateSignals {
+  readonly reachable?: boolean;
+}
+
+/** One OSV record as the guardrail would see it: its severity through the
+ *  ONE OSV classifier (`unknown` stays ABSENT, which the guardrail treats
+ *  conservatively, never as low), the malicious signal through the ONE
+ *  canonical predicate, and the package's reachability from the order. */
+export function osvCandidate(vuln: OsvVuln, signals: OsvCandidateSignals = {}): CandidateDepVuln {
+  const severity = classifyOsvSeverity(vuln);
+  const malicious = isMaliciousAdvisory({
+    id: vuln.id ?? '',
+    ...(vuln.aliases !== undefined ? { aliases: vuln.aliases } : {}),
+    ...(vuln.summary !== undefined ? { summary: vuln.summary } : {}),
   });
+  return {
+    ...(severity !== 'unknown' ? { severity } : {}),
+    ...(signals.reachable === true ? { reachable: true } : {}),
+    ...(malicious ? { malicious: true } : {}),
+  };
+}
+
+/**
+ * The advisories on a candidate version that the guardrail would BLOCK as
+ * `added` (Rule 2.30, #371): which advisories REFUSE a recipe is the exact
+ * question the frame's guardrail answers afterwards, so each record is put
+ * to the guardrail's own predicate (`wouldBlockAddedDepVuln`: the policy's
+ * `block` list plus its armed block rules, through `classify` itself), never
+ * a sibling severity knob. The shipped class: the pre-check read
+ * `newAdvisories.blockSeverities`, the tier for advisories published AFTER
+ * capture, which a repo can legitimately set to `[]`; that disarmed the
+ * pre-check while the guardrail still blocked every `added` dep-vuln.
+ */
+export function osvBlockingAdvisories(
+  vulns: readonly OsvVuln[],
+  policy: BrownfieldPolicy,
+  signals: OsvCandidateSignals = {},
+): OsvVuln[] {
+  return vulns.filter((v) => wouldBlockAddedDepVuln(policy, osvCandidate(v, signals)));
 }
 
 /** The one infrastructure-shaped triage of a bounded-exec outcome: null when
