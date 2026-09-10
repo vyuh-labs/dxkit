@@ -25,7 +25,7 @@
 import type { AnalysisTrustContext } from '../../analysis-trust';
 import type { CommandExec } from '../../analyzers/tools/bounded-exec';
 import type { ResolvedTolerances } from '../../install/tolerances';
-import type { FindingSeverity } from '../../baseline/types';
+import type { BrownfieldPolicy } from '../../baseline/policy';
 import type { DepVulnFinding } from '../../languages/capabilities/types';
 import type { OsvPackageQuery } from '../../analyzers/tools/osv';
 
@@ -85,10 +85,13 @@ export interface RecipeExecuteContext {
    *  wrapped in a per-run cache; injected in tests. `null` results are
    *  DISCLOSED, never read as clean. */
   readonly queryOsv: OsvPackageQuery;
-  /** The advisory severities that REFUSE a candidate version, from the ONE
-   *  policy normalizer (`newAdvisoryBlockSeverities`) so the pre-checks and
-   *  the guardrail's new-advisory tier can never diverge (Rule 2.30). */
-  readonly blockSeverities: ReadonlySet<FindingSeverity>;
+  /** The guardrail policy the frame arbitrates the run with (the repo's
+   *  resolved `.dxkit/policy.json`, `effectiveGuardrailPolicy`). The OSV
+   *  pre-checks put every candidate advisory to the guardrail's own block
+   *  predicate over THIS policy (`wouldBlockAddedDepVuln`), so a recipe can
+   *  never apply a version the guardrail then goes red on (Rule 2.30, #371).
+   *  Never a severity set: that was the sibling knob that disarmed. */
+  readonly policy: BrownfieldPolicy;
   /** Dependency re-audit over the ONE dispatch primitive
    *  (`gatherDepVulnsWithAvailability`). `null` = the audit could not run;
    *  the recipe fails its verify rather than claim an unobserved clean. */

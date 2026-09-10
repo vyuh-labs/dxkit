@@ -12,9 +12,11 @@ import { resolveTolerances, type ResolvedTolerances } from '../../install/tolera
 import { gatherDepVulnsWithAvailability } from '../../analyzers/security/gather';
 import { queryOsvPackage, type OsvPackageQuery, type OsvVuln } from '../../analyzers/tools/osv';
 import type { AnalysisTrustContext } from '../../analysis-trust';
-import { newAdvisoryBlockSeverities } from '../../baseline/policy-sections';
-import { readPolicySection } from '../../baseline/policy-text';
-import type { FindingSeverity } from '../../baseline/types';
+import {
+  DEFAULT_BROWNFIELD_POLICY,
+  loadPolicyFromCwd,
+  type BrownfieldPolicy,
+} from '../../baseline/policy';
 import type { DepVulnFinding } from '../../languages/capabilities/types';
 import { RECIPE_REGISTRY, type RecipeDeclaration } from '../work-orders/recipes-registry';
 import { packagesNamedBy } from '../work-orders/shared';
@@ -37,20 +39,35 @@ export interface RunRecipeOrdersDeps {
   readonly registry?: readonly RecipeDeclaration[];
   readonly queryOsv?: OsvPackageQuery;
   readonly auditDepVulns?: (cwd: string) => Promise<readonly DepVulnFinding[] | null>;
-  /** The advisory block tier for the OSV pre-checks; defaults to the repo's
-   *  policy through the one normalizer (`effectiveBlockSeverities`). */
-  readonly blockSeverities?: ReadonlySet<FindingSeverity>;
+  /** The guardrail policy the OSV pre-checks put candidates to; defaults
+   *  to the repo's resolved policy (`effectiveGuardrailPolicy`). */
+  readonly policy?: BrownfieldPolicy;
   /** The frame's tree-invariant step (4.4.6); defaults to the real step
    *  bound to this phase's exec + git. */
   readonly invariantStep?: TreeInvariantStep;
 }
 
-/** The repo's effective advisory block tier, through the ONE policy
- *  normalizer the guardrail's new-advisory classifier reads (Rule 2.30). */
-export function effectiveBlockSeverities(cwd: string): ReadonlySet<FindingSeverity> {
-  return newAdvisoryBlockSeverities({
-    newAdvisories: readPolicySection(cwd, 'newAdvisories') as never,
-  });
+/**
+ * The guardrail policy the frame arbitrates this run with: the repo's
+ * resolved `.dxkit/policy.json` through the ONE resolver the guardrail check
+ * itself reads (`resolvePolicy`, so `extends` / presets apply identically).
+ * The recipes' OSV pre-checks put every candidate to the guardrail's own
+ * block predicate over THIS policy (Rule 2.30, #371); the previous
+ * projection read `newAdvisories.blockSeverities`, the post-capture tier,
+ * which a repo can set to `[]` and thereby disarm the pre-check while the
+ * guardrail still blocks every `added` dep-vuln.
+ *
+ * An unloadable policy (unknown `extends`, malformed JSON) fails the
+ * guardrail itself, so the run is red regardless; the recipes fall back to
+ * the compiled DEFAULT, the strictest posture (every `added` blocks), which
+ * can only over-refuse, never apply what the guardrail would reject.
+ */
+export function effectiveGuardrailPolicy(cwd: string): BrownfieldPolicy {
+  try {
+    return loadPolicyFromCwd(cwd);
+  } catch {
+    return DEFAULT_BROWNFIELD_POLICY;
+  }
 }
 
 /** Wrap an OSV query in a per-run cache: one plan can ask about the same
@@ -125,7 +142,7 @@ export async function runRecipeOrders(
 ): Promise<RecipeOrderRecord[]> {
   const registry = deps.registry ?? RECIPE_REGISTRY;
   const queryOsv = cachedOsvQuery(deps.queryOsv ?? queryOsvPackage);
-  const blockSeverities = deps.blockSeverities ?? effectiveBlockSeverities(deps.cwd);
+  const policy = deps.policy ?? effectiveGuardrailPolicy(deps.cwd);
   // The repo-root tolerance set, resolved ONCE for the whole phase and
   // shared with the frame's invariant step (one resolution per phase).
   const tolerances = deps.tolerances ?? resolveTolerances(deps.cwd);
@@ -214,7 +231,7 @@ export async function runRecipeOrders(
         exec: deps.exec,
         tolerances,
         queryOsv,
-        blockSeverities,
+        policy,
         auditDepVulns: deps.auditDepVulns ?? defaultAudit,
       });
     } catch (err) {

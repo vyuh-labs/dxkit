@@ -27,7 +27,7 @@ import {
   environmentRefusal,
   execStepFailure,
   exemptionReason,
-  osvBlockTier,
+  osvBlockingAdvisories,
   owningManifestEntry,
   packDeclaration,
   packStrategyAt,
@@ -177,7 +177,9 @@ export async function executeDeclareDependency(
         `OSV pre-check for ${c.specifier}@${version} could not be reached; the guardrail verifies`,
       );
     } else {
-      const blockTier = osvBlockTier(known, ctx.blockSeverities);
+      // The guardrail's own block predicate over the run's policy (Rule
+      // 2.30, #371); a brand-new dependency has no reachability yet.
+      const blockTier = osvBlockingAdvisories(known, ctx.policy);
       if (blockTier.length > 0) {
         const ids = blockTier.map((v) => v.id ?? 'unidentified advisory').join(', ');
         return {
