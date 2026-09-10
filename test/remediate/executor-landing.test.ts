@@ -76,6 +76,7 @@ function seams(overrides: Partial<ExecutorSeams> = {}): ExecutorSeams {
     defaultBranch: () => 'main',
     landHead: () => ({
       outcome: 'pr-opened' as const,
+      branch: 'dxkit/remediate-write-docs',
       mode: 'pr' as const,
       prUrl: 'https://example.test/pr/1',
     }),
@@ -288,7 +289,12 @@ describe('executeTask landing layer (#273)', () => {
         },
         landHead: (opts) => {
           draftSeenByLander = opts.draft;
-          return { outcome: 'pr-opened', mode: 'pr', prUrl: 'https://example.test/pr/2' };
+          return {
+            outcome: 'pr-opened',
+            branch: 'dxkit/remediate-write-docs',
+            mode: 'pr',
+            prUrl: 'https://example.test/pr/2',
+          };
         },
       }),
     );
@@ -352,7 +358,12 @@ describe('order-outcome ledger wiring (scheduler memory, 3F)', () => {
         runTask: async () => resultWithOrders('verified'),
         landHead: (opts) => {
           landerPath = opts.orderLedgerPath;
-          return { outcome: 'pr-opened', mode: 'pr', prUrl: 'https://example.test/pr/3' };
+          return {
+            outcome: 'pr-opened',
+            branch: 'dxkit/remediate-write-docs',
+            mode: 'pr',
+            prUrl: 'https://example.test/pr/3',
+          };
         },
         writeOrderLedger: (_cwd, _task, rows) => {
           written = [...rows];
@@ -435,7 +446,12 @@ describe('order-outcome ledger wiring (scheduler memory, 3F)', () => {
       'pr',
       seams({
         runTask: async () => ({ ...verifiedResult() }),
-        landHead: () => ({ outcome: 'pr-opened', mode: 'pr', prUrl: 'https://example.test/pr/4' }),
+        landHead: () => ({
+          outcome: 'pr-opened',
+          branch: 'dxkit/remediate-write-docs',
+          mode: 'pr',
+          prUrl: 'https://example.test/pr/4',
+        }),
         writeOrderLedger: (_cwd, _task, rows) => {
           written = [...rows];
           return null;

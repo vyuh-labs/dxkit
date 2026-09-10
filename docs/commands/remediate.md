@@ -190,6 +190,30 @@ not merge" — its own required guardrail check keeps it unmergeable, so
 nothing merges while the work and the exact blocking findings survive
 the ephemeral runner. An unrunnable guardrail never pushes anything.
 
+The standing branch is rebuilt per run, never a pile, with one
+exception: a verified landing is never replaced by a salvage. Every
+landing commits a marker into the task's order ledger naming the outcome
+that landed and the branch it landed on, so what a branch holds is read
+from the branch itself (the marker at its tip), with the open PR's body
+as corroboration for branches landed before the marker existed. When the
+standing branch holds `verified` or `partially-landed` work (reviewed,
+green, awaiting merge), a later `guardrail-red` or `budget-exhausted`
+attempt leaves that branch and PR untouched and goes to the task's
+attempt branch (`dxkit/remediate-<task>-attempt`) as a draft PR whose
+body opens with the reason. The same happens when nothing readable says
+what the standing branch holds (it exists, carries no marker, and its PR
+could not be read): an unknown is never force-pushed over. A new verified
+or partially-landed run still rebuilds the standing branch (it supersedes
+the older landing) and closes any open attempt PR with a "superseded by"
+comment, keeping the attempt branch for its ledger history. The decision
+is disclosed in the job log, the attempt record (`branch` names the
+branch actually pushed) and the run output. A salvage that updates an
+existing PR in place converts it back to draft; when that PR had been
+marked ready for review on a previous head, the flip is disclosed too.
+The order ledger composes both branches of the pair, so a diverted
+salvage's rows survive the next landing, and bookkeeping commits never
+ride a standing branch that holds verified work.
+
 With `remediate.resume: true` (opt-in), the next run continues from that
 salvage branch instead of starting over, up to 2 attempts per branch
 before falling back to a fresh run (the attempt counter is pushed with

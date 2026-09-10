@@ -24,12 +24,17 @@ import { readDispatchOverrides } from './dispatch';
 import { driverById } from './registry';
 import { remediateTaskById } from './tasks';
 import { runRemediateTask, type RemediateResult } from './run';
-import { landRemediateHead, remediateBranchFor } from './land';
-import { describeDeliveryProbe, probeDeliveryPreconditions } from '../lanes/delivery-preconditions';
+import { landingDisclosure, landingEligibility, landingNotes, landRemediateHead } from './land';
+import { landingPreflightRefusal, type LandingPreflightSeams } from './landing-preflight';
 import { appendLaneEvent, LANE_LEDGER_SCHEMA_VERSION } from '../lanes/ledger';
 import { orderOutcomeRows, publishOrderRows, writeLocalOrderLedger } from './order-outcomes';
 import { remediateStamp } from './work-orders/breaker';
-import { currentHead, writeAttemptRecord, writeProvisionalRecord } from './attempt-record';
+import {
+  currentHead,
+  describeLandingFailure,
+  writeAttemptRecord,
+  writeProvisionalRecord,
+} from './attempt-record';
 import { deferredLandingRequested } from './landing-record';
 import { deferLanding, deferPublishRows } from './defer';
 
@@ -53,35 +58,15 @@ export interface TaskRun {
    *  record for the workflow's fresh-credential `remediate land` step:
    *  disclosed, never silent. */
   readonly landingDeferred?: string;
+  /** What the landing left behind (`landingDisclosure`, #372): the branch
+   *  HEAD actually reached, a preserved standing branch, a draft flip, a
+   *  superseded attempt PR. Never silent. */
+  readonly landedBranch?: string;
+  readonly standingPreserved?: string;
+  readonly draftFlipped?: string;
+  readonly supersededAttemptPr?: string;
   /** Truthful per-task success: verified/no-op, or a landed salvage draft. */
   readonly clean: boolean;
-}
-
-/**
- * Phrase a landing failure for the record + job log: the git/gh output is
- * the evidence, and a rules/permissions-shaped refusal names the remedy —
- * the class exists on every GitHub repo (a GITHUB_TOKEN push touching
- * workflow files is refused without the `workflows` permission), not only
- * where a push ruleset restricts paths.
- */
-export function describeLandingFailure(err: unknown): string {
-  const e = err as { message?: string; stderr?: string | Buffer };
-  const stderr = (e.stderr ?? '').toString().trim();
-  const message = (e.message ?? String(err)).split('\n')[0];
-  const evidence = stderr ? `${message}\n${stderr}` : message;
-  const rulesShaped =
-    /\b403\b|GH006|GH013|protected branch|ruleset|refusing to allow|permission/i.test(evidence);
-  const remedy = rulesShaped
-    ? '\nThis looks like a repository-rules or token-permissions refusal. Remedies: grant ' +
-      'the workflow token the permission the push needs (e.g. the `workflows` permission ' +
-      'for workflow-file changes), add a ruleset bypass for the bot, or keep the task ' +
-      'away from the restricted paths (a prompt-level constraint like "do not touch ' +
-      '.github/" holds in practice).'
-    : '';
-  return (
-    `the landing push/PR was refused — the verified work did NOT land, but the attempt ` +
-    `record and ledger carry the evidence (branch state left for inspection).\n${evidence}${remedy}`
-  );
 }
 
 /** Current branch name, or 'HEAD' for a detached (CI) checkout. */
@@ -99,13 +84,11 @@ function currentBranch(cwd: string): string {
 
 /** Injection seams for the executor — tests only; production callers pass
  *  nothing (see the module doc for why they exist). */
-export interface ExecutorSeams {
+export interface ExecutorSeams extends LandingPreflightSeams {
   readonly runTask?: typeof runRemediateTask;
   readonly landHead?: typeof landRemediateHead;
   readonly branch?: (cwd: string) => string;
   readonly defaultBranch?: (cwd: string) => string;
-  /** Injected for tests: the $0 landing preflight (#286). */
-  readonly probeDelivery?: typeof probeDeliveryPreconditions;
   /** Injected for tests: the order-outcome ledger writers (3F). */
   readonly writeOrderLedger?: typeof writeLocalOrderLedger;
   readonly publishOrderRows?: typeof publishOrderRows;
@@ -192,28 +175,12 @@ export async function executeTask(
   writeProvisionalRecord(cwd, taskId, currentHead(cwd) ?? '');
 
   const reporter = startPhaseReporter(`remediate:${taskId}`);
-  // The $0 landing preflight (#286): when this run intends to LAND, probe
-  // the standing branch's delivery preconditions BEFORE any agent spawns —
-  // a branch-creation ruleset that will 403 the landing is knowable from
-  // one API read, and the live class spent full agent budgets discovering
-  // it at push time. Only POSITIVE refusal evidence blocks; an
-  // unanswerable probe proceeds (the preflight never invents a refusal).
+  // The $0 landing preflight (#286, `landing-preflight.ts`): when this run
+  // intends to LAND, probe the branch pair's delivery preconditions BEFORE
+  // any agent spawns; only positive refusal evidence refuses.
   if (land === 'pr') {
-    const preflight = (seams.probeDelivery ?? probeDeliveryPreconditions)(cwd, {
-      branches: [remediateBranchFor(taskId)],
-    });
-    const blocked = preflight.probes.find((p) => p.verdict === 'blocked');
-    if (blocked) {
-      const note =
-        `landing-unavailable (preflight, $0 — no agent was spawned): ` +
-        `${describeDeliveryProbe(blocked)}`;
-      // `task` is omitted: the preflight runs before task-id resolution
-      // narrows the raw string; the note + ledger name it.
-      const refusal: RemediateResult = {
-        outcome: 'refused',
-        note,
-        ledger: `## dxkit remediate: ${taskId}\n\noutcome: **refused**\n\n${note}\n`,
-      };
+    const refusal = landingPreflightRefusal(cwd, taskId, seams);
+    if (refusal) {
       return finalizeTaskRun(cwd, taskId, { result: refusal, landed: false, clean: false });
     }
   }
@@ -283,28 +250,18 @@ export async function executeTask(
     if (!pub.published && pub.note) logger.warn(`order ledger: ${pub.note}`);
   };
 
-  const draftSalvage = result.outcome === 'budget-exhausted' && salvage === 'draft-pr';
-  // Guardrail-red under draft-pr salvage: the BLOCKED attempt is pushed as a
-  // RED draft — its own required guardrail check keeps it unmergeable, so
-  // "nothing merges" holds while the work + blocking findings survive the
-  // ephemeral runner and the next run can RESUME from them (guardrail-red
-  // was the outcome where the most valuable partial work died).
-  // Only a guardrail that actually RAN and blocked earns a red draft: an
-  // unrunnable verification must never produce a draft PR claiming a
-  // guardrail block that never happened (review fix 5).
-  // A failed containment restore leaves HEAD as a half-unwound tree no
-  // verification saw: never pushed as "the blocked attempt" (it stays local).
-  const blockedSalvage =
-    result.outcome === 'guardrail-red' &&
-    salvage === 'draft-pr' &&
-    result.guardrailRan === true &&
-    result.containment?.restoreFailed !== true;
-  // Per-order landing (4.4.6): the kept orders of a partially-landed run
-  // are verified work and land as a normal PR; the run stays non-clean so
-  // the dropped orders (named in the ledger) are never read as done.
-  const partialLanding = result.outcome === 'partially-landed';
-  const landEligible =
-    result.outcome === 'verified' || partialLanding || draftSalvage || blockedSalvage;
+  // The ONE derivation of "does this run land, and as what" (the lander's
+  // `landingEligibility`, pinned by the outcome parity test): a guardrail-
+  // red salvage under draft-pr lands as a RED draft (its own guardrail
+  // check keeps it unmergeable while the work + blocking findings survive
+  // the runner), but only when the guardrail actually RAN and blocked and
+  // containment left a tree some verification saw; the kept orders of a
+  // partially-landed run land as a normal PR, non-clean, so the dropped
+  // orders (named in the ledger) are never read as done.
+  const { landEligible, draft, partialLanding, draftSalvage, blockedSalvage } = landingEligibility(
+    result,
+    salvage,
+  );
   if (land !== 'pr' || !landEligible) {
     publishRows();
     return finalizeTaskRun(cwd, taskId, {
@@ -367,8 +324,6 @@ export async function executeTask(
     ledger: result.ledger,
     base: result.baseHead ?? defaultBranch,
   });
-  const draft = draftSalvage || blockedSalvage;
-
   if (deferred) {
     // Everything up to and including verification + PR-body assembly ran;
     // the pushes now ride the landing record for the workflow's
@@ -418,6 +373,7 @@ export async function executeTask(
       cwd,
       taskId,
       defaultBranch,
+      outcome: result.outcome,
       prTitle,
       prBody,
       draft,
@@ -438,9 +394,14 @@ export async function executeTask(
       landingBlocked: describeLandingFailure(err),
     });
   }
+  // What the landing left behind (#372) is disclosed on every surface: the
+  // log here, the attempt record (the JSON) through the run, and the
+  // attempt PR's own body (the lander). ONE projection, spread as is.
+  const disclosure = landingDisclosure(landResult);
+  for (const note of landingNotes(disclosure)) logger.warn(note);
   return finalizeTaskRun(cwd, taskId, {
     result,
-    ...(landResult.prUrl ? { prUrl: landResult.prUrl } : {}),
+    ...disclosure,
     landed: true,
     // A blocked salvage is NOT clean: the draft exists for inspection and
     // resume, but the task did not end well — the job stays red.

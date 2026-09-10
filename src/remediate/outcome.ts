@@ -176,6 +176,48 @@ export type RemediateOutcome =
   | 'sweep-failed' // agent committed work but leftovers could not be swept
   | 'refused'; // trust/config refusal, disclosed
 
+/** The outcome vocabulary at RUNTIME, for validating a word read from disk
+ *  (a landing record, a ledger). Pinned to the type both ways: a member
+ *  missing here or a stray string fails to compile. */
+export const REMEDIATE_OUTCOMES = [
+  'verified',
+  'partially-landed',
+  'verification-unavailable',
+  'no-op',
+  'recipes-refused',
+  'install-failed',
+  'floor-red',
+  'guardrail-red',
+  'score-red',
+  'budget-exhausted',
+  'agent-never-ran',
+  'agent-failed',
+  'sweep-failed',
+  'refused',
+] as const satisfies readonly RemediateOutcome[];
+type OutcomesCovered =
+  Record<(typeof REMEDIATE_OUTCOMES)[number], true> extends Record<RemediateOutcome, true>
+    ? true
+    : never;
+const outcomesCovered: OutcomesCovered = true;
+void outcomesCovered;
+
+export function isRemediateOutcome(value: unknown): value is RemediateOutcome {
+  return typeof value === 'string' && (REMEDIATE_OUTCOMES as readonly string[]).includes(value);
+}
+
+/**
+ * The ONE partition of what lands (Rule 2.30): a landing is either verified,
+ * gate-passing work (`verified`, `partially-landed`) or a SALVAGE, the
+ * draft the `draft-pr` policy keeps for a budget-cut or guardrail-blocked
+ * attempt. Every consumer that asks "is this a salvage?" (the executor's
+ * draft derivation, the lander's target decision, the standing-branch
+ * guard) reads this predicate, never its own table of outcome words.
+ */
+export function isSalvageLanding(outcome: RemediateOutcome | string): boolean {
+  return outcome === 'guardrail-red' || outcome === 'budget-exhausted';
+}
+
 export interface AgentEnvelope {
   readonly driver: string;
   /** Driver-native model argument + how it was chosen (ledger disclosure). */

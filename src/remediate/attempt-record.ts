@@ -21,8 +21,8 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { execFileSync } from 'child_process';
-import { remediateBranchFor } from '../lanes/branches';
 import type { TaskRun } from './execute';
+import type { LandingDisclosure } from './land';
 
 /** See the module doc: the pre-spawn record a SIGKILL leaves behind. */
 export function writeProvisionalRecord(cwd: string, taskId: string, baseHead: string): void {
@@ -54,6 +54,33 @@ export function writeProvisionalRecord(cwd: string, taskId: string, baseHead: st
   }
 }
 
+/**
+ * Phrase a landing failure for the record + job log: the git/gh output is
+ * the evidence, and a rules/permissions-shaped refusal names the remedy —
+ * the class exists on every GitHub repo (a GITHUB_TOKEN push touching
+ * workflow files is refused without the `workflows` permission), not only
+ * where a push ruleset restricts paths.
+ */
+export function describeLandingFailure(err: unknown): string {
+  const e = err as { message?: string; stderr?: string | Buffer };
+  const stderr = (e.stderr ?? '').toString().trim();
+  const message = (e.message ?? String(err)).split('\n')[0];
+  const evidence = stderr ? `${message}\n${stderr}` : message;
+  const rulesShaped =
+    /\b403\b|GH006|GH013|protected branch|ruleset|refusing to allow|permission/i.test(evidence);
+  const remedy = rulesShaped
+    ? '\nThis looks like a repository-rules or token-permissions refusal. Remedies: grant ' +
+      'the workflow token the permission the push needs (e.g. the `workflows` permission ' +
+      'for workflow-file changes), add a ruleset bypass for the bot, or keep the task ' +
+      'away from the restricted paths (a prompt-level constraint like "do not touch ' +
+      '.github/" holds in practice).'
+    : '';
+  return (
+    `the landing push/PR was refused — the verified work did NOT land, but the attempt ` +
+    `record and ledger carry the evidence (branch state left for inspection).\n${evidence}${remedy}`
+  );
+}
+
 /** HEAD of the checkout, or null (evidence plumbing, never a failure). */
 export function currentHead(cwd: string): string | null {
   try {
@@ -83,6 +110,21 @@ export function writeAttemptRecord(cwd: string, taskId: string, run: TaskRun): v
   }
 }
 
+/** The record's projection of what a landing left behind (#372): the
+ *  branch HEAD was actually pushed to (null until something landed, so
+ *  the field never names a branch HEAD never reached), the PR, and the
+ *  disclosures. ONE projection: the final record and the deferred land
+ *  step's patch both spread it. */
+export function landingRecordFields(d: Partial<LandingDisclosure>): Record<string, unknown> {
+  return {
+    branch: d.landedBranch ?? null,
+    prUrl: d.prUrl ?? null,
+    standingPreserved: d.standingPreserved ?? null,
+    draftFlipped: d.draftFlipped ?? null,
+    supersededAttemptPr: d.supersededAttemptPr ?? null,
+  };
+}
+
 export function taskRunJson(run: TaskRun): Record<string, unknown> {
   const r = run.result;
   return {
@@ -96,8 +138,7 @@ export function taskRunJson(run: TaskRun): Record<string, unknown> {
     envelope: r.envelope ?? null,
     orders: r.orders ?? null,
     guardrailVerdict: r.guardrailVerdict ?? null,
-    branch: r.task ? remediateBranchFor(r.task) : null,
-    prUrl: run.prUrl ?? null,
+    ...landingRecordFields(run),
     landRefused: run.landRefused ?? null,
     landingBlocked: run.landingBlocked ?? null,
     landingDeferred: run.landingDeferred ?? null,

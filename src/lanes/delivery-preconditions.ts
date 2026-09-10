@@ -27,7 +27,7 @@
  */
 
 import { execFileSync } from 'child_process';
-import { DEP_BUMP_BRANCH, remediateBranchFor } from './branches';
+import { DEP_BUMP_BRANCH, remediateBranchesFor } from './branches';
 import { REMEDIATE_TASKS } from '../remediate/tasks';
 
 export type DeliveryVerdict = 'ok' | 'blocked' | 'restricted-paths' | 'unknown';
@@ -49,10 +49,19 @@ export interface DeliveryPreconditions {
   readonly unverifiable: boolean;
 }
 
-/** The standing branch names the lanes deliver on — derived from the same
- *  canonical constants the landers use, never a second list. */
+/** The branch names the lanes deliver on, derived from the same canonical
+ *  constants the landers use, never a second list. Each remediate task
+ *  contributes its standing branch AND its attempt branch (a salvage lands
+ *  there when the standing PR holds a verified landing, #372), so the
+ *  probed set stays the pushed set. */
 export function standingLaneBranches(): string[] {
-  return [...REMEDIATE_TASKS.map((t) => remediateBranchFor(t.id)), DEP_BUMP_BRANCH];
+  return [
+    ...REMEDIATE_TASKS.flatMap((t) => {
+      const pair = remediateBranchesFor(t.id);
+      return [pair.standing, pair.attempt];
+    }),
+    DEP_BUMP_BRANCH,
+  ];
 }
 
 export type ApiProbe = (path: string) => string | null;

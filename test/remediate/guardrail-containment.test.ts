@@ -737,7 +737,12 @@ describe('a failed branch restore is disclosed and suppresses the salvage draft'
       defaultBranch: () => 'main',
       landHead: () => {
         pushed += 1;
-        return { outcome: 'pr-opened' as const, mode: 'pr' as const, prUrl: 'x' };
+        return {
+          outcome: 'pr-opened' as const,
+          branch: 'dxkit/remediate-write-docs',
+          mode: 'pr' as const,
+          prUrl: 'x',
+        };
       },
       probeDelivery: () => ({ probes: [], anyBlocked: false, unverifiable: false }),
       writeOrderLedger: () => null,
@@ -757,7 +762,12 @@ describe('a failed branch restore is disclosed and suppresses the salvage draft'
       defaultBranch: () => 'main',
       landHead: () => {
         pushed += 1;
-        return { outcome: 'pr-opened' as const, mode: 'pr' as const, prUrl: 'x' };
+        return {
+          outcome: 'pr-opened' as const,
+          branch: 'dxkit/remediate-write-docs',
+          mode: 'pr' as const,
+          prUrl: 'x',
+        };
       },
       probeDelivery: () => ({ probes: [], anyBlocked: false, unverifiable: false }),
       writeOrderLedger: () => null,
@@ -853,7 +863,12 @@ describe('composition with the deferred landing record (two-phase landing)', () 
       defaultBranch: () => 'main',
       landHead: () => {
         pushed += 1;
-        return { outcome: 'pr-opened' as const, mode: 'pr' as const, prUrl: 'x' };
+        return {
+          outcome: 'pr-opened' as const,
+          branch: 'dxkit/remediate-write-docs',
+          mode: 'pr' as const,
+          prUrl: 'x',
+        };
       },
       probeDelivery: () => ({ probes: [], anyBlocked: false, unverifiable: false }),
       env: { [DEFERRED_LANDING_ENV]: '1' },
