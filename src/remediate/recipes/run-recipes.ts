@@ -44,6 +44,7 @@ export {
   cachedOsvQuery,
   effectiveGuardrailPolicy,
   groupRecipeOrders,
+  orderGroupsForContainment,
   runRecipeOrders,
   type RunRecipeOrdersDeps,
 } from './execute-orders';

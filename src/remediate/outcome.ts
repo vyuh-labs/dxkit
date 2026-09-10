@@ -120,7 +120,10 @@ export interface OrdersPhaseSummary {
  *  commits were reverted because the final guardrail's blocking findings
  *  attributed to it. */
 export interface ContainedDrop {
-  readonly unit: 'agent-order' | 'recipe-group';
+  /** `recipe-order` (4.4.8): one commit of a recipe whose registry entry
+   *  declares `containmentUnit: 'order'` (its orders listed), dropped alone
+   *  while the rest of the recipe tier lands. */
+  readonly unit: 'agent-order' | 'recipe-group' | 'recipe-order';
   readonly orderIds: readonly string[];
   /** Which unwind round dropped it (1-based). */
   readonly round: number;

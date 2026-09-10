@@ -13,8 +13,10 @@
  * and did not pass:
  *
  *   1. ATTRIBUTE each blocking finding to exactly one kept unit (a kept
- *      agent order, or the kept recipe group as one unit, the 4.4.6 drop
- *      granularity), on overlap evidence: the unit names the finding's
+ *      agent order; the kept manifest recipes as one group, the 4.4.6 drop
+ *      granularity; or, for a recipe that declares `containmentUnit:
+ *      'order'`, one commit of file-scoped work, 4.4.8), on overlap
+ *      evidence: the unit names the finding's
  *      package, its committed diff touches the finding's file, the file is
  *      inside the order's envelope, or (for a package-shaped finding) the
  *      unit changed a dependency manifest. Ambiguity narrows first to the
@@ -135,6 +137,57 @@ function containmentReason(blocking: readonly string[], round: number): string {
 }
 
 /**
+ * Flip the recipe records the containment drops named. A `recipe-group`
+ * drop names every order of the group and a `recipe-order` drop the orders
+ * of one commit; both flow through the same order map, so there is ONE
+ * flip path whatever granularity the recipe declared. The group
+ * verification flips to `dropped` only when EVERY applied order was
+ * dropped: while kept orders remain it stays `kept`, and each dropped
+ * record says why on its own.
+ */
+function applyRecipeDrops(
+  recipes: RecipePhaseSummary,
+  drops: readonly ContainedDrop[],
+): RecipePhaseSummary {
+  const byOrder = new Map<string, ContainedDrop>();
+  for (const d of drops) {
+    if (d.unit === 'agent-order') continue;
+    for (const id of d.orderIds) byOrder.set(id, d);
+  }
+  if (byOrder.size === 0) return recipes;
+  const records = recipes.records.map((r) => {
+    const d = r.outcome.kind === 'applied' ? byOrder.get(r.orderId) : undefined;
+    return d
+      ? {
+          ...r,
+          disposition: {
+            kind: 'dropped' as const,
+            step: 'guardrail' as const,
+            reason: containmentReason(d.blocking, d.round),
+          },
+        }
+      : r;
+  });
+  const applied = records.filter((r) => r.outcome.kind === 'applied');
+  const allDropped = applied.length > 0 && applied.every((r) => byOrder.has(r.orderId));
+  if (!allDropped || recipes.groupVerification?.kind !== 'kept') return { ...recipes, records };
+  const recipeDrops = [...new Set(byOrder.values())];
+  return {
+    ...recipes,
+    records,
+    groupVerification: {
+      kind: 'dropped',
+      step: 'guardrail',
+      reason: containmentReason(
+        recipeDrops.flatMap((d) => d.blocking),
+        Math.max(...recipeDrops.map((d) => d.round)),
+      ),
+      droppedOrderIds: applied.map((r) => r.orderId),
+    },
+  };
+}
+
+/**
  * Contain a red final guardrail: attribute, unwind, re-verify, bounded.
  * Never throws; a refusal restores the branch and carries the reason.
  */
@@ -145,7 +198,6 @@ export async function containGuardrailRed(
   const originalHead = c.git.head();
   let roundsRun = 0;
   const allDrops: ContainedDrop[] = [];
-  let recipeGroupDropped: { reason: string; orderIds: readonly string[] } | undefined;
 
   const refuse = (reason: string): ContainmentOutcome => {
     let restoreNote = '';
@@ -250,13 +302,6 @@ export async function containGuardrailRed(
         blocking: bucket.blocking,
         evidence: [...bucket.evidence].join('; '),
       });
-
-      if (u.unit === 'recipe-group') {
-        recipeGroupDropped = {
-          reason: containmentReason(bucket.blocking, round),
-          orderIds: u.orderIds,
-        };
-      }
     }
     units = units.filter((u) => !perUnit.has(u));
 
@@ -284,30 +329,7 @@ export async function containGuardrailRed(
           },
         };
       });
-      const rg = recipeGroupDropped;
-      const recipes: RecipePhaseSummary = rg
-        ? {
-            ...c.recipes,
-            groupVerification: {
-              kind: 'dropped',
-              step: 'guardrail',
-              reason: rg.reason,
-              droppedOrderIds: rg.orderIds,
-            },
-            records: c.recipes.records.map((r) =>
-              r.outcome.kind === 'applied'
-                ? {
-                    ...r,
-                    disposition: {
-                      kind: 'dropped' as const,
-                      step: 'guardrail' as const,
-                      reason: rg.reason,
-                    },
-                  }
-                : r,
-            ),
-          }
-        : c.recipes;
+      const recipes = applyRecipeDrops(c.recipes, allDrops);
       return {
         kind: 'contained',
         containment: { maxRounds: MAX_CONTAINMENT_ROUNDS, rounds: roundsRun, dropped: allDrops },

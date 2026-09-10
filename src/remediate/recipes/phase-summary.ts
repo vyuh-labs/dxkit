@@ -19,6 +19,11 @@ export interface RecipeOrderRecord {
    *  by the executor so guardrail-red containment can attribute a red on
    *  a recipe-pinned package to the GROUP on direct evidence (4.4.7). */
   readonly packages?: readonly string[];
+  /** The commit the executor made for this order's execution group (sliced
+   *  orders of one file share it), recorded on an APPLIED record so
+   *  containment can revert an `order`-unit recipe's work one commit at a
+   *  time (4.4.8) without guessing at ranges. */
+  readonly commit?: string;
   /** Out-of-envelope paths the enforcement discarded (disclosed). */
   readonly droppedPaths?: readonly string[];
   /** Collector/step disclosures for this order's invariant step. */

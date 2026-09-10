@@ -114,10 +114,27 @@ function exemptionOf(
   return { pack, capability, reason: declaration.reason };
 }
 
+/**
+ * The unit guardrail-red containment reverts when it attributes a blocking
+ * finding to this recipe's work (4.4.8): `group` = every applied order of
+ * the recipe tier as ONE unit (orders that share manifest / lockfile hunks
+ * cannot be reverted independently, so the whole group drops together);
+ * `order` = each order's own commit (a file-scoped fix with a disjoint
+ * envelope: the one order whose diff the finding touches drops, the rest
+ * land). The recipe DECLARES it; the executor (per-order commits, group
+ * recipes committed first so their range stays contiguous) and the
+ * containment engine both READ it here (Rule 2.30).
+ */
+export type RecipeContainmentUnit = 'group' | 'order';
+
 export interface RecipeDeclaration {
   readonly id: string;
   /** The work-order class this recipe serves. */
   readonly class: WorkOrderClass;
+  /** How containment reverts this recipe's applied orders (see
+   *  `RecipeContainmentUnit`). REQUIRED: a recipe that omits it does not
+   *  compile, and the contract test pins every entry declares a legal value. */
+  readonly containmentUnit: RecipeContainmentUnit;
   /** One-line intent, rendered in the plan surface. */
   readonly summary: string;
   /** Whether an executor exists for this id. `false` = declared for tiering
@@ -161,6 +178,8 @@ export const RECIPE_REGISTRY: readonly RecipeDeclaration[] = [
   {
     id: 'lockfile-sync',
     class: classServedBy('lockfile-sync'),
+    // Rewrites the shared lockfile: one unit with the other manifest recipes.
+    containmentUnit: 'group',
     summary: "reinstall with the repo's package manager so the lockfile follows the manifest",
     implemented: true,
     // The producing pack must declare the resync capability (which rides its
@@ -199,6 +218,8 @@ export const RECIPE_REGISTRY: readonly RecipeDeclaration[] = [
   {
     id: 'override-pin',
     class: classServedBy('override-pin'),
+    // Pins share package.json / lockfile hunks and cannot revert independently.
+    containmentUnit: 'group',
     summary:
       'pin a fixed version through a pack-declared override when no direct upgrade path exists',
     implemented: true,
@@ -235,6 +256,8 @@ export const RECIPE_REGISTRY: readonly RecipeDeclaration[] = [
   {
     id: 'declare-dependency',
     class: classServedBy('declare-dependency'),
+    // Edits the same manifest + lockfile hunks the pins do.
+    containmentUnit: 'group',
     summary:
       'declare and install a bare import, refusing with the reason when the candidate carries a block-tier advisory',
     implemented: true,
@@ -271,6 +294,9 @@ export const RECIPE_REGISTRY: readonly RecipeDeclaration[] = [
   {
     id: 'lint-autofix',
     class: classServedBy('lint-autofix'),
+    // One file per execution group, its own commit, a disjoint envelope: a
+    // red in one file drops that file's orders only (#376).
+    containmentUnit: 'order',
     summary: "the pack linter's own autofix, restricted to the order's file and rules",
     implemented: true,
     // Every finding must carry a rule (an unparsed diagnostic cannot be
@@ -297,6 +323,20 @@ export const RECIPE_REGISTRY: readonly RecipeDeclaration[] = [
     packExemption: (order) => exemptionOf(lintOrderPack(order), 'lintFix'),
   },
 ];
+
+/**
+ * The containment unit a recipe id declares, the ONE read both the executor
+ * and the containment engine make. An id the registry does not know (an
+ * injected summary, a recipe retired between runs) reads as `group`: the
+ * conservative granularity, which can only ever drop MORE than necessary,
+ * never revert a range on a guess.
+ */
+export function containmentUnitOf(
+  recipeId: string,
+  registry: readonly RecipeDeclaration[] = RECIPE_REGISTRY,
+): RecipeContainmentUnit {
+  return registry.find((r) => r.id === recipeId)?.containmentUnit ?? 'group';
+}
 
 /** The first recipe of the order's class whose `matches` accepts it. */
 export function matchRecipe(

@@ -1044,3 +1044,298 @@ describe('the recipe-fallthrough budget floor (derivation, not a constant)', () 
     expect(raised.id).toBe(order.id);
   });
 });
+
+/**
+ * Per-order containment units for file-scoped recipes (4.4.8, #376): a
+ * recipe declares `containmentUnit`; the engine drops ONE commit of an
+ * `order` recipe and keeps the rest of the tier, while `group` recipes
+ * still drop as one unit. The record flip is one code path for both.
+ */
+describe('per-order containment units (4.4.8, #376)', () => {
+  const lintRecord = (file: string, commit: string) => ({
+    orderId: `lint-located:${file}`,
+    class: 'lint-located',
+    recipe: 'lint-autofix',
+    outcome: { kind: 'applied' as const, changedFiles: [file] },
+    commit,
+  });
+  const pinRecord = (pkg: string, commit?: string) => ({
+    orderId: `dep-advisory:${pkg}`,
+    class: 'dep-advisory',
+    recipe: 'override-pin',
+    outcome: { kind: 'applied' as const, changedFiles: ['package.json'] },
+    packages: [pkg],
+    ...(commit !== undefined ? { commit } : {}),
+  });
+  const lintRed = (file: string) => ({
+    kind: 'custom-check',
+    description: `[custom-check] lint · ${file}:3 - added (no-prior-match)`,
+    file,
+  });
+
+  it('N file-scoped orders with a red in ONE file: that order drops, N-1 land, the group verification stays kept', async () => {
+    // Three lint-autofix files, one commit each (head0..head3), then one
+    // agent order (head3..head4). The final guardrail is red on src/b.ts.
+    const git = fakeGit({
+      'head0..head1': ['src/a.ts'],
+      'head1..head2': ['src/b.ts'],
+      'head2..head3': ['src/c.ts'],
+      'head3..head4': ['src/agent.ts'],
+    });
+    const r = await runWith({
+      orders: [floorOrder('floor-failure:agent', 'src/agent/')],
+      git,
+      guardrails: [red([lintRed('src/b.ts')]), GREEN],
+      recipePhase: () => {
+        git.commit();
+        git.commit();
+        git.commit();
+        return summary([floorOrder('floor-failure:agent', 'src/agent/')], {
+          ran: true,
+          selectedRecipeTier: 3,
+          records: [
+            lintRecord('src/a.ts', 'head1'),
+            lintRecord('src/b.ts', 'head2'),
+            lintRecord('src/c.ts', 'head3'),
+          ],
+        });
+      },
+    });
+    expect(r.outcome).toBe('partially-landed');
+    // Exactly the red file's commit was reverted, at the tip.
+    expect(git.reverts.map((x) => [x.from, x.to])).toEqual([['head1', 'head2']]);
+    expect(r.containment?.dropped).toEqual([
+      {
+        unit: 'recipe-order',
+        orderIds: ['lint-located:src/b.ts'],
+        round: 1,
+        blocking: [lintRed('src/b.ts').description],
+        evidence: expect.stringContaining('committed diff touches src/b.ts'),
+      },
+    ]);
+    const recs = r.recipes?.records ?? [];
+    expect(recs.map((x) => [x.orderId, x.disposition?.kind])).toEqual([
+      ['lint-located:src/a.ts', 'kept'],
+      ['lint-located:src/b.ts', 'dropped'],
+      ['lint-located:src/c.ts', 'kept'],
+    ]);
+    expect(recs[1].disposition).toEqual({
+      kind: 'dropped',
+      step: 'guardrail',
+      reason: expect.stringContaining('src/b.ts'),
+    });
+    // The group verification stays KEPT: two of three orders land.
+    expect(r.recipes?.groupVerification).toEqual({ kind: 'kept', head: 'head3' });
+    expect(r.orders?.records[0].disposition?.kind).toBe('kept');
+    // The ledger counts it per recipe, and the group line says what was
+    // dropped after the fact.
+    expect(r.ledger).toContain('lint-autofix: dropped 1 of 3 applied order(s); 2 land');
+    expect(r.ledger).toContain(
+      '1 of its applied order(s) were later dropped by guardrail containment',
+    );
+    expect(r.ledger).toContain('(recipe-order, round 1)');
+    // Breaker rows: the dropped order carries its own guardrail failure.
+    const rows = orderOutcomeRows(r, 'fix-vulns', {
+      timestamp: '2026-08-27T00:00:00Z',
+      stamp: { dxkitVersion: 'v', policyHash: 'h' },
+    });
+    expect(rows.map((row) => [row.orderId, row.outcome])).toEqual([
+      ['lint-located:src/a.ts', 'verified'],
+      ['lint-located:src/b.ts', 'guardrail-red'],
+      ['lint-located:src/c.ts', 'verified'],
+      ['floor-failure:agent', 'verified'],
+    ]);
+  });
+
+  it('an override-pin group with recorded per-order commits still drops as ONE unit on a red for one package', async () => {
+    const git = fakeGit({
+      'head0..head2': ['package.json', 'package-lock.json'],
+      'head2..head3': ['src/a.ts'],
+    });
+    const finding = {
+      kind: 'dep-vuln',
+      description: '[dep-vuln] left-pad@1.0.0 · GHSA-test - added (no-prior-match)',
+      package: 'left-pad',
+    };
+    const r = await runWith({
+      orders: [floorOrder('floor-failure:a', 'src/')],
+      git,
+      guardrails: [red([finding]), GREEN],
+      recipePhase: () => {
+        git.commit();
+        git.commit();
+        return summary([floorOrder('floor-failure:a', 'src/')], {
+          ran: true,
+          selectedRecipeTier: 2,
+          records: [pinRecord('left-pad', 'head1'), pinRecord('tmp', 'head2')],
+        });
+      },
+    });
+    expect(r.outcome).toBe('partially-landed');
+    // One range for the whole group, both pins dropped, the group flipped.
+    expect(git.reverts.map((x) => [x.from, x.to])).toEqual([['head0', 'head2']]);
+    expect(r.containment?.dropped?.[0]).toEqual(
+      expect.objectContaining({
+        unit: 'recipe-group',
+        orderIds: ['dep-advisory:left-pad', 'dep-advisory:tmp'],
+      }),
+    );
+    expect(r.recipes?.groupVerification).toEqual({
+      kind: 'dropped',
+      step: 'guardrail',
+      reason: expect.stringContaining('left-pad'),
+      droppedOrderIds: ['dep-advisory:left-pad', 'dep-advisory:tmp'],
+    });
+    expect(r.recipes?.records.every((x) => x.disposition?.kind === 'dropped')).toBe(true);
+    expect(r.ledger).toContain('override-pin: dropped 2 of 2 applied order(s); 0 land');
+  });
+
+  it('a mixed run (group recipe + order recipes + an agent order) chains from the base through every kept head', async () => {
+    // head0..head1 pin (group), head1..head2 lint a, head2..head3 lint b,
+    // head3..head4 agent. Red on lint b only.
+    const git = fakeGit({
+      'head0..head1': ['package.json', 'package-lock.json'],
+      'head1..head2': ['src/a.ts'],
+      'head2..head3': ['src/b.ts'],
+      'head3..head4': ['src/agent.ts'],
+    });
+    const r = await runWith({
+      orders: [floorOrder('floor-failure:agent', 'src/agent/')],
+      git,
+      guardrails: [red([lintRed('src/b.ts')]), GREEN],
+      recipePhase: () => {
+        git.commit();
+        git.commit();
+        git.commit();
+        return summary([floorOrder('floor-failure:agent', 'src/agent/')], {
+          ran: true,
+          selectedRecipeTier: 3,
+          records: [
+            pinRecord('left-pad', 'head1'),
+            lintRecord('src/a.ts', 'head2'),
+            lintRecord('src/b.ts', 'head3'),
+          ],
+        });
+      },
+    });
+    expect(r.outcome).toBe('partially-landed');
+    expect(git.reverts.map((x) => [x.from, x.to])).toEqual([['head2', 'head3']]);
+    expect((r.recipes?.records ?? []).map((x) => [x.orderId, x.disposition?.kind])).toEqual([
+      ['dep-advisory:left-pad', 'kept'],
+      ['lint-located:src/a.ts', 'kept'],
+      ['lint-located:src/b.ts', 'dropped'],
+    ]);
+    expect(r.recipes?.groupVerification?.kind).toBe('kept');
+    expect(r.orders?.records[0].disposition?.kind).toBe('kept');
+  });
+
+  describe('buildKeptUnits: the recipe tier as units (pure)', () => {
+    const args = (records: RecipePhaseSummary['records'], head: string, git = fakeGit()) => ({
+      git,
+      baseHead: 'head0',
+      agentBase: head,
+      entryFloor: GREEN_FLOOR,
+      runFloor: () => GREEN_FLOOR,
+      recipes: summary([], { ran: true, records, groupVerification: { kind: 'kept', head } }),
+      records: [],
+      ordersById: new Map<string, WorkOrder>(),
+      guardrail: GREEN,
+      isManifestPath: () => false,
+    });
+    const shape = (units: KeptUnit[] | string) =>
+      typeof units === 'string' ? units : units.map((u) => [u.unit, u.from, u.to, [...u.orderIds]]);
+
+    it('one recipe-order unit per commit, sliced orders of one file sharing a commit share a unit', () => {
+      const git = fakeGit();
+      git.resetTo('head3');
+      const res = buildKeptUnits(
+        args(
+          [
+            lintRecord('src/a.ts', 'head1'),
+            { ...lintRecord('src/big.ts', 'head2'), orderId: 'lint-located:src/big.ts#1' },
+            { ...lintRecord('src/big.ts', 'head2'), orderId: 'lint-located:src/big.ts#2' },
+            lintRecord('src/c.ts', 'head3'),
+          ],
+          'head3',
+          git,
+        ),
+      );
+      expect(shape(res)).toEqual([
+        ['recipe-order', 'head0', 'head1', ['lint-located:src/a.ts']],
+        [
+          'recipe-order',
+          'head1',
+          'head2',
+          ['lint-located:src/big.ts#1', 'lint-located:src/big.ts#2'],
+        ],
+        ['recipe-order', 'head2', 'head3', ['lint-located:src/c.ts']],
+      ]);
+    });
+
+    it('group recipes fold into ONE unit up to their last commit; an order commit interleaved inside that range is absorbed, never split out', () => {
+      const git = fakeGit();
+      git.resetTo('head3');
+      const res = buildKeptUnits(
+        args(
+          [
+            lintRecord('src/a.ts', 'head1'),
+            pinRecord('left-pad', 'head2'),
+            lintRecord('src/c.ts', 'head3'),
+          ],
+          'head3',
+          git,
+        ),
+      );
+      expect(shape(res)).toEqual([
+        ['recipe-group', 'head0', 'head2', ['lint-located:src/a.ts', 'dep-advisory:left-pad']],
+        ['recipe-order', 'head2', 'head3', ['lint-located:src/c.ts']],
+      ]);
+    });
+
+    it('an applied record with no recorded commit keeps the whole tier as the single group unit (the pre-4.4.8 shape)', () => {
+      const git = fakeGit();
+      git.resetTo('head2');
+      const res = buildKeptUnits(
+        args([lintRecord('src/a.ts', 'head1'), pinRecord('left-pad')], 'head2', git),
+      );
+      expect(shape(res)).toEqual([
+        ['recipe-group', 'head0', 'head2', ['lint-located:src/a.ts', 'dep-advisory:left-pad']],
+      ]);
+    });
+
+    it('a recipe chain that does not end at the verified group head refuses (never a range on a guess)', () => {
+      const git = fakeGit();
+      git.resetTo('head3');
+      const res = buildKeptUnits(args([lintRecord('src/a.ts', 'head1')], 'head3', git));
+      expect(typeof res).toBe('string');
+      expect(res).toContain('per-order recipe ranges cannot be trusted');
+    });
+
+    it('reads the containment unit from the registry it is handed (a synthetic order-unit recipe splits per commit)', () => {
+      const git = fakeGit();
+      git.resetTo('head2');
+      const records = [
+        { ...lintRecord('src/a.ts', 'head1'), recipe: 'synthetic-fixer' },
+        { ...lintRecord('src/b.ts', 'head2'), recipe: 'synthetic-fixer' },
+      ];
+      // Unknown to the built-in registry: the conservative group unit.
+      expect(shape(buildKeptUnits(args(records, 'head2', git)))).toEqual([
+        ['recipe-group', 'head0', 'head2', ['lint-located:src/a.ts', 'lint-located:src/b.ts']],
+      ]);
+      const registry = [
+        {
+          id: 'synthetic-fixer',
+          class: 'lint-located' as const,
+          containmentUnit: 'order' as const,
+          summary: 't',
+          implemented: false,
+          matches: () => true,
+        },
+      ];
+      expect(shape(buildKeptUnits({ ...args(records, 'head2', git), registry }))).toEqual([
+        ['recipe-order', 'head0', 'head1', ['lint-located:src/a.ts']],
+        ['recipe-order', 'head1', 'head2', ['lint-located:src/b.ts']],
+      ]);
+    });
+  });
+});
