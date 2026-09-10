@@ -750,7 +750,15 @@ describe('runRecipePhaseForTask', () => {
       trust: trustedLocalContext(),
       taskId: 'fix-build',
       config: resolveRemediateConfig(cwd),
-      entryFloor: floorWith([{ pack: 'typescript', label: 'typecheck', status: 'fail' }]),
+      entryFloor: floorWith([
+        {
+          pack: 'typescript',
+          label: 'typecheck',
+          bin: 'npx',
+          args: ['tsc', '--noEmit'],
+          status: 'fail',
+        },
+      ]),
     });
     // Disabled recipes route every selected order to the agent queue; the
     // plan is BUILT (the queue exists) so a cap of 0 can complete the run
