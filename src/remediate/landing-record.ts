@@ -30,7 +30,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { remediateBranchFor } from '../lanes/branches';
 import type { OrderOutcomeRow } from '../lanes/order-ledger';
-import type { RemediateOutcome } from './outcome';
+import { isRemediateOutcome, type RemediateOutcome } from './outcome';
 
 /**
  * The deferred-landing signal, set (to '1') on the workflow template's task
@@ -185,6 +185,11 @@ export function readLandingRecord(cwd: string, taskId: string): LandingRecordRea
   // from disk on trust, so the record cannot redirect a push.
   if (r.branch !== remediateBranchFor(taskId)) {
     return bad(`branch '${String(r.branch)}' is not the task's standing branch`);
+  }
+  // The outcome drives the landing-target guard (#372): an absent or
+  // foreign word must never reach the lander as "unknown, rebuild".
+  if (!isRemediateOutcome(r.outcome)) {
+    return bad(`outcome '${String(r.outcome)}' is not a remediate outcome`);
   }
   if (
     !Array.isArray(r.orderRows) ||

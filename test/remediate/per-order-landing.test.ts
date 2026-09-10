@@ -416,6 +416,7 @@ describe('the executor lands a partially-landed run as a normal PR and keeps it 
         landed = { ...(o.draft !== undefined ? { draft: o.draft } : {}), prTitle: o.prTitle };
         return {
           outcome: 'pr-opened' as const,
+          branch: 'dxkit/remediate-write-docs',
           mode: 'pr' as const,
           prUrl: 'https://example.test/pr/9',
         };
@@ -519,6 +520,7 @@ describe('review fix 5: an unrunnable guardrail never produces a blocked draft',
         landedDraft = o.draft;
         return {
           outcome: 'pr-opened' as const,
+          branch: 'dxkit/remediate-write-docs',
           mode: 'pr' as const,
           prUrl: 'https://example.test/pr/7',
         };

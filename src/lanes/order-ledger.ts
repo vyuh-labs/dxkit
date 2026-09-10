@@ -66,7 +66,10 @@ export type OrderRowOutcome =
   | 'sweep-failed'
   | 'no-op'
   | 'paused'
-  | 'resumed';
+  | 'resumed'
+  /** A LANDING marker (bookkeeping, never evidence): what a branch's tip
+   *  holds, see `landingRow`. Neutral for the breaker. */
+  | 'landed';
 
 /**
  * The resume ATTEMPT row (bookkeeping, never evidence): one row per
@@ -103,6 +106,64 @@ export function resumeAttemptRow(
  *  standing branch": the resume rows in view for the task. */
 export function countResumeAttempts(rows: readonly OrderOutcomeRow[], task: string): number {
   return rows.filter((r) => r.task === task && r.outcome === 'resumed').length;
+}
+
+/**
+ * The LANDING marker row (bookkeeping, never evidence): written by the
+ * lander into the order ledger it commits with every landing, naming the
+ * run outcome that landed and the branch it landed on. It is how "what
+ * does this branch hold?" is answered from the branch's own committed
+ * ledger (#372): a force-push rebuilds a branch from the default head, so
+ * only a row the landing commit itself carries survives to describe the
+ * tip. Rows are unioned across a task's branch pair when composed, so the
+ * reader filters by branch; the newest marker for a branch is its last
+ * landing. Metadata pushes (non-landing runs) never write one.
+ */
+export const LANDING_ORDER = 'landing';
+
+export function landingRow(
+  task: string,
+  meta: {
+    readonly timestamp: string;
+    readonly outcome: string;
+    readonly branch: string;
+    readonly dxkitVersion: string;
+    readonly policyHash: string;
+  },
+): OrderOutcomeRow {
+  return {
+    schema_version: ORDER_LEDGER_SCHEMA_VERSION,
+    timestamp: meta.timestamp,
+    lane: 'remediate',
+    task,
+    // The branch is part of the row's identity: the pair's rows are
+    // unioned when composed, and two landings a millisecond apart on two
+    // branches must never dedupe into one.
+    orderId: `${LANDING_ORDER}:${meta.branch}`,
+    class: LANDING_ORDER,
+    tier: 'agent',
+    outcome: 'landed',
+    landing: { outcome: meta.outcome, branch: meta.branch },
+    dxkitVersion: meta.dxkitVersion,
+    policyHash: meta.policyHash,
+  };
+}
+
+/** The most recent landing marker for a task ON a branch (see
+ *  `landingRow`), or undefined when the rows carry none for it. */
+export function latestLanding(
+  rows: readonly OrderOutcomeRow[],
+  task: string,
+  branch: string,
+): { readonly outcome: string; readonly timestamp: string } | undefined {
+  let latest: OrderOutcomeRow | undefined;
+  for (const r of rows) {
+    if (r.task !== task || r.outcome !== 'landed' || r.landing?.branch !== branch) continue;
+    if (!latest || r.timestamp.localeCompare(latest.timestamp) >= 0) latest = r;
+  }
+  return latest?.landing
+    ? { outcome: latest.landing.outcome, timestamp: latest.timestamp }
+    : undefined;
 }
 
 /**
@@ -147,6 +208,9 @@ export interface OrderOutcomeRow {
    *  a dxkit upgrade or a remediate-policy change lifts a pause. */
   readonly dxkitVersion: string;
   readonly policyHash: string;
+  /** Present on a `landed` marker row only (see `landingRow`): the run
+   *  outcome that landed and the branch it landed on. */
+  readonly landing?: { readonly outcome: string; readonly branch: string };
 }
 
 /** Orders-ledger file for a standing-PR identity, repo-relative POSIX.

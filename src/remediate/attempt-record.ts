@@ -21,8 +21,8 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { execFileSync } from 'child_process';
-import { remediateBranchFor } from '../lanes/branches';
 import type { TaskRun } from './execute';
+import type { LandingDisclosure } from './land';
 
 /** See the module doc: the pre-spawn record a SIGKILL leaves behind. */
 export function writeProvisionalRecord(cwd: string, taskId: string, baseHead: string): void {
@@ -110,6 +110,21 @@ export function writeAttemptRecord(cwd: string, taskId: string, run: TaskRun): v
   }
 }
 
+/** The record's projection of what a landing left behind (#372): the
+ *  branch HEAD was actually pushed to (null until something landed, so
+ *  the field never names a branch HEAD never reached), the PR, and the
+ *  disclosures. ONE projection: the final record and the deferred land
+ *  step's patch both spread it. */
+export function landingRecordFields(d: Partial<LandingDisclosure>): Record<string, unknown> {
+  return {
+    branch: d.landedBranch ?? null,
+    prUrl: d.prUrl ?? null,
+    standingPreserved: d.standingPreserved ?? null,
+    draftFlipped: d.draftFlipped ?? null,
+    supersededAttemptPr: d.supersededAttemptPr ?? null,
+  };
+}
+
 export function taskRunJson(run: TaskRun): Record<string, unknown> {
   const r = run.result;
   return {
@@ -123,14 +138,10 @@ export function taskRunJson(run: TaskRun): Record<string, unknown> {
     envelope: r.envelope ?? null,
     orders: r.orders ?? null,
     guardrailVerdict: r.guardrailVerdict ?? null,
-    branch: r.task ? remediateBranchFor(r.task) : null,
-    prUrl: run.prUrl ?? null,
+    ...landingRecordFields(run),
     landRefused: run.landRefused ?? null,
     landingBlocked: run.landingBlocked ?? null,
     landingDeferred: run.landingDeferred ?? null,
-    // A salvage that went to the attempt branch because the standing PR
-    // holds a verified landing awaiting merge (#372).
-    standingPreserved: run.standingPreserved ?? null,
     landed: run.landed,
     // The commit range of the attempt — what the workflow's evidence step
     // format-patches into a run artifact when nothing landed.

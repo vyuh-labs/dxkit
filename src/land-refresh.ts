@@ -105,6 +105,10 @@ export interface LandRefreshResult {
   readonly mode: LandMode;
   readonly prUrl?: string;
   readonly note?: string;
+  /** The existing PR had been marked READY on a previous head and this
+   *  update returned it to draft (a salvage replaced that head): the
+   *  disclosure, never silent. */
+  readonly draftFlipped?: string;
 }
 
 /** The ONE machine-commit identity (Rule 2): the refresh lander, the
@@ -194,18 +198,26 @@ export function openOrUpdateStandingPr(
      *  `false` / absent leaves an existing PR's draft state as the
      *  reviewer set it. */
     readonly draft?: boolean;
+    /** The branch's open PR as ALREADY read by the caller (one landing
+     *  lists a branch once): null = the caller knows there is none;
+     *  absent = not read, list here. */
+    readonly existing?: { readonly url: string; readonly isDraft?: boolean } | null;
   },
 ): LandRefreshResult {
-  const existing = exec(
-    'gh',
-    ['pr', 'list', '--head', opts.branchName, '--state', 'open', '--json', 'url'],
-    { allowFail: true },
-  ).trim();
-  let parsed: Array<{ url: string }> = [];
-  try {
-    parsed = existing ? (JSON.parse(existing) as Array<{ url: string }>) : [];
-  } catch {
-    parsed = [];
+  let parsed: Array<{ url: string; isDraft?: boolean }> = [];
+  if (opts.existing !== undefined) {
+    parsed = opts.existing === null ? [] : [opts.existing];
+  } else {
+    const existing = exec(
+      'gh',
+      ['pr', 'list', '--head', opts.branchName, '--state', 'open', '--json', 'url,isDraft'],
+      { allowFail: true },
+    ).trim();
+    try {
+      parsed = existing ? (JSON.parse(existing) as Array<{ url: string; isDraft?: boolean }>) : [];
+    } catch {
+      parsed = [];
+    }
   }
   if (parsed.length > 0) {
     exec('gh', ['pr', 'edit', opts.branchName, '--title', opts.prTitle, '--body', opts.prBody], {
@@ -213,11 +225,23 @@ export function openOrUpdateStandingPr(
     });
     // Only creation takes `--draft`; an existing PR is converted explicitly.
     // Best-effort like the edit: an already-draft PR answers with an error
-    // that changes nothing.
+    // that changes nothing. A PR a reviewer had marked READY is flipped
+    // back (the head it was ready on is gone), and that is DISCLOSED.
+    let draftFlipped: string | undefined;
     if (opts.draft === true) {
       exec('gh', ['pr', 'ready', '--undo', opts.branchName], { allowFail: true });
+      if (parsed[0].isDraft === false) {
+        draftFlipped =
+          `PR ${parsed[0].url} was marked ready for review on a previous head; this salvage ` +
+          'replaced that head and returned the PR to draft.';
+      }
     }
-    return { outcome: 'pr-updated', mode: 'pr', prUrl: parsed[0].url };
+    return {
+      outcome: 'pr-updated',
+      mode: 'pr',
+      prUrl: parsed[0].url,
+      ...(draftFlipped ? { draftFlipped } : {}),
+    };
   }
   const created = exec(
     'gh',

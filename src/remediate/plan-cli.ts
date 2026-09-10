@@ -9,7 +9,7 @@ import { budgetForTask, resolveRemediateConfig } from './config';
 import { resolveModelSetting } from './driver';
 import { AGENT_DRIVERS, driverById } from './registry';
 import { remediateTaskById } from './tasks';
-import { remediateBranchFor } from '../lanes/branches';
+import { remediateBranchesFor } from '../lanes/branches';
 import { describeDeliveryProbe, probeDeliveryPreconditions } from '../lanes/delivery-preconditions';
 import {
   planRepoWorkOrders,
@@ -296,8 +296,15 @@ export async function runRemediatePlan(
   // prober the $0 preflight and doctor consume. Fail-open: an unverifiable
   // probe is one dim line, never a warning — the plan must not invent a
   // refusal it cannot evidence.
+  // Both branches of each task's pair are probed (the ONE pair builder):
+  // a salvage lands on the attempt branch while the standing PR holds
+  // verified work (#372). An attempt-branch-only block is a warning here,
+  // not a failure: it bites only in that situation, and the executor's
+  // preflight refuses then, naming it.
+  const pairs = config.tasks.map((t) => remediateBranchesFor(t));
+  const attemptBranches = new Set(pairs.map((p) => p.attempt));
   const delivery = probeDeliveryPreconditions(process.cwd(), {
-    branches: config.tasks.map((t) => remediateBranchFor(t)),
+    branches: pairs.flatMap((p) => [p.standing, p.attempt]),
   });
   if (delivery.unverifiable) {
     logger.dim(
@@ -306,8 +313,14 @@ export async function runRemediatePlan(
   } else {
     for (const p of delivery.probes) {
       if (p.verdict === 'ok') logger.info(`  delivery ${p.branch}: OK`);
-      else if (p.verdict === 'blocked') logger.fail(`  delivery ${describeDeliveryProbe(p)}`);
-      else logger.warn(`  delivery ${describeDeliveryProbe(p)}`);
+      else if (p.verdict === 'blocked' && !attemptBranches.has(p.branch)) {
+        logger.fail(`  delivery ${describeDeliveryProbe(p)}`);
+      } else if (p.verdict === 'blocked') {
+        logger.warn(
+          `  delivery ${describeDeliveryProbe(p)} (the attempt branch: needed only while the ` +
+            'standing PR holds verified work a salvage must not replace)',
+        );
+      } else logger.warn(`  delivery ${describeDeliveryProbe(p)}`);
     }
   }
 }

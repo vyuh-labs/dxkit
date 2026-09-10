@@ -128,7 +128,7 @@ describe('prepareResume — the eligibility ladder', () => {
   it('eligible → detached checkout + a resume-attempt ledger row, attempt = prior rows + 1', () => {
     const { exec, calls, published } = fakeExec({ openPr: true, markers: 1 });
     const d = prepareResume('/repo', 'fix-build', ON, exec);
-    expect(d).toEqual({ resumed: true, attempt: 2 });
+    expect(d).toEqual({ resumed: true, attempt: 2, branch: 'dxkit/remediate-fix-build' });
     expect(calls.some((c) => c[0] === 'git' && c.includes('--detach'))).toBe(true);
     // No marker commit anywhere: the counter is a ledger row, not history.
     expect(calls.some((c) => c[0] === 'git' && c[1] === 'commit')).toBe(false);
@@ -175,7 +175,7 @@ describe('prepareResume — the eligibility ladder', () => {
       rowsTask: 'fix-vulns',
     });
     const d = prepareResume('/repo', 'fix-build', ON, exec);
-    expect(d).toEqual({ resumed: true, attempt: 1 });
+    expect(d).toEqual({ resumed: true, attempt: 1, branch: 'dxkit/remediate-fix-build' });
   });
 
   it('carries the prior attempt blocking findings from the draft-PR ledger into the decision', () => {
@@ -221,7 +221,7 @@ describe('prepareResume — the eligibility ladder', () => {
     });
     const d = prepareResume('/repo', 'fix-vulns', ON, exec);
     expect(d.resumed).toBe(false);
-    expect(d.note).toContain('review or close the draft PR');
+    expect(d.note).toContain('review or close it');
     expect(d.note).toContain(`cap ${MAX_RESUME_ATTEMPTS}`);
     expect(calls.some((c) => c[0] === 'git' && c.includes('commit-tree'))).toBe(false);
   });

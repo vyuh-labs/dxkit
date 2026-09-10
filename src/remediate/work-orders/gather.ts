@@ -78,7 +78,7 @@ import {
   type OrderLedgerExec,
   type OrderOutcomeRow,
 } from '../../lanes/order-ledger';
-import { remediateAttemptBranchFor, remediateBranchFor } from '../../lanes/branches';
+import { remediateBranchesFor } from '../../lanes/branches';
 import {
   applyClassPauses,
   evaluateClassPauses,
@@ -373,9 +373,10 @@ export function orderHistoryBranchSources(): OrderBranchSource[] {
   const tasks = [...new Set(Object.values(WORK_ORDER_CLASSES).map((c) => c.task))].sort();
   return tasks.flatMap((task) => {
     const file = orderLedgerPath('remediate', task);
+    const pair = remediateBranchesFor(task);
     return [
-      { branch: remediateBranchFor(task), file },
-      { branch: remediateAttemptBranchFor(task), file },
+      { branch: pair.standing, file },
+      { branch: pair.attempt, file },
     ];
   });
 }

@@ -27,7 +27,7 @@
  */
 
 import { execFileSync } from 'child_process';
-import { DEP_BUMP_BRANCH, remediateAttemptBranchFor, remediateBranchFor } from './branches';
+import { DEP_BUMP_BRANCH, remediateBranchesFor } from './branches';
 import { REMEDIATE_TASKS } from '../remediate/tasks';
 
 export type DeliveryVerdict = 'ok' | 'blocked' | 'restricted-paths' | 'unknown';
@@ -56,7 +56,10 @@ export interface DeliveryPreconditions {
  *  probed set stays the pushed set. */
 export function standingLaneBranches(): string[] {
   return [
-    ...REMEDIATE_TASKS.flatMap((t) => [remediateBranchFor(t.id), remediateAttemptBranchFor(t.id)]),
+    ...REMEDIATE_TASKS.flatMap((t) => {
+      const pair = remediateBranchesFor(t.id);
+      return [pair.standing, pair.attempt];
+    }),
     DEP_BUMP_BRANCH,
   ];
 }

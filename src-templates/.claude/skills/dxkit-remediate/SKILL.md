@@ -159,12 +159,15 @@ blocking findings ride the next run's order prompts as a negative
 constraint instead. Attempts are capped at 2 per branch before the task
 falls back to a fresh run and a human is expected to look at the draft.
 
-A salvage never replaces a verified landing: while the task's standing PR
-records `verified` or `partially-landed` and awaits merge, a guardrail-red
-or budget-exhausted attempt lands on `dxkit/remediate-<task>-attempt` as a
-draft and the standing PR is left untouched (the log, the attempt record
-and the attempt PR body say why). A new verified run still rebuilds the
-standing branch.
+A salvage never replaces a verified landing: while the task's standing
+branch holds `verified` or `partially-landed` work awaiting merge (its
+committed landing marker says so; the PR body corroborates), or nothing
+readable says what it holds, a guardrail-red or budget-exhausted attempt
+lands on `dxkit/remediate-<task>-attempt` as a draft and the standing
+branch is left untouched (the log, the attempt record and the attempt PR
+body say why). A budget-exhausted partial on the attempt branch is a
+resume anchor like one on the standing branch. A new verified run still
+rebuilds the standing branch and closes the attempt PR as superseded.
 
 ## Tuning the budget
 

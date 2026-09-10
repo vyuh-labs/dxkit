@@ -535,10 +535,13 @@ Three accepted values:
 - `"draft-pr"`: for every task, VERIFIED partial work lands as a draft
   marked budget-bounded; a guardrail-blocked attempt lands as a red draft
   titled "do not merge", kept unmergeable by its own guardrail check.
-  Neither salvage ever replaces a verified or partially-landed run still
-  open on the task's standing PR: while that PR awaits merge, the salvage
-  lands on `dxkit/remediate-<task>-attempt` as a draft and the standing PR
-  is left untouched, disclosed.
+  Neither salvage ever replaces a verified or partially-landed run the
+  task's standing branch holds (its committed landing marker is the
+  evidence, the open PR body the corroboration): while that work awaits
+  merge, or when nothing readable says what the branch holds, the salvage
+  lands on `dxkit/remediate-<task>-attempt` as a draft and the standing
+  branch is left untouched, disclosed. The next verified landing rebuilds
+  the standing branch and closes the attempt PR as superseded.
 
 **Default and why.** `auto`. A single default was wrong in one direction
 or the other: `discard` threw away every open-ended run's gate-passing

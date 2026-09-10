@@ -23,3 +23,16 @@ export function remediateBranchFor(taskId: string): string {
 export function remediateAttemptBranchFor(taskId: string): string {
   return `${remediateBranchFor(taskId)}-attempt`;
 }
+
+/** A task's branch PAIR: the standing branch and its attempt sibling. */
+export interface RemediateBranches {
+  readonly standing: string;
+  readonly attempt: string;
+}
+
+/** The ONE way to build the pair (Rule 2.30): every consumer that needs
+ *  both (the lander, the preflight, the plan probes, resume, the order
+ *  ledger's compose and history reads) derives them here, never by hand. */
+export function remediateBranchesFor(taskId: string): RemediateBranches {
+  return { standing: remediateBranchFor(taskId), attempt: remediateAttemptBranchFor(taskId) };
+}

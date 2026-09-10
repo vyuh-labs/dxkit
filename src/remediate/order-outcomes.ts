@@ -42,7 +42,6 @@ import {
   mergeOrderRows,
   orderLedgerPath,
   parseLedgerText,
-  readBranchOrderRows,
   realOrderLedgerExec,
   serializeOrderRows,
   ORDER_LEDGER_SCHEMA_VERSION,
@@ -51,6 +50,11 @@ import {
   type OrderRowOutcome,
 } from '../lanes/order-ledger';
 import { remediateBranchFor } from '../lanes/branches';
+import {
+  metadataTargetBranch,
+  readRemediateBranchStates,
+  type RemediateBranchStates,
+} from './standing-branch';
 import { internalGitPushArgs } from '../git-internal-push';
 import { BOT_IDENTITY } from '../land-refresh';
 import type { RemediateStamp } from './work-orders/breaker';
@@ -265,29 +269,32 @@ export function realOrderLedgerGitExec(cwd: string): OrderLedgerGitExec {
   return realOrderLedgerExec(cwd);
 }
 
-/** The one branch read (Rule 2.30: `readBranchOrderRows` in the ledger
- *  module), keyed by task. Null = branch unreachable or absent. */
-function branchState(
-  task: string,
-  exec: OrderLedgerGitExec,
-): { head: string; rows: OrderOutcomeRow[]; foreign: string[] } | null {
-  return readBranchOrderRows(
-    { branch: remediateBranchFor(task), file: orderLedgerPath('remediate', task) },
-    exec,
-  );
+/** The task's branch PAIR as one ledger source (Rule 2.30: the ONE reader
+ *  in `standing-branch.ts`): the union of the standing and attempt rows,
+ *  so a salvage diverted to the attempt branch never loses the standing
+ *  branch's memory and a later standing rebuild carries the attempt's
+ *  rows forward (#372). */
+function pairLedger(states: RemediateBranchStates): {
+  readonly rows: readonly OrderOutcomeRow[];
+  readonly foreign: readonly string[];
+} {
+  return {
+    rows: mergeOrderRows(states.standing.rows, states.attempt.rows),
+    foreign: [...new Set([...states.standing.foreign, ...states.attempt.foreign])],
+  };
 }
 
-/** Compose the durable file content: branch rows + local rows + this run's
- *  rows, deduped, oldest first, recognized rows capped so the file cannot
- *  grow forever — and every FOREIGN line (a newer schema's rows, a corrupt
- *  line) carried through VERBATIM. This build caps only what it can read;
- *  dropping what it cannot would silently roll back a newer build's
- *  memory. */
+/** Compose the durable file content: the pair's rows + local rows + this
+ *  run's rows, deduped, oldest first, recognized rows capped so the file
+ *  cannot grow forever, and every FOREIGN line (a newer schema's rows, a
+ *  corrupt line) carried through VERBATIM. This build caps only what it
+ *  can read; dropping what it cannot would silently roll back a newer
+ *  build's memory. */
 function composeLedger(
   cwd: string,
   task: string,
   newRows: readonly OrderOutcomeRow[],
-  branch: { readonly rows: readonly OrderOutcomeRow[]; readonly foreign: readonly string[] } | null,
+  branch: { readonly rows: readonly OrderOutcomeRow[]; readonly foreign: readonly string[] },
 ): string {
   let localText = '';
   try {
@@ -296,11 +303,9 @@ function composeLedger(
     // no local file yet
   }
   const local = parseLedgerText(localText);
-  const merged = mergeOrderRows(branch?.rows ?? [], local.rows, newRows).filter(
-    (r) => r.task === task,
-  );
+  const merged = mergeOrderRows(branch.rows, local.rows, newRows).filter((r) => r.task === task);
   const capped = merged.slice(Math.max(0, merged.length - ORDER_LEDGER_MAX_ROWS));
-  const foreign = [...new Set([...(branch?.foreign ?? []), ...local.foreign])];
+  const foreign = [...new Set([...branch.foreign, ...local.foreign])];
   return serializeOrderRows(capped) + (foreign.length > 0 ? foreign.join('\n') + '\n' : '');
 }
 
@@ -316,12 +321,15 @@ export function writeLocalOrderLedger(
   exec?: OrderLedgerGitExec,
 ): string | null {
   const rel = orderLedgerPath('remediate', task);
-  // Even a run with NO rows of its own composes the standing branch's rows
-  // into the landing: the lander force-pushes from the default head, so a
-  // ledger left only on the branch (a resume-attempt row, a prior red run's
-  // failures) would be erased by the very landing that should carry it.
-  const branch = branchState(task, exec ?? realOrderLedgerGitExec(cwd));
-  const carried = (branch?.rows.length ?? 0) + (branch?.foreign.length ?? 0);
+  // Even a run with NO rows of its own composes the pair's rows into the
+  // landing: the lander force-pushes from the default head, so a ledger
+  // left only on a branch (a resume-attempt row, a prior red run's
+  // failures, a diverted salvage's rows) would be erased by the very
+  // landing that should carry it. Ledger only: the compose needs no PR.
+  const branch = pairLedger(
+    readRemediateBranchStates(task, exec ?? realOrderLedgerGitExec(cwd), { pr: false }),
+  );
+  const carried = branch.rows.length + branch.foreign.length;
   if (newRows.length === 0 && carried === 0) return null;
   const content = composeLedger(cwd, task, newRows, branch);
   const abs = path.join(cwd, rel);
@@ -357,15 +365,28 @@ export function publishOrderRows(
   task: string,
   newRows: readonly OrderOutcomeRow[],
   exec?: OrderLedgerGitExec,
+  opts: {
+    /** The branch to carry the commit, when the caller already read the
+     *  pair (resume). Default: decided here from the ONE reader, so a
+     *  standing branch that holds verified work is never pushed to. */
+    readonly branch?: string;
+  } = {},
 ): PublishOrderRowsResult {
   if (newRows.length === 0) return { published: false, note: 'no order rows to record' };
   const run = exec ?? realOrderLedgerGitExec(cwd);
-  const branch = remediateBranchFor(task);
   const file = orderLedgerPath('remediate', task);
+  let branch = opts.branch ?? remediateBranchFor(task);
 
   const attempt = (): void => {
-    const state = branchState(task, run);
-    const content = composeLedger(cwd, task, newRows, state);
+    // Fresh state per attempt (the retry is a fresh base). The target is
+    // decided from what the standing branch holds (#372): a preserved
+    // verified landing takes no bookkeeping commit either; the attempt
+    // branch carries it, and the compose unions both so nothing is lost.
+    const states = readRemediateBranchStates(task, run);
+    branch = opts.branch ?? metadataTargetBranch(states);
+    const target = branch === states.branches.attempt ? states.attempt : states.standing;
+    const head = target.ledger === 'read' ? target.head : undefined;
+    const content = composeLedger(cwd, task, newRows, pairLedger(states));
     const blob = run('git', ['hash-object', '-w', '--stdin'], { input: content }).trim();
     const indexDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-order-ledger-'));
     const indexFile = path.join(indexDir, 'index');
@@ -374,7 +395,7 @@ export function publishOrderRows(
       // With a remote head: start from ITS tree and parent on it. Without
       // one: a fresh index (the ledger file becomes the whole tree) and no
       // parent at all — an orphan, so no local commit ever rides along.
-      if (state) run('git', ['read-tree', state.head], { env });
+      if (head) run('git', ['read-tree', head], { env });
       run('git', ['update-index', '--add', '--cacheinfo', `100644,${blob},${file}`], { env });
       const tree = run('git', ['write-tree'], { env }).trim();
       const commit = run('git', [
@@ -384,7 +405,7 @@ export function publishOrderRows(
         `user.email=${BOT_IDENTITY.email}`,
         'commit-tree',
         tree,
-        ...(state ? ['-p', state.head] : []),
+        ...(head ? ['-p', head] : []),
         '-m',
         'chore(dxkit): record remediation order outcomes [skip ci]',
       ]).trim();

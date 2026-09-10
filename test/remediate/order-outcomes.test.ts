@@ -315,9 +315,11 @@ describe('writeLocalOrderLedger (landing channel)', () => {
     // Oldest first: the branch's unmerged failure row survives the landing.
     expect(lines[0]).toContain('floor-red');
     expect(lines[1]).toContain('guardrail-red');
-    // The read is the shared fetch/rev-parse/show sequence (Rule 2.30:
-    // one branch-read function, no second fetch/show pair).
-    expect(seen).toEqual(['fetch', 'rev-parse', 'show']);
+    // The read is ONE remote probe for the task's branch pair (it throws
+    // here, so both branches are read) followed by the shared
+    // fetch/rev-parse/show sequence per branch (Rule 2.30: one branch-read
+    // function, no second fetch/show pair).
+    expect(seen).toEqual(['ls-remote', 'fetch', 'rev-parse', 'show', 'fetch', 'rev-parse', 'show']);
   });
 
   it("carries a NEWER schema's rows through verbatim when rewriting the durable file", () => {
