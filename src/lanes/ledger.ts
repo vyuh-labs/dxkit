@@ -69,6 +69,41 @@ export function appendLaneEvent(cwd: string, event: LaneEvent): string {
 }
 
 /**
+ * The committed RUN LEDGER for a standing-PR identity (#374): the full
+ * verification ledger markdown, every order line included, committed on
+ * the lane branch beside the delivery + order ledgers in the same
+ * bookkeeping commit. The PR body carries the SUMMARY and names this file;
+ * a `.md` beside the `.jsonl` files is never read by `readLaneEvents`.
+ * Repo-relative POSIX.
+ */
+export function runLedgerPath(lane: string, task: string): string {
+  return `${LANES_DIR.replace(/\\/g, '/')}/${lane}-${task}.ledger.md`;
+}
+
+/**
+ * Write (replace) the run ledger for this run and return its repo-relative
+ * path, or null when it could not be written (the caller's PR body then
+ * names the job step summary instead). The file is per run, not appended:
+ * the lane branch is rebuilt per run and the ledger describes THAT run.
+ */
+export function writeRunLedger(
+  cwd: string,
+  lane: string,
+  task: string,
+  ledger: string,
+): string | null {
+  const rel = runLedgerPath(lane, task);
+  try {
+    const abs = path.join(cwd, rel);
+    fs.mkdirSync(path.dirname(abs), { recursive: true });
+    fs.writeFileSync(abs, ledger.endsWith('\n') ? ledger : `${ledger}\n`, 'utf8');
+    return rel;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Every event in the lanes directory, oldest first. Fail-open per line
  * (a corrupt line is skipped, never a crash) and per schema (an event from
  * a NEWER schema version is skipped — this dxkit cannot interpret it, and a

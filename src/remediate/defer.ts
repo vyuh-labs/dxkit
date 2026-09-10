@@ -85,6 +85,8 @@ export function deferLanding(
     readonly prBody: string;
     readonly draft: boolean;
     readonly ledgerPath: string;
+    /** The full run-ledger file (#374), when it could be written. */
+    readonly runLedgerPath: string | null;
     readonly orderRows: readonly OrderOutcomeRow[];
   },
 ): DeferLandingOutcome {
@@ -102,6 +104,7 @@ export function deferLanding(
       prBody: args.prBody,
       draft: args.draft,
       ledgerPath: args.ledgerPath,
+      ...(args.runLedgerPath ? { runLedgerPath: args.runLedgerPath } : {}),
       orderRows: args.orderRows,
     });
   } catch (err) {
