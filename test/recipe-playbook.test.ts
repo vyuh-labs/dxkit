@@ -90,7 +90,11 @@ import {
   tempRepo,
 } from './remediate/recipes/helpers';
 import { activeInstallStrategies, installStrategyProviders } from '../src/languages';
-import { ciInstallVariants, renderInstallDependenciesShell } from '../src/install/shell';
+import {
+  ciInstallVariants,
+  renderInstallDependenciesShell,
+  SHELL_FALLBACK_FN,
+} from '../src/install/shell';
 import { defaultResolvedTolerances } from '../src/install/tolerances';
 import { runDeclaredInstall } from '../src/lanes/verify-tree';
 import { lintGateSpecs } from '../src/analyzers/custom-checks/config';
@@ -761,7 +765,7 @@ describe('recipe playbook — synthetic pack', () => {
     );
     expect(shell).toContain('[ -f playbook.lock ]');
     expect(shell).toContain(
-      'playbook-pm-mock install --frozen || playbook-pm-mock install --frozen --peers-ok',
+      `playbook-pm-mock install --frozen || ${SHELL_FALLBACK_FN} playbook-pm-mock install --frozen --peers-ok`,
     );
     expect(
       ciInstallVariants(providers.map((p) => p.provider)).some((v) =>

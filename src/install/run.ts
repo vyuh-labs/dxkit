@@ -107,6 +107,76 @@ function infrastructureOf(
   return null;
 }
 
+/**
+ * The line the executor (and the rendered CI chain, which echoes it before
+ * retrying) writes between a primary's output and a fallback's, naming the
+ * fallback. ONE delimiter, so a captured chain log splits back into the
+ * executor's attempts (`splitChainOutput`) and the CI-side classification
+ * reads the same segments the in-process executor classified.
+ */
+export function fallbackDelimiter(command: InstallCommand): string {
+  return `--- fallback (${installCommandText(command)}) ---`;
+}
+
+const FALLBACK_DELIMITER_LINE = /^--- fallback \((.+)\) ---$/gm;
+
+/** One attempt's slice of a captured chain log: `command` is null for the
+ *  primary (the chain never names it), else the fallback's display text. */
+export interface ChainSegment {
+  readonly command: string | null;
+  readonly output: string;
+}
+
+/** Split a chain log (the executor's combined `output`, or the rendered CI
+ *  chain's captured log) into its per-attempt segments, in run order. */
+export function splitChainOutput(output: string): readonly ChainSegment[] {
+  const segments: ChainSegment[] = [];
+  let command: string | null = null;
+  let last = 0;
+  for (const m of output.matchAll(FALLBACK_DELIMITER_LINE)) {
+    segments.push({ command, output: output.slice(last, m.index) });
+    command = m[1];
+    last = m.index + m[0].length;
+  }
+  segments.push({ command, output: output.slice(last) });
+  return segments;
+}
+
+/** What a failed chain log says about the install, in the executor's own
+ *  vocabulary: the class of the LAST attempt's output (what actually stopped
+ *  the install), the primary's class kept as history when a fallback ran and
+ *  failed differently, and the last command that ran. */
+export interface ChainClassification {
+  readonly classification: InstallFailureClass;
+  readonly primaryClassification?: InstallFailureClass;
+  readonly command: string;
+  /** Every command the chain ran, in order (the primary first). */
+  readonly attempts: readonly string[];
+}
+
+/**
+ * Classify a FAILED chain log against a plan: the ONE classification the
+ * in-process executor applies to a fallback failure (re-classify what
+ * actually stopped the install, keep the primary's class as history), so a
+ * CI-captured log and an executor run of the same commands read identically.
+ * Never re-implements a classifier: it reads the plan's declared ones.
+ */
+export function classifyChainOutput(plan: InstallPlan, output: string): ChainClassification {
+  const segments = splitChainOutput(output);
+  const first = segments[0];
+  const last = segments[segments.length - 1];
+  const primaryClass = classifyInstallFailure(plan, first.output).classification;
+  const finalClass =
+    segments.length === 1 ? primaryClass : classifyInstallFailure(plan, last.output).classification;
+  const primaryText = installCommandText(plan.primary);
+  return {
+    classification: finalClass,
+    ...(finalClass !== primaryClass ? { primaryClassification: primaryClass } : {}),
+    command: last.command ?? primaryText,
+    attempts: segments.map((s) => s.command ?? primaryText),
+  };
+}
+
 /** Classify a failed primary's output: the first declared fallback whose
  *  classifier matches names the class, else the plan's own extra
  *  classifier, else `unclassified`. */
@@ -206,9 +276,7 @@ export function runInstall(
   return {
     status: 'failed',
     command: fallback.command,
-    output: tail(
-      `${primary.output}\n--- fallback (${installCommandText(fallback.command)}) ---\n${second.output}`,
-    ),
+    output: tail(`${primary.output}\n${fallbackDelimiter(fallback.command)}\n${second.output}`),
     classification: final,
     ...(final !== classification ? { primaryClassification: classification } : {}),
     attempts,

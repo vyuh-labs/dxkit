@@ -117,6 +117,7 @@ export const NODE_EXECUTION: ExecutionRequirement = {
 const PNPM: InstallStrategy = {
   manager: 'pnpm',
   lockfile: 'pnpm-lock.yaml',
+  manifest: 'package.json',
   modes: {
     frozen: { primary: { bin: 'pnpm', args: ['install', '--frozen-lockfile'] }, fallbacks: [] },
     resync: { primary: { bin: 'pnpm', args: ['install', '--no-frozen-lockfile'] }, fallbacks: [] },
@@ -134,6 +135,7 @@ const PNPM: InstallStrategy = {
 const YARN: InstallStrategy = {
   manager: 'yarn',
   lockfile: 'yarn.lock',
+  manifest: 'package.json',
   modes: {
     // Classic-safe primary: classic honors --frozen-lockfile and silently
     // IGNORES --immutable (so --immutable-first would not be frozen there);
@@ -173,6 +175,7 @@ const YARN: InstallStrategy = {
 const BUN: InstallStrategy = {
   manager: 'bun',
   lockfile: 'bun.lock',
+  manifest: 'package.json',
   modes: {
     frozen: { primary: { bin: 'bun', args: ['install', '--frozen-lockfile'] }, fallbacks: [] },
     resync: { primary: { bin: 'bun', args: ['install'] }, fallbacks: [] },
@@ -192,6 +195,7 @@ const BUN: InstallStrategy = {
 const NPM_LOCKED: InstallStrategy = {
   manager: 'npm',
   lockfile: 'package-lock.json',
+  manifest: 'package.json',
   modes: {
     frozen: {
       primary: { bin: 'npm', args: ['ci'] },
@@ -219,6 +223,7 @@ const NPM_LOCKED: InstallStrategy = {
 const NPM_UNLOCKED: InstallStrategy = {
   manager: 'npm',
   lockfile: null,
+  manifest: 'package.json',
   modes: {
     frozen: {
       primary: { bin: 'npm', args: ['install'] },

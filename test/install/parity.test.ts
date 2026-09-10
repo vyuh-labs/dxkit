@@ -7,8 +7,10 @@ import {
   ciInstallVariants,
   renderInstallDependenciesShell,
   renderInstallLine,
+  SHELL_FALLBACK_FN,
 } from '../../src/install/shell';
-import { runInstall } from '../../src/install/run';
+import { classifyChainOutput, fallbackDelimiter, runInstall } from '../../src/install/run';
+import { classifyInstallLog } from '../../src/install/outcome';
 import { defaultResolvedTolerances, type ResolvedTolerances } from '../../src/install/tolerances';
 import { runDeclaredInstall } from '../../src/lanes/verify-tree';
 import { runCorrectnessFloor } from '../../src/analyzers/correctness/run';
@@ -52,7 +54,12 @@ const text = installCommandText;
 function shellSequence(v: InstallVariant, t: ResolvedTolerances): string[] {
   return renderInstallLine(v, t)
     .split(' || ')
-    .map((seg) => seg.replace(/^\{ .* && /, '').replace(/; \}$/, ''));
+    .map((seg) =>
+      seg
+        .replace(/^\{ .* && /, '')
+        .replace(/; \}$/, '')
+        .replace(new RegExp(`^${SHELL_FALLBACK_FN} `), ''),
+    );
 }
 
 /** What the executor runs when the primary fails with `output`. */
@@ -211,7 +218,9 @@ describe('template == executor == verifier, per variant', () => {
     // it; its classifier is the gate — pinned above).
     const yarn = TS.installStrategy!.variants().find((v) => v.when.includes('yarn.lock'))!;
     expect(renderInstallLine(yarn, DEFAULTS)).toContain('|| { yarn --version');
-    expect(renderInstallLine(yarn, DEFAULTS)).toContain('&& yarn install --immutable; }');
+    expect(renderInstallLine(yarn, DEFAULTS)).toContain(
+      `&& ${SHELL_FALLBACK_FN} yarn install --immutable; }`,
+    );
   });
 
   it('the per-PM table and the file-keyed variants are one declaration', () => {
@@ -221,6 +230,98 @@ describe('template == executor == verifier, per variant', () => {
         v.strategy,
       );
     }
+  });
+});
+
+/**
+ * The CI-side classification parity (#381). The rendered chain captures its
+ * output and hands it to `install classify`, which reads the SAME plan
+ * through `classifyChainOutput`. Two consumers, two shapes (an executor run
+ * vs a captured shell log), so the net runs both on shared failure shapes
+ * and asserts the class agrees. The shell retries a fallback on ANY
+ * primary failure (blanket, outcome-equivalent), so its log carries the
+ * fallback's segment where the executor's has none; the CLASS must still
+ * agree, and the executor's own combined output must round-trip through
+ * the splitter to its own verdict.
+ */
+describe('the rendered chain classifies a captured log as the executor classifies its run', () => {
+  const SHAPES: Record<string, string> = {
+    'peer-conflict': 'npm ERR! code ERESOLVE\nnpm ERR! peer dep missing',
+    'lockfile-drift': 'npm ERR! code EUSAGE\nMissing: x@1 from lock file',
+    unclassified: 'npm ERR! code ENOTFOUND\nnpm ERR! network request failed',
+    'unsupported-flag': 'Unknown Syntax Error: Unsupported option name ("--frozen-lockfile").',
+  };
+
+  for (const v of ciInstallVariants(PROVIDERS)) {
+    const label = v.when.join('+');
+    const plan = v.strategy.modes.frozen;
+
+    it(`${label}: the executor's combined failure output round-trips through the splitter`, () => {
+      for (const [primaryShape, fallbackShape] of [
+        [SHAPES['peer-conflict'], SHAPES['lockfile-drift']],
+        [SHAPES['peer-conflict'], SHAPES['peer-conflict']],
+        [SHAPES['lockfile-drift'], SHAPES['lockfile-drift']],
+        [SHAPES['unclassified'], SHAPES['unclassified']],
+        [SHAPES['unsupported-flag'], SHAPES['unclassified']],
+      ]) {
+        let n = 0;
+        const r = runInstall(
+          plan,
+          '/repo',
+          () => ({ available: true, code: 1, output: n++ === 0 ? primaryShape : fallbackShape }),
+          DEFAULTS,
+        );
+        expect(r.status).toBe('failed');
+        if (r.status !== 'failed') return;
+        const chain = classifyChainOutput(plan, r.output);
+        expect(chain.classification).toBe(r.classification);
+        expect(chain.primaryClassification).toBe(r.primaryClassification);
+        expect(chain.command).toBe(text(r.command));
+        expect(chain.attempts).toEqual(r.attempts.map((a) => text(a.command)));
+      }
+    });
+
+    it(`${label}: a shell-captured log classifies as the executor would classify the same failure`, () => {
+      const dir = repoFor(v);
+      try {
+        for (const shape of Object.values(SHAPES)) {
+          // The shell's log: the primary's output, then (blanket retry) each
+          // authorized fallback's delimiter + output, failing the same way.
+          const fallbacks = plan.fallbacks.filter((f) => DEFAULTS.tolerated.has(f.when));
+          const shellLog = [
+            shape,
+            ...fallbacks.flatMap((f) => [fallbackDelimiter(f.command), shape]),
+          ].join('\n');
+          const record = classifyInstallLog(dir, PROVIDERS, shellLog, 1);
+          const r = runInstall(
+            plan,
+            dir,
+            () => ({ available: true, code: 1, output: shape }),
+            DEFAULTS,
+          );
+          expect(r.status).toBe('failed');
+          if (r.status !== 'failed') return;
+          expect(record.ok).toBe(false);
+          expect(record.class, `${label} on ${shape.split('\n')[0]}`).toBe(r.classification);
+          expect(record.attempts[0]).toBe(text(plan.primary));
+          expect(record.manager).toBe(v.strategy.manager);
+        }
+        // And a clean exit records ok, with the primary as the command.
+        const ok = classifyInstallLog(dir, PROVIDERS, 'added 3 packages', 0);
+        expect(ok.ok).toBe(true);
+        expect(ok.command).toBe(text(plan.primary));
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+  }
+
+  it('the shell fallback function echoes the executor delimiter, byte for byte', () => {
+    // The chain's `dxkit_fallback a b c` prints `--- fallback (a b c) ---`
+    // then runs `a b c`; the executor writes the same line between attempts.
+    const shell = renderInstallDependenciesShell('', PROVIDERS, DEFAULTS);
+    expect(shell).toContain(`${SHELL_FALLBACK_FN}() { echo "--- fallback ($*) ---"; "$@"; }`);
+    expect(fallbackDelimiter({ bin: 'a', args: ['b', 'c'] })).toBe('--- fallback (a b c) ---');
   });
 });
 

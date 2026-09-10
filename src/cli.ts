@@ -582,6 +582,9 @@ export async function run(argv: string[]): Promise<void> {
       'env-file': { type: 'string' },
       // baseline create: proceed despite missing scanners (CI/non-interactive)
       'allow-incomplete': { type: 'boolean', default: false },
+      // install classify: the captured chain log + the install's exit code
+      log: { type: 'string' },
+      code: { type: 'string' },
     },
     allowPositionals: true,
     strict: false,
@@ -3772,6 +3775,33 @@ export async function run(argv: string[]): Promise<void> {
         break;
       }
       logger.fail(`Unknown hook: ${hookName ?? '(missing)'}. Available: vyuh-dxkit hook stop-gate`);
+      process.exit(1);
+      break;
+    }
+
+    case 'install': {
+      // CI install-outcome plumbing for the generated workflows (#381):
+      // `classify` runs at the end of the rendered install step on its
+      // captured log, `comment` renders the record in the comment step.
+      const sub = positionals[1];
+      if (sub === 'classify') {
+        const { runInstallClassify } = await import('./install/outcome-cli');
+        process.exit(
+          runInstallClassify(cwd, {
+            log: values.log as string | undefined,
+            code: values.code as string | undefined,
+          }),
+        );
+      }
+      if (sub === 'comment') {
+        const { runInstallComment } = await import('./install/outcome-cli');
+        process.exit(runInstallComment(cwd));
+      }
+      logger.fail(
+        `Unknown install subcommand: ${sub ?? '(missing)'}. Available: vyuh-dxkit install ` +
+          'classify --log <file> --code <n> | vyuh-dxkit install comment (workflow plumbing; ' +
+          'to set dxkit up on a repo, run vyuh-dxkit init)',
+      );
       process.exit(1);
       break;
     }
