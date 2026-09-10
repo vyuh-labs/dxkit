@@ -162,22 +162,25 @@ function readBaseline(
   disclosures: string[],
   anchorReader: AnchorReader | undefined,
 ): { baseline: BaselineFile | null; unreadable: boolean; priorSource: string | null } {
-  try {
-    const read = readCommittedPrior(cwd, {
-      name,
-      ...(anchorReader ? { anchorReader } : {}),
-    });
-    if (!read.prior) return { baseline: null, unreadable: false, priorSource: null };
-    const priorSource = describePriorSource(read.prior);
-    disclosures.push(`${PRIOR_DISCLOSURE_PREFIX}${priorSource}`);
-    return { baseline: read.prior.baseline, unreadable: false, priorSource };
-  } catch (err) {
+  const read = readCommittedPrior(cwd, {
+    name,
+    ...(anchorReader ? { anchorReader } : {}),
+  });
+  if (read.unreadable) {
+    // A prior that exists but cannot be parsed: disclosed, and the plan
+    // proceeds without debt (the same posture as an unreadable tree copy).
+    const u = read.unreadable;
     disclosures.push(
-      `baseline '${name}' exists but could not be read (${err instanceof Error ? err.message : String(err)}); ` +
+      `prior unreadable: baseline '${name}' exists but could not be read ` +
+        `(${u.source === 'anchor' ? 'anchor branch copy' : 'tree copy'} at ${u.path}: ${u.error.message}); ` +
         'the plan proceeds WITHOUT the recorded backlog: floor attribution and debt are incomplete',
     );
     return { baseline: null, unreadable: true, priorSource: null };
   }
+  if (!read.prior) return { baseline: null, unreadable: false, priorSource: null };
+  const priorSource = describePriorSource(read.prior);
+  disclosures.push(`${PRIOR_DISCLOSURE_PREFIX}${priorSource}`);
+  return { baseline: read.prior.baseline, unreadable: false, priorSource };
 }
 
 /** Per producing pack, its declared install command. A finding that does not

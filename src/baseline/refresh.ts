@@ -48,7 +48,8 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { changedFilesTouchDependencyManifest, detectActiveLanguages } from '../languages';
-import { readCommittedPrior } from '../gate/prior';
+import { readCommittedPrior, type CommittedPriorUnreadable } from '../gate/prior';
+import { dxkitCli } from '../self-invocation';
 import { computeChangedFiles } from './changed-files';
 import { createBaseline } from './create';
 import {
@@ -62,7 +63,7 @@ import type { BaselineFile } from './baseline-file';
 import { isSanitized } from './sanitize';
 import { invalidateAnchorReadMemo, readFromAnchorRef } from './anchor-publish';
 import { loadPolicyFromCwd, type BaselineSection } from './policy';
-import { resolveBaselineMode } from './modes';
+import { DEFAULT_ANCHOR_REF, resolveBaselineMode } from './modes';
 import { deferAdvisoryExpiryDate } from '../allowlist/categories';
 import {
   ALLOWLIST_SCHEMA_VERSION,
@@ -130,23 +131,37 @@ function safeSection(cwd: string): BaselineSection | undefined {
  * read the guardrail check and the remediation planner also use
  * (`readCommittedPrior`, #387), so the refresh diffs against what the gate
  * was actually using. MUST be read BEFORE the fresh capture overwrites the
- * tree copy. Null when neither exists (first capture) or the chosen copy is
- * unreadable (treated as absent, as before).
+ * tree copy. `baseline` is null when no prior exists (first capture);
+ * `unreadable` is set when a prior EXISTS but could not be parsed, which the
+ * lane must refuse on (#388): absorbing it as "first capture" would publish
+ * a fresh baseline with every advisory pending a decision grandfathered.
  */
 function loadPriorBaseline(
   cwd: string,
   treePath: string,
   section: BaselineSection | undefined,
-): BaselineFile | null {
-  try {
-    return (
-      readCommittedPrior(cwd, { baselinePath: treePath, ...(section ? { section } : {}) }).prior
-        ?.baseline ?? null
-    );
-  } catch {
-    /* unreadable prior, treated as absent */
-    return null;
-  }
+): { baseline: BaselineFile | null; unreadable: CommittedPriorUnreadable | null } {
+  const read = readCommittedPrior(cwd, {
+    baselinePath: treePath,
+    ...(section ? { section } : {}),
+  });
+  return { baseline: read.prior?.baseline ?? null, unreadable: read.unreadable };
+}
+
+/** The refusal a refresh raises over an unreadable prior: what failed, where,
+ *  why, and the remedy. Thrown BEFORE the capture, so nothing is published. */
+export function unreadablePriorRefusal(u: CommittedPriorUnreadable, anchorRef: string): string {
+  const where =
+    u.source === 'anchor'
+      ? `the '${anchorRef}' anchor branch copy (materialized at ${u.path})`
+      : `the committed tree copy at ${u.path}`;
+  return (
+    `refusing to refresh: a prior baseline exists but could not be read, so newly published ` +
+    `advisories cannot be told apart from pre-existing debt (${where}: ${u.error.message}). ` +
+    `Publishing a fresh capture over it would absorb every advisory pending a decision as ` +
+    `ordinary debt. Inspect that copy, or re-capture deliberately with ` +
+    `\`${dxkitCli('baseline create --force')}\` and \`${dxkitCli('baseline publish')}\`.`
+  );
 }
 
 function depVulnIds(file: BaselineFile): Set<string> {
@@ -242,45 +257,10 @@ function commitFileToDecisionBranch(
   invalidateAnchorReadMemo(ADVISORY_DECISION_BRANCH);
 }
 
-/** The decision PR's body: the advisory table + the two lanes, stated once. */
-export function decisionPrBody(
-  heldOut: ReadonlyArray<HeldOutAdvisory>,
-  entries: ReadonlyArray<AllowlistEntry>,
-): string {
-  const expiryByFp = new Map(entries.map((e) => [e.fingerprint, e.expiresAt ?? '—']));
-  const rows = heldOut
-    .map(
-      (a) =>
-        `| ${a.package}${a.installedVersion ? `@${a.installedVersion}` : ''} | ${a.advisoryId} | ` +
-        `\`${a.fingerprint}\` | ${expiryByFp.get(a.fingerprint) ?? '—'} |`,
-    )
-    .join('\n');
-  return [
-    `## ${heldOut.length} newly published advisor${heldOut.length === 1 ? 'y' : 'ies'} need a decision`,
-    '',
-    'The scheduled baseline refresh found dependency advisories published to the feed AFTER',
-    'the previous capture, on a tree whose diff touched no dependency manifest — nobody in',
-    'this repo introduced them. They were **held out of the refreshed baseline** (never',
-    'silently grandfathered), so they gate every PR by the advisory tier until this repo',
-    'decides:',
-    '',
-    '| Package | Advisory | Fingerprint | Defer expires |',
-    '|---|---|---|---|',
-    rows,
-    '',
-    '**Lane 1 — fix (preferred):** upgrade or patch the affected dependencies and merge that',
-    'change; the next refresh absorbs the resolution and this PR becomes obsolete.',
-    '',
-    '**Lane 2 — defer, time-boxed:** MERGE THIS PR. It adds `category=deferred` allowlist',
-    'entries that clear the gate now and EXPIRE on the dates above — the findings re-block',
-    'when the window lapses, which is the forcing function back into the fix lane.',
-    '',
-    'Closing this PR without fixing re-raises it on the next scheduled refresh — a live',
-    'advisory never goes silent.',
-    '',
-    '🤖 raised by `vyuh-dxkit baseline refresh` (the D4 advisory decision lane)',
-  ].join('\n');
-}
+// The decision PR body renderer lives in `refresh-pr-body.ts` (module-size
+// split); re-exported so consumers keep one import surface.
+import { decisionPrBody } from './refresh-pr-body';
+export { decisionPrBody };
 
 /**
  * The refresh orchestration: the advisory decision lane, then the expiry
@@ -363,7 +343,12 @@ async function runAdvisoryDecisionLane(
   }
 
   // The prior EFFECTIVE baseline — read before the capture overwrites the tree.
-  const prior = loadPriorBaseline(cwd, treePath, section);
+  const { baseline: prior, unreadable } = loadPriorBaseline(cwd, treePath, section);
+  // Fail CLOSED on an unreadable prior (#388): nothing is captured or
+  // published; the caller exits non-zero with the remedy named.
+  if (unreadable) {
+    throw new Error(unreadablePriorRefusal(unreadable, section?.anchorRef ?? DEFAULT_ANCHOR_REF));
+  }
 
   if (opts._capture) {
     await opts._capture({ cwd, name });

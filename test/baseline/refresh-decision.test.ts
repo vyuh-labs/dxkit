@@ -26,6 +26,7 @@ import {
   decisionPrBody,
   runBaselineRefresh,
 } from '../../src/baseline/refresh';
+import { publishFilesToAnchorRef } from '../../src/baseline/anchor-publish';
 import { BASELINE_SCHEMA_VERSION, type BaselineFile } from '../../src/baseline/baseline-file';
 import type { AllowlistFile } from '../../src/allowlist/file';
 import { DEFER_ADVISORY_EXPIRY_DAYS } from '../../src/allowlist/categories';
@@ -219,6 +220,67 @@ describe('baseline refresh — the advisory decision lane', () => {
     expect(result.heldOut).toEqual([]);
     expect(result.note).toContain('first capture');
   }, 120_000);
+
+  // #388: a prior that EXISTS but cannot be parsed is not "first capture".
+  // Treating it so would publish a fresh baseline with every advisory pending
+  // a decision absorbed as ordinary debt. The lane refuses, names the remedy,
+  // captures nothing and publishes nothing.
+  it('a corrupt ANCHOR refuses the refresh: nothing captured, remedy named', async () => {
+    const { repo } = makeRepoWithOrigin();
+    fs.mkdirSync(path.join(repo, '.dxkit'), { recursive: true });
+    fs.writeFileSync(
+      path.join(repo, '.dxkit', 'policy.json'),
+      JSON.stringify({ baseline: { mode: 'committed-full', anchor: 'branch' } }),
+    );
+    publishFilesToAnchorRef({
+      cwd: repo,
+      anchorRef: 'dxkit-baselines',
+      files: [{ path: '.dxkit/baselines/main.json', content: '{ this is not json' }],
+      message: 'corrupt anchor',
+      baseParent: false,
+    });
+    // A readable tree copy must NOT rescue the run: the anchor is the prior
+    // the gate reads, and its corruption is the evidence problem.
+    const treePath = writeTreeBaseline(repo, baselineFile(repo, 'base', []));
+    const treeBefore = fs.readFileSync(treePath, 'utf8');
+    let captured = false;
+    await expect(
+      runBaselineRefresh({
+        cwd: repo,
+        _capture: async () => {
+          captured = true;
+        },
+      }),
+    ).rejects.toThrow(/refusing to refresh: a prior baseline exists but could not be read/);
+    await expect(
+      runBaselineRefresh({
+        cwd: repo,
+        _capture: async () => {
+          captured = true;
+        },
+      }),
+    ).rejects.toThrow(/'dxkit-baselines' anchor branch copy[\s\S]*baseline create --force/);
+    expect(captured).toBe(false);
+    expect(fs.readFileSync(treePath, 'utf8')).toBe(treeBefore);
+  }, 120_000);
+
+  it('a corrupt TREE copy (no anchor) refuses the same way', async () => {
+    const { repo } = makeRepoWithOrigin();
+    const treePath = path.join(repo, '.dxkit', 'baselines', 'main.json');
+    fs.mkdirSync(path.dirname(treePath), { recursive: true });
+    fs.writeFileSync(treePath, '{ this is not json');
+    let captured = false;
+    await expect(
+      runBaselineRefresh({
+        cwd: repo,
+        _capture: async () => {
+          captured = true;
+        },
+      }),
+    ).rejects.toThrow(/refusing to refresh[\s\S]*committed tree copy/);
+    expect(captured).toBe(false);
+    expect(fs.readFileSync(treePath, 'utf8')).toBe('{ this is not json');
+  }, 60_000);
 
   it('ref-based mode is a graceful, explained no-op (the class cannot arise there)', async () => {
     const { repo } = makeRepoWithOrigin();

@@ -171,6 +171,33 @@ describe('the planner reads the prior the guardrail reads (#387)', () => {
     expect(out.disclosures.some((d) => d.startsWith(PRIOR_DISCLOSURE_PREFIX))).toBe(false);
   });
 
+  it('a corrupt anchor is disclosed as "prior unreadable" and the plan proceeds without debt', async () => {
+    writeBranchPolicy();
+    writeTreeCopy();
+    const corruptAnchor: AnchorReader = (_cwd, _baselinePath, section) => {
+      if (section?.anchor !== 'branch') return null;
+      const dir = mkdtempSync(join(tmpdir(), 'dxkit-planner-corrupt-anchor-'));
+      tmps.push(dir);
+      const p = join(dir, 'main.json');
+      writeFileSync(p, '{ this is not json');
+      return p;
+    };
+    const out = await planRepoWorkOrders(repo, resolveRemediateConfig(repo), {
+      packs: TS,
+      osvFetcher: NO_OSV,
+      anchorReader: corruptAnchor,
+    });
+    // Not "no prior" and not the readable tree copy: the unreadable anchor is
+    // named, and the readable tree copy does not quietly stand in for it.
+    expect(out.priorSource).toBeNull();
+    const line = out.disclosures.find((d) => d.startsWith('prior unreadable:'));
+    expect(line).toBeDefined();
+    expect(line).toContain('could not be read');
+    expect(line).toContain('anchor branch copy');
+    expect(depAdvisoryFindings(out.plan)).toBe(0);
+    expect(out.evidenceDegraded).toBe('the baseline exists but could not be read');
+  });
+
   it('describePriorSource is the one phrasing for every shape', () => {
     const base = {
       createdAt: '2026-08-15T10:00:00.000Z',

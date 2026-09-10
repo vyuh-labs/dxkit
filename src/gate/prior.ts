@@ -72,12 +72,28 @@ export interface CommittedPriorReadOptions {
   readonly anchorReader?: AnchorReader;
 }
 
-/** What `readCommittedPrior` answers. */
+/** A prior that EXISTS but could not be parsed: not the same thing as no
+ *  prior at all (#388). A refresh over it would grandfather every advisory
+ *  pending a decision as ordinary debt, so callers must tell the two apart. */
+export interface CommittedPriorUnreadable {
+  /** Which copy was chosen and failed to parse. */
+  readonly source: 'anchor' | 'tree';
+  /** The file that failed to parse (a temp materialization for `anchor`). */
+  readonly path: string;
+  /** The parse error, as `readBaselineFile` raised it. */
+  readonly error: Error;
+}
+
+/** What `readCommittedPrior` answers. Exactly one of three states:
+ *  `prior` set (read), both null (no prior exists), or `unreadable` set
+ *  (a prior exists but could not be parsed). */
 export interface CommittedPriorRead {
   /** The logical tree path (display + the missing-file remedy). */
   readonly baselinePath: string;
-  /** Null when neither the anchor nor a tree copy exists. */
+  /** The prior, or null when none was read. */
   readonly prior: AcquiredPrior | null;
+  /** Set when the chosen copy exists but could not be parsed. */
+  readonly unreadable: CommittedPriorUnreadable | null;
 }
 
 /**
@@ -91,9 +107,10 @@ export interface CommittedPriorRead {
  * path directly is the bug that had the planner minting orders for debt the
  * default branch had already paid.
  *
- * Returns `prior: null` when neither exists (after a hydrate attempt);
- * throws when the copy it chose exists but cannot be parsed. Never runs a
- * scan.
+ * Returns `prior: null, unreadable: null` when neither exists (after a
+ * hydrate attempt) and `unreadable` when the copy it chose exists but cannot
+ * be parsed; never throws for either, so a caller cannot confuse "no prior"
+ * with "a prior I could not read". Never runs a scan.
  */
 export function readCommittedPrior(
   cwd: string,
@@ -115,10 +132,12 @@ export function readCommittedPrior(
   if (fromBranch) {
     // Keep `baselinePath` as the logical tree path for display; read the fresh
     // side-branch anchor from the temp file.
+    const anchor = parseBaseline(fromBranch, 'anchor');
+    if ('unreadable' in anchor) return { baselinePath, prior: null, unreadable: anchor.unreadable };
     return {
       baselinePath,
       prior: {
-        baseline: readBaselineFile(fromBranch),
+        baseline: anchor.baseline,
         baselinePath,
         anchorSource: {
           used: 'anchor',
@@ -126,6 +145,7 @@ export function readCommittedPrior(
           note: `baseline read from the '${anchorRef}' side branch (anchor transport)`,
         },
       },
+      unreadable: null,
     };
   }
   if (!fs.existsSync(baselinePath)) {
@@ -133,7 +153,7 @@ export function readCommittedPrior(
     // (a bootstrap where the side branch became reachable between the two
     // calls, or a non-'branch' transport with a genuinely missing file).
     const hydrated = hydrateAnchorFromBranch(cwd, baselinePath, section);
-    if (!hydrated) return { baselinePath, prior: null };
+    if (!hydrated) return { baselinePath, prior: null, unreadable: null };
   }
   // D4d disclosure: with the `branch` transport, reaching this line means the
   // side branch could NOT be read and the caller proceeds on the tree copy,
@@ -152,14 +172,31 @@ export function readCommittedPrior(
             `investigate with \`${dxkitCli('doctor')}\`.`,
         }
       : undefined;
+  const tree = parseBaseline(baselinePath, 'tree');
+  if ('unreadable' in tree) return { baselinePath, prior: null, unreadable: tree.unreadable };
   return {
     baselinePath,
     prior: {
-      baseline: readBaselineFile(baselinePath),
+      baseline: tree.baseline,
       baselinePath,
       ...(anchorSource ? { anchorSource } : {}),
     },
+    unreadable: null,
   };
+}
+
+/** The one parse of a chosen copy: a failure is carried as `unreadable`
+ *  (which copy, where, why), never a thrown-and-swallowed absence. */
+function parseBaseline(
+  file: string,
+  source: CommittedPriorUnreadable['source'],
+): { baseline: BaselineFile } | { unreadable: CommittedPriorUnreadable } {
+  try {
+    return { baseline: readBaselineFile(file) };
+  } catch (err) {
+    const error = err instanceof Error ? err : new Error(String(err));
+    return { unreadable: { source, path: file, error } };
+  }
 }
 
 /**
@@ -332,6 +369,9 @@ export async function acquirePrior(
       ...(options.name !== undefined ? { name: options.name } : {}),
       ...(options.baselinePath !== undefined ? { baselinePath: options.baselinePath } : {}),
     });
+    // A prior that exists but cannot be parsed refuses the gate exactly as
+    // the parse error always did; only an absent prior gets the capture remedy.
+    if (read.unreadable) throw read.unreadable.error;
     if (!read.prior) {
       throw new Error(
         `baseline file not found: ${read.baselinePath}. ` +
