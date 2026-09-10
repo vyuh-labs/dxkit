@@ -129,6 +129,7 @@ describe('landRemediateHead', () => {
       cwd: repo,
       taskId: 'fix-vulns',
       defaultBranch: 'main',
+      outcome: 'verified',
       prTitle: 't',
       prBody: 'b',
       exec,
@@ -149,6 +150,7 @@ describe('landRemediateHead', () => {
       cwd: repo,
       taskId: 'fix-lint',
       defaultBranch: 'main',
+      outcome: 'verified',
       prTitle: 't',
       prBody: 'b',
       draft: true,
@@ -167,6 +169,7 @@ describe('landRemediateHead', () => {
       cwd: repo,
       taskId: 'fix-vulns',
       defaultBranch: 'main',
+      outcome: 'verified',
       prTitle: 't',
       prBody: 'b',
       ledgerPath: '.dxkit/lane-ledger.jsonl',
@@ -174,7 +177,12 @@ describe('landRemediateHead', () => {
     });
     const commit = calls.find((c) => c[0] === 'git' && c.includes('commit'))!;
     expect(commit).toContain('--');
-    expect(commit.slice(commit.indexOf('--') + 1)).toEqual(['.dxkit/lane-ledger.jsonl']);
+    // The delivery ledger plus the order ledger the landing marker rides
+    // (#372): the lander's own paths, nothing else.
+    expect(commit.slice(commit.indexOf('--') + 1)).toEqual([
+      '.dxkit/lane-ledger.jsonl',
+      '.dxkit/lanes/remediate-fix-vulns.orders.jsonl',
+    ]);
     expect(commit.some((a) => a.includes(BOT_IDENTITY.email))).toBe(true);
   });
 
@@ -184,6 +192,7 @@ describe('landRemediateHead', () => {
       cwd: repo,
       taskId: 'fix-vulns',
       defaultBranch: 'main',
+      outcome: 'verified',
       prTitle: 't',
       prBody: 'b',
       exec,

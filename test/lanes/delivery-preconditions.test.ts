@@ -6,7 +6,11 @@ import {
   standingLaneBranches,
   type ApiProbe,
 } from '../../src/lanes/delivery-preconditions';
-import { DEP_BUMP_BRANCH, remediateBranchFor } from '../../src/lanes/branches';
+import {
+  DEP_BUMP_BRANCH,
+  remediateAttemptBranchFor,
+  remediateBranchFor,
+} from '../../src/lanes/branches';
 import { REMEDIATE_TASKS } from '../../src/remediate/tasks';
 
 /**
@@ -29,7 +33,12 @@ describe('standingLaneBranches', () => {
   it('derives from the landers’ own constants — never a second list', () => {
     const branches = standingLaneBranches();
     expect(branches).toContain(DEP_BUMP_BRANCH);
-    for (const t of REMEDIATE_TASKS) expect(branches).toContain(remediateBranchFor(t.id));
+    for (const t of REMEDIATE_TASKS) {
+      expect(branches).toContain(remediateBranchFor(t.id));
+      // The attempt branch a salvage takes when the standing PR is
+      // preserved (#372) is pushed by the lander, so it is probed too.
+      expect(branches).toContain(remediateAttemptBranchFor(t.id));
+    }
   });
 });
 

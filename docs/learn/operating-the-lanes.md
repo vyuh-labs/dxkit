@@ -220,7 +220,13 @@ Read the task's job summary first — it names the outcome. The shapes:
   a red draft PR titled "do not merge" (its own guardrail check keeps it
   unmergeable), so the work and the blocking findings survive the runner;
   the next run starts fresh with those findings as a negative constraint
-  (a blocked diff is never a resume anchor). Otherwise no action is
+  (a blocked diff is never a resume anchor). If the standing branch
+  already holds a verified or partially-landed run awaiting your merge
+  (its committed landing marker says so; the PR body corroborates), or
+  nothing readable says what it holds, the red draft goes to
+  `dxkit/remediate-<task>-attempt` instead and the verified PR is left
+  untouched; the log and the attempt record say so, and the next verified
+  landing closes the attempt PR as superseded. Otherwise no action is
   required; the next scheduled run retries from a clean tree, and after
   `remediate.pauseAfterFailures` consecutive failures the class is paused
   instead of retried (see the circuit breaker above).

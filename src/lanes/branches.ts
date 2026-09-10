@@ -13,3 +13,26 @@ export const DEP_BUMP_BRANCH = 'dxkit/dep-bump';
 export function remediateBranchFor(taskId: string): string {
   return `dxkit/remediate-${taskId}`;
 }
+
+/**
+ * The remediate lane's ATTEMPT branch for a task: where a guardrail-red or
+ * budget-exhausted salvage goes while the standing branch holds a VERIFIED
+ * landing a human has not merged yet (#372). Force-pushed per attempt like
+ * the standing branch; it never carries the standing PR.
+ */
+export function remediateAttemptBranchFor(taskId: string): string {
+  return `${remediateBranchFor(taskId)}-attempt`;
+}
+
+/** A task's branch PAIR: the standing branch and its attempt sibling. */
+export interface RemediateBranches {
+  readonly standing: string;
+  readonly attempt: string;
+}
+
+/** The ONE way to build the pair (Rule 2.30): every consumer that needs
+ *  both (the lander, the preflight, the plan probes, resume, the order
+ *  ledger's compose and history reads) derives them here, never by hand. */
+export function remediateBranchesFor(taskId: string): RemediateBranches {
+  return { standing: remediateBranchFor(taskId), attempt: remediateAttemptBranchFor(taskId) };
+}

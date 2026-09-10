@@ -1132,7 +1132,7 @@ function laneSeams(pushes: string[], run: () => Promise<RemediateResult>): Execu
     probeDelivery: () => ({ probes: [], anyBlocked: false, unverifiable: false }),
     landHead: () => {
       pushes.push('landHead');
-      return { outcome: 'pr-opened', mode: 'pr' };
+      return { outcome: 'pr-opened', branch: 'dxkit/remediate-fix-vulns', mode: 'pr' };
     },
     writeOrderLedger: () => {
       pushes.push('writeOrderLedger'); // composes against the standing branch
@@ -1202,7 +1202,7 @@ describe('e2e e: two-phase landing, the lane composition', () => {
       writeOrderLedger: () => null, // the standing-branch read is offline here
       landHead: (o) => landRemediateHead({ ...o, exec }),
     });
-    expect(landed).toEqual({ outcome: 'landed', prUrl: 'https://example.test/pr/447' });
+    expect(landed).toMatchObject({ outcome: 'landed', prUrl: 'https://example.test/pr/447' });
     const push = calls.find((c) => c[0] === 'git' && c[1] === 'push');
     expect(push).toBeDefined();
     expect(push?.join(' ')).toContain('dxkit/remediate-fix-vulns');

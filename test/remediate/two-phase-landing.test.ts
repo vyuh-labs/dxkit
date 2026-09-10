@@ -128,6 +128,7 @@ function seams(overrides: Partial<ExecutorSeams> = {}): ExecutorSeams {
     defaultBranch: () => 'main',
     landHead: () => ({
       outcome: 'pr-opened' as const,
+      branch: 'dxkit/remediate-write-docs',
       mode: 'pr' as const,
       prUrl: 'https://example.test/pr/1',
     }),
@@ -252,7 +253,7 @@ describe('executor under deferred landing (env set => no push, one record)', () 
         runTask: async () => resultWithOrders('verified'),
         landHead: () => {
           pushed = true;
-          return { outcome: 'pr-opened', mode: 'pr' };
+          return { outcome: 'pr-opened', branch: 'dxkit/remediate-write-docs', mode: 'pr' };
         },
         writeOrderLedger: () => {
           pushed = true; // the compose reads the standing branch, deferred too
@@ -297,7 +298,7 @@ describe('executor under deferred landing (env set => no push, one record)', () 
         runTask: async () => result('budget-exhausted'),
         landHead: () => {
           pushed = true;
-          return { outcome: 'pr-opened', mode: 'pr' };
+          return { outcome: 'pr-opened', branch: 'dxkit/remediate-write-docs', mode: 'pr' };
         },
       }),
     );
@@ -346,7 +347,12 @@ describe('executor under deferred landing (env set => no push, one record)', () 
         env: {},
         landHead: () => {
           pushed = true;
-          return { outcome: 'pr-opened', mode: 'pr', prUrl: 'https://example.test/pr/1' };
+          return {
+            outcome: 'pr-opened',
+            branch: 'dxkit/remediate-write-docs',
+            mode: 'pr',
+            prUrl: 'https://example.test/pr/1',
+          };
         },
       }),
     );
@@ -385,7 +391,12 @@ describe('remediate land (phase two)', () => {
       },
       landHead: (opts) => {
         landOpts = { ...opts };
-        return { outcome: 'pr-opened', mode: 'pr', prUrl: 'https://example.test/pr/9' };
+        return {
+          outcome: 'pr-opened',
+          branch: 'dxkit/remediate-write-docs',
+          mode: 'pr',
+          prUrl: 'https://example.test/pr/9',
+        };
       },
     });
     expect(out.outcome).toBe('landed');
@@ -419,7 +430,7 @@ describe('remediate land (phase two)', () => {
       head: () => 'cccc3333',
       landHead: () => {
         pushed = true;
-        return { outcome: 'pr-opened', mode: 'pr' };
+        return { outcome: 'pr-opened', branch: 'dxkit/remediate-write-docs', mode: 'pr' };
       },
       writeOrderLedger: () => null,
     });
@@ -443,7 +454,7 @@ describe('remediate land (phase two)', () => {
       head: () => 'bbbb2222',
       landHead: () => {
         pushed = true;
-        return { outcome: 'pr-opened', mode: 'pr' };
+        return { outcome: 'pr-opened', branch: 'dxkit/remediate-write-docs', mode: 'pr' };
       },
     });
     expect(pushed).toBe(false);
@@ -514,7 +525,12 @@ describe('remediate land (phase two)', () => {
             stderr: 'remote: error: GH013: Repository rule violations found',
           });
         }
-        return { outcome: 'pr-opened' as const, mode: 'pr' as const, prUrl: 'https://x/pr/1' };
+        return {
+          outcome: 'pr-opened' as const,
+          branch: 'dxkit/remediate-write-docs',
+          mode: 'pr' as const,
+          prUrl: 'https://x/pr/1',
+        };
       },
     };
     const out = runRemediateLand(cwd, 'write-docs', seamsUsed);
@@ -556,7 +572,7 @@ describe('remediate land (phase two)', () => {
       writeOrderLedger: () => null,
       landHead: () => {
         pushed = true;
-        return { outcome: 'pr-opened', mode: 'pr' };
+        return { outcome: 'pr-opened', branch: 'dxkit/remediate-write-docs', mode: 'pr' };
       },
     });
     expect(pushed).toBe(false);
