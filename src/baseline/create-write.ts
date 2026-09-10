@@ -21,6 +21,7 @@ import { entryToAllowlistable, partitionByActiveAllowlist } from './allowlist-ma
 import { captureFloorDebt } from './floor-debt';
 import { trustedLocalContext } from '../analysis-trust';
 import { gatherCurrentScan, scanToBaselineFile } from './create';
+import type { CurrentScan } from './create';
 
 export interface CreateBaselineOptions {
   /** Repo root to baseline. Caller should pass an absolute path. */
@@ -74,6 +75,13 @@ export interface CreateBaselineResult {
     readonly allowlisted: number;
     readonly byCategory: Readonly<Record<string, number>>;
   };
+  /** The scan the file was projected from (committed modes only). The refresh
+   *  lane's degraded-capture check (#388) reads its observation evidence (the
+   *  aggregate's per-source provenance, the custom-check seam record) through
+   *  the gate's one observation predicate, so "did this capture observe the
+   *  kind" is answered by the definition the guardrail already uses. A run
+   *  property, never persisted. */
+  readonly scan?: CurrentScan;
 }
 
 /**
@@ -175,5 +183,6 @@ export async function createBaseline(
     path: filePath,
     file,
     allowlistSplit: { live: live.length, allowlisted: suppressions.length, byCategory },
+    scan,
   };
 }

@@ -10,14 +10,22 @@
  *
  *   1. Capture a fresh baseline (the existing `createBaseline` — one capture
  *      path, this module never re-implements it).
- *   2. Diff the fresh capture's dep-vulns against the PRIOR effective baseline
+ *   2. REFUSE a degraded capture (4.4.8, #388; `refresh-degraded.ts`): a kind
+ *      the prior recorded that the fresh capture did not observe, on a tree
+ *      whose diff touched none of that kind's inputs, is never published. The
+ *      prior anchor and the tree copy stay as they were and the run is red
+ *      with the kind, the counts, what the provenance said and the remedy.
+ *   3. Diff the fresh capture's dep-vulns against the PRIOR effective baseline
  *      (side-branch anchor first, tree copy second — the same precedence the
- *      guardrail check uses). A fresh dep-vuln absent from the prior baseline,
- *      on a tree whose diff since the prior anchor touched NO dependency
- *      manifest of any active pack, is a NEWLY PUBLISHED ADVISORY — the same
- *      ONE discriminator (`changedFilesTouchDependencyManifest`) the
- *      classifier and the ref-based skip trust (Rule 2.30).
- *   3. HOLD those out of the written baseline — never absorbed silently — and
+ *      guardrail check uses). A fresh dep-vuln known to NO "known before the
+ *      prior capture" set (the prior anchor, the decision branch's carried
+ *      hold-outs, an OSV publication date before the prior capture; #389,
+ *      `refresh-holdout.ts`), on a tree whose diff since the prior anchor
+ *      touched NO dependency manifest of any active pack, is a NEWLY PUBLISHED
+ *      ADVISORY — the same ONE manifest discriminator
+ *      (`changedFilesTouchDependencyManifest`) the classifier and the
+ *      ref-based skip trust (Rule 2.30).
+ *   4. HOLD those out of the written baseline — never absorbed silently — and
  *      raise the two-lane decision as a standing base-branch PR
  *      (`dxkit/advisory-decision`) whose content is short-dated `deferred`
  *      allowlist entries:
@@ -28,7 +36,8 @@
  *      Until one of those happens the held-out advisories keep classifying as
  *      `newly_published_advisory` on every check, gated by the tier knob —
  *      dependency owners decide on the base branch before feature PRs fight
- *      the findings one at a time.
+ *      the findings one at a time. An advisory already on the decision branch
+ *      stays held out as STILL PENDING and is never announced as new again.
  *
  * Evidence honesty (Rule 19 applied to the refresh): a prior baseline that
  * cannot be loaded, or a changed-file set that cannot be computed, means the
@@ -43,9 +52,7 @@
  * steps (anchor publish / tree commit) see exactly the tree they expect.
  */
 
-import { execFileSync } from 'child_process';
 import * as fs from 'fs';
-import * as os from 'os';
 import * as path from 'path';
 import { changedFilesTouchDependencyManifest, detectActiveLanguages } from '../languages';
 import { readCommittedPrior, type CommittedPriorUnreadable } from '../gate/prior';
@@ -58,13 +65,9 @@ import {
   readBaselineFile,
   writeBaselineFile,
 } from './baseline-file';
-import type { BaselineEntry } from './types';
 import type { BaselineFile } from './baseline-file';
-import { isSanitized } from './sanitize';
-import { invalidateAnchorReadMemo, readFromAnchorRef } from './anchor-publish';
 import { loadPolicyFromCwd, type BaselineSection } from './policy';
 import { DEFAULT_ANCHOR_REF, resolveBaselineMode } from './modes';
-import { deferAdvisoryExpiryDate } from '../allowlist/categories';
 import {
   ALLOWLIST_SCHEMA_VERSION,
   type AllowlistEntry,
@@ -72,26 +75,47 @@ import {
 } from '../allowlist/file';
 import { loadAllowlist } from '../allowlist/file';
 import { makeExec, openOrUpdateStandingPr, type LandRefreshResult } from '../land-refresh';
-import { internalGitPushArgs } from '../git-internal-push';
-import { noPromptGitEnv } from '../git-no-prompt';
 import { detectDefaultBranch, expiryNoticeEnabled } from '../ship-installers';
 import { syncExpiryNotice, type ExpiryNoticeResult } from './expiry-notice';
+import type { OsvFetcher } from '../analyzers/tools/osv';
+import {
+  assessCaptureDegradation,
+  degradedCaptureRefusal,
+  describeClearedKind,
+  NO_OBSERVATION_RECORD,
+  observationFromScan,
+  type CaptureObservation,
+} from './refresh-degraded';
+import {
+  advisoryIdOf,
+  classifyFreshAdvisories,
+  decisionEntriesFor,
+  depVulnIds,
+  describeDisappeared,
+  resolvePublishedDates,
+  toHeldOut,
+  type HeldOutAdvisory,
+} from './refresh-holdout';
+import {
+  ADVISORY_DECISION_BRANCH,
+  carryOverEntries,
+  commitFileToDecisionBranch,
+  serializeAllowlist,
+} from './refresh-decision-branch';
 
-/** The standing decision branch. ONE branch, force-updated — never a pile. */
-export const ADVISORY_DECISION_BRANCH = 'dxkit/advisory-decision';
-
-/** One held-out newly published advisory, projected for the decision PR. */
-export interface HeldOutAdvisory {
-  readonly fingerprint: string;
-  readonly package: string;
-  readonly installedVersion?: string;
-  readonly advisoryId: string;
-}
+// The decision PR body renderer, the hold-out projection and the standing
+// branch name live in sibling modules (module-size splits); re-exported so
+// consumers keep one import surface.
+import { decisionPrBody } from './refresh-pr-body';
+export { decisionPrBody, ADVISORY_DECISION_BRANCH };
+export type { HeldOutAdvisory, CaptureObservation };
 
 export interface BaselineRefreshResult {
   /** The fresh capture's finding count (post hold-out). */
   readonly findings: number;
-  /** Advisories held OUT of the refreshed baseline (empty on a quiet feed). */
+  /** Advisories held OUT of the refreshed baseline (empty on a quiet feed):
+   *  the ones new this refresh AND the ones still pending a decision
+   *  (`pendingSince` set). */
   readonly heldOut: ReadonlyArray<HeldOutAdvisory>;
   /** The decision-PR landing outcome; absent when nothing was held out. */
   readonly decision?: LandRefreshResult;
@@ -101,6 +125,11 @@ export interface BaselineRefreshResult {
   /** Why the advisory lane did / could not run — always populated so a refresh
    *  log never leaves the reader guessing (the GateFailure discipline). */
   readonly note: string;
+  /** What this refresh published that a reader must know about: a kind that
+   *  dropped to zero and was published as a full clear (with why that is
+   *  honest), recorded debt that had disappeared from the prior anchor.
+   *  Required so a renderer cannot forget them; empty on a plain refresh. */
+  readonly disclosures: ReadonlyArray<string>;
 }
 
 export interface BaselineRefreshOptions {
@@ -111,9 +140,13 @@ export interface BaselineRefreshOptions {
   readonly now?: Date;
   /** Exec injection for tests (PR mechanics). */
   readonly exec?: ReturnType<typeof makeExec>;
+  /** OSV fetcher injection for tests (publication dates); production omits. */
+  readonly osvFetcher?: OsvFetcher;
   /** TEST SEAM: replaces the `createBaseline` capture (the analyzers are not
-   *  what refresh tests exercise — the decision lane is). Production omits. */
-  readonly _capture?: (args: { cwd: string; name: string }) => Promise<void>;
+   *  what refresh tests exercise — the decision lane is). Returns the capture's
+   *  observation record; a seam that returns nothing recorded no evidence and
+   *  reads as unobserved for every kind (#388). Production omits. */
+  readonly _capture?: (args: { cwd: string; name: string }) => Promise<CaptureObservation | void>;
 }
 
 /** Best-effort policy baseline section (mirrors check.ts's safe read). */
@@ -164,103 +197,16 @@ export function unreadablePriorRefusal(u: CommittedPriorUnreadable, anchorRef: s
   );
 }
 
-function depVulnIds(file: BaselineFile): Set<string> {
-  const out = new Set<string>();
-  for (const f of file.findings) if (f.kind === 'dep-vuln') out.add(f.id);
-  return out;
+/** The committed tree copy's bytes before the capture overwrites it (null when
+ *  absent), so a refused capture can put back exactly what was there. */
+function snapshotTreeCopy(treePath: string): string | null {
+  return fs.existsSync(treePath) ? fs.readFileSync(treePath, 'utf8') : null;
 }
 
-function toHeldOut(entry: BaselineEntry): HeldOutAdvisory {
-  if (entry.kind !== 'dep-vuln') throw new Error('held-out projection is dep-vuln-only');
-  // A sanitized entry (committed-sanitized mode) strips package/advisory
-  // metadata — the fingerprint is all the identity that remains.
-  if (isSanitized(entry)) {
-    return { fingerprint: entry.id, package: '(sanitized)', advisoryId: entry.id };
-  }
-  return {
-    fingerprint: entry.id,
-    package: entry.package,
-    ...(entry.installedVersion !== undefined ? { installedVersion: entry.installedVersion } : {}),
-    advisoryId: entry.advisoryId ?? entry.id,
-  };
+function restoreTreeCopy(treePath: string, snapshot: string | null): void {
+  if (snapshot === null) fs.rmSync(treePath, { force: true });
+  else fs.writeFileSync(treePath, snapshot);
 }
-
-/**
- * Existing deferred entries on the standing decision branch, so a re-raise
- * (the branch is force-updated every refresh) preserves each advisory's
- * ORIGINAL expiry — re-dating on every refresh would quietly turn the 7-day
- * window into defer-forever, the exact failure the lane exists to prevent.
- */
-function carryOverEntries(cwd: string): Map<string, AllowlistEntry> {
-  const out = new Map<string, AllowlistEntry>();
-  const raw = readFromAnchorRef(cwd, ADVISORY_DECISION_BRANCH, '.dxkit/allowlist.json');
-  if (!raw) return out;
-  try {
-    const file = JSON.parse(raw) as AllowlistFile;
-    for (const e of file.entries ?? []) {
-      if (e.kind === 'dep-vuln' && e.category === 'deferred') out.set(e.fingerprint, e);
-    }
-  } catch {
-    /* malformed standing content — regenerate from scratch */
-  }
-  return out;
-}
-
-/** Serialize an allowlist file exactly as `saveAllowlist` does (plain JSON,
- *  the `full`-mode format — the decision lane never writes sanitized mode). */
-function serializeAllowlist(file: AllowlistFile): string {
-  return JSON.stringify(file, null, 2) + '\n';
-}
-
-/**
- * Commit ONE file onto the standing decision branch, parented on the current
- * HEAD (so the PR is mergeable into the default branch), using a temp index —
- * the working tree and HEAD never move. Force-pushes the standing branch
- * (latest-wins; it is machine-owned) through the one internal-push argv.
- */
-function commitFileToDecisionBranch(
-  cwd: string,
-  relPath: string,
-  content: string,
-  message: string,
-): void {
-  const tmpIndex = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-decision-idx-')), 'idx');
-  const env = {
-    ...process.env,
-    GIT_INDEX_FILE: tmpIndex,
-    GIT_AUTHOR_NAME: 'dxkit-bot',
-    GIT_AUTHOR_EMAIL: 'dxkit-bot@users.noreply.github.com',
-    GIT_COMMITTER_NAME: 'dxkit-bot',
-    GIT_COMMITTER_EMAIL: 'dxkit-bot@users.noreply.github.com',
-    ...noPromptGitEnv({ cwd }),
-  };
-  const git = (args: string[], input?: string): string =>
-    execFileSync('git', args, {
-      cwd,
-      env,
-      encoding: 'utf8',
-      timeout: 30_000,
-      ...(input !== undefined ? { input } : {}),
-      stdio: input !== undefined ? ['pipe', 'pipe', 'pipe'] : ['ignore', 'pipe', 'pipe'],
-    }).toString();
-
-  git(['read-tree', 'HEAD']);
-  const blob = git(['hash-object', '-w', '--stdin'], content).trim();
-  git(['update-index', '--add', '--cacheinfo', `100644,${blob},${relPath}`]);
-  const tree = git(['write-tree']).trim();
-  const commit = git(['commit-tree', tree, '-p', 'HEAD', '-m', message]).trim();
-  git(internalGitPushArgs(`${commit}:refs/heads/${ADVISORY_DECISION_BRANCH}`, { force: true }));
-  // This push can CREATE the decision ref, so the anchor reader's per-process
-  // absent-ref memo must forget it (the writer contract on the memo): the
-  // next refresh in this process re-reads the branch instead of treating
-  // every held-out advisory as brand new (which would roll its expiry).
-  invalidateAnchorReadMemo(ADVISORY_DECISION_BRANCH);
-}
-
-// The decision PR body renderer lives in `refresh-pr-body.ts` (module-size
-// split); re-exported so consumers keep one import surface.
-import { decisionPrBody } from './refresh-pr-body';
-export { decisionPrBody };
 
 /**
  * The refresh orchestration: the advisory decision lane, then the expiry
@@ -335,6 +281,7 @@ async function runAdvisoryDecisionLane(
     return {
       findings: 0,
       heldOut: [],
+      disclosures: [],
       note:
         'ref-based baseline mode — no committed baseline to refresh, and newly published ' +
         'advisories cannot false-block there (the check gathers both sides against the same ' +
@@ -350,10 +297,17 @@ async function runAdvisoryDecisionLane(
     throw new Error(unreadablePriorRefusal(unreadable, section?.anchorRef ?? DEFAULT_ANCHOR_REF));
   }
 
+  // The tree copy as it was, so a refused capture (below) can restore it: the
+  // capture writes the tree path before the lane can judge it.
+  const treeBefore = snapshotTreeCopy(treePath);
+  let observation: CaptureObservation;
   if (opts._capture) {
-    await opts._capture({ cwd, name });
+    observation = (await opts._capture({ cwd, name })) ?? NO_OBSERVATION_RECORD;
   } else {
-    await createBaseline({ cwd, name, force: true, verbose: opts.verbose });
+    const created = await createBaseline({ cwd, name, force: true, verbose: opts.verbose });
+    observation = created.scan
+      ? observationFromScan(created.scan, created.mode.mode)
+      : NO_OBSERVATION_RECORD;
   }
   const fresh = readBaselineFile(treePath);
 
@@ -361,6 +315,7 @@ async function runAdvisoryDecisionLane(
     return {
       findings: fresh.findings.length,
       heldOut: [],
+      disclosures: [],
       note: 'first capture — no prior baseline to detect newly published advisories against',
     };
   }
@@ -369,64 +324,88 @@ async function runAdvisoryDecisionLane(
   // No evidence (unreachable anchor commit) or a manifest-touching diff ⇒
   // absorb normally, and say which.
   const changed = prior.repo.commitSha ? computeChangedFiles(cwd, prior.repo.commitSha) : null;
+  const manifestTouched =
+    changed !== null && changedFilesTouchDependencyManifest(changed, detectActiveLanguages(cwd));
+
+  // The degraded-capture refusal (#388) comes BEFORE any publish decision: a
+  // kind the prior recorded that this capture did not observe, with no diff
+  // explaining the drop, must not reach the anchor. The tree copy goes back
+  // to what it was and the run is red with the evidence named.
+  const degradation = assessCaptureDegradation({
+    prior,
+    fresh,
+    changed,
+    manifestTouched,
+    observation,
+  });
+  if (degradation.refused.length > 0) {
+    restoreTreeCopy(treePath, treeBefore);
+    throw new Error(degradedCaptureRefusal(degradation.refused));
+  }
+  const disclosures: string[] = degradation.cleared.map(describeClearedKind);
+
   if (changed === null) {
     return {
       findings: fresh.findings.length,
       heldOut: [],
+      disclosures,
       note:
         `changed files vs the prior anchor (${prior.repo.commitSha.slice(0, 12) || 'unknown'}) ` +
         'could not be computed — cannot attribute new dep-vulns to the feed, so nothing was ' +
         'held out (absorbed as ordinary pre-existing debt)',
     };
   }
-  if (changedFilesTouchDependencyManifest(changed, detectActiveLanguages(cwd))) {
+  if (manifestTouched) {
+    // Known hole (#389 follow-up, out of scope): this absorbs advisories still
+    // pending a decision too, so a dependency change that merges before the
+    // decision PR grandfathers them. The standard refresh contract stands.
     return {
       findings: fresh.findings.length,
       heldOut: [],
+      disclosures,
       note:
         'a dependency manifest changed since the prior anchor — new dep-vulns may come from ' +
         'the dependency change itself, so the refresh absorbed them as ordinary pre-existing debt',
     };
   }
 
+  // "Known before the prior capture" (#389): the prior anchor ∪ the decision
+  // branch's carried hold-outs ∪ an OSV publication date before the prior
+  // capture. Dates are resolved for the candidate set only.
+  const carried = carryOverEntries(cwd);
   const priorIds = depVulnIds(prior);
-  const heldEntries = fresh.findings.filter((f) => f.kind === 'dep-vuln' && !priorIds.has(f.id));
-  if (heldEntries.length === 0) {
+  const candidateIds = fresh.findings
+    .filter((f) => f.kind === 'dep-vuln' && !priorIds.has(f.id) && !carried.has(f.id))
+    .flatMap((f) => {
+      const id = advisoryIdOf(f);
+      return id !== undefined ? [id] : [];
+    });
+  const published = await resolvePublishedDates(candidateIds, opts.osvFetcher);
+  const cls = classifyFreshAdvisories({ fresh, prior, carried, published });
+  if (cls.disappeared.length > 0) disclosures.push(describeDisappeared(cls.disappeared));
+
+  const held = [
+    ...cls.newlyPublished.map((entry) => toHeldOut(entry)),
+    ...cls.pending.map(({ entry, since }) => toHeldOut(entry, since)),
+  ];
+  if (held.length === 0) {
     return {
       findings: fresh.findings.length,
       heldOut: [],
+      disclosures,
       note: 'no newly published advisories since the prior capture',
     };
   }
 
-  // HOLD OUT: the refreshed baseline never grandfathers the new advisories.
-  const heldIds = new Set(heldEntries.map((f) => f.id));
+  // HOLD OUT: the refreshed baseline never grandfathers the new advisories,
+  // nor the ones still pending a decision.
+  const heldIds = new Set(held.map((a) => a.fingerprint));
   const kept: BaselineFile = {
     ...fresh,
     findings: fresh.findings.filter((f) => !heldIds.has(f.id)),
   };
   writeBaselineFile(treePath, kept);
-  const heldOut = heldEntries.map(toHeldOut);
-
-  // The decision content: short-dated deferred entries, expiry preserved from
-  // the standing branch for advisories already awaiting a decision.
-  const carried = carryOverEntries(cwd);
-  const today = now.toISOString().slice(0, 10);
-  const decisionEntries: AllowlistEntry[] = heldOut.map((a) => {
-    const prev = carried.get(a.fingerprint);
-    if (prev) return prev;
-    return {
-      fingerprint: a.fingerprint,
-      kind: 'dep-vuln',
-      category: 'deferred',
-      reason:
-        `newly published advisory ${a.advisoryId} (${a.package}) detected by the scheduled ` +
-        `refresh on ${today} — merged as a time-boxed deferral; fix before expiry`,
-      addedBy: 'dxkit-refresh',
-      addedAt: today,
-      expiresAt: deferAdvisoryExpiryDate(now),
-    };
-  });
+  const decisionEntries: AllowlistEntry[] = decisionEntriesFor(held, carried, now);
 
   // Merge onto the DEFAULT BRANCH's current allowlist (the tree's), so the
   // decision PR carries only the additive delta.
@@ -442,8 +421,20 @@ async function runAdvisoryDecisionLane(
     entries: [...base.entries, ...decisionEntries.filter((e) => !present.has(e.fingerprint))],
   };
 
+  const newCount = cls.newlyPublished.length;
+  const pendingCount = cls.pending.length;
+  const plural = (n: number): string => `advisor${n === 1 ? 'y' : 'ies'}`;
+  const firstRaised = cls.pending.map((p) => p.since).sort()[0];
+  const pendingClause =
+    pendingCount > 0
+      ? `${pendingCount} still pending a decision (first raised ${firstRaised})`
+      : '';
+  const prTitle =
+    newCount > 0
+      ? `dxkit: ${newCount} newly published ${plural(newCount)} need${newCount === 1 ? 's' : ''} a decision` +
+        (pendingCount > 0 ? ` (${pendingCount} still pending)` : '')
+      : `dxkit: ${pendingCount} ${plural(pendingCount)} still pending a decision`;
   let decision: LandRefreshResult;
-  const prTitle = `dxkit: ${heldOut.length} newly published advisor${heldOut.length === 1 ? 'y' : 'ies'} need a decision`;
   try {
     commitFileToDecisionBranch(
       cwd,
@@ -455,7 +446,7 @@ async function runAdvisoryDecisionLane(
       branchName: ADVISORY_DECISION_BRANCH,
       defaultBranch: detectDefaultBranch(cwd),
       prTitle,
-      prBody: decisionPrBody(heldOut, decisionEntries),
+      prBody: decisionPrBody(held, decisionEntries),
     });
   } catch (err) {
     // Fail-open, never silent: the hold-out already protected the baseline;
@@ -467,12 +458,12 @@ async function runAdvisoryDecisionLane(
     };
   }
 
-  return {
-    findings: kept.findings.length,
-    heldOut,
-    decision,
-    note:
-      `${heldOut.length} newly published advisor${heldOut.length === 1 ? 'y' : 'ies'} held out ` +
-      `of the refreshed baseline; decision raised on '${ADVISORY_DECISION_BRANCH}'`,
-  };
+  const note =
+    newCount > 0
+      ? `${newCount} newly published ${plural(newCount)} held out of the refreshed baseline` +
+        (pendingClause ? `, plus ${pendingClause}` : '') +
+        `; decision raised on '${ADVISORY_DECISION_BRANCH}'`
+      : `no newly published advisories since the prior capture; ${pendingClause}, held out ` +
+        `of the refreshed baseline; decision re-raised on '${ADVISORY_DECISION_BRANCH}'`;
+  return { findings: kept.findings.length, heldOut: held, decision, disclosures, note };
 }

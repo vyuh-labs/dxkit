@@ -2830,22 +2830,43 @@ export async function run(argv: string[]): Promise<void> {
         const targetPath = resolveRepoPath(positionals[2]);
         const { runBaselineRefresh } = await import('./baseline/refresh');
         logger.header('vyuh-dxkit baseline refresh');
+        // The run summary the scheduled workflow shows (best-effort, CI only):
+        // a refusal or a disclosure must be readable without opening the log.
+        const stepSummary = (markdown: string): void => {
+          if (!process.env.GITHUB_STEP_SUMMARY) return;
+          try {
+            fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `\n${markdown}\n`, 'utf8');
+          } catch {
+            /* best-effort */
+          }
+        };
         try {
           const result = await runBaselineRefresh({
             cwd: targetPath,
             name: values.name as string | undefined,
             verbose: !!values.verbose,
           });
+          if (result.disclosures.length > 0) {
+            stepSummary(
+              [
+                '### baseline refresh: disclosures',
+                '',
+                ...result.disclosures.map((d) => `- ${d}`),
+              ].join('\n'),
+            );
+          }
           if (values.json) {
             await emitJson(result);
             break;
           }
           logger.success(`Baseline refreshed — ${result.findings} finding(s).`);
           logger.info(`  ${result.note}`);
+          for (const d of result.disclosures) logger.warn(`  ${d}`);
           if (result.heldOut.length > 0) {
             for (const a of result.heldOut) {
+              const status = a.pendingSince ? ` (pending since ${a.pendingSince})` : '';
               logger.info(
-                `    ${a.package}${a.installedVersion ? `@${a.installedVersion}` : ''} · ${a.advisoryId}`,
+                `    ${a.package}${a.installedVersion ? `@${a.installedVersion}` : ''} · ${a.advisoryId}${status}`,
               );
             }
             if (result.decision?.prUrl) {
@@ -2869,7 +2890,11 @@ export async function run(argv: string[]): Promise<void> {
             }
           }
         } catch (err) {
-          logger.fail((err as Error).message);
+          // A refusal (unreadable prior, degraded capture) exits non-zero so
+          // the scheduled run is visibly red, with the reason in the summary.
+          const message = (err as Error).message;
+          stepSummary(`### baseline refresh refused\n\n${message}`);
+          logger.fail(message);
           process.exit(1);
         }
         break;
