@@ -7,6 +7,8 @@
  * never a self-certified run.
  */
 import type { CorrectnessFloorResult } from '../../analyzers/correctness/run';
+import { containIfGuardrailRed } from '../containment';
+import { describeDropped } from '../orders-complete';
 import type { RemediateGit, RemediateResult, RemediateRunOptions } from '../outcome';
 import type { RemediateTask } from '../tasks';
 import {
@@ -129,6 +131,7 @@ export async function recipeTierStep(
     hasDiff: args.git.hasDiff(args.baseHead),
     entryFloor: args.entryFloor,
     runFloor: args.runFloor,
+    git: args.git,
   });
   return { recipes, done };
 }
@@ -167,13 +170,7 @@ async function verifyRecipeGroup(
   });
   switch (verdict.kind) {
     case 'kept':
-      return {
-        ...recipes,
-        groupVerification: { kind: 'kept', head },
-        records: recipes.records.map((r) =>
-          r.outcome.kind === 'applied' ? { ...r, disposition: { kind: 'kept', head } } : r,
-        ),
-      };
+      return recipeTierKeptAt(recipes, head);
     case 'unverifiable':
       // Infrastructure, not a verdict: the group's commits stay on the
       // branch (never destroyed by a transient failure); the caller
@@ -214,6 +211,21 @@ async function verifyRecipeGroup(
   }
 }
 
+/** The recipe tier verified as one unit (install + floor) at `head`: the
+ *  group verification record plus every applied record kept there. ONE
+ *  shape, written by the pre-agent group verification and by the
+ *  recipe-only completion when its guardrail goes red (so containment can
+ *  place the tier's commits either way). */
+function recipeTierKeptAt(recipes: RecipePhaseSummary, head: string): RecipePhaseSummary {
+  return {
+    ...recipes,
+    groupVerification: { kind: 'kept', head },
+    records: recipes.records.map((r) =>
+      r.outcome.kind === 'applied' ? { ...r, disposition: { kind: 'kept', head } } : r,
+    ),
+  };
+}
+
 export interface RecipeOnlyArgs {
   readonly taskId: RemediateTask['id'];
   readonly recipes: RecipePhaseSummary;
@@ -222,6 +234,10 @@ export interface RecipeOnlyArgs {
   readonly hasDiff: boolean;
   readonly entryFloor: CorrectnessFloorResult;
   readonly runFloor: () => CorrectnessFloorResult;
+  /** The branch surface containment reverts through (4.4.8). */
+  readonly git: RemediateGit;
+  /** Injected for tests; production derives from the active packs. */
+  readonly isManifestPath?: (path: string) => boolean;
 }
 
 export async function completeRecipeOnlyRun(
@@ -260,40 +276,105 @@ export async function completeRecipeOnlyRun(
     entryFloor: args.entryFloor,
     runFloor: args.runFloor,
   });
-  const common = {
-    task: args.taskId,
-    recipes: args.recipes,
-    ...verificationDisclosures(verified, guardrail, opts.cwd),
-    baseHead: args.baseHead,
-    head: args.head,
-  };
   if (verified.verdict === 'install-failed') {
-    return { outcome: 'install-failed', ...common, note: installFailedNote(verified) };
+    return {
+      outcome: 'install-failed',
+      ...disclose(args, verified, guardrail, opts),
+      note: installFailedNote(verified),
+    };
   }
   if (verified.verdict === 'floor-red') {
     return {
       outcome: 'floor-red',
-      ...common,
+      ...disclose(args, verified, guardrail, opts),
       note:
         'the correctness floor has NET-NEW failures after the recipe commits (the entry ' +
         'floor did not have them), so nothing lands. A recipe that breaks the build gets the ' +
         'same truthful failure an agent would.',
     };
   }
+  // Guardrail-red containment for a recipe-only run (4.4.8, #376): the
+  // tree this verification arbitrated IS the recipe tier, verified as one
+  // unit (install + floor) at `head`, exactly what the pre-agent group
+  // verification records when agent orders follow. Stamp that, then route
+  // through the ONE containment call site the order-driven completion
+  // uses, so a red in one file of an autofix run drops that file's commit
+  // and lands the rest instead of discarding the whole verified tier
+  // because no agent order happened to follow.
+  const red = guardrail.ran && !guardrail.passesGate;
+  const attempt = await containIfGuardrailRed(opts, {
+    git: args.git,
+    baseHead: args.baseHead,
+    agentBase: args.head,
+    entryFloor: args.entryFloor,
+    runFloor: args.runFloor,
+    recipes: red ? recipeTierKeptAt(args.recipes, args.head) : args.recipes,
+    records: [],
+    ordersById: new Map(),
+    guardrail,
+    verified,
+    head: args.head,
+    ...(args.isManifestPath ? { isManifestPath: args.isManifestPath } : {}),
+  });
+  const common = {
+    // A refused attempt restores the branch and carries the phase's own
+    // records (a kept-stamped tier under a guardrail-red run would read as
+    // landing); only a contained run carries the flipped records.
+    ...disclose(
+      { ...args, recipes: attempt.contained ? attempt.recipes : args.recipes, head: attempt.head },
+      attempt.verified,
+      attempt.guardrail,
+      opts,
+    ),
+    ...(attempt.containment ? { containment: attempt.containment } : {}),
+  };
+  if (attempt.contained) {
+    const dropped = attempt.recipes.records.filter((r) => r.disposition?.kind === 'dropped');
+    return {
+      outcome: 'partially-landed',
+      ...common,
+      note:
+        `${zeroDollar} The final guardrail was red; its blocking findings were attributed per ` +
+        'order, the attributed orders were dropped (commits reverted), and the remainder ' +
+        're-verified green, so the verified remainder lands. Dropped at their own ' +
+        `verification (still open): ${describeDropped(dropped)}.`,
+    };
+  }
   if (!guardrail.ran || !guardrail.passesGate) {
+    const refusalNote =
+      attempt.containment?.refused !== undefined
+        ? ` Containment was attempted and refused: ${attempt.containment.refused}.`
+        : '';
     return {
       outcome: 'guardrail-red',
       ...common,
-      note: guardrail.ran
-        ? `the guardrail did not pass (${guardrail.verdict}), so nothing merges. The recipe ` +
-          'commits stay on the branch for inspection.'
-        : `the guardrail could not run (${guardrail.verdict}), so nothing lands. A recipe ` +
-          'diff is never pushed unverified.',
+      note:
+        (guardrail.ran
+          ? `the guardrail did not pass (${guardrail.verdict}), so nothing merges. The recipe ` +
+            'commits stay on the branch for inspection.'
+          : `the guardrail could not run (${guardrail.verdict}), so nothing lands. A recipe ` +
+            'diff is never pushed unverified.') + refusalNote,
     };
   }
   return {
     outcome: 'verified',
     ...common,
     note: `${zeroDollar} ${counts.applied} order(s) applied and verified the way CI verifies.`,
+  };
+}
+
+/** The result fields every recipe-only arm carries. */
+function disclose(
+  args: Pick<RecipeOnlyArgs, 'taskId' | 'recipes' | 'baseHead' | 'head'>,
+  verified: Awaited<ReturnType<typeof verifyCommittedHead>>['verified'],
+  guardrail: Awaited<ReturnType<typeof verifyCommittedHead>>['guardrail'],
+  opts: RemediateRunOptions,
+) {
+  return {
+    task: args.taskId,
+    recipes: args.recipes,
+    ...verificationDisclosures(verified, guardrail, opts.cwd),
+    baseHead: args.baseHead,
+    head: args.head,
   };
 }

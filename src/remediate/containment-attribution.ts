@@ -9,15 +9,22 @@
 import type { BlockingFinding, GuardrailGateResult } from '../lanes/verify';
 import type { CorrectnessFloorResult } from '../analyzers/correctness/run';
 import { pathInEnvelope } from './recipes/envelope';
-import type { RecipePhaseSummary } from './recipes/run-recipes';
+import type { RecipeOrderRecord, RecipePhaseSummary } from './recipes/run-recipes';
 import type { OrderRunRecord, RemediateGit } from './outcome';
 import type { WorkOrder, WorkOrderEnvelope } from './work-orders/types';
+import {
+  RECIPE_REGISTRY,
+  containmentUnitOf,
+  type RecipeDeclaration,
+} from './work-orders/recipes-registry';
 import { packagesNamedBy } from './work-orders/shared';
 
-/** One kept unit of the landed head: a kept agent order, or the kept
- *  recipe group as a whole (the 4.4.6 drop granularity). */
+/** One kept unit of the landed head: a kept agent order, the kept
+ *  group-unit recipes as a whole (the 4.4.6 drop granularity, for orders
+ *  that share manifest hunks), or ONE commit of a recipe that declares
+ *  `containmentUnit: 'order'` (4.4.8: a file-scoped fix drops alone). */
 export interface KeptUnit {
-  readonly unit: 'agent-order' | 'recipe-group';
+  readonly unit: 'agent-order' | 'recipe-group' | 'recipe-order';
   readonly orderIds: readonly string[];
   /** The unit's commit range on the branch (`from..to`). */
   readonly from: string;
@@ -48,6 +55,9 @@ export interface ContainmentArgs {
   /** The red final-guardrail result being contained. */
   readonly guardrail: GuardrailGateResult;
   readonly isManifestPath: (p: string) => boolean;
+  /** The recipe registry the containment unit of each recipe is read from
+   *  (injected for tests; defaults to the built-in registry). */
+  readonly registry?: readonly RecipeDeclaration[];
 }
 
 /** Overlap evidence between one blocking finding and one kept unit, with
@@ -152,6 +162,91 @@ export function attributeFinding(
   return { kind: 'ambiguous', units: pool.map((c) => c.u) };
 }
 
+/** A kept recipe unit over `records`, spanning `from..to`. */
+function recipeUnit(
+  c: ContainmentArgs,
+  unit: 'recipe-group' | 'recipe-order',
+  records: readonly RecipeOrderRecord[],
+  from: string,
+  to: string,
+): KeptUnit {
+  return {
+    unit,
+    orderIds: records.map((r) => r.orderId),
+    from,
+    to,
+    diffPaths: c.git.changedPaths(from, to),
+    // The packages the unit's applied orders name (recorded per record by
+    // the recipe executor): a red on a package the RECIPE pinned must
+    // attribute to the group on tier-1 evidence, never fall through to a
+    // driver tiebreak that blames an innocent agent order.
+    packages: new Set(records.flatMap((r) => r.packages ?? [])),
+    driverFailed: false,
+  };
+}
+
+/**
+ * The kept recipe tier as units (4.4.8), from `from` to the verified group
+ * head. Applied records are walked in commit order (the executor records
+ * them as it commits); consecutive records sharing a commit are one block
+ * (a file's lint slices). Every block up to the LAST block whose recipe
+ * declares `containmentUnit: 'group'` folds into ONE `recipe-group` unit
+ * (orders sharing manifest hunks revert together; an `order` block that
+ * sits inside that range is absorbed rather than split out of a range it
+ * lies within, the conservative reading); each block after it is its own
+ * `recipe-order` unit. The executor commits group recipes first, so on a
+ * real run the group range is contiguous and every file-scoped commit gets
+ * its own unit. An applied record with NO recorded commit (an older
+ * summary) cannot be placed, so the whole tier stays the single group unit
+ * it was before per-order units existed. A chain that does not end at the
+ * verified head is a refusal string: containment never reverts a range it
+ * cannot trust.
+ */
+function recipeTierUnits(c: ContainmentArgs, from: string, head: string): KeptUnit[] | string {
+  const applied = c.recipes.records.filter((r) => r.outcome.kind === 'applied');
+  if (applied.some((r) => r.commit === undefined)) {
+    return [recipeUnit(c, 'recipe-group', applied, from, head)];
+  }
+  const registry = c.registry ?? RECIPE_REGISTRY;
+  const blocks: { commit: string; records: RecipeOrderRecord[] }[] = [];
+  for (const r of applied) {
+    const last = blocks[blocks.length - 1];
+    if (last && last.commit === r.commit) last.records.push(r);
+    else blocks.push({ commit: r.commit!, records: [r] });
+  }
+  let groupEnd = -1;
+  blocks.forEach((b, i) => {
+    if (containmentUnitOf(b.records[0].recipe, registry) === 'group') groupEnd = i;
+  });
+  const units: KeptUnit[] = [];
+  let prev = from;
+  const groupBlocks = blocks.slice(0, groupEnd + 1);
+  if (groupBlocks.length > 0) {
+    const to = groupBlocks[groupBlocks.length - 1].commit;
+    units.push(
+      recipeUnit(
+        c,
+        'recipe-group',
+        groupBlocks.flatMap((b) => b.records),
+        prev,
+        to,
+      ),
+    );
+    prev = to;
+  }
+  for (const b of blocks.slice(groupEnd + 1)) {
+    units.push(recipeUnit(c, 'recipe-order', b.records, prev, b.commit));
+    prev = b.commit;
+  }
+  if (prev !== head) {
+    return (
+      `the recipe tier's commits end at ${prev} but its verified head is ${head}, so the ` +
+      'per-order recipe ranges cannot be trusted'
+    );
+  }
+  return units;
+}
+
 /**
  * Reconstruct the kept units' commit ranges from the chained kept
  * dispositions (each drop reset to the previously verified head, so the
@@ -164,20 +259,9 @@ export function buildKeptUnits(c: ContainmentArgs): KeptUnit[] | string {
   let prev = c.baseHead;
   const gv = c.recipes.groupVerification;
   if (gv?.kind === 'kept') {
-    const applied = c.recipes.records.filter((r) => r.outcome.kind === 'applied');
-    units.push({
-      unit: 'recipe-group',
-      orderIds: applied.map((r) => r.orderId),
-      from: prev,
-      to: gv.head,
-      diffPaths: c.git.changedPaths(prev, gv.head),
-      // The packages the group's applied orders name (recorded per record
-      // by the recipe executor): a red on a package the RECIPE pinned must
-      // attribute to the group on tier-1 evidence, never fall through to a
-      // driver tiebreak that blames an innocent agent order.
-      packages: new Set(applied.flatMap((r) => r.packages ?? [])),
-      driverFailed: false,
-    });
+    const recipeUnits = recipeTierUnits(c, prev, gv.head);
+    if (typeof recipeUnits === 'string') return recipeUnits;
+    units.push(...recipeUnits);
     prev = gv.head;
   } else if (gv === undefined && c.agentBase !== c.baseHead) {
     return (

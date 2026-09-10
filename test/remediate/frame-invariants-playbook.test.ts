@@ -542,6 +542,7 @@ describe("R10: an invariant failure never swallows the open group members' recor
       {
         id: 'synthetic-lint',
         class: 'lint-located',
+        containmentUnit: 'order',
         summary: 'synthetic grouped lint recipe',
         implemented: true,
         matches: () => true,
@@ -565,7 +566,7 @@ describe("R10: an invariant failure never swallows the open group members' recor
         discardPaths: (paths) => {
           discards.push([...paths]);
         },
-        commitPaths: () => {},
+        commitPaths: () => 'commit1',
       },
       exec: fakeExec().exec,
       registry,

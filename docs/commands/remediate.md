@@ -171,7 +171,13 @@ and counted by class. A finding with no overlap evidence, or one that
 stays ambiguous, refuses containment: the branch is restored and the run
 keeps the plain guardrail-red outcome with the refusal disclosed. An
 innocent order is never dropped on a guess, and an unrunnable guardrail
-is never contained.
+is never contained. The unit a recipe's work is reverted in is declared
+by the recipe: the manifest recipes (override pins, lockfile resync,
+dependency declarations) share lockfile hunks and drop as one group,
+while a file-scoped recipe such as the linter autofix drops one order
+(one file's commit) at a time, so a red in seven files never reverts the
+other two hundred that verified. The ledger counts it per recipe:
+dropped N of M applied orders, the rest land.
 
 ## Salvage and resume
 

@@ -28,8 +28,10 @@ export interface RecipeGit {
   /** Discard the uncommitted changes to exactly these paths (restore
    *  tracked content, delete untracked files). Never wider than `paths`. */
   discardPaths(paths: readonly string[]): void;
-  /** Stage exactly these paths and commit them with the bot identity. */
-  commitPaths(paths: readonly string[], message: string): void;
+  /** Stage exactly these paths and commit them with the bot identity;
+   *  returns the new HEAD sha (the per-order commit containment reverts,
+   *  4.4.8), or the unchanged HEAD when there was nothing to commit. */
+  commitPaths(paths: readonly string[], message: string): string;
 }
 
 export function realRecipeGit(cwd: string): RecipeGit {
@@ -59,7 +61,7 @@ export function realRecipeGit(cwd: string): RecipeGit {
       git(['clean', '-fd', '--', ...paths]);
     },
     commitPaths(paths, message) {
-      if (paths.length === 0) return;
+      if (paths.length === 0) return git(['rev-parse', 'HEAD']);
       git(['add', '--', ...paths]);
       git([
         '-c',
@@ -71,6 +73,7 @@ export function realRecipeGit(cwd: string): RecipeGit {
         '-m',
         message,
       ]);
+      return git(['rev-parse', 'HEAD']);
     },
   };
 }

@@ -17,6 +17,7 @@ import {
   cachedOsvQuery,
   effectiveGuardrailPolicy,
   groupRecipeOrders,
+  orderGroupsForContainment,
   recipeCounts,
   runRecipeOrders,
   runRecipePhaseForTask,
@@ -89,6 +90,7 @@ function fakeGit(): RecipeGit & {
     commitPaths(paths: readonly string[], message: string) {
       state.commits.push({ paths, message });
       state.dirty = state.dirty.filter((p) => !paths.includes(p));
+      return `commit${state.commits.length}`;
     },
     head: () => 'deadbeef',
   };
@@ -102,6 +104,7 @@ function syntheticRecipe(
   return {
     id,
     class: 'synthetic-class',
+    containmentUnit: 'group',
     summary: 't',
     implemented: true,
     matches: () => true,
@@ -364,6 +367,7 @@ describe('grouped execution (a file of lint slices is ONE fix attempt)', () => {
     return {
       id: 'grouped-fixer',
       class: 'lint-located',
+      containmentUnit: 'order',
       summary: 't',
       implemented: true,
       matches: () => true,
@@ -863,5 +867,87 @@ describe('circuit-breaker partition (runRecipePhaseForTask)', () => {
     expect(summary.paused ?? []).toEqual([]);
     expect(summary.selectedRecipeTier).toBe(1);
     expect(summary.records[0]?.outcome.kind).toBe('applied');
+  });
+});
+
+describe('per-order containment units at the executor (4.4.8, #376)', () => {
+  const fileOrder = (file: string) =>
+    makeOrder({
+      id: `lint-located:${file}`,
+      class: 'lint-located',
+      recipe: 'grouped-fixer',
+      findings: [lintFinding(`f-${file}`, 'lint:typescript', file, 'prefer-const')],
+      envelope: { paths: [file], manifests: false },
+    });
+  // The fake reassigns its dirty list on every commit, so the recipe reads
+  // it through the git handle at execution time.
+  const fileRecipe = (git: { dirty: string[] }): RecipeDeclaration => ({
+    id: 'grouped-fixer',
+    class: 'lint-located',
+    containmentUnit: 'order',
+    summary: 't',
+    implemented: true,
+    matches: () => true,
+    execute: async (order) => {
+      const file = order.envelope.paths[0];
+      git.dirty.push(file);
+      return { kind: 'applied', changedFiles: [file] };
+    },
+    groupKey: (order) => order.envelope.paths[0],
+  });
+
+  it('group-unit recipes execute and commit BEFORE order-unit recipes whatever the plan order, stable within each', () => {
+    const pin = makeOrder({
+      id: 'dep-advisory:a',
+      class: 'dep-advisory',
+      recipe: 'synthetic-fixer',
+    });
+    const a = fileOrder('src/a.ts');
+    const b = fileOrder('src/b.ts');
+    const registry = [
+      syntheticRecipe(async () => ({ kind: 'refused', reason: 'x' })),
+      fileRecipe({ dirty: [] }),
+    ];
+    const ordered = orderGroupsForContainment([[a], [pin], [b]], registry);
+    expect(ordered.map((g) => g[0].id)).toEqual([pin.id, a.id, b.id]);
+    // An unknown recipe id reads as the conservative group unit (first).
+    const ghost = makeOrder({ id: 'x:ghost', class: 'synthetic-class', recipe: 'ghost' });
+    expect(orderGroupsForContainment([[a], [ghost]], registry).map((g) => g[0].id)).toEqual([
+      ghost.id,
+      a.id,
+    ]);
+  });
+
+  it('every applied record carries the commit the executor made for its group, one commit per file', async () => {
+    const git = fakeGit();
+    const { exec } = fakeExec();
+    const pin = makeOrder({
+      id: 'dep-advisory:a',
+      class: 'dep-advisory',
+      recipe: 'synthetic-fixer',
+      envelope: { paths: ['package.json'], manifests: true },
+    });
+    const registry = [
+      syntheticRecipe(async () => {
+        git.dirty.push('package.json');
+        return { kind: 'applied', changedFiles: ['package.json'] };
+      }),
+      fileRecipe(git),
+    ];
+    const records = await runRecipeOrders([fileOrder('src/a.ts'), pin, fileOrder('src/b.ts')], {
+      cwd: '/x',
+      trust: trustedLocalContext(),
+      git,
+      exec,
+      registry,
+    });
+    // Records are in COMMIT order (the group recipe first), and each one
+    // names its own commit so containment can chain the ranges.
+    expect(records.map((r) => [r.orderId, r.outcome.kind, r.commit])).toEqual([
+      ['dep-advisory:a', 'applied', 'commit1'],
+      ['lint-located:src/a.ts', 'applied', 'commit2'],
+      ['lint-located:src/b.ts', 'applied', 'commit3'],
+    ]);
+    expect(git.commits.map((c) => c.paths)).toEqual([['package.json'], ['src/a.ts'], ['src/b.ts']]);
   });
 });
