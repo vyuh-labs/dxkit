@@ -16,6 +16,7 @@ import {
   type DepScanSource,
   type FloorSource,
   type GatherWorkOrderOptions,
+  PRIOR_DISCLOSURE_PREFIX,
 } from './work-orders/gather';
 import { renderWorkOrderSummary } from './work-orders/render';
 import type { WorkOrderPlan } from './work-orders/types';
@@ -114,6 +115,7 @@ export async function runRemediatePlan(
   let plan: WorkOrderPlan | null = null;
   let floorSource: FloorSource | null = null;
   let depScanSource: DepScanSource | null = null;
+  let priorSource: string | null = null;
   let disclosures: readonly string[] = [];
   let pauses: readonly ClassPause[] = [];
   let evidenceDegraded: string | null = null;
@@ -126,6 +128,7 @@ export async function runRemediatePlan(
     plan = gathered.plan;
     floorSource = gathered.floorSource;
     depScanSource = gathered.depScanSource;
+    priorSource = gathered.priorSource;
     disclosures = gathered.disclosures;
     pauses = gathered.pauses;
     evidenceDegraded = gathered.evidenceDegraded;
@@ -191,6 +194,9 @@ export async function runRemediatePlan(
           /** Which source answered the deferral join (bom-artifact / live-scan
            *  / injected / not-needed). */
           workOrderDepScanSource: depScanSource,
+          /** Which prior the debt came from: the anchor branch the guardrail
+           *  reads, or the tree copy and why (#387). Null: no baseline. */
+          workOrderPriorSource: priorSource,
           /** Degraded gather reads, phrased for humans (corrupt baseline,
            *  capped roots, which scan was paid). Empty = nothing degraded. */
           workOrderDisclosures: disclosures,
@@ -243,6 +249,11 @@ export async function runRemediatePlan(
         : ' (no remediate.maxSpendPerRun ceiling declared)'),
   );
   logger.info(`schedule (managed workflow): ${config.schedule}`);
+  // Which prior the plan's debt came from (#387): the same anchor-first read
+  // the guardrail uses, phrased once (`describePriorSource`).
+  logger.info(
+    `prior: ${priorSource ?? (planError ? 'not read (plan failed)' : 'none (no baseline captured)')}`,
+  );
   if (!config.enabled) {
     logger.dim('remediate.enabled is not set — the scheduled workflow is off; local runs work.');
   }
@@ -279,7 +290,10 @@ export async function runRemediatePlan(
     logger.warn(`work orders: could not plan (${planError})`);
   } else if (plan) {
     logger.dim(`work orders: floor read from ${describeFloorSource(floorSource ?? 'none')}`);
-    for (const d of disclosures) logger.dim(`work orders: ${d}`);
+    // The prior line is the header's `prior:` line; do not print it twice.
+    for (const d of disclosures) {
+      if (!d.startsWith(PRIOR_DISCLOSURE_PREFIX)) logger.dim(`work orders: ${d}`);
+    }
     logger.info(
       `work orders: ${plan.orders.length} planned` +
         (plan.undispatchable.length > 0
