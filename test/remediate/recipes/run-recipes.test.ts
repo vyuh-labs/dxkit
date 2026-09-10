@@ -741,7 +741,7 @@ describe('runRecipePhaseForTask', () => {
     ]);
   });
 
-  it('skips planning entirely when BOTH consumers are off (recipes disabled + order dispatch off)', async () => {
+  it('still plans when BOTH tiers are off (recipes disabled + maxOrdersPerRun 0): the runner reads the plan to disclose what policy leaves undispatched (#393)', async () => {
     const cwd = tempRepo({
       '.dxkit/policy.json': '{"remediate":{"recipes":{"enabled":false},"maxOrdersPerRun":0}}',
     });
@@ -750,18 +750,25 @@ describe('runRecipePhaseForTask', () => {
       trust: trustedLocalContext(),
       taskId: 'fix-build',
       config: resolveRemediateConfig(cwd),
-      entryFloor: floorWith([]),
-      // A gather seam that THROWS proves planning never ran: a planned call
-      // would surface as planError.
-      gather: {
-        runFloor: () => {
-          throw new Error('planning must not run when nothing consumes the plan');
+      entryFloor: floorWith([
+        {
+          pack: 'typescript',
+          label: 'typecheck',
+          bin: 'npx',
+          args: ['tsc', '--noEmit'],
+          status: 'fail',
         },
-      },
+      ]),
     });
+    // Disabled recipes route every selected order to the agent queue; the
+    // plan is BUILT (the queue exists) so a cap of 0 can complete the run
+    // from the recipe tier with the queue disclosed, instead of reading
+    // "no plan" and falling through to the legacy single-prompt agent.
     expect(summary.disabled).toBe(true);
     expect(summary.planError).toBeUndefined();
-    expect(summary.agentOrders).toBeUndefined();
+    expect(summary.ran).toBe(false);
+    expect(summary.records).toEqual([]);
+    expect(summary.agentOrders?.map((o) => o.id)).toEqual(['floor-failure:typescript:typecheck']);
   });
 
   it('a task selecting no orders is an honest no-run with the tier split at zero', async () => {

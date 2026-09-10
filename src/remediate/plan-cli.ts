@@ -230,6 +230,12 @@ export async function runRemediatePlan(
     `budget: ${config.agent.budget.maxTurns} turns, ${config.agent.budget.maxMinutes} min, ` +
       `$${config.agent.budget.maxUsd} — salvage: ${config.salvage}`,
   );
+  if (config.maxOrdersPerRun <= 0) {
+    logger.info(
+      'agent tier: disabled by policy (remediate.maxOrdersPerRun: 0); recipes only, and a ' +
+        'task whose open orders all need the agent tier spawns no job',
+    );
+  }
   if (d.budgetSupport.turns !== 'enforced') {
     logger.warn(`maxTurns is not enforceable by ${d.id}`);
   }

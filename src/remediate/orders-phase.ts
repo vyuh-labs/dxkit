@@ -110,10 +110,13 @@ export type Clock = () => number;
 
 /**
  * The runner's one call: dispatch the agent queue when one exists (a plan
- * in hand, a positive `remediate.maxOrdersPerRun`), else null — the legacy
- * task-prompt path is then the runner's. The queue is the agent-tier
- * orders plus every recipe order the recipe tier refused or failed;
- * open-ended tasks select no classes, so their queue is always empty.
+ * in hand, a positive `remediate.maxOrdersPerRun`), else null: nothing to
+ * dispatch; the runner's own path predicate (`workOrderPlanApplies`)
+ * decides what a null means, never this function (#393: a cap of 0 is
+ * "recipes only", and the recipe-tier step completes such a run before
+ * this call is reached). The queue is the agent-tier orders plus every
+ * recipe order the recipe tier refused or failed; open-ended tasks select
+ * no classes, so their queue is always empty.
  */
 export async function dispatchQueuedOrders(
   opts: RemediateRunOptions,
@@ -447,6 +450,9 @@ function recordBase(order: WorkOrder): Omit<OrderRunRecord, 'outcome'> {
   };
 }
 
-function notDispatched(order: WorkOrder, reason: string): OrderRunRecord {
+/** The ONE record shape for an order the agent tier did not dispatch (beyond
+ *  the cap, a stop reason, or the tier disabled by policy); the reason is
+ *  the ledger's per-order line. */
+export function notDispatched(order: WorkOrder, reason: string): OrderRunRecord {
   return { ...recordBase(order), outcome: 'not-dispatched', detail: reason };
 }

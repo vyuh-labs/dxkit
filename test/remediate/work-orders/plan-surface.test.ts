@@ -536,4 +536,28 @@ describe('remediate plan --json: work orders', () => {
     // The spend projection follows the derived matrix.
     expect(out.projectedMaxSpendUsd).toBe(15);
   });
+
+  it('maxOrdersPerRun: 0 disables the agent tier: a task whose only open order is agent-tier spawns no job, and the plan discloses why (#393)', async () => {
+    writePolicy({ remediate: { enabled: true, tasks: ['fix-build'], maxOrdersPerRun: 0 } });
+    // A typecheck failure in the stored floor envelope: a floor-failure
+    // order, which no recipe can take (agent-tier).
+    writeBaseline([], FLOOR_DEBT);
+    const out = await captureJson(() =>
+      runRemediatePlan(repo, { json: true, gather: { packs: TS, now: NOW } }),
+    );
+    expect(out.workOrderPlanError).toBeNull();
+    const orders = out.workOrders as Array<Record<string, unknown>>;
+    expect(orders.map((o) => [o.id, o.tier])).toEqual([
+      ['floor-failure:typescript:typecheck', 'agent'],
+    ]);
+    expect(out.matrixSource).toBe('orders');
+    expect(out.matrixTasks).toEqual([]);
+    expect(out.matrixNoOpenOrders).toEqual(['fix-build']);
+    const line = (out.matrixDisclosures as string[]).find((d) =>
+      d.includes("'fix-build' spawns no job"),
+    );
+    expect(line).toContain('need the agent tier, which is disabled by policy');
+    expect(line).toContain('remediate.maxOrdersPerRun: 0');
+    expect(out.projectedMaxSpendUsd).toBe(0);
+  });
 });

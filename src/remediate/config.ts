@@ -82,9 +82,9 @@ export interface RemediateConfig {
   readonly resume: boolean;
   /** Most agent-tier work orders one run dispatches, ONE ORDER PER AGENT
    *  RUN, highest value first (`remediate.maxOrdersPerRun`, default 3;
-   *  0 turns order-driven dispatch off and restores the single open-ended
-   *  task prompt). Orders beyond the cap are disclosed, never silently
-   *  dropped. */
+   *  0 disables the agent tier: recipes only, no agent spawns for a task
+   *  with a work-order plan, and the undispatched orders are disclosed).
+   *  Orders beyond the cap are disclosed, never silently dropped. */
   readonly maxOrdersPerRun: number;
   /** The circuit breaker (`remediate.pauseAfterFailures`, default 2;
    *  0 disables): a work-order class whose last N consecutive counted
