@@ -31,7 +31,7 @@ import { execFileSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as logger from '../logger';
-import { landRemediateHead } from './land';
+import { describePreservedStandingPr, landRemediateHead } from './land';
 import { publishOrderRows, writeLocalOrderLedger } from './order-outcomes';
 import { currentHead } from './attempt-record';
 import { describeLandingFailure } from './execute';
@@ -93,7 +93,13 @@ export type RemediateLandOutcome =
   | { readonly outcome: 'invalid-record'; readonly error: string }
   /** HEAD no longer matches the verified head: refused, never pushed. */
   | { readonly outcome: 'stale-head'; readonly error: string }
-  | { readonly outcome: 'landed'; readonly prUrl?: string }
+  | {
+      readonly outcome: 'landed';
+      readonly prUrl?: string;
+      /** The standing PR held a verified landing awaiting merge, so this
+       *  salvage went to the attempt branch instead (#372), disclosed. */
+      readonly standingPreserved?: string;
+    }
   | { readonly outcome: 'rows-published' }
   /** Bookkeeping publish failed: disclosed warning, record kept for a
    *  manual retry; never fails the lane (parity with the inline path). */
@@ -192,18 +198,29 @@ export function runRemediateLand(
       cwd,
       taskId,
       defaultBranch: record.defaultBranch ?? '',
+      outcome: record.outcome,
       prTitle: record.prTitle ?? '',
       prBody: record.prBody ?? '',
       ...(record.draft !== undefined ? { draft: record.draft } : {}),
       ...(record.ledgerPath ? { ledgerPath: record.ledgerPath } : {}),
       ...(orderLedgerRel ? { orderLedgerPath: orderLedgerRel } : {}),
     });
+    // Same disclosure as the inline path (#372): the attempt record (JSON)
+    // and this command's output both carry a preserved standing PR.
+    const standingPreserved = landResult.preserved
+      ? describePreservedStandingPr(landResult.preserved)
+      : undefined;
     patchAttemptRecord(cwd, taskId, {
       landed: true,
       ...(landResult.prUrl ? { prUrl: landResult.prUrl } : {}),
+      ...(standingPreserved ? { standingPreserved } : {}),
     });
     clearLandingRecord(cwd, taskId);
-    return { outcome: 'landed', ...(landResult.prUrl ? { prUrl: landResult.prUrl } : {}) };
+    return {
+      outcome: 'landed',
+      ...(landResult.prUrl ? { prUrl: landResult.prUrl } : {}),
+      ...(standingPreserved ? { standingPreserved } : {}),
+    };
   } catch (err) {
     const failure = describeLandingFailure(err);
     // Inline parity (the executor's landHead catch calls publishRows): a
@@ -266,8 +283,10 @@ export function runRemediateLandCli(cwd: string, taskId: string): void {
       logger.info(result.note);
       break;
     case 'landed':
-      if (result.prUrl) logger.success(`standing PR: ${result.prUrl}`);
-      else logger.success('landed: branch pushed, standing PR updated');
+      if (result.standingPreserved) logger.warn(result.standingPreserved);
+      if (result.prUrl) {
+        logger.success(`${result.standingPreserved ? 'attempt' : 'standing'} PR: ${result.prUrl}`);
+      } else logger.success('landed: branch pushed, PR updated');
       break;
     case 'rows-published':
       logger.info('order-outcome rows published to the standing branch');

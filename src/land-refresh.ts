@@ -188,8 +188,11 @@ export function openOrUpdateStandingPr(
     readonly defaultBranch: string;
     readonly prTitle: string;
     readonly prBody: string;
-    /** Open as a DRAFT (the remediate lane's budget-exhausted salvage). An
-     *  EXISTING PR's draft state is left as the reviewer set it. */
+    /** Open as a DRAFT (the remediate lane's salvage landings). `true`
+     *  also converts an EXISTING PR back to draft (#372: a red salvage
+     *  that updates a PR in place must not leave it presented as ready);
+     *  `false` / absent leaves an existing PR's draft state as the
+     *  reviewer set it. */
     readonly draft?: boolean;
   },
 ): LandRefreshResult {
@@ -208,6 +211,12 @@ export function openOrUpdateStandingPr(
     exec('gh', ['pr', 'edit', opts.branchName, '--title', opts.prTitle, '--body', opts.prBody], {
       allowFail: true,
     });
+    // Only creation takes `--draft`; an existing PR is converted explicitly.
+    // Best-effort like the edit: an already-draft PR answers with an error
+    // that changes nothing.
+    if (opts.draft === true) {
+      exec('gh', ['pr', 'ready', '--undo', opts.branchName], { allowFail: true });
+    }
     return { outcome: 'pr-updated', mode: 'pr', prUrl: parsed[0].url };
   }
   const created = exec(

@@ -190,6 +190,20 @@ not merge" — its own required guardrail check keeps it unmergeable, so
 nothing merges while the work and the exact blocking findings survive
 the ephemeral runner. An unrunnable guardrail never pushes anything.
 
+The standing branch is rebuilt per run, never a pile, with one
+exception: a verified landing is never replaced by a salvage. When the
+open standing PR records `verified` or `partially-landed` (reviewed,
+green, awaiting merge), a later `guardrail-red` or `budget-exhausted`
+attempt leaves that branch and PR untouched and goes to the task's
+attempt branch (`dxkit/remediate-<task>-attempt`) as a draft PR whose
+body opens with the reason. A new verified or partially-landed run still
+rebuilds the standing branch (it supersedes the older landing). The
+decision reads the standing PR's own ledger, the same read resume makes,
+and it is disclosed in the job log, the attempt record and the run
+output ("standing PR #N holds a verified landing; this attempt went to
+the attempt branch"). A salvage that updates an existing PR in place
+also converts it back to draft.
+
 With `remediate.resume: true` (opt-in), the next run continues from that
 salvage branch instead of starting over, up to 2 attempts per branch
 before falling back to a fresh run (the attempt counter is pushed with

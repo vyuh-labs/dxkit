@@ -13,3 +13,13 @@ export const DEP_BUMP_BRANCH = 'dxkit/dep-bump';
 export function remediateBranchFor(taskId: string): string {
   return `dxkit/remediate-${taskId}`;
 }
+
+/**
+ * The remediate lane's ATTEMPT branch for a task: where a guardrail-red or
+ * budget-exhausted salvage goes while the standing branch holds a VERIFIED
+ * landing a human has not merged yet (#372). Force-pushed per attempt like
+ * the standing branch; it never carries the standing PR.
+ */
+export function remediateAttemptBranchFor(taskId: string): string {
+  return `${remediateBranchFor(taskId)}-attempt`;
+}

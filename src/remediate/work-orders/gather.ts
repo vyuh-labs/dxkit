@@ -78,7 +78,7 @@ import {
   type OrderLedgerExec,
   type OrderOutcomeRow,
 } from '../../lanes/order-ledger';
-import { remediateBranchFor } from '../../lanes/branches';
+import { remediateAttemptBranchFor, remediateBranchFor } from '../../lanes/branches';
 import {
   applyClassPauses,
   evaluateClassPauses,
@@ -362,15 +362,22 @@ export async function gatherWorkOrderInputs(
   };
 }
 
-/** The standing branches where unmerged order-outcome rows can live: one
- *  per task that owns a work-order class (derived from the ONE class spine,
- *  never a hand-kept list — a new class's task is covered automatically). */
+/** The branches where unmerged order-outcome rows can live: per task that
+ *  owns a work-order class (derived from the ONE class spine, never a
+ *  hand-kept list, so a new class's task is covered automatically), its
+ *  standing branch AND its attempt branch (a salvage's rows ride the
+ *  attempt branch's landing commit when the standing PR is preserved,
+ *  #372; the breaker must still see that run). Absent branches cost one
+ *  ls-remote line and read as nothing. */
 export function orderHistoryBranchSources(): OrderBranchSource[] {
   const tasks = [...new Set(Object.values(WORK_ORDER_CLASSES).map((c) => c.task))].sort();
-  return tasks.map((task) => ({
-    branch: remediateBranchFor(task),
-    file: orderLedgerPath('remediate', task),
-  }));
+  return tasks.flatMap((task) => {
+    const file = orderLedgerPath('remediate', task);
+    return [
+      { branch: remediateBranchFor(task), file },
+      { branch: remediateAttemptBranchFor(task), file },
+    ];
+  });
 }
 
 /** Gather + plan in one call: the surface entry point. Applies the circuit

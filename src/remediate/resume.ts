@@ -36,6 +36,7 @@ import {
 import { remediateStamp } from './work-orders/breaker';
 import { publishOrderRows } from './order-outcomes';
 import { remediateBranchFor } from './land';
+import { readOpenStandingPr } from './standing-pr';
 import type { RemediateConfig } from './config';
 
 /** Resumes allowed per salvage branch before falling back to a fresh run. */
@@ -80,34 +81,10 @@ export interface ResumeDecision {
   readonly note?: string;
 }
 
-/** Extract the ledger's outcome word from a PR body — the fact the resume
- *  policy turns on. Anchored to the ledger's own emitted line shapes (the
- *  runner's `Task: **<task>** ... outcome: **<word>**` header, or the
- *  executor's bare `outcome: **<word>**` refusal line), never a prose
- *  mention of the word elsewhere in the body. Undefined when no ledger
- *  outcome line exists. */
-export function extractLedgerOutcome(body: string | undefined): string | undefined {
-  if (!body) return undefined;
-  return (
-    body.match(/^Task: \*\*[^\n]*outcome: \*\*([a-z-]+)\*\*/m)?.[1] ??
-    body.match(/^outcome: \*\*([a-z-]+)\*\*/m)?.[1]
-  );
-}
-
-/** Extract the ledger's "Blocking findings" list from a PR body, bounded —
- *  the durable record of WHY the prior attempt was blocked. */
-export function extractBlockingContext(body: string | undefined): string | undefined {
-  if (!body) return undefined;
-  const idx = body.indexOf('Blocking findings:');
-  if (idx === -1) return undefined;
-  const section = body
-    .slice(idx)
-    .split('\n')
-    .slice(1)
-    .filter((l) => l.trim().startsWith('- '));
-  if (section.length === 0) return undefined;
-  return section.join('\n').slice(0, 1500);
-}
+// The standing PR's ledger facts come from the ONE reader the lander also
+// consults (`standing-pr.ts`, #372); re-exported so consumers keep one
+// import surface.
+export { extractBlockingContext, extractLedgerOutcome } from './standing-pr';
 
 /**
  * Decide + prepare a resume for one task. On success the working tree is
@@ -136,22 +113,12 @@ export function prepareResume(
     // prior attempt's ledger: its "Blocking findings" list (a guardrail-red
     // salvage) is carried into the resumed prompt so attempt N+1 starts from
     // "close these findings", not from scratch.
-    const prJson = run('gh', [
-      'pr',
-      'list',
-      '--head',
-      branch,
-      '--state',
-      'open',
-      '--json',
-      'url,body',
-    ]);
-    const open = JSON.parse(prJson || '[]') as Array<{ body?: string }>;
-    if (!Array.isArray(open) || open.length === 0) {
+    const standing = readOpenStandingPr(run, branch);
+    if (standing === null) {
       return { resumed: false, note: `no open draft PR for '${branch}' — fresh run` };
     }
-    const blockingContext = extractBlockingContext(open[0]?.body);
-    const priorOutcome = extractLedgerOutcome(open[0]?.body);
+    const blockingContext = standing.blockingContext;
+    const priorOutcome = standing.outcome;
     // Attempt accounting happens for ANY open draft, resume or fresh start:
     // the cap is the human-escalation tripwire, and a guardrail-red chain
     // that never counted its attempts would re-spend a full budget on the

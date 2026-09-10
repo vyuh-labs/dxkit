@@ -54,6 +54,33 @@ export function writeProvisionalRecord(cwd: string, taskId: string, baseHead: st
   }
 }
 
+/**
+ * Phrase a landing failure for the record + job log: the git/gh output is
+ * the evidence, and a rules/permissions-shaped refusal names the remedy —
+ * the class exists on every GitHub repo (a GITHUB_TOKEN push touching
+ * workflow files is refused without the `workflows` permission), not only
+ * where a push ruleset restricts paths.
+ */
+export function describeLandingFailure(err: unknown): string {
+  const e = err as { message?: string; stderr?: string | Buffer };
+  const stderr = (e.stderr ?? '').toString().trim();
+  const message = (e.message ?? String(err)).split('\n')[0];
+  const evidence = stderr ? `${message}\n${stderr}` : message;
+  const rulesShaped =
+    /\b403\b|GH006|GH013|protected branch|ruleset|refusing to allow|permission/i.test(evidence);
+  const remedy = rulesShaped
+    ? '\nThis looks like a repository-rules or token-permissions refusal. Remedies: grant ' +
+      'the workflow token the permission the push needs (e.g. the `workflows` permission ' +
+      'for workflow-file changes), add a ruleset bypass for the bot, or keep the task ' +
+      'away from the restricted paths (a prompt-level constraint like "do not touch ' +
+      '.github/" holds in practice).'
+    : '';
+  return (
+    `the landing push/PR was refused — the verified work did NOT land, but the attempt ` +
+    `record and ledger carry the evidence (branch state left for inspection).\n${evidence}${remedy}`
+  );
+}
+
 /** HEAD of the checkout, or null (evidence plumbing, never a failure). */
 export function currentHead(cwd: string): string | null {
   try {
@@ -101,6 +128,9 @@ export function taskRunJson(run: TaskRun): Record<string, unknown> {
     landRefused: run.landRefused ?? null,
     landingBlocked: run.landingBlocked ?? null,
     landingDeferred: run.landingDeferred ?? null,
+    // A salvage that went to the attempt branch because the standing PR
+    // holds a verified landing awaiting merge (#372).
+    standingPreserved: run.standingPreserved ?? null,
     landed: run.landed,
     // The commit range of the attempt — what the workflow's evidence step
     // format-patches into a run artifact when nothing landed.

@@ -24,18 +24,28 @@ import { readDispatchOverrides } from './dispatch';
 import { driverById } from './registry';
 import { remediateTaskById } from './tasks';
 import { runRemediateTask, type RemediateResult } from './run';
-import { landRemediateHead, remediateBranchFor } from './land';
+import {
+  describePreservedStandingPr,
+  landRemediateHead,
+  remediateAttemptBranchFor,
+  remediateBranchFor,
+} from './land';
 import { describeDeliveryProbe, probeDeliveryPreconditions } from '../lanes/delivery-preconditions';
 import { appendLaneEvent, LANE_LEDGER_SCHEMA_VERSION } from '../lanes/ledger';
 import { orderOutcomeRows, publishOrderRows, writeLocalOrderLedger } from './order-outcomes';
 import { remediateStamp } from './work-orders/breaker';
-import { currentHead, writeAttemptRecord, writeProvisionalRecord } from './attempt-record';
+import {
+  currentHead,
+  describeLandingFailure,
+  writeAttemptRecord,
+  writeProvisionalRecord,
+} from './attempt-record';
 import { deferredLandingRequested } from './landing-record';
 import { deferLanding, deferPublishRows } from './defer';
 
 // Attempt-record helpers live in `./attempt-record` (module-size split);
 // re-exported so consumers keep one import surface.
-export { taskRunJson } from './attempt-record';
+export { describeLandingFailure, taskRunJson } from './attempt-record';
 
 export interface TaskRun {
   readonly result: RemediateResult;
@@ -53,35 +63,12 @@ export interface TaskRun {
    *  record for the workflow's fresh-credential `remediate land` step:
    *  disclosed, never silent. */
   readonly landingDeferred?: string;
+  /** The standing PR held a verified landing awaiting merge, so this
+   *  salvage went to the attempt branch instead of replacing it (#372):
+   *  the disclosure, never silent. */
+  readonly standingPreserved?: string;
   /** Truthful per-task success: verified/no-op, or a landed salvage draft. */
   readonly clean: boolean;
-}
-
-/**
- * Phrase a landing failure for the record + job log: the git/gh output is
- * the evidence, and a rules/permissions-shaped refusal names the remedy —
- * the class exists on every GitHub repo (a GITHUB_TOKEN push touching
- * workflow files is refused without the `workflows` permission), not only
- * where a push ruleset restricts paths.
- */
-export function describeLandingFailure(err: unknown): string {
-  const e = err as { message?: string; stderr?: string | Buffer };
-  const stderr = (e.stderr ?? '').toString().trim();
-  const message = (e.message ?? String(err)).split('\n')[0];
-  const evidence = stderr ? `${message}\n${stderr}` : message;
-  const rulesShaped =
-    /\b403\b|GH006|GH013|protected branch|ruleset|refusing to allow|permission/i.test(evidence);
-  const remedy = rulesShaped
-    ? '\nThis looks like a repository-rules or token-permissions refusal. Remedies: grant ' +
-      'the workflow token the permission the push needs (e.g. the `workflows` permission ' +
-      'for workflow-file changes), add a ruleset bypass for the bot, or keep the task ' +
-      'away from the restricted paths (a prompt-level constraint like "do not touch ' +
-      '.github/" holds in practice).'
-    : '';
-  return (
-    `the landing push/PR was refused — the verified work did NOT land, but the attempt ` +
-    `record and ledger carry the evidence (branch state left for inspection).\n${evidence}${remedy}`
-  );
 }
 
 /** Current branch name, or 'HEAD' for a detached (CI) checkout. */
@@ -199,8 +186,11 @@ export async function executeTask(
   // it at push time. Only POSITIVE refusal evidence blocks; an
   // unanswerable probe proceeds (the preflight never invents a refusal).
   if (land === 'pr') {
+    // Both branches the lander may push (the standing branch, and the
+    // attempt branch a salvage takes when the standing PR is preserved):
+    // the probed set is the pushed set.
     const preflight = (seams.probeDelivery ?? probeDeliveryPreconditions)(cwd, {
-      branches: [remediateBranchFor(taskId)],
+      branches: [remediateBranchFor(taskId), remediateAttemptBranchFor(taskId)],
     });
     const blocked = preflight.probes.find((p) => p.verdict === 'blocked');
     if (blocked) {
@@ -418,6 +408,7 @@ export async function executeTask(
       cwd,
       taskId,
       defaultBranch,
+      outcome: result.outcome,
       prTitle,
       prBody,
       draft,
@@ -438,10 +429,18 @@ export async function executeTask(
       landingBlocked: describeLandingFailure(err),
     });
   }
+  // A preserved standing PR (#372) is disclosed on every surface: the log
+  // here, the attempt record (the JSON) through the run, and the attempt
+  // PR's own body (the lander).
+  const standingPreserved = landResult.preserved
+    ? describePreservedStandingPr(landResult.preserved)
+    : undefined;
+  if (standingPreserved) logger.warn(standingPreserved);
   return finalizeTaskRun(cwd, taskId, {
     result,
     ...(landResult.prUrl ? { prUrl: landResult.prUrl } : {}),
     landed: true,
+    ...(standingPreserved ? { standingPreserved } : {}),
     // A blocked salvage is NOT clean: the draft exists for inspection and
     // resume, but the task did not end well — the job stays red.
     clean: result.outcome === 'verified' || draftSalvage,
