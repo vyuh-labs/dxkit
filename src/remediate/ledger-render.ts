@@ -18,23 +18,95 @@ import { renderFloorVerification, renderGuardrailVerdict } from '../lanes/verifi
 import { describeInstall } from '../lanes/verify-tree';
 import { describeTreeInvariantOutcome } from '../lanes/tree-invariants';
 import { renderScoreHinge } from './score-hinge';
-import { renderOrdersSection, renderRecipeSection, type LedgerMode } from './ledger-render-orders';
+import {
+  PR_BODY_ORDER_LINE_THRESHOLD,
+  renderOrdersSection,
+  renderRecipeSection,
+  type LedgerMode,
+  type SectionLines,
+} from './ledger-render-orders';
 import type { RecipePhaseSummary } from './recipes/run-recipes';
-import type { GuardrailContainment, RemediateResult } from './outcome';
+import type { ContainmentRound, GuardrailContainment, RemediateResult } from './outcome';
+
+/** The one wording of a round's re-verify: the tree verdict, the
+ *  guardrail's word, and what it blocked on (capped by the engine). */
+function describeReverify(r: ContainmentRound['reverify']): string {
+  const head =
+    `re-verify: ${r.verdict}` +
+    (r.guardrailVerdict !== undefined ? ` (${r.guardrailVerdict})` : '');
+  const blocking =
+    r.blocking.length > 0
+      ? `, blocking: ${r.blocking.join('; ')}` +
+        (r.moreBlocking > 0 ? `; and ${r.moreBlocking} more` : '')
+      : r.failure !== undefined
+        ? `: ${r.failure}`
+        : '';
+  return head + blocking;
+}
+
+/**
+ * ONE block per executed round (#373), the record every renderer reads: the
+ * units the round dropped, then its re-verify. `summary` mode counts the
+ * per-unit evidence lines once a round dropped more units than the PR body
+ * lists one per line (the L4 discipline); the committed ledger has every
+ * line. The wording of a line never changes with the mode.
+ */
+function renderContainmentRounds(
+  rounds: readonly ContainmentRound[],
+  mode: LedgerMode,
+): SectionLines {
+  const lines: string[] = [];
+  let collapsed = false;
+  for (const r of rounds) {
+    const ids = r.dropped.flatMap((d) => d.orderIds);
+    lines.push(
+      `- round ${r.round}: dropped ${ids.length === 0 ? 'nothing' : `\`${ids.join('`, `')}\``}; ` +
+        describeReverify(r.reverify),
+    );
+    if (mode === 'summary' && r.dropped.length > PR_BODY_ORDER_LINE_THRESHOLD) {
+      collapsed = true;
+      lines.push(
+        `  - ${r.dropped.length} units dropped this round, each named with its attribution ` +
+          'evidence in the committed ledger',
+      );
+      continue;
+    }
+    for (const d of r.dropped) {
+      lines.push(
+        `  - \`${d.orderIds.join('`, `')}\` (${d.unit}): attribution: ${d.evidence}; ` +
+          `blocking: ${d.blocking.join('; ')}`,
+      );
+    }
+  }
+  return { lines, collapsed };
+}
 
 /** Guardrail-red containment (4.4.7): what was attributed and dropped, or
  *  why containment was refused: the reader sees exactly why an order the
- *  run dispatched is not in the landing set. */
-function renderContainment(c: GuardrailContainment, recipes?: RecipePhaseSummary): string[] {
+ *  run dispatched is not in the landing set. A refusal keeps every round it
+ *  ran (#373): what each round dropped, on what evidence, what its re-verify
+ *  reported, and which round refused on what. */
+function renderContainment(
+  c: GuardrailContainment,
+  recipes: RecipePhaseSummary | undefined,
+  mode: LedgerMode,
+): SectionLines {
   const lines: string[] = ['### Guardrail containment', ''];
   if (c.refused !== undefined) {
     lines.push(
       `The final guardrail was red and per-order containment was attempted (bounded at ` +
-        `${c.maxRounds} unwind round(s)) but REFUSED: ${c.refused}. No order was dropped on ` +
-        `a guess; the whole attempt follows the guardrail-red salvage policy.`,
+        `${c.maxRounds} unwind round(s)) but REFUSED after ${c.rounds} executed round(s). No ` +
+        `order was dropped on a guess; every unwind below was restored to the pre-containment ` +
+        `head, and the whole attempt follows the guardrail-red salvage policy.`,
+    );
+    const rounds = renderContainmentRounds(c.roundEvidence, mode);
+    lines.push(...rounds.lines);
+    lines.push(
+      `- refused ${c.refusedAtRound !== undefined ? `in round ${c.refusedAtRound}` : 'before any round'}: ` +
+        c.refused,
       '',
     );
-    return lines;
+    return { lines, collapsed: rounds.collapsed };
   }
   lines.push(
     `The final guardrail was red; each blocking finding was attributed to one order ` +
@@ -50,7 +122,7 @@ function renderContainment(c: GuardrailContainment, recipes?: RecipePhaseSummary
   }
   lines.push(...renderRecipeContainmentCounts(recipes));
   lines.push('');
-  return lines;
+  return { lines, collapsed: false };
 }
 
 /** Per recipe, how much of its applied work containment dropped vs lands
@@ -252,7 +324,9 @@ function renderLedgerLines(
   }
 
   if (r.containment) {
-    lines.push(...renderContainment(r.containment, r.recipes));
+    const containment = renderContainment(r.containment, r.recipes, mode);
+    lines.push(...containment.lines);
+    collapsed = collapsed || containment.collapsed;
   }
 
   lines.push('### Verification', '');
