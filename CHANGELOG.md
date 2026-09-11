@@ -5,6 +5,116 @@ All notable changes to `@vyuhlabs/dxkit` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.4.8] - 2026-09-11
+
+A consolidation release. Every item closes a case where dxkit reported
+something it had not verified, destroyed or lost verified work, or gave a
+remedy that could not work. The evidence came from one week of live runs:
+three scheduled remediate runs on a real estate, a daily refresh lane, and
+the mirror rehearsal that ran the release branch against the estate's own
+tree. On that tree the wave-1 build landed 124 of 196 verified lint fixes
+with the guardrail green and no agent, where 4.4.7 had discarded the whole
+group and landed eight findings through one agent. It also moves dxkit to
+Node 24.
+
+### Fixed
+
+- **A verified standing PR is never replaced by a red salvage (#372).**
+  The landing target is decided from what the standing branch holds,
+  read branch-side from the committed order ledger first and the open PR
+  only as corroboration. A red or budget-exhausted salvage goes to a
+  separate attempt branch as a draft; a verified landing rebuilds the
+  standing branch and supersedes the attempt PR. Resume, the order ledger,
+  the preflight probes and the plan step all read the same branch pair
+  through one home. A draft flip on a ready PR is disclosed, never silent.
+- **The override-pin pre-check asks the guardrail's own block predicate
+  (#371).** It read the new-advisory tier's severities, which a repo can
+  set to none, so a pin that landed on a vulnerable version walked
+  straight into the next advisory. The pre-check now asks the classifier
+  whether the candidate would block, and when the pin target carries an
+  advisory with its own fix it raises to the first clean version, bounded
+  and disclosed, instead of handing the order to an agent.
+- **File-scoped recipes are contained per order (#376).** A recipe
+  declares its containment unit; lint-autofix orders drop individually,
+  so a red finding in one file no longer reverts every other file's
+  verified autofix. Recipe-only runs enter the same containment engine.
+- **The PR body stays under GitHub's size cap and a branch with no PR is
+  never "landed" (#374).** The body is a summary rendered by the one
+  ledger renderer, capped in bytes at the GitHub boundary for create and
+  edit alike, with the full ledger committed on the branch. A `pr create`
+  failure is printed with its cause, exits non-zero and records no landed
+  event.
+- **Un-landed verified work survives the runner (#375).** The task step
+  pushes the verified head to a pending ref right after it writes the
+  landing record; the landing preflight retries with backoff before it
+  names the failure; the next run's plan step validates the pending ref
+  and re-lands it before planning new work.
+- **A containment refusal keeps every round's evidence (#373).** Drops,
+  attribution evidence and the re-verify's blocking findings survive a
+  refusal and are rendered per round in the ledger, the PR body and the
+  JSON, with the refusing round named.
+- **The TypeScript affected-tests floor runs the repo's own test entry
+  point (#377).** The test script, a declared runner or a config file
+  decide the command, in that order; create-react-app repos run through
+  `react-scripts test` with related-test selection; a runner that cannot
+  start in the repo's shape is a disclosed skip decided before the spawn,
+  never a floor failure an agent can "fix" with a config file.
+- **After-capture advisories attribute per package, not per diff (#382).**
+  An added dependency advisory on a package whose resolved version is
+  identical on the prior side is classified as published after capture,
+  whether or not the change touched a manifest.
+- **An install-step lockfile drift is the change's finding (#381).** The
+  generated guardrails workflow captures its install chain's output, hands
+  it to the one dxkit classifier, and turns a lockfile drift into a block
+  with the floor's own remedy text instead of "did not run, not a finding
+  in your change". Parity between the shell chain and the runner's
+  classifier is pinned by test.
+- **The planner reads the prior the guardrail reads (#387).** Under the
+  branch anchor the planner read the repo's tree copy of the baseline, an
+  install-day local capture, and minted orders for packages the default
+  branch had already fixed. One committed-prior read now serves the gate,
+  the refresh lane and the planner, anchor first, fallback disclosed; an
+  unreadable prior refuses the refresh instead of reading as a first
+  capture.
+- **The refresh lane refuses a degraded capture (#388).** A capture in
+  which a kind the prior recorded went unobserved on an unchanged tree is
+  refused, the prior kept, the run red with the reason, reading the same
+  observation answer the gate uses.
+- **The advisory hold-out is idempotent (#389).** "Newly published" was
+  "absent from yesterday's anchor", which excludes everything held out
+  before, so held-out advisories were re-announced daily and, after one
+  degraded capture, a repo's whole dependency debt became "newly
+  published". Known-before is now the prior anchor, the carried hold-outs
+  and any advisory published before the prior capture; an old advisory
+  that fell out of the anchor is absorbed as debt with the anomaly named.
+- **`maxOrdersPerRun: 0` disables the agent tier (#393).** It fell through
+  to the legacy unscoped single-prompt agent. Zero now means recipes only;
+  the legacy path runs only when no work-order plan applies, and names
+  itself in the ledger.
+- **The correctness floor and lint gate run on Windows (#364).** The
+  bounded exec spawns the resolved binary and routes `.cmd` and `.bat`
+  through `cmd.exe`; on Windows the resolver tries PATHEXT candidates in
+  order and never accepts an extensionless file. The Windows CI lane runs
+  a platform-native parity test and a floor-check smoke.
+- The delivery reader ignores order-ledger files, so the landing marker
+  row is never counted as a delivery.
+
+### Changed
+
+- **Node 24.** dxkit's own CI runs on Node 24 with a Node 22 lane for the
+  engines floor; `engines.node` is `>=22` on all three packages (18 and 20
+  are past end of life). Generated workflows render `node-version` from
+  the repo's detected Node version through the language pack, with 24 as
+  the default, so a repo pinned to 20 keeps its runtime. Node detection is
+  repo-intrinsic: the installed-Node fallback is gone.
+
+### Known
+
+- Wave 2 of this scope ships as 4.4.9: the Python onboarding issues
+  (#366 to #370), the schema-drift issues (#378 to #380), the local
+  anchor-publish preflight (#365) and the direction-aware scheme-mismatch
+  remedy (#363).
+
 ## [4.4.7] - 2026-08-28
 
 The first organic remediate run on a real estate (4.4.6) proved the core
