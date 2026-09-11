@@ -20,6 +20,10 @@
  *     with no attributable findings (a refusal-tier verdict) refuses; a
  *     revert conflict refuses; dropping EVERY order refuses (nothing would
  *     remain);
+ *   - refusal EVIDENCE (#373): a refusal keeps every executed round's
+ *     drops with their attribution and the round's re-verify verdict and
+ *     blocking set, names the round that refused, and all three renderers
+ *     (ledger, PR body, JSON) carry the same record;
  *   - driver-failure hygiene: a driver-failed order's committed partial is
  *     verified like any order and disclosed in the ledger when kept;
  *   - the pure attribution ladder and the recipe-fallthrough budget floor.
@@ -30,6 +34,9 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { executeTask } from '../../src/remediate/cli';
+import { taskRunJson } from '../../src/remediate/attempt-record';
+import { renderRemediatePrBody } from '../../src/remediate/ledger-render';
+import { PR_BODY_ORDER_LINE_THRESHOLD } from '../../src/remediate/ledger-render-orders';
 import { DEFERRED_LANDING_ENV, landingRecordPath } from '../../src/remediate/landing-record';
 import { trustedLocalContext } from '../../src/analysis-trust';
 import { runRemediateTask, type RemediateGit, type RemediateResult } from '../../src/remediate/run';
@@ -286,10 +293,27 @@ describe('guardrail-red containment: contained red lands the remainder', () => {
         evidence: expect.stringContaining('names package tmp'),
       },
     ]);
+    // The contained case carries the same per-round record a refusal keeps
+    // (#373): one round, its drop, a verified re-verify.
+    expect(r.containment?.roundEvidence).toEqual([
+      {
+        round: 1,
+        dropped: r.containment?.dropped,
+        reverify: {
+          verdict: 'verified',
+          guardrailVerdict: 'PASSED',
+          blocking: [],
+          moreBlocking: 0,
+        },
+      },
+    ]);
+    expect(r.containment?.refusedAtRound).toBeUndefined();
     expect(r.note).toContain('attributed per order');
     expect(r.note).toContain('dep-advisory:tmp');
     expect(r.ledger).toContain('### Guardrail containment');
     expect(r.ledger).toContain('dep-advisory:tmp');
+    expect(r.ledger).toContain('remainder re-verified green in 1 of at most');
+    expect(r.ledger).not.toContain('round 1: dropped');
     // Breaker rows: the kept order verified; the dropped one carries ITS
     // OWN guardrail failure, never the run's.
     const rows = orderOutcomeRows(r, 'fix-vulns', {
@@ -791,6 +815,7 @@ function refusedRedResult(restoreFailed: boolean): RemediateResult {
       maxRounds: MAX_CONTAINMENT_ROUNDS,
       rounds: 1,
       dropped: [],
+      roundEvidence: [],
       refused: 'the remainder no longer verifies after the unwind',
       ...(restoreFailed ? { restoreFailed: true as const } : {}),
     },
@@ -817,6 +842,7 @@ describe('composition with the deferred landing record (two-phase landing)', () 
       containment: {
         maxRounds: MAX_CONTAINMENT_ROUNDS,
         rounds: 1,
+        roundEvidence: [],
         dropped: [
           {
             unit: 'agent-order',
@@ -895,6 +921,297 @@ describe('composition with the deferred landing record (two-phase landing)', () 
       ['floor-failure:a', 'verified'],
       ['dep-advisory:tmp', 'guardrail-red'],
     ]);
+  });
+});
+
+describe("a containment refusal keeps every round's evidence (#373)", () => {
+  const dep = (pkg: string) => ({
+    kind: 'dep-vuln',
+    description: `[dep-vuln] ${pkg}@1.0.0 - GHSA-test - added (no-prior-match)`,
+    package: pkg,
+  });
+  const pinRecord = (pkg: string, commit: string) => ({
+    orderId: `dep-advisory:${pkg}`,
+    class: 'dep-advisory',
+    recipe: 'override-pin',
+    outcome: { kind: 'applied' as const, changedFiles: ['package.json'] },
+    packages: [pkg],
+    commit,
+  });
+  const lintRecord = (file: string, commit: string) => ({
+    orderId: `lint-located:${file}`,
+    class: 'lint-located',
+    recipe: 'lint-autofix',
+    outcome: { kind: 'applied' as const, changedFiles: [file] },
+    commit,
+  });
+  const lintRed = (file: string, n = 1) => ({
+    kind: 'custom-check',
+    description: `[custom-check] lint - ${file}:${n} - added (no-prior-match)`,
+    file,
+  });
+
+  it('a round-2 refusal keeps round 1: the units it dropped with evidence, and its re-verify verdict with the blocking set', async () => {
+    // The live shape: a recipe pin group (head0..head1, names minimist) and
+    // two agent dep orders (tmp: head1..head2; lodash: head2..head3). The
+    // final guardrail is red on tmp AND lodash, so round 1 drops exactly
+    // those two and re-verifies the group alone; the re-verify is red on
+    // minimist, which attributes to the group, the ONLY unit left, so
+    // round 2 refuses ("nothing would remain"). Before #373 the ledger
+    // carried only that sentence.
+    const git = fakeGit({
+      'head0..head1': ['package.json', 'package-lock.json'],
+      'head1..head2': ['package.json', 'package-lock.json'],
+      'head2..head3': ['package.json', 'package-lock.json'],
+    });
+    const orders = [depOrder('tmp'), depOrder('lodash')];
+    const r = await runWith({
+      orders,
+      git,
+      guardrails: [red([dep('tmp'), dep('lodash')]), red([dep('minimist')])],
+      recipePhase: () => {
+        git.commit();
+        return summary(orders, {
+          ran: true,
+          selectedRecipeTier: 1,
+          records: [pinRecord('minimist', 'head1')],
+        });
+      },
+    });
+    expect(r.outcome).toBe('guardrail-red');
+    // Round 1 unwound both agent orders (newest first), then the refusal
+    // restored the pre-containment head.
+    expect(git.reverts.map((x) => [x.from, x.to])).toEqual([
+      ['head2', 'head3'],
+      ['head1', 'head2'],
+    ]);
+    expect(git.resets).toEqual(['head3']);
+    const c = r.containment!;
+    expect(c.refused).toContain('nothing would remain to land');
+    expect(c.refusedAtRound).toBe(2);
+    expect(c.rounds).toBe(1);
+    // Nothing is dropped from the landed tree (everything was restored)...
+    expect(c.dropped).toEqual([]);
+    // ...but round 1 survives on the outcome: what it dropped, on what
+    // evidence, and what the re-verify said.
+    expect(c.roundEvidence).toEqual([
+      {
+        round: 1,
+        dropped: [
+          {
+            unit: 'agent-order',
+            orderIds: ['dep-advisory:tmp'],
+            round: 1,
+            blocking: [dep('tmp').description],
+            evidence: expect.stringContaining('names package tmp'),
+          },
+          {
+            unit: 'agent-order',
+            orderIds: ['dep-advisory:lodash'],
+            round: 1,
+            blocking: [dep('lodash').description],
+            evidence: expect.stringContaining('names package lodash'),
+          },
+        ],
+        reverify: {
+          verdict: 'guardrail-red',
+          guardrailVerdict: 'BLOCKED',
+          blocking: [dep('minimist').description],
+          moreBlocking: 0,
+        },
+      },
+    ]);
+    // The records stay as the phase recorded them (a refusal drops nothing).
+    expect(r.orders?.records.every((x) => x.disposition?.kind === 'kept')).toBe(true);
+    // The ledger: one block per round, then the refusal naming its round.
+    const roundLine =
+      '- round 1: dropped `dep-advisory:tmp`, `dep-advisory:lodash`; re-verify: guardrail-red ' +
+      `(BLOCKED), blocking: ${dep('minimist').description}`;
+    expect(r.ledger).toContain('### Guardrail containment');
+    expect(r.ledger).toContain('but REFUSED after 1 executed round(s)');
+    expect(r.ledger).toContain(roundLine);
+    expect(r.ledger).toContain(
+      '  - `dep-advisory:tmp` (agent-order): attribution: the order names package tmp',
+    );
+    expect(r.ledger).toContain(`; blocking: ${dep('tmp').description}`);
+    expect(r.ledger).toContain('- refused in round 2: every kept order attributed to the red');
+    // The PR body (the L4 summary renderer) carries the same block.
+    const body = renderRemediatePrBody(r, { ledgerFile: null });
+    expect(body).toContain(roundLine);
+    expect(body).toContain('- refused in round 2: every kept order attributed to the red');
+    // The JSON record carries the same containment record, rounds included.
+    const json = taskRunJson({ result: r, landed: false, clean: false });
+    expect(json.containment).toEqual(c);
+    // The note still says containment was refused, as before.
+    expect(r.note).toContain('Containment was attempted and refused');
+  });
+
+  it('a round-1 "unattributed" refusal carries zero rounds and names the finding it could not attribute', async () => {
+    const git = fakeGit();
+    const finding = {
+      kind: 'secret',
+      description: '[secret] docs/readme.md:1 - added (no-prior-match)',
+      file: 'docs/readme.md',
+    };
+    const r = await runWith({
+      orders: [floorOrder('floor-failure:a', 'src/')],
+      git,
+      guardrails: [red([finding])],
+    });
+    expect(r.outcome).toBe('guardrail-red');
+    const c = r.containment!;
+    expect(c.rounds).toBe(0);
+    expect(c.roundEvidence).toEqual([]);
+    expect(c.refusedAtRound).toBe(1);
+    expect(c.refused).toContain(finding.description);
+    expect(r.ledger).toContain('but REFUSED after 0 executed round(s)');
+    expect(r.ledger).toContain(`- refused in round 1: blocking finding ${finding.description}`);
+    expect(r.ledger).not.toContain('round 1: dropped');
+    expect(renderRemediatePrBody(r, { ledgerFile: null })).toContain(
+      `- refused in round 1: blocking finding ${finding.description}`,
+    );
+  });
+
+  it('a red that outlives the bound names the bound as the refusing round and keeps both rounds', async () => {
+    const git = fakeGit({
+      'head0..head1': ['src/a/f.ts'],
+      'head1..head2': ['src/b/f.ts'],
+      'head2..head3': ['src/c/f.ts'],
+    });
+    const r = await runWith({
+      orders: [
+        floorOrder('floor-failure:a', 'src/a/'),
+        floorOrder('floor-failure:b', 'src/b/'),
+        floorOrder('floor-failure:c', 'src/c/'),
+      ],
+      git,
+      guardrails: [
+        red([lintRed('src/c/f.ts')]),
+        red([lintRed('src/b/f.ts')]),
+        red([lintRed('src/a/f.ts')]),
+      ],
+    });
+    const c = r.containment!;
+    expect(c.refusedAtRound).toBe(MAX_CONTAINMENT_ROUNDS);
+    expect(c.roundEvidence.map((x) => x.round)).toEqual([1, 2]);
+    expect(c.roundEvidence.map((x) => x.dropped.flatMap((d) => d.orderIds))).toEqual([
+      ['floor-failure:c'],
+      ['floor-failure:b'],
+    ]);
+    expect(c.roundEvidence.map((x) => x.reverify.blocking)).toEqual([
+      [lintRed('src/b/f.ts').description],
+      [lintRed('src/a/f.ts').description],
+    ]);
+    expect(r.ledger).toContain('- round 2: dropped `floor-failure:b`; re-verify: guardrail-red');
+    expect(r.ledger).toContain(
+      `- refused in round ${MAX_CONTAINMENT_ROUNDS}: the guardrail stayed red`,
+    );
+  });
+
+  it("a re-verify that no longer verifies is kept as the round's evidence with its failure named", async () => {
+    const git = fakeGit({
+      'head0..head1': ['src/a.ts'],
+      'head1..head2': ['package.json', 'package-lock.json'],
+    });
+    const gates = [red([dep('tmp')])];
+    const r = await runRemediateTask({
+      cwd: tmpCwd(),
+      trust: trustedLocalContext(),
+      taskId: 'fix-vulns',
+      config: config(),
+      drivers: [scriptedDriver()],
+      git,
+      runFloor: () => GREEN_FLOOR,
+      runGuardrail: async () => gates.shift() ?? GREEN,
+      verifySeams: {
+        worktree: async <T>(opts: { ref: string }, fn: (p: string) => Promise<T>) => fn(opts.ref),
+        install: (head: string) =>
+          head === 'head3'
+            ? {
+                status: 'failed',
+                pack: 'typescript',
+                argv: ['npm', 'ci'],
+                output: 'EUSAGE',
+                classification: 'lockfile-drift',
+              }
+            : { status: 'installed', steps: [] },
+        changedFiles: () => ['src/a.ts'],
+      },
+      armInLoopGate: () => ({ mode: 'backstop-only' as const, reason: 'test' }),
+      runRecipePhase: async () => summary([floorOrder('floor-failure:a', 'src/'), depOrder('tmp')]),
+      frameInvariants: {
+        step: async () => ({
+          applied: [],
+          notApplicable: [],
+          changedPaths: [],
+          disclosures: [],
+          failed: false,
+        }),
+      },
+    });
+    const c = r.containment!;
+    expect(c.refusedAtRound).toBe(1);
+    expect(c.roundEvidence).toHaveLength(1);
+    expect(c.roundEvidence[0].dropped.map((d) => d.orderIds)).toEqual([['dep-advisory:tmp']]);
+    expect(c.roundEvidence[0].reverify.verdict).toBe('install-failed');
+    expect(c.roundEvidence[0].reverify.blocking).toEqual([]);
+    expect(r.ledger).toContain('- round 1: dropped `dep-advisory:tmp`; re-verify: install-failed');
+    expect(r.ledger).toContain('- refused in round 1: the remainder no longer verifies');
+  });
+
+  it("the PR body counts a round's drops past the line threshold while the ledger names each; the re-verify blocking set is capped with the rest counted", async () => {
+    // N+1 file-scoped lint orders (one commit each) plus one agent order.
+    // Round 1 is red on N of the lint files (N > the PR-body threshold), so
+    // N recipe-order units drop; the re-verify is red on the last lint
+    // file and six times on the agent order's file, so round 2 attributes
+    // every remaining unit and refuses.
+    const n = PR_BODY_ORDER_LINE_THRESHOLD + 1;
+    const files = Array.from({ length: n + 1 }, (_, i) => `src/f${i}.ts`);
+    const ranges: Record<string, string[]> = {};
+    files.forEach((f, i) => {
+      ranges[`head${i}..head${i + 1}`] = [f];
+    });
+    ranges[`head${n + 1}..head${n + 2}`] = ['src/agent/x.ts'];
+    const git = fakeGit(ranges);
+    const agent = floorOrder('floor-failure:agent', 'src/agent/');
+    const reverifyRed = [
+      lintRed(files[n]),
+      ...Array.from({ length: 6 }, (_, i) => lintRed('src/agent/x.ts', i + 1)),
+    ];
+    const r = await runWith({
+      orders: [agent],
+      git,
+      guardrails: [red(files.slice(0, n).map((f) => lintRed(f))), red(reverifyRed)],
+      recipePhase: () => {
+        for (let i = 0; i < files.length; i++) git.commit();
+        return summary([agent], {
+          ran: true,
+          selectedRecipeTier: files.length,
+          records: files.map((f, i) => lintRecord(f, `head${i + 1}`)),
+        });
+      },
+    });
+    const c = r.containment!;
+    expect(c.refusedAtRound).toBe(2);
+    expect(c.roundEvidence).toHaveLength(1);
+    expect(c.roundEvidence[0].dropped).toHaveLength(n);
+    // The re-verify's blocking set is capped like a drop's evidence, the
+    // rest counted, never silently truncated.
+    expect(c.roundEvidence[0].reverify.blocking).toHaveLength(5);
+    expect(c.roundEvidence[0].reverify.moreBlocking).toBe(reverifyRed.length - 5);
+    expect(r.ledger).toContain('; and 2 more');
+    // The committed ledger names every dropped unit with its evidence.
+    for (const f of files.slice(0, n)) {
+      expect(r.ledger).toContain(`  - \`lint-located:${f}\` (recipe-order): attribution:`);
+    }
+    // The PR body counts them (the L4 discipline) and points at the ledger.
+    const body = renderRemediatePrBody(r, { ledgerFile: null });
+    expect(body).toContain(`- round 1: dropped \`lint-located:${files[0]}\``);
+    expect(body).toContain(
+      `  - ${n} units dropped this round, each named with its attribution evidence in the committed ledger`,
+    );
+    expect(body).not.toContain('(recipe-order): attribution:');
+    expect(body).toContain('Full ledger (every order, one line each)');
   });
 });
 

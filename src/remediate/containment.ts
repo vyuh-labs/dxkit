@@ -50,6 +50,8 @@ import type { RecipePhaseSummary } from './recipes/run-recipes';
 import { verifyCommittedHead } from './verify';
 import type {
   ContainedDrop,
+  ContainmentReverify,
+  ContainmentRound,
   GuardrailContainment,
   OrderRunRecord,
   RemediateRunOptions,
@@ -134,6 +136,32 @@ function containmentReason(blocking: readonly string[], round: number): string {
     `(containment round ${round}): ${shown.join('; ')}` +
     (more > 0 ? `; and ${more} more` : '')
   );
+}
+
+/**
+ * Project ONE round's re-verify into the record the round keeps (#373):
+ * the tree verdict, the guardrail's word, and the blocking findings it
+ * named, capped like a drop's evidence. Reads the UNCAPPED structured
+ * projection first (the same list attribution reads) and falls back to
+ * the display list, so the record never claims fewer findings than the
+ * guardrail reported.
+ */
+export function summarizeReverify(
+  verified: VerifyTreeResult,
+  guardrail: GuardrailGateResult,
+): ContainmentReverify {
+  const all =
+    guardrail.blockingFindings !== undefined
+      ? guardrail.blockingFindings.map((f) => f.description)
+      : (guardrail.blocking ?? []);
+  const blocking = all.slice(0, DROP_EVIDENCE_CAP);
+  return {
+    verdict: verified.verdict,
+    ...(guardrail.ran ? { guardrailVerdict: guardrail.verdict } : {}),
+    blocking,
+    moreBlocking: all.length - blocking.length,
+    ...(verified.failure ? { failure: verified.failure.message } : {}),
+  };
 }
 
 /**
@@ -259,8 +287,12 @@ export async function containGuardrailRed(
   const originalHead = c.git.head();
   let roundsRun = 0;
   const allDrops: ContainedDrop[] = [];
+  // Every executed round's record, kept across a refusal (#373): the
+  // refusal message alone cannot say what round 1 dropped or what its
+  // re-verify reported, and a fail-open path always says why (Rule 19).
+  const roundEvidence: ContainmentRound[] = [];
 
-  const refuse = (reason: string): ContainmentOutcome => {
+  const refuse = (reason: string, round?: number): ContainmentOutcome => {
     let restoreNote = '';
     let restoreFailed = false;
     if (c.git.head() !== originalHead) {
@@ -280,7 +312,9 @@ export async function containGuardrailRed(
         maxRounds: MAX_CONTAINMENT_ROUNDS,
         rounds: roundsRun,
         dropped: [],
+        roundEvidence,
         refused: reason + restoreNote,
+        ...(round !== undefined ? { refusedAtRound: round } : {}),
         ...(restoreFailed ? { restoreFailed: true } : {}),
       },
     };
@@ -299,6 +333,7 @@ export async function containGuardrailRed(
       return refuse(
         `the guardrail is red (${guardrail.verdict}) but reported no attributable blocking ` +
           "findings (a refusal-tier verdict is never an order's fault)",
+        round,
       );
     }
     // Every blocking finding must attribute to exactly one unit, or the
@@ -312,6 +347,7 @@ export async function containGuardrailRed(
         return refuse(
           `blocking finding ${f.description} overlaps no kept order's envelope or committed ` +
             'diff, so it cannot be attributed and no order is dropped',
+          round,
         );
       }
       if (a.kind === 'ambiguous') {
@@ -319,6 +355,7 @@ export async function containGuardrailRed(
         return refuse(
           `blocking finding ${f.description} is ambiguous between ${ids}, so it cannot be attributed ` +
             'to one order, so none is dropped',
+          round,
         );
       }
       const bucket = perUnit.get(a.unit) ?? { blocking: [], evidence: new Set<string>() };
@@ -331,6 +368,7 @@ export async function containGuardrailRed(
       return refuse(
         'every kept order attributed to the red: nothing would remain to land, so the run ' +
           'follows the plain guardrail-red policy',
+        round,
       );
     }
     // Unwind, newest range first (minimizes revert conflicts).
@@ -350,20 +388,22 @@ export async function containGuardrailRed(
           `reverting ${u.orderIds.join(', ')} conflicted ` +
             `(${err instanceof Error ? err.message.split('\n')[0] : String(err)}), so the ` +
             'unwound remainder cannot be reconstructed',
+          round,
         );
       }
     }
     roundsRun = round;
-    for (const u of roundDrops) {
+    const thisRound: ContainedDrop[] = roundDrops.map((u) => {
       const bucket = perUnit.get(u)!;
-      allDrops.push({
+      return {
         unit: u.unit,
         orderIds: u.orderIds,
         round,
         blocking: bucket.blocking,
         evidence: [...bucket.evidence].join('; '),
-      });
-    }
+      };
+    });
+    allDrops.push(...thisRound);
     units = units.filter((u) => !perUnit.has(u));
 
     // Re-verify the remainder through the ONE tree verification: install +
@@ -375,6 +415,11 @@ export async function containGuardrailRed(
       runFloor: c.runFloor,
     });
     lastVerified = verified;
+    roundEvidence.push({
+      round,
+      dropped: thisRound,
+      reverify: summarizeReverify(verified, reGuardrail),
+    });
     if (verified.verdict === 'verified') {
       const dropByOrder = new Map<string, ContainedDrop>();
       for (const d of allDrops) for (const id of d.orderIds) dropByOrder.set(id, d);
@@ -393,7 +438,12 @@ export async function containGuardrailRed(
       const recipes = applyRecipeDrops(c.recipes, allDrops);
       return {
         kind: 'contained',
-        containment: { maxRounds: MAX_CONTAINMENT_ROUNDS, rounds: roundsRun, dropped: allDrops },
+        containment: {
+          maxRounds: MAX_CONTAINMENT_ROUNDS,
+          rounds: roundsRun,
+          dropped: allDrops,
+          roundEvidence,
+        },
         records,
         recipes,
         verified,
@@ -408,11 +458,13 @@ export async function containGuardrailRed(
     return refuse(
       `the remainder no longer verifies after the unwind (verification ended ` +
         `'${verified.verdict}'${verified.failure ? `: ${verified.failure.message}` : ''})`,
+      round,
     );
   }
   const lastWord = lastVerified?.guardrail?.verdict ?? 'red';
   return refuse(
     `the guardrail stayed red (${lastWord}) after ${MAX_CONTAINMENT_ROUNDS} unwind round(s); ` +
       'the bound is deliberate; the run follows the plain guardrail-red policy',
+    MAX_CONTAINMENT_ROUNDS,
   );
 }

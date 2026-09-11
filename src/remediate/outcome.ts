@@ -20,6 +20,7 @@ import type { RemediateConfig } from './config';
 import type { InLoopGateStatus } from './agent-trust';
 import type { RecipePhaseSummary, runRecipePhaseForTask } from './recipes/run-recipes';
 import type { WorkOrderBudget } from './work-orders/types';
+import type { GuardrailContainment } from './containment-types';
 
 /** How (whether) the driver applied the run's tool-narrowing policy —
  *  disclosed in the envelope, never a silent drop. */
@@ -116,52 +117,15 @@ export interface OrdersPhaseSummary {
   readonly priorBlockingApplied?: boolean;
 }
 
-/** One containment drop (guardrail-red containment, 4.4.7): the unit whose
- *  commits were reverted because the final guardrail's blocking findings
- *  attributed to it. */
-export interface ContainedDrop {
-  /** `recipe-order` (4.4.8): one commit of a recipe whose registry entry
-   *  declares `containmentUnit: 'order'` (its orders listed), dropped alone
-   *  while the rest of the recipe tier lands. */
-  readonly unit: 'agent-order' | 'recipe-group' | 'recipe-order';
-  readonly orderIds: readonly string[];
-  /** Which unwind round dropped it (1-based). */
-  readonly round: number;
-  /** Compact descriptions of the blocking findings attributed to this unit. */
-  readonly blocking: readonly string[];
-  /** The overlap evidence the attribution stands on, plus any tiebreak used
-   *  (Rule 19: a cause claim always names its evidence). */
-  readonly evidence: string;
-}
-
-/**
- * Guardrail-red containment (4.4.7): when the FINAL guardrail over the
- * landed head is red, the runner attributes each blocking finding to the
- * order whose envelope and committed diff overlap it, reverts the
- * attributed orders, re-verifies (install + floor) and re-runs the
- * guardrail on the remainder, bounded to a small disclosed number of
- * rounds. A red that attributes to NO order, is ambiguous, or survives the
- * bound REFUSES containment (the branch is restored and the run follows
- * the plain guardrail-red salvage policy): never a guess, never an
- * unexplained red landed.
- */
-export interface GuardrailContainment {
-  /** The disclosed bound on unwind rounds. */
-  readonly maxRounds: number;
-  /** Rounds actually executed (0 when refused before any unwind). */
-  readonly rounds: number;
-  /** The dropped units, empty when containment was refused (any reverts
-   *  already made were restored). */
-  readonly dropped: readonly ContainedDrop[];
-  /** Present when containment was attempted and REFUSED, with the reason;
-   *  the run then completes guardrail-red exactly as before this feature. */
-  readonly refused?: string;
-  /** True when the refusal's branch RESTORE itself failed: HEAD is then a
-   *  half-unwound tree no verification ever saw, so the executor must not
-   *  push it as a salvage draft; the branch stays local for inspection
-   *  (the refusal note says so). */
-  readonly restoreFailed?: true;
-}
+// The containment record types (`ContainedDrop`, `ContainmentReverify`,
+// `ContainmentRound`, `GuardrailContainment`) live in `./containment-types`
+// (module-size split, verbatim); re-exported so consumers keep one surface.
+export type {
+  ContainedDrop,
+  ContainmentReverify,
+  ContainmentRound,
+  GuardrailContainment,
+} from './containment-types';
 
 export type RemediateOutcome =
   | 'verified' // diff produced, floor net-new-clean, guardrail PASSED — ready to land

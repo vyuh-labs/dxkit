@@ -210,6 +210,10 @@ export function taskRunJson(run: TaskRun): Record<string, unknown> {
     partial: r.partial ?? false,
     envelope: r.envelope ?? null,
     orders: r.orders ?? null,
+    // Guardrail-red containment, contained or refused, with every round's
+    // drops and re-verify evidence (#373): the JSON reads the same record
+    // the ledger renders.
+    containment: r.containment ?? null,
     guardrailVerdict: r.guardrailVerdict ?? null,
     ...landingRecordFields(run),
     landRefused: run.landRefused ?? null,
