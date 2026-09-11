@@ -69,6 +69,21 @@ export interface CorrectnessCommand {
    * false-negative: an unmatched line is dropped, not guessed at.
    */
   readonly parseFailures?: (output: string) => string[] | null;
+  /**
+   * OPTIONAL pre-spawn disclosure (4.4.8, #377): the pack determined, from
+   * the repo's own evidence, that this command CANNOT START in the repo's
+   * shape (the runner named by the test script is not installed; the only
+   * runner present is a hoisted transitive binary with no config and no
+   * test script; the test script runs no runner at all). `bin` / `args`
+   * then carry the command dxkit WOULD have run, so the disclosure names
+   * it. The runner never spawns such a command: it records a fail-OPEN
+   * `skipped-unavailable` with this reason, the same tier as a missing
+   * binary. Without this, a runner invoked in a shape the repo's own test
+   * command would never use failed for dxkit's own reasons and was read as
+   * failing tests, and a remediation agent "fixed the floor" (a jest config
+   * recreating create-react-app's) instead of code.
+   */
+  readonly cannotStart?: string;
 }
 
 /**

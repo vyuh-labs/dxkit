@@ -46,6 +46,12 @@ import { createBaseline } from '../src/baseline/create';
 import { runGuardrailCheck } from '../src/baseline/check';
 import { CONFIDENCE_CONTENT_HASH_SAME_FILE } from '../src/baseline/git-aware-match';
 import { isSanitized } from '../src/baseline/sanitize';
+import { typescript } from '../src/languages/typescript';
+import {
+  describeEnvironmentSkips,
+  runCorrectnessFloor,
+  type CommandExec,
+} from '../src/analyzers/correctness/run';
 
 const FIXTURES = join(__dirname, 'fixtures', 'analysis');
 
@@ -63,6 +69,13 @@ const MATERIALIZE: Array<{ marker: string; target: string }> = [
   // flagged by dxkit's own self-guardrail hygiene scan.
   { marker: 'nm-lookup-orig.marker', target: 'node_modules/cldr/dist/lookup.js.orig' },
   { marker: 'src-legacy-orig.marker', target: 'src/legacy.js.orig' },
+  // Test-runner shims (#377): the correctness floor gates a runner on its
+  // `node_modules/.bin` shim, so the fixtures that pin the floor's test entry
+  // point carry the shims as markers. `jest` on the CRA fixture is the HOISTED
+  // transitive binary the pre-fix floor ran bare.
+  { marker: 'nm-bin-react-scripts.marker', target: 'node_modules/.bin/react-scripts' },
+  { marker: 'nm-bin-jest.marker', target: 'node_modules/.bin/jest' },
+  { marker: 'nm-bin-vitest.marker', target: 'node_modules/.bin/vitest' },
 ];
 
 /** Copy a fixture into a throwaway git repo (env-in-git needs tracked files). */
@@ -111,6 +124,12 @@ const STACKS: Array<{ stack: string; flow?: { calls: number } }> = [
   // No flow row: the php pack declares no httpFlow yet (framework routing —
   // Laravel/Symfony attribute routes — is a follow-up descriptor wave).
   { stack: 'php-app' },
+  // No flow row: a create-react-app tree (#377), the shape the correctness
+  // floor's affected-tests builder was structurally blind to. dxkit's own
+  // repo runs vitest, so its self-guardrail never sees a repo whose test
+  // entry point is a wrapper over a hoisted runner. Its floor assertions
+  // live in the "correctness floor" block below.
+  { stack: 'ts-cra-app' },
 ];
 
 const staged: Record<string, string> = {};
@@ -292,6 +311,131 @@ describe('analysis fixtures — test-gap import-graph credits non-relative impor
       staged['python-uv'],
     );
     expect([...reached]).toContain('packages/acme-platform/src/acme/util.py');
+  });
+});
+
+describe('analysis fixtures: the correctness floor runs the repo’s own test entry point (#377)', () => {
+  // The class: on a create-react-app repo the floor ran the hoisted
+  // transitive `jest` bare (no root config, no transforms), read its own
+  // invocation failure as five failing tests, and dispatched a work order
+  // that an agent closed by adding a jest.config.js recreating CRA's setup.
+  // The affected-tests command must be the repo's OWN entry point, and a
+  // runner that cannot start in the repo's shape must be a disclosed skip.
+  const ctx = (cwd: string, changed: string[]) => ({
+    cwd,
+    changedFiles: changed,
+    scope: 'affected' as const,
+  });
+  // The two runner-native fixtures are floor-shape fixtures, not analysis
+  // rows: staged here, not in the matrix.
+  const native: Record<string, string> = {};
+  beforeAll(() => {
+    for (const stack of ['ts-vitest-lib', 'ts-jest-lib']) native[stack] = stageFixture(stack);
+    return () => {
+      for (const dir of Object.values(native)) rmSync(dir, { recursive: true, force: true });
+    };
+  });
+
+  it('ts-cra-app: affected-tests is `react-scripts test`, never the hoisted jest', () => {
+    const dir = staged['ts-cra-app'];
+    // The trap is present: a bare jest shim sits in .bin, exactly as on a
+    // real CRA tree.
+    expect(existsSync(join(dir, 'node_modules', '.bin', 'jest'))).toBe(true);
+    const cmd = typescript.correctness.affectedTests(ctx(dir, ['src/App.js', 'README.md']));
+    expect(cmd).toEqual({
+      label: 'affected-tests',
+      bin: 'npx',
+      args: [
+        '--no-install',
+        'react-scripts',
+        'test',
+        '--watchAll=false',
+        '--ci',
+        '--passWithNoTests',
+        '--findRelatedTests',
+        'src/App.js',
+      ],
+      parseFailures: expect.any(Function),
+    });
+  });
+
+  /** Run the real TS pack's floor on a tree with an exec that reports every
+   *  spawn as a failing run: a check may only come back green or skipped if
+   *  the runner never spawned it. */
+  function floorWithFailingExec(dir: string) {
+    const spawned: string[] = [];
+    const exec: CommandExec = (c) => {
+      spawned.push([c.bin, ...c.args].join(' '));
+      return { available: true, code: 1, output: 'Cannot find module' };
+    };
+    const result = runCorrectnessFloor({ ...ctx(dir, ['src/App.js']), packs: [typescript], exec });
+    return { result, spawned, tests: result.checks.find((c) => c.label === 'affected-tests') };
+  }
+
+  it('ts-cra-app, config-less (no test script, runner undeclared): the hoisted jest is a disclosed cannot-start skip, never a failing check', () => {
+    // The tree whose only runner is the transitive binary: no test script,
+    // nothing declared, a bare jest shim. The skip is decided BEFORE the
+    // spawn, from the repo's evidence alone.
+    const dir = stageFixture('ts-cra-app');
+    try {
+      const pkgPath = join(dir, 'package.json');
+      const pkg = JSON.parse(readFileSync(pkgPath, 'utf8')) as Record<string, unknown>;
+      delete pkg.scripts;
+      delete pkg.dependencies;
+      writeFileSync(pkgPath, JSON.stringify(pkg));
+      const { result, spawned, tests } = floorWithFailingExec(dir);
+      expect(tests?.status).toBe('skipped-unavailable');
+      expect(tests?.output).toContain('cannot start');
+      expect(tests?.output).toContain('tried: npx --no-install jest');
+      expect(spawned.some((s) => s.includes('jest'))).toBe(false);
+      expect(result.blocks).toBe(false);
+      // The disclosure line every surface prints names the skip.
+      expect(describeEnvironmentSkips(result).some((l) => l.includes('cannot start'))).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('ts-cra-app with react-scripts declared but not installed: a disclosed skip with the remedy, and jest is never run instead', () => {
+    const dir = stageFixture('ts-cra-app');
+    try {
+      rmSync(join(dir, 'node_modules', '.bin', 'react-scripts'));
+      const { result, spawned, tests } = floorWithFailingExec(dir);
+      expect(tests?.status).toBe('skipped-unavailable');
+      expect(tests?.output).toContain('node_modules/.bin/react-scripts is missing');
+      expect(tests?.output).toContain('install dependencies');
+      expect(spawned.some((s) => s.includes('jest'))).toBe(false);
+      expect(result.blocks).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('ts-vitest-lib keeps its native vitest command', () => {
+    const cmd = typescript.correctness.affectedTests(ctx(native['ts-vitest-lib'], ['src/sum.ts']));
+    expect(cmd?.bin).toBe('npx');
+    expect(cmd?.args).toEqual([
+      '--no-install',
+      'vitest',
+      'related',
+      '--run',
+      '--passWithNoTests',
+      'src/sum.ts',
+    ]);
+    expect(cmd?.cannotStart).toBeUndefined();
+  });
+
+  it('ts-jest-lib keeps its native jest command', () => {
+    const cmd = typescript.correctness.affectedTests(ctx(native['ts-jest-lib'], ['src/sum.js']));
+    expect(cmd?.bin).toBe('npx');
+    expect(cmd?.args).toEqual([
+      '--no-install',
+      'jest',
+      '--passWithNoTests',
+      '--findRelatedTests',
+      'src/sum.js',
+    ]);
+    expect(cmd?.cannotStart).toBeUndefined();
   });
 });
 

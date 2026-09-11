@@ -457,6 +457,52 @@ describe('runCorrectnessFloor', () => {
     });
   });
 
+  describe('a command the pack marks cannotStart (#377: the runner cannot start in the repo’s shape)', () => {
+    const stuck: CorrectnessCommand = {
+      label: 'affected-tests',
+      bin: 'npx',
+      args: ['--no-install', 'jest'],
+      cannotStart: 'jest is installed only transitively, so the test entry point is unknown',
+    };
+
+    it('is a disclosed fail-open skip decided BEFORE the spawn, naming the reason and the command tried', async () => {
+      let spawned = 0;
+      const exec: CommandExec = () => {
+        spawned++;
+        return { available: true, code: 1, output: 'Cannot find module' };
+      };
+      const r = runCorrectnessFloor({
+        ...base,
+        packs: [pack('ts', null, stuck)],
+        exec,
+      });
+      expect(spawned).toBe(0);
+      expect(r.blocks).toBe(false);
+      expect(r.ran).toBe(false);
+      expect(r.checks).toHaveLength(1);
+      expect(r.checks[0].status).toBe('skipped-unavailable');
+      expect(r.checks[0].args).toEqual(['--no-install', 'jest']);
+      expect(r.checks[0].output).toBe(
+        "cannot start in this repo's shape: jest is installed only transitively, so the test " +
+          'entry point is unknown (tried: npx --no-install jest)',
+      );
+      const { describeEnvironmentSkips } = await import('../src/analyzers/correctness/run');
+      expect(describeEnvironmentSkips(r)).toEqual([
+        `ts affected-tests skipped: ${r.checks[0].output}`,
+      ]);
+    });
+
+    it('the capture plan lists it as a skip, never as a command capture would run', async () => {
+      const { describeFloorCapturePlan } = await import('../src/analyzers/correctness/run');
+      const plan = describeFloorCapturePlan('/repo', [pack('ts', cmd('typecheck', 'tsc'), stuck)]);
+      expect(plan).toEqual([
+        'ts typecheck: tsc',
+        "ts affected-tests: skipped, cannot start in this repo's shape: jest is installed only " +
+          'transitively, so the test entry point is unknown (tried: npx --no-install jest)',
+      ]);
+    });
+  });
+
   describe('describeFloorCapturePlan (the pre-capture estimate — 4.2 evaluate-first)', () => {
     it('names the full-scope commands capture would run, without executing anything', async () => {
       const { describeFloorCapturePlan } = await import('../src/analyzers/correctness/run');

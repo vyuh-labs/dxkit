@@ -166,3 +166,26 @@ export function upgradeArgv(
       ];
   }
 }
+
+/**
+ * The argv that runs one `package.json` script with the repo's own package
+ * manager, appending `extraArgs` to the script's command line. npm needs
+ * the `--` separator to forward arguments to the script; pnpm, yarn and bun
+ * forward everything after the script name. Returned as an argv (bin
+ * first) so callers execFile it: a repo-declared script runs in the shape
+ * the repo declared it, never re-guessed as a bare binary.
+ */
+export function runScriptArgv(
+  pm: PackageManager,
+  script: string,
+  extraArgs: readonly string[] = [],
+): string[] {
+  switch (pm) {
+    case 'npm':
+      return ['npm', 'run', script, ...(extraArgs.length > 0 ? ['--', ...extraArgs] : [])];
+    case 'pnpm':
+    case 'yarn':
+    case 'bun':
+      return [pm, 'run', script, ...extraArgs];
+  }
+}
