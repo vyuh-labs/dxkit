@@ -10,7 +10,7 @@
 
       - uses: actions/setup-node@v6
         with:
-          node-version: '22'
+          node-version: '{{NODE_VERSION}}'
 
 __DXKIT_FRAGMENT_HOST_SETUP__
       - name: Install dxkit

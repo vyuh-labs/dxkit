@@ -35,7 +35,7 @@ jobs:
 
       - uses: actions/setup-node@v6
         with:
-          node-version: '22'
+          node-version: '{{NODE_VERSION}}'
 
       # Language runtime(s) for the detected stack, so graphify resolves the
       # same symbols the local + gate builds see. Empty on a Node-only repo.

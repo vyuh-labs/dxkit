@@ -89,7 +89,7 @@ jobs:
 
       - uses: actions/setup-node@v6
         with:
-          node-version: '22'
+          node-version: '{{NODE_VERSION}}'
 
       - name: Install dependencies + dxkit
         run: |
@@ -184,7 +184,7 @@ __DXKIT_LANE_TOKEN_STEPS__
 
       - uses: actions/setup-node@v6
         with:
-          node-version: '22'
+          node-version: '{{NODE_VERSION}}'
 
       # Language runtime(s) for the detected stack, so the correctness floor
       # can build + run the tests that verify the agent's work.

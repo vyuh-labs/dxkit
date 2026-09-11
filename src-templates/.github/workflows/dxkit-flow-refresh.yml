@@ -48,7 +48,7 @@ __DXKIT_LANE_TOKEN_STEPS__
 
       - uses: actions/setup-node@v6
         with:
-          node-version: '22'
+          node-version: '{{NODE_VERSION}}'
 
       # Language runtime(s) for the detected stack, so extraction sees the same
       # code the local + gate builds see. Empty on a Node-only repo.

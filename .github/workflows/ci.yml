@@ -18,7 +18,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-node@v6
         with:
-          node-version: '22'
+          node-version: '24'
           cache: 'npm'
       - run: npm ci
 
@@ -192,3 +192,30 @@ jobs:
 
       - name: Verify pack
         run: npm pack --dry-run
+
+  # The `engines.node >=22` floor, kept honest: the main job runs on Node 24,
+  # so nothing above would notice a Node-24-only API creeping into src/. This
+  # lane builds and runs the unit suite on the OLDEST Node the package
+  # declares it supports. No scanner toolchains are installed here (the
+  # tool-dependent tests skipIf the binary is missing; the main job covers
+  # them) - it proves dxkit itself runs on the floor, not every scanner.
+  node-floor:
+    name: Node 22 engines floor
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - run: npm ci
+      - name: Build
+        run: npm run build
+      - name: Typecheck
+        run: npm run typecheck
+      - name: CLI runs on the floor
+        run: node dist/index.js --version && node dist/index.js doctor
+      - name: Unit tests
+        run: npx vitest run

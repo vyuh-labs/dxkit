@@ -57,7 +57,7 @@ ever.
 ## Local development
 
 ```bash
-nvm use                # picks up .nvmrc (Node 22)
+nvm use                # picks up .nvmrc (Node 24)
 npm ci                 # bit-exact install from package-lock.json (recommended)
 npm run build          # copies src-templates/ → templates/ and runs tsc
 npm test               # vitest in watch mode

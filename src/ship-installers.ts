@@ -17,6 +17,7 @@ import { makeExecutable, serializePreservingJson } from './files';
 import { RUNBOOK_FILENAME, RUNBOOK_MARKER, renderRunbook } from './learn/runbook';
 import { activateHooks } from './hooks-cli';
 import { detect } from './detect';
+import type { DetectedStack } from './types';
 import { defaultBranchViaGh } from './setup-gh';
 import {
   buildDevcontainerExtensions,
@@ -29,7 +30,7 @@ import {
 } from './languages';
 import type { CiSetupStep } from './languages/types';
 import { resolvePlacement, type PlacementPlan } from './execution';
-import { VERSION } from './constants';
+import { VERSION, packVersionVariables } from './constants';
 import {
   resolveBaselineMode,
   resolveAnchorTransport,
@@ -225,6 +226,52 @@ function ciSetupOutOfDate(cwd: string, destName: string, rendered: string): bool
   return rendered
     .split('\n')
     .filter((l) => l.trim().startsWith('uses:'))
+    .some((l) => !content.includes(l.trim()));
+}
+
+/**
+ * The repo's detected language-runtime versions (each pack's `detectVersion`,
+ * else its default): the input to the `{{<KEY>_VERSION}}` workflow render.
+ * Fail-open to the pack defaults: a detection error must not take a workflow
+ * install down.
+ */
+function detectedVersions(cwd: string): DetectedStack['versions'] {
+  try {
+    return detect(cwd).versions;
+  } catch {
+    return {};
+  }
+}
+
+/** The Node major every generated `setup-node` step renders: the ONE
+ *  substitution source's `NODE_VERSION` (detected through the pack, else the
+ *  pack default). Exported for the render tests and the update note. */
+export function nodeVersionFor(cwd: string): string {
+  return packVersionVariables(detectedVersions(cwd)).NODE_VERSION;
+}
+
+/** The rendered `node-version:` line at the workflow's `with:` indent. */
+function renderNodeVersionLine(cwd: string): string {
+  return `          node-version: '${nodeVersionFor(cwd)}'`;
+}
+
+/**
+ * True when an installed dxkit-managed workflow's rendered `node-version`
+ * (or any other `{{<KEY>_VERSION}}`-rendered `*-version:` line) no longer
+ * matches the fresh render (the repo's declared Node moved, or the pack
+ * default did). The same stale signal as `ciSetupOutOfDate`, for the runtime
+ * line rather than the setup steps, so `update` names WHY it refreshed.
+ */
+function runtimeVersionOutOfDate(cwd: string, destName: string, rendered: string): boolean {
+  let content: string;
+  try {
+    content = fs.readFileSync(path.join(cwd, '.github', 'workflows', destName), 'utf8');
+  } catch {
+    return false;
+  }
+  return rendered
+    .split('\n')
+    .filter((l) => /^\s*[a-z-]+-version:/.test(l))
     .some((l) => !content.includes(l.trim()));
 }
 
@@ -582,6 +629,16 @@ function installWorkflow(
   for (const [key, value] of Object.entries(substitutions)) {
     content = content.split(key).join(value);
   }
+  // The language-runtime versions render LAST, after every caller and
+  // partial substitution, so a `{{NODE_VERSION}}` carried in by a rendered
+  // partial (the fragment-capture job) is filled too. ONE substitution
+  // source (`packVersionVariables`, shared with the generator's AGENTS.md
+  // render): the repo's DETECTED version through the pack (Rule 6), else
+  // the pack default, never a literal in a template, so the gate cannot
+  // move a customer's test runtime silently.
+  for (const [key, value] of Object.entries(packVersionVariables(detectedVersions(cwd)))) {
+    content = content.split(`{{${key}}}`).join(value);
+  }
 
   if (fs.existsSync(destAbs)) {
     const existing = fs.readFileSync(destAbs, 'utf8');
@@ -619,6 +676,11 @@ export function installCiGuardrails(
   // Re-render when the detected stack's runtime-setup changed (a language was
   // added since install) even without --force — dxkit's own managed template.
   const stale = ciSetupOutOfDate(cwd, 'dxkit-guardrails.yml', ciSetup);
+  const runtimeMoved = runtimeVersionOutOfDate(
+    cwd,
+    'dxkit-guardrails.yml',
+    renderNodeVersionLine(cwd),
+  );
   const result = installWorkflow(
     cwd,
     'dxkit-guardrails.yml',
@@ -635,6 +697,11 @@ export function installCiGuardrails(
   );
   if (stale && result.installed.length > 0) {
     result.notes.push('Refreshed the CI guardrails workflow for the current language stack.');
+  }
+  if (runtimeMoved && result.installed.length > 0) {
+    result.notes.push(
+      `Refreshed the CI guardrails workflow's Node runtime to ${nodeVersionFor(cwd)} (the repo's declared Node, else the pack default).`,
+    );
   }
   return result;
 }

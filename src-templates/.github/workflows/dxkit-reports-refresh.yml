@@ -41,7 +41,7 @@ jobs:
 
       - uses: actions/setup-node@v6
         with:
-          node-version: '22'
+          node-version: '{{NODE_VERSION}}'
 
       # Language runtime(s) for the detected stack, so the analyzers score the
       # same code the local + gate builds see. Empty on a Node-only repo.

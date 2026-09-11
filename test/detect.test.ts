@@ -4,6 +4,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { execFileSync } from 'child_process';
 import { detect, explainNoLanguages } from '../src/detect';
+import { typescript } from '../src/languages/typescript';
 
 const FIX = (name: string) => path.join(__dirname, 'fixtures', name);
 
@@ -107,10 +108,13 @@ describe('detect()', () => {
   describe('node-range fixture (>=10)', () => {
     const stack = detect(FIX('node-range'));
 
-    it('prefers installed Node version over range minimum', () => {
-      // >=10 is a range — should use installed version, not "10"
-      const installedMajor = process.version.replace(/^v/, '').split('.')[0];
-      expect(stack.versions.node).toBe(installedMajor);
+    it('an open floor the pack default satisfies renders the pack default, never the machine', () => {
+      // >=10 declares no ceiling: the pack default (24) satisfies it, so the
+      // repo gets the default. The installed Node is NOT consulted (a
+      // machine-specific answer would re-render generated workflows per
+      // developer; 4.4.8 N).
+      expect(stack.versions.node).toBe(typescript.defaultVersion);
+      expect(typescript.detectVersion!(FIX('node-range'))).toBeUndefined();
     });
 
     it('does not return "10" for >=10 range', () => {

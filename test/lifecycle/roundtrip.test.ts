@@ -266,6 +266,28 @@ describe('update refreshes dxkit-owned files but never clobbers user files', () 
     expect(existsSync(join(repo, '.githooks/pre-push.dxkit'))).toBe(false);
   });
 
+  it('an installed workflow pinned to an old Node literal is refreshed to the pack-rendered version', () => {
+    write(repo, 'package.json', JSON.stringify({ name: 'upd3', version: '1.0.0' }));
+    write(repo, 'src/index.ts', 'export const x = 1;\n');
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-qm', 'pre-dxkit');
+
+    cli(repo, 'init', '--full', '--yes', '--no-finish');
+
+    const wfAbs = join(repo, '.github/workflows/dxkit-guardrails.yml');
+    const fresh = readFileSync(wfAbs, 'utf8');
+    expect(fresh).toContain("node-version: '24'");
+    // A pre-4.4.8 install carried the literal `'22'` in the template; the
+    // file keeps its dxkit marker, so update owns it.
+    writeFileSync(wfAbs, fresh.replace("node-version: '24'", "node-version: '22'"));
+    expect(readFileSync(wfAbs, 'utf8')).toContain("node-version: '22'");
+
+    cli(repo, 'update');
+
+    expect(readFileSync(wfAbs, 'utf8')).toContain("node-version: '24'");
+    expect(readFileSync(wfAbs, 'utf8')).not.toContain("node-version: '22'");
+  });
+
   it('#11: update --force NEVER overwrites a user-authored AGENTS.md', () => {
     const agents = '# My Project\n\nProject-authored guidance the user maintains.\n';
     write(repo, 'AGENTS.md', agents);
