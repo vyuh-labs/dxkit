@@ -83,9 +83,17 @@ jobs:
       tasks: ${{ steps.plan.outputs.tasks }}
       any: ${{ steps.plan.outputs.any }}
     steps:
+__DXKIT_LANE_TOKEN_STEPS__
+
+      # The plan job RE-LANDS un-landed verified work before it plans (a
+      # prior run's pending ref, dxkit #375), so its checkout carries the
+      # lane token: the re-land pushes the standing branch and opens the
+      # PR exactly as a land step would. The checkout is the one credential
+      # writer in this job (nothing else installs one).
       - uses: actions/checkout@v6
         with:
           ref: __DXKIT_DEFAULT_BRANCH__
+          token: __DXKIT_LANE_TOKEN__
 
       - uses: actions/setup-node@v6
         with:
@@ -95,9 +103,17 @@ jobs:
         run: |
           __DXKIT_INSTALL_DEPS__
 
+      # Un-landed verified work first (dxkit #375): `--reland-pending` makes
+      # the plan fetch each task's pending ref (the verified head + landing
+      # record a prior task step pushed before its land step failed),
+      # validate it, and land it through the same land path the post-task
+      # step uses, BEFORE planning new work. Nothing is invented: an invalid
+      # or stale ref is skipped with the reason and left in place; a re-land
+      # that fails again is disclosed and the ref stays for the next run.
       - name: Compute the task matrix
         id: plan
         env:
+          GH_TOKEN: __DXKIT_LANE_TOKEN__
           # A dispatch that names a task runs EXACTLY that task (its choice
           # list is rendered from the registry, so the value is a known id or
           # `custom`); blank falls through to the scheduled, spend-ceilinged
@@ -105,7 +121,7 @@ jobs:
           DISPATCH_TASK: ${{ github.event.inputs.task || '' }}
         run: |
           if [ -x ./node_modules/.bin/vyuh-dxkit ]; then DXKIT=./node_modules/.bin/vyuh-dxkit; else DXKIT=vyuh-dxkit; fi
-          "$DXKIT" remediate plan --json > remediate-plan.json
+          "$DXKIT" remediate plan --json --reland-pending > remediate-plan.json
           node - <<'EOF'
           const fs = require('fs');
           const p = JSON.parse(fs.readFileSync('remediate-plan.json', 'utf8'));
@@ -126,6 +142,15 @@ jobs:
           }
           for (const note of p.matrixDisclosures ?? []) {
             console.log(`::notice title=remediate matrix::${note}`);
+          }
+          // Pending refs (un-landed verified work from a prior run, #375):
+          // re-landed here, or skipped/failed with the reason, never silent.
+          for (const pl of p.pendingLandings ?? []) {
+            const level = pl.outcome === 'relanded' ? 'notice' : 'warning';
+            const what = pl.outcome === 'relanded'
+              ? `re-landed onto ${pl.landedBranch}${pl.prUrl ? ` (${pl.prUrl})` : ''}`
+              : `${pl.outcome}: ${pl.reason}`;
+            console.log(`::${level} title=remediate pending work (${pl.task})::${pl.ref}: ${what}`);
           }
           console.log('matrix:', JSON.stringify(tasks));
           EOF
@@ -346,6 +371,17 @@ __DXKIT_LANE_TOKEN_LAND_STEPS__
       # chain silently falls back to the earlier task/job mints or the PAT,
       # which may be stale by then; a stale fallback fails the push with
       # its own disclosed error rather than skipping the attempt.
+      #
+      # The credential PROOF retries (dxkit #375): a fresh installation
+      # token can answer "Repository not found" for a few seconds after
+      # mint (the live run's sibling jobs landed minutes later with the same
+      # App), so the ls-remote gets three attempts with backoff (10s, 30s)
+      # and every failure line is kept. When all three fail, the step hands
+      # the count + last error to `remediate land --preflight-failed`, which
+      # phrases the ONE `landing-blocked:` disclosure (log, annotation, run
+      # summary, attempt record) and pushes nothing; the verified work
+      # survives on the task step's pending ref (or the landing artifact
+      # below) and the next run's plan step re-lands it.
       - name: Land the deferred work (fresh credential)
         if: ${{ !cancelled() }}
         env:
@@ -366,10 +402,43 @@ __DXKIT_LANE_TOKEN_LAND_STEPS__
             echo "::error title=landing credential::expected exactly 1 auth header config, found $COUNT (a duplicate would 400 the landing push)"
             exit 1
           fi
-          git ls-remote --heads origin >/dev/null
-          echo "landing credential verified (single auth header, ls-remote OK)"
           if [ -x ./node_modules/.bin/vyuh-dxkit ]; then DXKIT=./node_modules/.bin/vyuh-dxkit; else DXKIT=vyuh-dxkit; fi
+          ATTEMPT=0
+          VERIFIED=0
+          LAST_ERR=""
+          for DELAY in 10 30 0; do
+            ATTEMPT=$((ATTEMPT + 1))
+            if LAST_ERR=$(git ls-remote --heads origin 2>&1 >/dev/null); then
+              VERIFIED=1
+              echo "landing credential verified (single auth header, ls-remote OK, attempt $ATTEMPT)"
+              break
+            fi
+            echo "landing credential preflight attempt $ATTEMPT failed: $LAST_ERR"
+            if [ "$DELAY" -gt 0 ]; then
+              echo "retrying the landing credential preflight in ${DELAY}s"
+              sleep "$DELAY"
+            fi
+          done
+          if [ "$VERIFIED" != "1" ]; then
+            "$DXKIT" remediate land --task "${{ matrix.task }}" --preflight-failed "$LAST_ERR" --preflight-attempts "$ATTEMPT"
+            exit 1
+          fi
           "$DXKIT" remediate land --task "${{ matrix.task }}"
+
+      # An UN-LANDED landing record survives the runner as a run artifact
+      # (dxkit #375): the land step clears the record on success, so a file
+      # here means the landing did not complete (preflight failure, refused
+      # push, a crash). The pending ref is the machine copy the next run
+      # re-lands; this is the human copy (`gh run download -n <name>`). ONE
+      # name: rendered from `landingArtifactName` and pinned by test.
+      - name: Preserve the un-landed landing record
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: remediate-${{ matrix.task }}-landing
+          path: .dxkit/cache/remediate-landing-${{ matrix.task }}.json
+          if-no-files-found: ignore
+          retention-days: 14
 
       # A BLOCKED / failed attempt's diff must survive the ephemeral runner:
       # the runner writes a machine-readable attempt record; when nothing

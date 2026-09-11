@@ -24,15 +24,37 @@ export function remediateAttemptBranchFor(taskId: string): string {
   return `${remediateBranchFor(taskId)}-attempt`;
 }
 
-/** A task's branch PAIR: the standing branch and its attempt sibling. */
+/**
+ * The remediate lane's PENDING ref for a task (#375): the durable copy of
+ * verified-but-not-yet-landed work. The task step pushes the verified head
+ * here (plus one bookkeeping commit carrying the landing record and the
+ * run's ledger files) BEFORE the fresh-credential land step runs, so a
+ * landing that never completes (a credential preflight failure, a land
+ * crash, runner death) leaves the work on the remote instead of on an
+ * ephemeral runner. Machine-owned and force-pushed per run; a successful
+ * `remediate land` deletes it, and the next run's plan step re-lands a
+ * survivor before planning new work. It never carries a PR.
+ */
+export function remediatePendingBranchFor(taskId: string): string {
+  return `${remediateBranchFor(taskId)}-pending`;
+}
+
+/** A task's branch TRIPLE: the standing branch, its attempt sibling, and
+ *  the pending ref that preserves un-landed verified work. */
 export interface RemediateBranches {
   readonly standing: string;
   readonly attempt: string;
+  readonly pending: string;
 }
 
-/** The ONE way to build the pair (Rule 2.30): every consumer that needs
- *  both (the lander, the preflight, the plan probes, resume, the order
- *  ledger's compose and history reads) derives them here, never by hand. */
+/** The ONE way to build the triple (Rule 2.30): every consumer that needs
+ *  them (the lander, the preflight, the plan probes, resume, the order
+ *  ledger's compose and history reads, the pending-ref push and re-land)
+ *  derives them here, never by hand. */
 export function remediateBranchesFor(taskId: string): RemediateBranches {
-  return { standing: remediateBranchFor(taskId), attempt: remediateAttemptBranchFor(taskId) };
+  return {
+    standing: remediateBranchFor(taskId),
+    attempt: remediateAttemptBranchFor(taskId),
+    pending: remediatePendingBranchFor(taskId),
+  };
 }

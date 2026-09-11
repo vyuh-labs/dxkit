@@ -27,13 +27,20 @@
  * (`readLandingRecord`); the standing-branch name is recomputed from the
  * task id, never trusted from disk.
  */
-import { execFileSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as logger from '../logger';
+import { appendStepSummary } from '../lanes/step-summary';
 import { landingDisclosure, landingNotes, landRemediateHead, type LandingDisclosure } from './land';
 import { publishOrderRows, writeLocalOrderLedger } from './order-outcomes';
-import { currentHead, describeLandingFailure, landingRecordFields } from './attempt-record';
+import {
+  currentHead,
+  describeLandingFailure,
+  describePendingPreservation,
+  describePreflightFailure,
+  landingRecordFields,
+} from './attempt-record';
+import { isOwnBookkeepingCommit } from './bookkeeping-commit';
 import {
   clearLandingRecord,
   landingRecordPath,
@@ -41,47 +48,41 @@ import {
   writeLandingRecord,
   type LandingRecord,
 } from './landing-record';
+import { deletePendingRef, landingArtifactName } from './pending-ref';
 
 export interface LandCliSeams {
   readonly landHead?: typeof landRemediateHead;
   readonly publishRows?: typeof publishOrderRows;
   readonly writeOrderLedger?: typeof writeLocalOrderLedger;
   readonly head?: (cwd: string) => string | null;
+  /** Injected for tests: the pending-ref deleter (#375). */
+  readonly deletePendingRef?: typeof deletePendingRef;
 }
 
-const HEX_SHA_RE = /^[0-9a-f]{7,64}$/;
+/**
+ * The workflow's land step ran its credential preflight (a bounded,
+ * backed-off `ls-remote`) and every attempt failed (#375): the step hands
+ * the count and the last error here so the landing is DISCLOSED (one
+ * phrasing, `describePreflightFailure`) and recorded, and nothing pushes.
+ */
+export interface PreflightFailure {
+  readonly attempts: number;
+  readonly lastError: string;
+}
 
 /**
- * Is `observed` exactly ONE commit atop `expected`, touching ONLY the
- * lander's own bookkeeping paths (the delivery + order ledgers)? Pure git
- * reads, biased toward false: any doubt (unreadable parent, a merge, an
- * empty or out-of-scope diff) answers no, and the retry then refuses as
- * stale, which is the honest outcome for a head this step cannot prove it
- * authored itself.
+ * Where un-landed verified work survives, phrased once for every failure
+ * path: the pending ref when the task step pushed it, else the run
+ * artifact the workflow uploads the record as (14 days).
  */
-function isOwnBookkeepingCommit(
-  cwd: string,
-  observed: string,
-  expected: string,
-  allowedPaths: readonly string[],
-): boolean {
-  if (allowedPaths.length === 0) return false;
-  if (!HEX_SHA_RE.test(observed) || !HEX_SHA_RE.test(expected)) return false;
-  const read = (args: readonly string[]): string =>
-    execFileSync('git', [...args], {
-      cwd,
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-    }).trim();
-  try {
-    if (read(['rev-parse', `${observed}^`]) !== read(['rev-parse', expected])) return false;
-    const files = read(['diff-tree', '--no-commit-id', '--name-only', '-r', observed])
-      .split('\n')
-      .filter(Boolean);
-    return files.length > 0 && files.every((f) => allowedPaths.includes(f));
-  } catch {
-    return false;
-  }
+function preservationNote(taskId: string, record: LandingRecord, why: string): string {
+  if (record.action !== 'land') return '';
+  if (record.pendingRef) return `\n${describePendingPreservation(record.pendingRef, why)}`;
+  return (
+    `\nthe verified work was NOT preserved on a pending ref (the task step's push failed or ` +
+    `was skipped): it survives only in the run artifact '${landingArtifactName(taskId)}' and ` +
+    `the attempt patch (14 days)`
+  );
 }
 
 export type RemediateLandOutcome =
@@ -106,7 +107,11 @@ export type RemediateLandOutcome =
    *  manual retry; never fails the lane (parity with the inline path). */
   | { readonly outcome: 'rows-publish-failed'; readonly note: string }
   /** The push/PR failed: disclosed cause + remedy, record kept (retry). */
-  | { readonly outcome: 'landing-failed'; readonly error: string };
+  | { readonly outcome: 'landing-failed'; readonly error: string }
+  /** The credential preflight failed before any push (#375): disclosed,
+   *  nothing pushed, record kept; the pending ref (or the artifact) holds
+   *  the work for the next run's plan step. */
+  | { readonly outcome: 'landing-blocked'; readonly error: string };
 
 /** Exit-code truth for the CLI wrapper: refusals, push failures and a
  *  pushed branch with no PR are non-zero; no-ops and bookkeeping warnings
@@ -137,6 +142,7 @@ export function runRemediateLand(
   cwd: string,
   taskId: string,
   seams: LandCliSeams = {},
+  preflightFailure?: PreflightFailure,
 ): RemediateLandOutcome {
   const read = readLandingRecord(cwd, taskId);
   if (read === null) {
@@ -150,6 +156,24 @@ export function runRemediateLand(
   }
   if ('error' in read) return { outcome: 'invalid-record', error: read.error };
   const record = read.record;
+
+  if (preflightFailure) {
+    // Nothing pushes: the credential never proved itself. Disclose where
+    // the work survives and keep the record (a persistent checkout can
+    // retry; under Actions the next run's plan step re-lands the ref).
+    const why = describePreflightFailure(preflightFailure.attempts, preflightFailure.lastError);
+    const rows =
+      record.action === 'publish-rows'
+        ? '\nthe order-outcome rows were not recorded; the circuit breaker will not see this run ' +
+          '(the job summary remains the evidence)'
+        : '';
+    const error =
+      `${why}${preservationNote(taskId, record, why)}${rows}\nThe landing record is kept at ` +
+      `${landingRecordPath(taskId)}; re-run \`remediate land --task ${taskId}\` to retry once ` +
+      'the cause is fixed.';
+    patchAttemptRecord(cwd, taskId, { landed: false, landingBlocked: error });
+    return { outcome: 'landing-blocked', error };
+  }
 
   if (record.action === 'publish-rows') {
     const pub = (seams.publishRows ?? publishOrderRows)(cwd, taskId, record.orderRows);
@@ -212,6 +236,20 @@ export function runRemediateLand(
     // record (JSON) and this command's outcome carry every disclosure.
     const disclosure = landingDisclosure(landResult);
     clearLandingRecord(cwd, taskId);
+    // The ONE deleter (#375): the work now lives on the branch the lander
+    // pushed, so the pending copy is retired. A pushed-without-PR landing
+    // also pushed, so the copy is retired there too. Best-effort: a
+    // leftover ref is skipped by the next plan step with the reason.
+    if (
+      record.pendingRef &&
+      !(seams.deletePendingRef ?? deletePendingRef)(cwd, record.pendingRef)
+    ) {
+      logger.warn(
+        `the pending ref '${record.pendingRef}' could not be deleted after landing; the next ` +
+          "run's plan step will skip it as already landed (its tip no longer matches a record " +
+          'it could re-land)',
+      );
+    }
     if (disclosure.prMissing) {
       // Pushed, no PR (#374): the same shape the inline executor writes
       // (`landed: false`, the note as `landingBlocked`), so the workflow's
@@ -269,12 +307,14 @@ export function runRemediateLand(
         }
       }
     }
-    patchAttemptRecord(cwd, taskId, { landingBlocked: failure });
+    const preserved = preservationNote(taskId, record, failure);
+    patchAttemptRecord(cwd, taskId, { landingBlocked: `${failure}${preserved}` });
     return {
       outcome: 'landing-failed',
       error:
-        `${failure}${rowsDisclosure}\nThe landing record is kept at ${landingRecordPath(taskId)}; ` +
-        `re-run \`remediate land --task ${taskId}\` to retry once the cause is fixed.`,
+        `${failure}${rowsDisclosure}${preserved}\nThe landing record is kept at ` +
+        `${landingRecordPath(taskId)}; re-run \`remediate land --task ${taskId}\` to retry once ` +
+        'the cause is fixed.',
     };
   }
 }
@@ -282,9 +322,14 @@ export function runRemediateLand(
 /** The CLI wrapper: report + truthful exit code. `seams` are test-only
  *  (production passes nothing), the same injection `runRemediateLand`
  *  takes, so the report + exit-code layer is pinned end to end. */
-export function runRemediateLandCli(cwd: string, taskId: string, seams: LandCliSeams = {}): void {
+export function runRemediateLandCli(
+  cwd: string,
+  taskId: string,
+  seams: LandCliSeams = {},
+  preflightFailure?: PreflightFailure,
+): void {
   logger.header(`dxkit remediate land: ${taskId}`);
-  const result = runRemediateLand(cwd, taskId, seams);
+  const result = runRemediateLand(cwd, taskId, seams, preflightFailure);
   switch (result.outcome) {
     case 'no-record':
       logger.info(result.note);
@@ -309,8 +354,17 @@ export function runRemediateLandCli(cwd: string, taskId: string, seams: LandCliS
     case 'invalid-record':
     case 'stale-head':
     case 'landing-failed':
+    case 'landing-blocked':
       logger.fail(result.error);
       break;
   }
-  if (!landExitClean(result)) process.exitCode = 1;
+  if (!landExitClean(result)) {
+    // A landing that did not complete is visible from the run page and the
+    // run summary, never only in the step log (#375): the annotation and
+    // the summary carry the same text the console printed.
+    const text = 'error' in result ? result.error : 'note' in result ? result.note : result.outcome;
+    logger.ciAnnotate('error', `remediate ${taskId} did not land: ${text.split('\n')[0]}`);
+    appendStepSummary(`## dxkit remediate: ${taskId} did not land\n\n${text}`);
+    process.exitCode = 1;
+  }
 }

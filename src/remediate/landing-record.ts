@@ -28,7 +28,7 @@
  */
 import * as fs from 'fs';
 import * as path from 'path';
-import { remediateBranchFor } from '../lanes/branches';
+import { remediateBranchFor, remediatePendingBranchFor } from '../lanes/branches';
 import type { OrderOutcomeRow } from '../lanes/order-ledger';
 import { isRemediateOutcome, type RemediateOutcome } from './outcome';
 
@@ -89,11 +89,32 @@ export interface LandingRecord {
   /** Set by a failed land attempt whose bookkeeping commit advanced HEAD,
    *  disclosed so a retry knows why the expected head moved. */
   readonly headAdvancedNote?: string;
+  /**
+   * The pending ref the task step pushed the verified work to (#375),
+   * present only when that push succeeded. Recomputed from the task id
+   * and cross-checked at read time, never trusted from disk. A successful
+   * `remediate land` deletes the ref it names (the ONE deleter).
+   */
+  readonly pendingRef?: string;
+  /** The Actions run that verified the work (an https URL), carried so a
+   *  re-landing by a later run can name where the evidence lives. */
+  readonly runUrl?: string;
 }
 
 /** Repo-relative record path for a task. */
 export function landingRecordPath(taskId: string): string {
   return `.dxkit/cache/remediate-landing-${taskId}.json`;
+}
+
+/**
+ * Where the record lives ON THE PENDING REF (#375): committed in the same
+ * `.dxkit/lanes/` directory the run ledger uses (`.dxkit/cache/` is
+ * gitignored, so it cannot ride a commit), on the pending ref only, never
+ * on the standing branch. The next run's plan step reads it from the
+ * ref's tip through `parseLandingRecord`.
+ */
+export function pendingLandingRecordPath(taskId: string): string {
+  return `.dxkit/lanes/remediate-${taskId}.landing.json`;
 }
 
 /** Write the record (the executor's deferred exit). Throws on I/O failure
@@ -127,6 +148,7 @@ export function clearLandingRecord(cwd: string, taskId: string): void {
 
 const TASK_ID_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const HEX_SHA_RE = /^[0-9a-f]{7,64}$/;
+const HTTPS_URL_RE = /^https:\/\/\S+$/;
 // A branch/ref name we are willing to pass to git/gh: no leading '-' (never
 // readable as a flag), no whitespace, no '..' (refname + traversal safety).
 const REF_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._/-]*$/;
@@ -161,18 +183,35 @@ export function readLandingRecord(cwd: string, taskId: string): LandingRecordRea
   } catch {
     return null;
   }
+  return parseLandingRecord(raw, taskId, landingRecordPath(taskId));
+}
+
+/**
+ * Parse + VALIDATE raw record text: the ONE validator (Rule 2.30), behind
+ * both readers (the runtime file under `.dxkit/cache/`, and the copy the
+ * pending ref carries, read from a git object by the re-land). `source`
+ * names where the text came from, for the error's remedy.
+ */
+export function parseLandingRecord(
+  raw: string,
+  taskId: string,
+  source: string,
+): { readonly record: LandingRecord } | { readonly error: string } {
+  if (!TASK_ID_RE.test(taskId)) {
+    return { error: `invalid task id '${taskId}': expected lowercase letters/digits/dashes` };
+  }
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
   } catch {
     return {
-      error: `landing record at ${landingRecordPath(taskId)} is not valid JSON; re-run the task to regenerate it`,
+      error: `landing record at ${source} is not valid JSON; re-run the task to regenerate it`,
     };
   }
   const r = parsed as Partial<LandingRecord>;
   const bad = (why: string): { error: string } => ({
     error:
-      `landing record at ${landingRecordPath(taskId)} failed validation (${why}): ` +
+      `landing record at ${source} failed validation (${why}): ` +
       `refusing to push from it; re-run the task to regenerate the record`,
   });
   if (r.schema !== LANDING_RECORD_SCHEMA) {
@@ -199,6 +238,14 @@ export function readLandingRecord(cwd: string, taskId: string): LandingRecordRea
     r.orderRows.some((row) => typeof row !== 'object' || row === null)
   ) {
     return bad('orderRows is not an array of row objects');
+  }
+  // The pending ref is CROSS-CHECKED like the branch: the record names
+  // which ref a successful landing deletes, so it must be the task's own.
+  if (r.pendingRef !== undefined && r.pendingRef !== remediatePendingBranchFor(taskId)) {
+    return bad(`pending ref '${String(r.pendingRef)}' is not the task's pending ref`);
+  }
+  if (r.runUrl !== undefined && (typeof r.runUrl !== 'string' || !HTTPS_URL_RE.test(r.runUrl))) {
+    return bad('runUrl is not an https URL');
   }
   if (r.action === 'land') {
     if (typeof r.head !== 'string' || !HEX_SHA_RE.test(r.head)) {

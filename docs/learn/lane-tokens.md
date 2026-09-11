@@ -83,13 +83,21 @@ takes three precautions:
   the task, the agent's wall-clock budget is not clamped to the token
   lifetime (workflows installed before 4.4.7 still land inline and keep
   the 45-minute App-tier clamp until `vyuh-dxkit update` refreshes
-  them);
+  them). The task step also pushes the verified head (plus the landing
+  record) to the task's pending ref, `dxkit/remediate-<task>-pending`,
+  before the land step runs, so a landing that never completes leaves
+  the work on the remote; the next run's plan step re-lands it first,
+  and a successful landing deletes the ref;
 - it treats the credential like any other delivery precondition: the
   workflow installs exactly **one** credential (the checkout persists
   none), asserts that exactly one exists, and **proves it with a live
   `ls-remote` before the agent spawns**. A broken credential fails the
   run at zero agent cost, at setup — never at delivery after the budget
-  is spent.
+  is spent. The landing-time proof retries three times with backoff (a
+  freshly minted installation token can answer "Repository not found"
+  for a few seconds) and, when every attempt fails, discloses
+  `landing-blocked: credential preflight failed after 3 attempts (...)`
+  in the run summary and the job annotations instead of a raw exit 128.
 
 ## Verifying what a repo will use
 

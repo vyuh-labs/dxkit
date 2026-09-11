@@ -33,11 +33,12 @@ import { remediateStamp } from './work-orders/breaker';
 import {
   currentHead,
   describeLandingFailure,
+  finalizeTaskRun,
   writeAttemptRecord,
   writeProvisionalRecord,
 } from './attempt-record';
 import { deferredLandingRequested } from './landing-record';
-import { deferLanding, deferPublishRows } from './defer';
+import { deferLanding, deferPublishRows, type DeferSeams } from './defer';
 
 // Attempt-record helpers live in `./attempt-record` (module-size split);
 // re-exported so consumers keep one import surface.
@@ -101,6 +102,9 @@ export interface ExecutorSeams extends LandingPreflightSeams {
   /** Injected for tests: the environment the deferred-landing signal is
    *  read from (production reads process.env). */
   readonly env?: Readonly<Record<string, string | undefined>>;
+  /** Injected for tests: the pending-ref push a deferred landing makes
+   *  (#375; production pushes through real git). */
+  readonly pushPending?: DeferSeams['pushPending'];
 }
 
 /** Executor extras beyond the positional contract (kept separate from the
@@ -342,17 +346,24 @@ export async function executeTask(
     // Everything up to and including verification + PR-body assembly ran;
     // the pushes now ride the landing record for the workflow's
     // fresh-credential `remediate land` step (`./defer`).
-    const outcome = deferLanding(cwd, {
-      taskId,
-      result,
-      defaultBranch,
-      prTitle,
-      prBody,
-      draft,
-      ledgerPath,
-      runLedgerPath: runLedgerRel,
-      orderRows,
-    });
+    const outcome = deferLanding(
+      cwd,
+      {
+        taskId,
+        result,
+        defaultBranch,
+        prTitle,
+        prBody,
+        draft,
+        ledgerPath,
+        runLedgerPath: runLedgerRel,
+        orderRows,
+      },
+      {
+        ...(seams.pushPending ? { pushPending: seams.pushPending } : {}),
+        ...(seams.env ? { env: seams.env } : {}),
+      },
+    );
     if (!outcome.deferred) {
       return finalizeTaskRun(cwd, taskId, {
         result,
@@ -438,43 +449,6 @@ export async function executeTask(
     // resume, but the task did not end well — the job stays red.
     clean: result.outcome === 'verified' || draftSalvage,
   });
-}
-
-/**
- * Every executeTask exit funnels through here: write the machine-readable
- * attempt record (the workflow's artifact step reads it to upload the diff
- * of a blocked/failed attempt — evidence must survive the ephemeral runner)
- * and, under Actions, annotate a not-landed attempt so it is visible from
- * the run page without opening logs.
- */
-function finalizeTaskRun(cwd: string, taskId: string, run: TaskRun): TaskRun {
-  writeAttemptRecord(cwd, taskId, run);
-  if (run.landingBlocked) {
-    logger.warn(run.landingBlocked);
-  }
-  if (run.landingDeferred) {
-    logger.info(run.landingDeferred);
-  }
-  if (!run.clean) {
-    // A non-clean outcome must be diagnosable from the run page: the agent
-    // phase group otherwise closes with ZERO output (the driver captures the
-    // CLI's streams), so the failure's own evidence — the driver-reported
-    // cause and the transcript tail — surfaces in the LOG here. Log only,
-    // never the ledger/PR body.
-    if (run.result.envelope?.failure) {
-      logger.warn(`driver-reported failure: ${run.result.envelope.failure}`);
-    }
-    if (run.result.transcriptTail) {
-      logger.warn(`agent transcript (last lines):\n${run.result.transcriptTail}`);
-    }
-  }
-  if (process.env.GITHUB_ACTIONS === 'true' && !run.clean) {
-    const first = (run.landingBlocked ?? run.result.note ?? run.result.outcome).split('\n')[0];
-    process.stdout.write(
-      `::warning title=remediate ${taskId} did not land::${run.result.outcome}: ${first}\n`,
-    );
-  }
-  return run;
 }
 
 /** Credentials the configured driver declares, read from THIS process env

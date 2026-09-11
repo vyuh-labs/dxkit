@@ -22,14 +22,26 @@ import { renderWorkOrderSummary } from './work-orders/render';
 import type { WorkOrderPlan } from './work-orders/types';
 import type { ClassPause } from './work-orders/breaker';
 import { deriveScheduledMatrix } from './work-orders/schedule';
+import {
+  describePendingReland,
+  relandPendingWork,
+  type PendingRelandOutcome,
+  type RelandSeams,
+} from './pending-reland';
 
 export interface RemediatePlanOptions {
   readonly json?: boolean;
   /** Run the live correctness floor for the work-order plan (default: read
    *  the baseline's recorded envelope, so the plan stays a $0 dry-run). */
   readonly withFloor?: boolean;
+  /** Re-land any pending ref (un-landed verified work a prior run pushed,
+   *  #375) BEFORE planning: the workflow's plan step sets this; a local
+   *  plan never fetches or pushes. */
+  readonly relandPending?: boolean;
   /** Injected for tests (a fake floor run, a fixed clock). */
   readonly gather?: GatherWorkOrderOptions;
+  /** Injected for tests: the re-land's git/land seams. */
+  readonly relandSeams?: RelandSeams;
 }
 
 /** Human phrasing of which floor source the work-order plan read. */
@@ -108,6 +120,13 @@ export async function runRemediatePlan(
 
   const availability = driver ? driver.available(cwd) : undefined;
 
+  // Un-landed verified work FIRST (#375): a prior run's pending ref is
+  // re-landed through the one lander before this run plans anything, so
+  // the plan reads a standing branch that holds it. Disclosed per ref.
+  const pendingLandings: readonly PendingRelandOutcome[] = opts.relandPending
+    ? relandPendingWork(cwd, config.tasks, opts.relandSeams)
+    : [];
+
   // The work-order plan (remediate rethink, section 3A): the finite units the
   // lane would dispatch, from the live entry floor + debt + deferrals via the
   // ONE gather adapter (circuit-breaker pauses applied there). Fail-open: a
@@ -176,6 +195,10 @@ export async function runRemediatePlan(
           matrixNoOpenOrders: matrix.noOpenOrders,
           matrixLegacyOpenEnded: matrix.legacyOpenEnded,
           matrixDisclosures: matrix.disclosures,
+          /** Pending refs (un-landed verified work from a prior run) this
+           *  plan re-landed, skipped (reason named) or could not check;
+           *  empty unless --reland-pending found one (#375). */
+          pendingLandings,
           /** Classes the circuit breaker paused (orders carry per-order
            *  marks; this is the class-level summary with the reasons). */
           pausedClasses: pauses,
@@ -255,6 +278,10 @@ export async function runRemediatePlan(
         : ' (no remediate.maxSpendPerRun ceiling declared)'),
   );
   logger.info(`schedule (managed workflow): ${config.schedule}`);
+  for (const p of pendingLandings) {
+    if (p.outcome === 'relanded') logger.info(describePendingReland(p));
+    else logger.warn(describePendingReland(p));
+  }
   // Which prior the plan's debt came from (#387): the same anchor-first read
   // the guardrail uses, phrased once (`describePriorSource`).
   logger.info(
@@ -316,15 +343,19 @@ export async function runRemediatePlan(
   // prober the $0 preflight and doctor consume. Fail-open: an unverifiable
   // probe is one dim line, never a warning — the plan must not invent a
   // refusal it cannot evidence.
-  // Both branches of each task's pair are probed (the ONE pair builder):
+  // Every ref of each task's triple is probed (the ONE triple builder):
   // a salvage lands on the attempt branch while the standing PR holds
-  // verified work (#372). An attempt-branch-only block is a warning here,
-  // not a failure: it bites only in that situation, and the executor's
-  // preflight refuses then, naming it.
-  const pairs = config.tasks.map((t) => remediateBranchesFor(t));
-  const attemptBranches = new Set(pairs.map((p) => p.attempt));
+  // verified work (#372), and the task step pushes un-landed verified
+  // work to the pending ref (#375). An attempt- or pending-only block is
+  // a warning here, not a failure: the attempt block bites only while the
+  // standing PR holds verified work (the executor's preflight refuses
+  // then, naming it), and a blocked pending ref costs the durable copy,
+  // never the landing.
+  const triples = config.tasks.map((t) => remediateBranchesFor(t));
+  const attemptBranches = new Set(triples.map((p) => p.attempt));
+  const pendingRefs = new Set(triples.map((p) => p.pending));
   const delivery = probeDeliveryPreconditions(process.cwd(), {
-    branches: pairs.flatMap((p) => [p.standing, p.attempt]),
+    branches: triples.flatMap((p) => [p.standing, p.attempt, p.pending]),
   });
   if (delivery.unverifiable) {
     logger.dim(
@@ -333,7 +364,12 @@ export async function runRemediatePlan(
   } else {
     for (const p of delivery.probes) {
       if (p.verdict === 'ok') logger.info(`  delivery ${p.branch}: OK`);
-      else if (p.verdict === 'blocked' && !attemptBranches.has(p.branch)) {
+      else if (p.verdict === 'blocked' && pendingRefs.has(p.branch)) {
+        logger.warn(
+          `  delivery ${describeDeliveryProbe(p)} (the pending ref: only preserves un-landed ` +
+            'verified work across runs; a landing does not depend on it)',
+        );
+      } else if (p.verdict === 'blocked' && !attemptBranches.has(p.branch)) {
         logger.fail(`  delivery ${describeDeliveryProbe(p)}`);
       } else if (p.verdict === 'blocked') {
         logger.warn(

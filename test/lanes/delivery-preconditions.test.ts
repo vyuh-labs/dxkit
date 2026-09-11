@@ -10,6 +10,7 @@ import {
   DEP_BUMP_BRANCH,
   remediateAttemptBranchFor,
   remediateBranchFor,
+  remediatePendingBranchFor,
 } from '../../src/lanes/branches';
 import { REMEDIATE_TASKS } from '../../src/remediate/tasks';
 
@@ -38,6 +39,9 @@ describe('standingLaneBranches', () => {
       // The attempt branch a salvage takes when the standing PR is
       // preserved (#372) is pushed by the lander, so it is probed too.
       expect(branches).toContain(remediateAttemptBranchFor(t.id));
+      // The pending ref the task step pushes un-landed verified work to
+      // (#375) is pushed by the task step, so it is probed too.
+      expect(branches).toContain(remediatePendingBranchFor(t.id));
     }
   });
 });

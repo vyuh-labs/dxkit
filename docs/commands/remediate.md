@@ -295,7 +295,25 @@ token through one chain, best tier first:
    standing branch, opening/updating the PR, and recording the
    order-outcome ledger. The step runs even after a failed task, so a
    salvage draft still lands, and it is idempotent (a re-run with no
-   record is a disclosed no-op). Because the delivery credential is
+   record is a disclosed no-op). Un-landed verified work is durable:
+   right after the record is written, the task step also pushes the
+   verified head plus one bookkeeping commit (the record and the run's
+   ledger files, under `.dxkit/lanes/`) to the task's pending ref,
+   `dxkit/remediate-<task>-pending`, under the credential it already
+   holds. The land step's credential proof (`git ls-remote`) retries
+   three times with backoff (10s, 30s) before it is fatal; when every
+   attempt fails, `remediate land --preflight-failed` phrases the one
+   `landing-blocked: credential preflight failed after N attempts (...)`
+   disclosure into the log, the job annotations, the run summary and the
+   attempt record, pushes nothing, and the record uploads as the
+   `remediate-<task>-landing` run artifact (14 days). The next run's plan
+   step (`remediate plan --reland-pending`) fetches each task's pending
+   ref, validates the record against the ref's tip (exactly one record
+   commit atop the recorded verified head), and re-lands it through the
+   same `remediate land` before planning new work; an invalid ref is
+   skipped with the reason and left in place, and a re-land that fails
+   again is disclosed. A successful landing (either run) deletes the
+   pending ref. Local runs (no `--land pr`) never touch it. Because the delivery credential is
    minted at delivery time, the agent budget is no longer clamped to
    the token lifetime (older installed workflows that still land inline
    keep the 45-minute clamp until `vyuh-dxkit update` refreshes them;

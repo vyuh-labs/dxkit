@@ -408,6 +408,14 @@ export async function run(argv: string[]): Promise<void> {
       // dispatch: overrides a circuit-breaker pause on the task's classes
       // for this one run. Never inferred from ambient environment.
       'dispatch-override': { type: 'boolean', default: false },
+      // `remediate land --task <t> --preflight-failed <err> --preflight-attempts <n>`
+      // (#375): the workflow's land step reports a failed credential
+      // preflight so the CLI discloses it in ONE phrasing; nothing pushes.
+      'preflight-failed': { type: 'string' },
+      'preflight-attempts': { type: 'string' },
+      // `remediate plan --reland-pending`: the workflow's plan step re-lands
+      // any pending ref (un-landed verified work) before planning new work.
+      'reland-pending': { type: 'boolean', default: false },
       verbose: { type: 'boolean', default: false },
       'no-save': { type: 'boolean', default: false },
       detailed: { type: 'boolean', default: false },
@@ -3327,13 +3335,29 @@ export async function run(argv: string[]): Promise<void> {
           process.exitCode = 1;
           break;
         }
-        runRemediateLandCli(resolveRepoPath(positionals[2]), landTaskId);
+        const preflightError = values['preflight-failed'] as string | undefined;
+        const preflightAttempts = Number.parseInt(
+          (values['preflight-attempts'] as string | undefined) ?? '',
+          10,
+        );
+        runRemediateLandCli(
+          resolveRepoPath(positionals[2]),
+          landTaskId,
+          {},
+          preflightError !== undefined
+            ? {
+                attempts: Number.isFinite(preflightAttempts) ? preflightAttempts : 1,
+                lastError: preflightError,
+              }
+            : undefined,
+        );
         break;
       }
       if (positionals[1] === 'plan') {
         await runRemediatePlan(resolveRepoPath(positionals[2]), {
           json: !!values.json,
           withFloor: !!values['with-floor'],
+          relandPending: !!values['reland-pending'],
         });
         break;
       }

@@ -22,8 +22,30 @@ import {
   landingRecordPath,
   writeLandingRecord,
   LANDING_RECORD_SCHEMA,
+  type LandingRecord,
 } from './landing-record';
 import type { RemediateResult } from './outcome';
+import { landingArtifactName, pushPendingRef } from './pending-ref';
+
+/** The Actions run URL from the ambient environment, or undefined (a
+ *  local deferred run). Carried on the record so a later re-land can name
+ *  where the verification evidence lives. */
+export function runUrlFromEnv(
+  env: Readonly<Record<string, string | undefined>>,
+): string | undefined {
+  const server = env.GITHUB_SERVER_URL;
+  const repo = env.GITHUB_REPOSITORY;
+  const run = env.GITHUB_RUN_ID;
+  if (!server || !repo || !run || !/^https:\/\/\S+$/.test(server)) return undefined;
+  return `${server}/${repo}/actions/runs/${run}`;
+}
+
+/** Injection seams for `deferLanding` (tests only; production passes
+ *  nothing). */
+export interface DeferSeams {
+  readonly pushPending?: typeof pushPendingRef;
+  readonly env?: Readonly<Record<string, string | undefined>>;
+}
 
 /**
  * Defer a non-landing run's order-outcome rows: the circuit breaker's
@@ -89,24 +111,28 @@ export function deferLanding(
     readonly runLedgerPath: string | null;
     readonly orderRows: readonly OrderOutcomeRow[];
   },
+  seams: DeferSeams = {},
 ): DeferLandingOutcome {
+  const runUrl = runUrlFromEnv(seams.env ?? process.env);
+  const record: LandingRecord = {
+    schema: LANDING_RECORD_SCHEMA,
+    task: args.taskId,
+    action: 'land',
+    branch: remediateBranchFor(args.taskId),
+    head: currentHead(cwd) ?? args.result.head ?? null,
+    outcome: args.result.outcome,
+    ...(args.result.baseHead ? { baseHead: args.result.baseHead } : {}),
+    defaultBranch: args.defaultBranch,
+    prTitle: args.prTitle,
+    prBody: args.prBody,
+    draft: args.draft,
+    ledgerPath: args.ledgerPath,
+    ...(args.runLedgerPath ? { runLedgerPath: args.runLedgerPath } : {}),
+    orderRows: args.orderRows,
+    ...(runUrl ? { runUrl } : {}),
+  };
   try {
-    writeLandingRecord(cwd, {
-      schema: LANDING_RECORD_SCHEMA,
-      task: args.taskId,
-      action: 'land',
-      branch: remediateBranchFor(args.taskId),
-      head: currentHead(cwd) ?? args.result.head ?? null,
-      outcome: args.result.outcome,
-      ...(args.result.baseHead ? { baseHead: args.result.baseHead } : {}),
-      defaultBranch: args.defaultBranch,
-      prTitle: args.prTitle,
-      prBody: args.prBody,
-      draft: args.draft,
-      ledgerPath: args.ledgerPath,
-      ...(args.runLedgerPath ? { runLedgerPath: args.runLedgerPath } : {}),
-      orderRows: args.orderRows,
-    });
+    writeLandingRecord(cwd, record);
   } catch (err) {
     return {
       deferred: false,
@@ -116,10 +142,32 @@ export function deferLanding(
         `(${err instanceof Error ? err.message.split('\n')[0] : String(err)})`,
     };
   }
+  // Durability (#375): the verified head + the record ride the task's
+  // pending ref under the credential this step already holds, BEFORE the
+  // land step runs, so a landing that never completes leaves the work on
+  // the remote. The record then names the ref a successful landing deletes.
+  // Best-effort and disclosed either way: a failed push costs the durable
+  // copy (the run artifact remains), never the landing.
+  const push = (seams.pushPending ?? pushPendingRef)(cwd, record);
+  if (push.pushed) {
+    try {
+      writeLandingRecord(cwd, { ...record, pendingRef: push.ref });
+    } catch {
+      // the record on disk still validates; only the delete-after-landing
+      // convenience is lost, and the next plan step skips a landed tip
+    }
+  }
+  const preserved = push.pushed
+    ? `A copy of the verified work is preserved on '${push.ref}': if this landing is blocked, ` +
+      'the next run re-lands it.'
+    : `The verified work could NOT be preserved on '${push.ref}' (${push.note}): if this ` +
+      `landing is blocked, it survives only in the run artifact ` +
+      `'${landingArtifactName(args.taskId)}' (14 days).`;
   return {
     deferred: true,
     landingDeferred:
       `landing deferred: the verified work is recorded at ${landingRecordPath(args.taskId)} ` +
-      "for the workflow's `remediate land` step, which pushes under a freshly minted credential.",
+      "for the workflow's `remediate land` step, which pushes under a freshly minted " +
+      `credential. ${preserved}`,
   };
 }
