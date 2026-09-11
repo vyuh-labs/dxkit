@@ -51,14 +51,15 @@ export interface DeliveryPreconditions {
 
 /** The branch names the lanes deliver on, derived from the same canonical
  *  constants the landers use, never a second list. Each remediate task
- *  contributes its standing branch AND its attempt branch (a salvage lands
- *  there when the standing PR holds a verified landing, #372), so the
- *  probed set stays the pushed set. */
+ *  contributes its standing branch, its attempt branch (a salvage lands
+ *  there when the standing PR holds a verified landing, #372) AND its
+ *  pending ref (the task step pushes un-landed verified work there, #375),
+ *  so the probed set stays the pushed set. */
 export function standingLaneBranches(): string[] {
   return [
     ...REMEDIATE_TASKS.flatMap((t) => {
-      const pair = remediateBranchesFor(t.id);
-      return [pair.standing, pair.attempt];
+      const branches = remediateBranchesFor(t.id);
+      return [branches.standing, branches.attempt, branches.pending];
     }),
     DEP_BUMP_BRANCH,
   ];

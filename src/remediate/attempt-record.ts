@@ -17,10 +17,15 @@
  *   - FINAL, at every executor exit (pre-push with landed:false, then
  *     overwritten by finalize), so the workflow's artifact step can upload
  *     the diff of a blocked or failed attempt.
+ *
+ * `finalizeTaskRun`, the executor's one exit funnel (the final write plus
+ * the run-page annotation), lives here too (moved verbatim from
+ * `execute.ts` at the module-size bar).
  */
 import * as fs from 'fs';
 import * as path from 'path';
 import { execFileSync } from 'child_process';
+import * as logger from '../logger';
 import type { TaskRun } from './execute';
 import type { LandingDisclosure } from './land';
 
@@ -81,6 +86,32 @@ export function describeLandingFailure(err: unknown): string {
   );
 }
 
+/**
+ * Phrase a credential-preflight failure (#375): the workflow's land step
+ * proves its fresh credential with a bounded, backed-off `ls-remote` before
+ * `remediate land` runs; when every attempt fails, the step hands the
+ * attempt count and the last error to the CLI and THIS is the one wording
+ * that reaches the log, the job annotation, the run summary and the
+ * attempt record (the template never phrases it in bash).
+ */
+export function describePreflightFailure(attempts: number, lastError: string): string {
+  const err = lastError.trim().split('\n')[0] || 'no error output';
+  return `landing-blocked: credential preflight failed after ${attempts} attempts (${err})`;
+}
+
+/**
+ * Phrase where un-landed verified work survives (#375): ONE wording for
+ * the console, the JSON/attempt record, the run summary and the re-landed
+ * PR body. `pendingRef` is the ref the task step pushed the work to;
+ * `why` names what blocked the landing.
+ */
+export function describePendingPreservation(pendingRef: string, why: string): string {
+  return (
+    `verified work preserved on '${pendingRef}' (landing blocked: ${why.split('\n')[0]}); ` +
+    'the next run re-lands it'
+  );
+}
+
 /** HEAD of the checkout, or null (evidence plumbing, never a failure). */
 export function currentHead(cwd: string): string | null {
   try {
@@ -108,6 +139,43 @@ export function writeAttemptRecord(cwd: string, taskId: string, run: TaskRun): v
   } catch {
     // the record is evidence plumbing, never a failure
   }
+}
+
+/**
+ * Every executeTask exit funnels through here: write the machine-readable
+ * attempt record (the workflow's artifact step reads it to upload the diff
+ * of a blocked/failed attempt — evidence must survive the ephemeral runner)
+ * and, under Actions, annotate a not-landed attempt so it is visible from
+ * the run page without opening logs.
+ */
+export function finalizeTaskRun(cwd: string, taskId: string, run: TaskRun): TaskRun {
+  writeAttemptRecord(cwd, taskId, run);
+  if (run.landingBlocked) {
+    logger.warn(run.landingBlocked);
+  }
+  if (run.landingDeferred) {
+    logger.info(run.landingDeferred);
+  }
+  if (!run.clean) {
+    // A non-clean outcome must be diagnosable from the run page: the agent
+    // phase group otherwise closes with ZERO output (the driver captures the
+    // CLI's streams), so the failure's own evidence — the driver-reported
+    // cause and the transcript tail — surfaces in the LOG here. Log only,
+    // never the ledger/PR body.
+    if (run.result.envelope?.failure) {
+      logger.warn(`driver-reported failure: ${run.result.envelope.failure}`);
+    }
+    if (run.result.transcriptTail) {
+      logger.warn(`agent transcript (last lines):\n${run.result.transcriptTail}`);
+    }
+  }
+  if (process.env.GITHUB_ACTIONS === 'true' && !run.clean) {
+    const first = (run.landingBlocked ?? run.result.note ?? run.result.outcome).split('\n')[0];
+    process.stdout.write(
+      `::warning title=remediate ${taskId} did not land::${run.result.outcome}: ${first}\n`,
+    );
+  }
+  return run;
 }
 
 /** The record's projection of what a landing left behind (#372): the

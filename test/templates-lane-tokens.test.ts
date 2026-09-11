@@ -34,7 +34,8 @@ import {
   LANE_TOKEN_SUBSTITUTIONS,
   LANE_TOKEN_TASK_STEPS,
 } from '../src/lanes/lane-token';
-import { DEFERRED_LANDING_ENV } from '../src/remediate/landing-record';
+import { DEFERRED_LANDING_ENV, landingRecordPath } from '../src/remediate/landing-record';
+import { landingArtifactName } from '../src/remediate/pending-ref';
 import {
   INSTALL_DEPS_PLACEHOLDER,
   defaultResolvedTolerances,
@@ -384,6 +385,43 @@ describe('workflow-template token discipline', () => {
     // The fresh mint prefers itself in the landing chain (delivery-time
     // lifetime), then falls through the earlier tiers.
     expect(rendered).toContain('steps.dxkit-app-token-land.outputs.token');
+  });
+
+  it('the remediate lane keeps un-landed verified work durable and retries the landing preflight (#375)', () => {
+    const content = fs.readFileSync(path.join(WORKFLOWS, 'dxkit-remediate.yml'), 'utf8');
+    const rendered = renderForParse(content);
+    // The land step's credential proof is bounded + backed off (3 attempts,
+    // 10s/30s), and a final failure hands the count + last error to the
+    // CLI, which owns the ONE `landing-blocked:` phrasing: the template
+    // never phrases it in bash.
+    const landStep = stepsOf('dxkit-remediate.yml', content).find((s) =>
+      s.header.includes('Land the deferred work (fresh credential)'),
+    );
+    expect(landStep).toBeDefined();
+    expect(landStep!.body).toContain('for DELAY in 10 30 0; do');
+    expect(landStep!.body).toContain('git ls-remote --heads origin');
+    expect(landStep!.body).toContain(
+      'remediate land --task "${{ matrix.task }}" --preflight-failed "$LAST_ERR" --preflight-attempts "$ATTEMPT"',
+    );
+    expect(landStep!.body).not.toContain('landing-blocked');
+    // The un-landed record uploads as the artifact named from the ONE
+    // helper, at the record path the CLI reads, after the land step and
+    // before the attempt-diff collection.
+    expect(content).toContain(`name: ${landingArtifactName('${{ matrix.task }}')}`);
+    expect(content).toContain(`path: ${landingRecordPath('${{ matrix.task }}')}`);
+    const landIdx = rendered.indexOf('- name: Land the deferred work (fresh credential)');
+    const preserveIdx = rendered.indexOf('- name: Preserve the un-landed landing record');
+    const collectIdx = rendered.indexOf('- name: Collect the attempt diff');
+    expect(preserveIdx).toBeGreaterThan(landIdx);
+    expect(collectIdx).toBeGreaterThan(preserveIdx);
+    // The plan job re-lands a pending ref FIRST, so it carries the lane
+    // token (its checkout + the plan step's gh credential) and the flag.
+    const planJob = content.slice(content.indexOf('  plan:'), content.indexOf('  remediate:'));
+    expect(planJob).toContain('__DXKIT_LANE_TOKEN_STEPS__');
+    expect(planJob).toContain('token: __DXKIT_LANE_TOKEN__');
+    expect(planJob).toContain('GH_TOKEN: __DXKIT_LANE_TOKEN__');
+    expect(planJob).toContain('remediate plan --json --reland-pending');
+    expect(planJob).toContain('pendingLandings');
   });
 });
 
