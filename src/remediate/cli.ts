@@ -21,7 +21,6 @@
  * SCHEDULED workflow (unattended); a human at a terminal is its own consent.
  * The local CLI is the trusted boundary (bump-lane doctrine).
  */
-import * as fs from 'fs';
 import * as logger from '../logger';
 import { resolveRemediateConfig, tasksWithinSpendCeiling } from './config';
 import { staleDispatchWorkflowNote } from './dispatch';
@@ -45,21 +44,15 @@ export {
   runRemediateLand,
   runRemediateLandCli,
   type LandCliSeams,
+  type PreflightFailure,
   type RemediateLandOutcome,
 } from './land-cli';
+import { appendStepSummary } from '../lanes/step-summary';
 import { headCommit, resetHardTo, runConfiguredLoop } from './configured-loop';
 import { executeTask, taskRunJson, type TaskRun } from './execute';
 
-/** Append a ledger to the GitHub Actions step summary when running in CI. */
-function appendStepSummary(ledger: string): void {
-  const file = process.env.GITHUB_STEP_SUMMARY;
-  if (!file) return;
-  try {
-    fs.appendFileSync(file, ledger + '\n\n', 'utf8');
-  } catch {
-    // summary is best-effort decoration — never a failure
-  }
-}
+// The step-summary writer lives in `../lanes/step-summary` (shared with the
+// land step's blocked-landing disclosure, #375).
 
 function reportTaskRun(run: TaskRun, json: boolean): void {
   if (json) return; // aggregate JSON is emitted by the caller
@@ -189,6 +182,7 @@ export function remediateUsage(): string {
   return (
     `usage: vyuh-dxkit remediate --task <${REMEDIATE_TASKS.map((t) => t.id).join('|')}> ` +
     `[--land pr] [--dispatch-override] [--json] | remediate configured [--land pr] | ` +
-    `remediate plan | remediate land --task <t>`
+    `remediate plan [--reland-pending] | remediate land --task <t> ` +
+    `[--preflight-failed <error> --preflight-attempts <n>]`
   );
 }
