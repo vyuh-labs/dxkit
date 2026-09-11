@@ -37,7 +37,7 @@ jobs:
 
       - uses: actions/setup-node@v6
         with:
-          node-version: '22'
+          node-version: '{{NODE_VERSION}}'
 
       # Toolchain(s) for the packs placed on this host, rendered from their
       # pack-declared ciSetup (Rule 6) with the repo's DETECTED versions.

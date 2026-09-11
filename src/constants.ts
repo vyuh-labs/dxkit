@@ -23,6 +23,27 @@ function readPackageVersion(): string {
 
 export const VERSION = readPackageVersion();
 
+/**
+ * The Node major dxkit itself requires: the `engines.node` floor of the
+ * shipped package.json, read from the ONE place it is declared. `doctor`'s
+ * runtime check reads this instead of carrying its own integer, so the floor
+ * moves once (in package.json) and the check + its remedy follow.
+ */
+function readPackageNodeEngineFloor(): number {
+  try {
+    const pkgPath = path.join(__dirname, '..', 'package.json');
+    const raw = fs.readFileSync(pkgPath, 'utf-8');
+    const engine = (JSON.parse(raw) as { engines?: { node?: string } }).engines?.node ?? '';
+    const m = engine.match(/(\d+)/);
+    if (m) return parseInt(m[1], 10);
+  } catch {
+    /* fall through to the declared floor */
+  }
+  return 22;
+}
+
+export const NODE_ENGINE_FLOOR = readPackageNodeEngineFloor();
+
 type LangVersionKey = keyof DetectedStack['versions'];
 
 /**
@@ -46,6 +67,31 @@ export const DEFAULT_VERSIONS = {
 
 export const DEFAULT_COVERAGE = '80';
 
+/**
+ * The per-pack `<KEY>_VERSION` template variables (`NODE_VERSION`,
+ * `PYTHON_VERSION`, ...) for a repo's detected versions, the ONE substitution
+ * source for every template that names a language runtime, whether rendered
+ * by the generator (`AGENTS.md`'s `## Node.js {{NODE_VERSION}}`) or by the
+ * workflow writer (`node-version: '{{NODE_VERSION}}'` in every generated
+ * `setup-node` step). Detected value first (the pack's `detectVersion`, via
+ * `detect(cwd).versions`), else the pack's `defaultVersion`, so a customer
+ * that declares Node 20 keeps running its gate on 20 and a repo that declares
+ * nothing gets the pack default. Adding a pack with a `defaultVersion`
+ * auto-extends the vocabulary.
+ */
+export function packVersionVariables(
+  versions: Partial<DetectedStack['versions']>,
+): Record<string, string> {
+  const v: Record<string, string> = {};
+  for (const lang of LANGUAGES) {
+    if (lang.defaultVersion === undefined) continue;
+    const key = lang.versionKey ?? (lang.id as LangVersionKey);
+    const upper = key.toUpperCase();
+    v[`${upper}_VERSION`] = versions[key] ?? lang.defaultVersion;
+  }
+  return v;
+}
+
 export function buildVariables(config: ResolvedConfig): Record<string, string> {
   const v: Record<string, string> = {
     PROJECT_NAME: config.projectName,
@@ -66,13 +112,7 @@ export function buildVariables(config: ResolvedConfig): Record<string, string> {
   };
 
   // Per-pack `<KEY>_VERSION` template variables (Phase 10i.0-LP.6).
-  // Adding a new pack with a `defaultVersion` auto-extends this loop.
-  for (const lang of LANGUAGES) {
-    if (lang.defaultVersion === undefined) continue;
-    const key = lang.versionKey ?? (lang.id as LangVersionKey);
-    const upper = key.toUpperCase();
-    v[`${upper}_VERSION`] = config.versions[key] ?? lang.defaultVersion;
-  }
+  Object.assign(v, packVersionVariables(config.versions));
 
   // Derived variables — bespoke per-language transformations of the
   // version string. Kept hardcoded; each is too idiosyncratic to

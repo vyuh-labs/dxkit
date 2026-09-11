@@ -17,7 +17,7 @@ vyuh-dxkit doctor [path]
 
 | Category          | Examples                                                      |
 | ----------------- | ------------------------------------------------------------- |
-| Node version      | Node ≥ 18                                                     |
+| Node version      | Node ≥ 22 (the package `engines` floor)                       |
 | Tool availability | Every Layer 1 + active-pack Layer 2 tool detected             |
 | Tool versions     | Versions are within known-working ranges                      |
 | Project shape     | `.git` exists, `.gitignore` reasonable, no obvious mis-config |
@@ -30,7 +30,7 @@ vyuh-dxkit doctor [path]
 Human-readable diagnostics with actionable next steps:
 
 ```
-✓ Node 20.11.1 (✓ ≥ 18 required)
+✓ Node 24.9.0 (✓ ≥ 22 required)
 ✓ Project structure looks correct
 ✓ All Layer 1 tools detected
 ✗ ruff: not found on PATH

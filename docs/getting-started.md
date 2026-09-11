@@ -5,7 +5,7 @@ first report on an existing repo.
 
 ## 1. Install dxkit
 
-Requires Node.js ≥ 18.
+Requires Node.js ≥ 22 (dxkit's own CI runs on Node 24).
 
 **Canonical first install** — one zero-question command that finishes
 setup end to end:
