@@ -218,6 +218,24 @@ export function runCorrectnessFloor(opts: CorrectnessFloorOptions): CorrectnessF
     const commands = [provider.syntaxCheck(ctx), provider.affectedTests(ctx)];
     for (const cmd of commands) {
       if (cmd === null) continue; // pack declined this check for this change
+      if (cmd.cannotStart !== undefined) {
+        // The pack determined from the repo's own evidence that this command
+        // cannot start in the repo's shape (#377). Decided BEFORE the spawn,
+        // like an unmet requirement: a runner that fails for dxkit's own
+        // invocation reasons is not failing tests, and must never mint a
+        // floor failure an agent then "fixes" by reconfiguring the runner.
+        // Fail-OPEN at the missing-binary tier, with the reason and the
+        // command tried both named.
+        checks.push({
+          pack: id,
+          label: cmd.label,
+          bin: cmd.bin,
+          args: cmd.args,
+          status: 'skipped-unavailable',
+          output: describeCannotStart(cmd),
+        });
+        continue;
+      }
       const outcome = exec(cmd, opts.cwd);
       if (!outcome.available) {
         checks.push({
@@ -337,6 +355,18 @@ export function runCorrectnessFloor(opts: CorrectnessFloorOptions): CorrectnessF
   return { ran, checks, blocks, scope, ...(scopeEscalated ? { scopeEscalated } : {}) };
 }
 
+/** The ONE phrasing of a pre-spawn "cannot start" skip: the pack's reason,
+ *  then the command that would have run, so a reader can tell "the tests
+ *  fail" from "the runner could not start" on every surface (the Stop-gate
+ *  line, the floor-debt envelope, the ledger). */
+export function describeCannotStart(cmd: {
+  readonly bin: string;
+  readonly args: readonly string[];
+  readonly cannotStart?: string;
+}): string {
+  return `cannot start in this repo's shape: ${cmd.cannotStart ?? 'reason not given'} (tried: ${[cmd.bin, ...cmd.args].join(' ')})`;
+}
+
 /** One-line disclosure of a manifest-driven scope escalation (null when the
  *  run was not escalated). Every surface that summarizes a floor run appends
  *  it, so a full-suite run on a fast surface always says why. */
@@ -361,7 +391,12 @@ export function describeFloorCapturePlan(cwd: string, packs: readonly LanguageSu
   const plan: string[] = [];
   for (const { id, provider } of activeCorrectnessProviders(packs)) {
     for (const cmd of [provider.syntaxCheck(ctx), provider.affectedTests(ctx)]) {
-      if (cmd !== null) plan.push(`${id} ${cmd.label}: ${[cmd.bin, ...cmd.args].join(' ')}`);
+      if (cmd === null) continue;
+      if (cmd.cannotStart !== undefined) {
+        plan.push(`${id} ${cmd.label}: skipped, ${describeCannotStart(cmd)}`);
+        continue;
+      }
+      plan.push(`${id} ${cmd.label}: ${[cmd.bin, ...cmd.args].join(' ')}`);
     }
     if (provider.resolutionCheck) plan.push(`${id} import-resolution: read-only, sub-second`);
     if (provider.lockfileCheck) {

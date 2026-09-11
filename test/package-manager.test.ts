@@ -9,6 +9,7 @@ import {
   addDevCommand,
   pmAwareDevInstall,
   upgradeArgv,
+  runScriptArgv,
   LOCKFILES,
   type PackageManager,
 } from '../src/package-manager';
@@ -153,5 +154,15 @@ describe('command builders', () => {
     }
     // Deterministic (sorted, deduplicated).
     expect([...prefixes]).toEqual([...new Set(prefixes)].sort());
+  });
+
+  it('runScriptArgv runs a package.json script with the repo PM, forwarding extra args (#377)', () => {
+    // npm needs the `--` separator to forward; the others forward after the
+    // script name. Without extras no separator is emitted.
+    expect(runScriptArgv('npm', 'test')).toEqual(['npm', 'run', 'test']);
+    expect(runScriptArgv('npm', 'test', ['--ci'])).toEqual(['npm', 'run', 'test', '--', '--ci']);
+    expect(runScriptArgv('pnpm', 'test', ['--ci'])).toEqual(['pnpm', 'run', 'test', '--ci']);
+    expect(runScriptArgv('yarn', 'test', ['--ci'])).toEqual(['yarn', 'run', 'test', '--ci']);
+    expect(runScriptArgv('bun', 'test', ['--ci'])).toEqual(['bun', 'run', 'test', '--ci']);
   });
 });

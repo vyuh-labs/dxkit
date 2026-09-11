@@ -28,6 +28,7 @@ import {
 } from '../analyzers/tools/osv-scanner-deps';
 import { detectLockfile } from '../package-manager';
 import { nodeInstallStrategy } from './node-install';
+import { tsAffectedTestsInvocation } from './ts-test-entry';
 import { fileExists, run, runJSON } from '../analyzers/tools/runner';
 import { walkPaths } from '../analyzers/tools/walk-paths';
 import { readRepoFile, repoFileExists } from './version-detect';
@@ -1275,13 +1276,6 @@ function hasLocalBin(cwd: string, bin: string): boolean {
   );
 }
 
-/** The installed TS/JS test runner, vitest preferred then jest, or null. */
-function tsTestRunner(cwd: string): 'vitest' | 'jest' | null {
-  if (hasLocalBin(cwd, 'vitest')) return 'vitest';
-  if (hasLocalBin(cwd, 'jest')) return 'jest';
-  return null;
-}
-
 /**
  * The project's own typecheck npm script, if it declares one — the two
  * dominant conventions. Preferred over a bare `tsc` because it carries the
@@ -2274,35 +2268,31 @@ const tsCorrectnessProvider: CorrectnessProvider = {
   },
 
   affectedTests(ctx: CorrectnessContext): CorrectnessCommand | null {
-    const runner = tsTestRunner(ctx.cwd);
-    if (runner === null) return null; // no vitest/jest installed → nothing to run
-    const parseFailures = parseTsTestRunnerFailures;
-
     // On the fast (affected) surface run only the tests the changed source
-    // files reach — native impact-selection both runners support. Fall back to
-    // the full suite at `full` scope, or when the diff was undeterminable
-    // (empty changedFiles → treat as full, per the contract). A non-empty diff
-    // that touched no TS/JS file (docs-only) skips — nothing to run.
+    // files reach, the native impact-selection the known runners support.
+    // Fall back to the full suite at `full` scope, or when the diff was
+    // undeterminable (empty changedFiles → treat as full, per the contract).
+    // A non-empty diff that touched no TS/JS file (docs-only) skips: nothing
+    // to run.
     const undeterminable = ctx.changedFiles.length === 0;
     const changed = ctx.changedFiles.filter((f) => TS_JS_EXT.some((e) => f.endsWith(e)));
     if (ctx.scope === 'affected' && !undeterminable && changed.length === 0) return null;
-    const affected = ctx.scope === 'affected' && changed.length > 0;
+    const affected = ctx.scope === 'affected' && changed.length > 0 ? changed : null;
 
-    // `--passWithNoTests` keeps "no related test" a PASS, not a failure — a
-    // source change with no covering test is a coverage concern (the finding
-    // gate's job), not a liveness failure.
-    if (runner === 'vitest') {
-      const args = affected
-        ? ['--no-install', 'vitest', 'related', '--run', '--passWithNoTests', ...changed]
-        : ['--no-install', 'vitest', 'run', '--passWithNoTests'];
-      return { label: 'affected-tests', bin: 'npx', args, parseFailures };
-    }
-    // jest — `--findRelatedTests` consumes every following positional as its
-    // file list, so it stays last with the changed files as its arguments.
-    const args = affected
-      ? ['--no-install', 'jest', '--passWithNoTests', '--findRelatedTests', ...changed]
-      : ['--no-install', 'jest', '--passWithNoTests'];
-    return { label: 'affected-tests', bin: 'npx', args, parseFailures };
+    // The invocation comes from the repo's OWN test entry point (#377): its
+    // `test` script first, then a declared runner. An installed-but-undeclared
+    // runner binary is never run bare; the entry-point resolver returns the
+    // disclosed reason and the command it would have tried instead, and the
+    // runner records a fail-open skip rather than a failing check.
+    const invocation = tsAffectedTestsInvocation(ctx.cwd, affected);
+    if (invocation === null) return null; // no test command at all → nothing to run
+    return {
+      label: 'affected-tests',
+      bin: invocation.bin,
+      args: invocation.args,
+      parseFailures: parseTsTestRunnerFailures,
+      ...(invocation.cannotStart !== undefined ? { cannotStart: invocation.cannotStart } : {}),
+    };
   },
 };
 

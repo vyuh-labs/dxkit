@@ -1,0 +1,5 @@
+#!/bin/sh
+# Materialized at stage time as node_modules/.bin/jest: the HOISTED transitive
+# jest a create-react-app tree carries (react-scripts depends on it). This is
+# the shim the pre-fix floor ran bare, with no root jest config, and read the
+# resulting invocation failure as failing tests (#377).

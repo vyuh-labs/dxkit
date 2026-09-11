@@ -25,7 +25,10 @@ function describeFinding(f: WorkOrderFinding): string {
             (e.importingFiles && e.importingFiles.length > 0
               ? ` (imported by ${e.importingFiles.join(', ')})`
               : '')
-        : `${f.id}: ${e.pack} ${e.label} fails (repro: ${e.command || 'see the floor check'})`;
+        : `${f.id}: ${e.pack} ${e.label} fails under the invocation ` +
+            `${e.command ? `\`${e.command}\`` : 'recorded by the floor check'} ` +
+            `(the repo's own entry point as dxkit resolved it; fix the code that fails under it, ` +
+            `never the runner or its configuration)`;
     case 'dep-vuln': {
       const location = describeEntryLocation({
         id: f.id,
