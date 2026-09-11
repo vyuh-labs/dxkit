@@ -102,11 +102,17 @@ function fakeWindowsSpawn(calls: SpawnCall[]): RawSpawn {
   };
 }
 
-/** A Windows PATH fixture: npm's shims are batch scripts, node is a native exe. */
+/** A Windows PATH fixture shaped like Node's install directory: `node.exe`,
+ *  and for each npm shim BOTH the extensionless bash script (for Git Bash /
+ *  MSYS, which Windows itself cannot execute) and the `.cmd` batch file. The
+ *  real lane failed on exactly this pair (#364 follow-up): the resolver took
+ *  the extensionless `npx` and CreateProcess ENOENTed it. */
 function windowsPathDir(): string {
   const dir = mkdtemp('winpath');
-  touch(path.join(dir, 'npx.cmd'), '@echo off\r\n');
-  touch(path.join(dir, 'npm.cmd'), '@echo off\r\n');
+  for (const shim of ['npx', 'npm']) {
+    touch(path.join(dir, shim), '#!/bin/sh\nbasedir=$(dirname "$0")\n');
+    touch(path.join(dir, `${shim}.cmd`), '@echo off\r\n');
+  }
   touch(path.join(dir, 'node.exe'), 'MZ');
   return dir;
 }
@@ -123,6 +129,8 @@ function tsProject(scripts?: Record<string, string>): string {
   touch(path.join(cwd, 'tsconfig.json'), '{}');
   touch(path.join(cwd, 'src', 'a.ts'), 'export const a = 1;\n');
   for (const bin of ['tsc', 'eslint', 'vitest']) {
+    // npm writes both shims into `.bin` on Windows, like Node's own dir.
+    touch(path.join(cwd, 'node_modules', '.bin', bin), '#!/bin/sh\n');
     touch(path.join(cwd, 'node_modules', '.bin', `${bin}.cmd`), '@echo off\r\n');
   }
   return cwd;
@@ -239,6 +247,49 @@ describe('bounded exec on Windows: the probe and the spawn agree (#364)', () => 
         const outcome = makeCommandExec(undefined, fakeWindowsSpawn(calls))(
           { bin: 'npx', args: ['--no-install', 'tsc'] },
           pathDir,
+        );
+        expect(outcome).toEqual({ available: false, code: -1, output: 'npx is not on PATH' });
+        expect(calls).toHaveLength(0);
+      }),
+    );
+  });
+
+  it('picks the .cmd beside the extensionless bash shim, and skips a directory holding only the shim', () => {
+    // Two PATH entries: the first holds only the bash shim (a Git Bash
+    // layout), the second is Node's install dir with both files. The walk
+    // must continue past the first and choose the `.cmd` in the second.
+    const shimOnly = mkdtemp('shimonly');
+    touch(path.join(shimOnly, 'npx'), '#!/bin/sh\n');
+    const nodeDir = windowsPathDir();
+    withPlatform('win32', () =>
+      withEnv(
+        { PATH: [shimOnly, nodeDir].join(path.delimiter), PATHEXT: '.com;.exe;.bat;.cmd' },
+        () => {
+          expect(resolveCommandBin('npx')).toEqual({ path: path.join(nodeDir, 'npx.cmd') });
+          expect(resolveCommandBin('npm')).toEqual({ path: path.join(nodeDir, 'npm.cmd') });
+          const calls: SpawnCall[] = [];
+          const outcome = makeCommandExec(undefined, fakeWindowsSpawn(calls))(
+            { bin: 'npx', args: ['--no-install', 'tsc'] },
+            nodeDir,
+          );
+          expect(outcome).toMatchObject({ available: true, code: 0 });
+          expect(calls[0].file).toMatch(/cmd\.exe$/i);
+          expect(calls[0].args[3]).toContain(path.join(nodeDir, 'npx.cmd'));
+        },
+      ),
+    );
+  });
+
+  it('only the extensionless bash shim on PATH is "not on PATH" on Windows: disclosed, never spawned', () => {
+    const shimOnly = mkdtemp('shimonly');
+    touch(path.join(shimOnly, 'npx'), '#!/bin/sh\n');
+    withPlatform('win32', () =>
+      withEnv({ PATH: shimOnly, PATHEXT: '.com;.exe;.bat;.cmd' }, () => {
+        expect(resolveCommandBin('npx')).toEqual({ path: null, reason: 'npx is not on PATH' });
+        const calls: SpawnCall[] = [];
+        const outcome = makeCommandExec(undefined, fakeWindowsSpawn(calls))(
+          { bin: 'npx', args: ['--no-install', 'tsc'] },
+          shimOnly,
         );
         expect(outcome).toEqual({ available: false, code: -1, output: 'npx is not on PATH' });
         expect(calls).toHaveLength(0);
