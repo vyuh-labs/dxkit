@@ -1,0 +1,11 @@
+{
+  "name": "ts-vitest-lib",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "test": "vitest"
+  },
+  "devDependencies": {
+    "vitest": "2.0.0"
+  }
+}

@@ -501,8 +501,16 @@ describe('typescript.correctness', () => {
     });
   });
 
+  /** Declare a runner in package.json AND install its shim: an installed
+   *  but undeclared runner is not an entry point (#377). */
+  function declareRunner(...runners: string[]): void {
+    const devDependencies = Object.fromEntries(runners.map((r) => [r, '1.0.0']));
+    fs.writeFileSync(path.join(tmp, 'package.json'), JSON.stringify({ devDependencies }));
+    for (const r of runners) installBin(r);
+  }
+
   it('affectedTests: vitest related on the affected surface', () => {
-    installBin('vitest');
+    declareRunner('vitest');
     const cmd = typescript.correctness!.affectedTests(
       ctx({ changedFiles: ['src/a.ts', 'README.md'] }),
     );
@@ -515,7 +523,7 @@ describe('typescript.correctness', () => {
   });
 
   it('affectedTests: vitest full suite at full scope', () => {
-    installBin('vitest');
+    declareRunner('vitest');
     const cmd = typescript.correctness!.affectedTests(ctx({ scope: 'full' }));
     expect(cmd).toEqual({
       label: 'affected-tests',
@@ -526,18 +534,18 @@ describe('typescript.correctness', () => {
   });
 
   it('affectedTests: full suite when the diff is undeterminable (empty changedFiles)', () => {
-    installBin('vitest');
+    declareRunner('vitest');
     const cmd = typescript.correctness!.affectedTests(ctx({ changedFiles: [], scope: 'affected' }));
     expect(cmd?.args).toEqual(['--no-install', 'vitest', 'run', '--passWithNoTests']);
   });
 
   it('affectedTests: skips when no TS/JS file changed on the affected surface', () => {
-    installBin('vitest');
+    declareRunner('vitest');
     expect(typescript.correctness!.affectedTests(ctx({ changedFiles: ['README.md'] }))).toBeNull();
   });
 
   it('affectedTests: jest --findRelatedTests with the file list last', () => {
-    installBin('jest');
+    declareRunner('jest');
     const cmd = typescript.correctness!.affectedTests(ctx({ changedFiles: ['src/a.ts'] }));
     expect(cmd).toEqual({
       label: 'affected-tests',
@@ -547,9 +555,8 @@ describe('typescript.correctness', () => {
     });
   });
 
-  it('affectedTests: prefers vitest over jest when both installed', () => {
-    installBin('vitest');
-    installBin('jest');
+  it('affectedTests: prefers vitest over jest when both are declared and installed', () => {
+    declareRunner('vitest', 'jest');
     const cmd = typescript.correctness!.affectedTests(ctx());
     expect(cmd?.args).toContain('vitest');
   });
@@ -558,8 +565,46 @@ describe('typescript.correctness', () => {
     expect(typescript.correctness!.affectedTests(ctx())).toBeNull();
   });
 
-  it('affectedTests: carries the failure-level parser (4.2 attribution)', () => {
+  it('affectedTests: an installed but undeclared runner is a disclosed cannot-start, never a bare invocation (#377)', () => {
+    // The create-react-app shape: jest hoisted by react-scripts, no root
+    // config, no test script. The pre-fix builder emitted `npx jest` here.
+    fs.writeFileSync(path.join(tmp, 'package.json'), '{"name":"x"}');
     installBin('jest');
+    const cmd = typescript.correctness!.affectedTests(ctx());
+    expect(cmd?.cannotStart).toContain('jest is installed only transitively');
+    expect(cmd?.args).toEqual(['--no-install', 'jest']);
+  });
+
+  it('affectedTests: a react-scripts test script is the entry point, with jest selection passed through', () => {
+    fs.writeFileSync(
+      path.join(tmp, 'package.json'),
+      JSON.stringify({
+        scripts: { test: 'react-scripts test' },
+        dependencies: { 'react-scripts': '5.0.1' },
+      }),
+    );
+    installBin('react-scripts');
+    installBin('jest');
+    const cmd = typescript.correctness!.affectedTests(ctx({ changedFiles: ['src/App.js'] }));
+    expect(cmd).toEqual({
+      label: 'affected-tests',
+      bin: 'npx',
+      args: [
+        '--no-install',
+        'react-scripts',
+        'test',
+        '--watchAll=false',
+        '--ci',
+        '--passWithNoTests',
+        '--findRelatedTests',
+        'src/App.js',
+      ],
+      parseFailures: expect.any(Function),
+    });
+  });
+
+  it('affectedTests: carries the failure-level parser (4.2 attribution)', () => {
+    declareRunner('jest');
     const cmd = typescript.correctness!.affectedTests(ctx());
     expect(typeof cmd?.parseFailures).toBe('function');
   });

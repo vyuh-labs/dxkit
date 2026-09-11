@@ -1,0 +1,3 @@
+#!/bin/sh
+# Materialized at stage time as node_modules/.bin/react-scripts: the shim the
+# TS pack gates the create-react-app entry point on.
