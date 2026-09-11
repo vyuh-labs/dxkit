@@ -112,7 +112,7 @@ __DXKIT_LANE_TOKEN_STEPS__
       - uses: actions/setup-node@v6
         if: steps.perm.outputs.authorized == 'true' && steps.pr.outputs.same_repo == 'true'
         with:
-          node-version: '22'
+          node-version: '{{NODE_VERSION}}'
 
       # Language runtime(s) for the detected stack — same slot the guardrails
       # workflow renders, so the cache-warming check sees the same toolchain.

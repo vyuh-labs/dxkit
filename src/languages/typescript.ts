@@ -30,7 +30,7 @@ import { detectLockfile } from '../package-manager';
 import { nodeInstallStrategy } from './node-install';
 import { fileExists, run, runJSON } from '../analyzers/tools/runner';
 import { walkPaths } from '../analyzers/tools/walk-paths';
-import { installedNodeMajor, readRepoFile, repoFileExists } from './version-detect';
+import { readRepoFile, repoFileExists } from './version-detect';
 import { UNIVERSAL_TEST_DIR_PATTERNS } from './test-dir-patterns';
 import { runTestsWithCoverage } from '../analyzers/tools/run-tests-helper';
 import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
@@ -2769,12 +2769,45 @@ const tsLicensesProvider: LicensesProvider = {
 };
 
 /**
- * The Node major this repo targets — `.nvmrc`, `package.json` `volta.node` /
- * `engines.node`, else the installed Node. Feeds the `NODE_VERSION` template
- * var. (The TS pack has no `ciSetup` — the CI runner already provides Node for
- * dxkit's own CLI — and the always-on node devcontainer feature is installer-
- * declared, so this drives docs, not a toolchain-setup substitution.)
+ * The Node major this repo DECLARES: `.nvmrc`, `package.json` `volta.node` /
+ * `engines.node` (a range such as `>=20 <23` or `^20 || ^22` reads as its
+ * lowest major: the floor the repo says it supports); undefined when the repo
+ * declares nothing, so consumers fall back to the pack `defaultVersion`. Feeds
+ * the `NODE_VERSION` template var, the AGENTS.md heading AND every generated
+ * workflow's `setup-node` line, so the value must be REPO-INTRINSIC: the
+ * installed Node was dropped as a fallback because a machine-specific answer
+ * renders a different workflow on every developer's machine and churns
+ * `update` (Rule 19's machine-independence discipline).
  */
+/** The Node major a repo declares when nothing but `.nvmrc` / `volta` /
+ *  `engines` says so, and the floor every generated workflow falls back to. */
+const NODE_DEFAULT_VERSION = '24';
+
+/**
+ * The Node major an `engines.node` range DECLARES, read without a machine in
+ * the loop:
+ *  - a pinned or bounded range (`20`, `^20`, `~20.11`, `>=20 <23`,
+ *    `^20 || ^22`) names its lowest major, the floor the repo says it supports;
+ *  - an open floor (`>=10`, `>18`) is satisfied by the pack default, so it
+ *    declares nothing (undefined, the consumer falls back to the default)
+ *    unless the floor is ABOVE the default, in which case the floor itself.
+ * Never Node 10 for `>=10`, and never the installed Node: that answer differs
+ * per machine and would re-render the workflow on every `update`.
+ */
+function nodeMajorFromEngineRange(engine: string): string | undefined {
+  // Majors only: `>=18.20.2` is one clause at 18, not three numbers.
+  const majorsOnly = engine.replace(/\.\d+/g, '');
+  const clauses = [...majorsOnly.matchAll(/(>=?)?\s*v?(\d+)/g)].map((m) => ({
+    op: m[1] ?? '',
+    major: parseInt(m[2], 10),
+  }));
+  if (clauses.length === 0) return undefined;
+  const openFloor = clauses.every((c) => c.op !== '') && !/[<^~x*|-]/.test(engine);
+  if (!openFloor) return String(Math.min(...clauses.map((c) => c.major)));
+  const floor = Math.min(...clauses.map((c) => (c.op === '>' ? c.major + 1 : c.major)));
+  return floor > parseInt(NODE_DEFAULT_VERSION, 10) ? String(floor) : undefined;
+}
+
 function detectNodeVersion(cwd: string): string | undefined {
   if (repoFileExists(cwd, '.nvmrc')) {
     const ver = readRepoFile(cwd, '.nvmrc').trim().replace(/^v/, '');
@@ -2793,21 +2826,12 @@ function detectNodeVersion(cwd: string): string | undefined {
         if (m) return m[1];
       }
       const engine = parsed?.engines?.node;
-      if (engine) {
-        if (!/[>|]/.test(engine)) {
-          const m = String(engine).match(/(\d+)/);
-          if (m) return m[1];
-        }
-        const installed = installedNodeMajor();
-        if (installed) return installed;
-        const m = String(engine).match(/(\d+)/);
-        if (m) return m[1];
-      }
+      if (engine) return nodeMajorFromEngineRange(String(engine));
     } catch {
       /* ignore malformed package.json */
     }
   }
-  return installedNodeMajor();
+  return undefined;
 }
 
 export const typescript: LanguageSupport = {
@@ -3113,13 +3137,16 @@ export const typescript: LanguageSupport = {
   },
 
   permissions: ['Bash(npm test:*)', 'Bash(npm run:*)', 'Bash(npx:*)'],
-  defaultVersion: '20',
+  // Node 24 (current LTS), the floor a repo gets when it declares no Node of
+  // its own; matches dxkit's own `setup-node` line. A repo's `.nvmrc` /
+  // `volta` / `engines` wins over it (detectNodeVersion).
+  defaultVersion: NODE_DEFAULT_VERSION,
   versionKey: 'node',
   detectVersion: detectNodeVersion,
   devcontainerFeature: {
     name: 'ghcr.io/devcontainers/features/node:1',
-    // Node 22 LTS — matches the smoke workflow's `setup-node@v6` line.
-    opts: { version: '22', nvmVersion: 'latest' },
+    // Node 24 LTS, matches the smoke workflow's `setup-node@v6` line.
+    opts: { version: '24', nvmVersion: 'latest' },
   },
   devcontainerExtensions: ['dbaeumer.vscode-eslint', 'esbenp.prettier-vscode'],
   // No ruleFile — there is no `.claude/rules/typescript.md`. nextjs.md

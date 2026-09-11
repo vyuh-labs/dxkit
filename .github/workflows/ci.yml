@@ -18,7 +18,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-node@v6
         with:
-          node-version: '22'
+          node-version: '24'
           cache: 'npm'
       - run: npm ci
 
@@ -192,3 +192,44 @@ jobs:
 
       - name: Verify pack
         run: npm pack --dry-run
+
+  # The `engines.node >=22` floor, kept honest: the main job runs on Node 24,
+  # so nothing above would notice a Node-24-only API creeping into src/. This
+  # lane builds, typechecks and runs the CLI on the OLDEST Node the package
+  # declares it supports, plus the suites that exercise dxkit's own lifecycle
+  # and registries without any external scanner: install/update/uninstall
+  # round-trips, the pack contract + playbook, detection and the generated-
+  # workflow render, discovery and self-invocation. No scanner toolchain is
+  # installed here, so the FULL suite is deliberately not run (parts of it
+  # probe a real osv-scanner / gitleaks binary and read "unavailable" without
+  # one; the main job covers those). It proves dxkit itself runs on the
+  # floor, not every scanner.
+  node-floor:
+    name: Node 22 engines floor
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - run: npm ci
+      - name: Build
+        run: npm run build
+      - name: Typecheck
+        run: npm run typecheck
+      - name: CLI runs on the floor
+        run: node dist/index.js --version && node dist/index.js doctor
+      - name: Scanner-free unit suites (lifecycle, registries, render)
+        run: >-
+          npx vitest run
+          test/lifecycle
+          test/languages-contract.test.ts
+          test/recipe-playbook.test.ts
+          test/update.test.ts
+          test/node-version-render.test.ts
+          test/detect.test.ts
+          test/discovery-playbook.test.ts
+          test/self-invocation-playbook.test.ts

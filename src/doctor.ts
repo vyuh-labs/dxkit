@@ -3,6 +3,7 @@ import * as path from 'path';
 import { execSync } from 'child_process';
 import { commandExists } from './analyzers/tools/runner';
 import { Manifest } from './types';
+import { DEFAULT_VERSIONS, NODE_ENGINE_FLOOR } from './constants';
 import { activeLanguagesFromStack } from './languages';
 import { assessLanguageToolchains } from './languages/toolchain-coverage';
 import { hostOf, toolchainForBinary, toolchainInstallHint, type ToolchainId } from './execution';
@@ -45,7 +46,7 @@ import {
  * Three-tier doctor:
  *
  * Tier 1 — Reports prerequisites: the small set of things that must
- * be present for ANY dxkit CLI command to work. Node 18+ and git.
+ * be present for ANY dxkit CLI command to work. Node at the package `engines` floor and git.
  * Failure here = dxkit can't function = exit 1.
  *
  * Tier 2 — Agent DX prerequisites: the `.vyuh-dxkit.json` manifest +
@@ -434,15 +435,15 @@ function runReportsChecks(): CheckResult[] {
   const nodeMajor = nodeMajorVersion();
   return [
     {
-      label: `Node ≥ 18 (running ${process.versions.node})`,
-      ok: nodeMajor >= 18,
+      label: `Node ≥ ${NODE_ENGINE_FLOOR} (running ${process.versions.node})`,
+      ok: nodeMajor >= NODE_ENGINE_FLOOR,
       tier: 'reports',
-      ...(nodeMajor >= 18
+      ...(nodeMajor >= NODE_ENGINE_FLOOR
         ? {}
         : {
             fix: {
-              hint: `Upgrade Node to v18 or newer. dxkit uses Node 22 in its devcontainer.`,
-              command: 'nvm install 22 && nvm use 22',
+              hint: `Upgrade Node to v${NODE_ENGINE_FLOOR} or newer. dxkit runs Node ${DEFAULT_VERSIONS.node} in its own CI and devcontainer.`,
+              command: `nvm install ${DEFAULT_VERSIONS.node} && nvm use ${DEFAULT_VERSIONS.node}`,
             },
           }),
     },

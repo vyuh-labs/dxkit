@@ -45,7 +45,7 @@ __DXKIT_LANE_TOKEN_STEPS__
 
       - uses: actions/setup-node@v6
         with:
-          node-version: '22'
+          node-version: '{{NODE_VERSION}}'
 
       # Language runtime(s) for the detected stack, so an extension's
       # interpreter (python3, ruby, …) is present. Empty on a Node-only repo.

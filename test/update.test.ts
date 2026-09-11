@@ -128,7 +128,7 @@ describe('resolveInstallFlags + writeInstallFlags: manifest persistence', () => 
       infrastructure: { docker: false, postgres: false, redis: false },
       projectName: 'test',
       projectDescription: '',
-      versions: { node: '22' },
+      versions: { node: '24' },
       requiredTools: [],
       coverageThreshold: '60',
       claudeCode: true,

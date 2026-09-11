@@ -43,7 +43,7 @@ __DXKIT_LANE_TOKEN_STEPS__
 
       - uses: actions/setup-node@v6
         with:
-          node-version: '22'
+          node-version: '{{NODE_VERSION}}'
 
       # Language runtime(s) for the detected stack, so the baseline is captured
       # with the SAME native scanner + toolchain the gate uses. Empty on Node-only.
