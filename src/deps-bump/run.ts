@@ -23,8 +23,8 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { execFileSync } from 'child_process';
 import { assembleLanePrBody } from '../pr/assemble';
+import { makeCommandExec } from '../analyzers/tools/bounded-exec';
 import type { AnalysisTrustContext } from '../analysis-trust';
 import type { DepVulnFinding } from '../languages/capabilities/types';
 import { gatherDepVulns } from '../analyzers/security/gather';
@@ -220,25 +220,17 @@ export function renderLedger(result: Omit<DepsBumpResult, 'ledger'>): string {
   return lines.join('\n');
 }
 
+/** The bump's spawn is the ONE bounded exec (resolved binary, `.cmd` shims
+ *  routed through cmd.exe on Windows, #364), never a raw `execFileSync` of
+ *  `argv[0]`: a bare `npm` ENOENTs on Windows where `npm.cmd` is what PATH
+ *  holds. A bump treats every non-ok (spawn failure, timeout, overflow, a
+ *  non-zero exit) as a completed failure, so the infra flags fold into `ok`. */
 function defaultExecBump(cwd: string) {
+  const exec = makeCommandExec(10 * 60_000);
   return (argv: readonly string[]): { ok: boolean; output: string } => {
-    try {
-      const out = execFileSync(argv[0], argv.slice(1), {
-        cwd,
-        encoding: 'utf8',
-        timeout: 10 * 60_000,
-        stdio: ['ignore', 'pipe', 'pipe'],
-        maxBuffer: 64 * 1024 * 1024,
-      });
-      return { ok: true, output: out.toString() };
-    } catch (e) {
-      const err = e as { stdout?: unknown; stderr?: unknown; message?: string };
-      const text = [err.stderr, err.stdout, err.message]
-        .map((x) => (x == null ? '' : String(x)))
-        .join('\n')
-        .trim();
-      return { ok: false, output: text.slice(-2000) };
-    }
+    const outcome = exec({ bin: argv[0], args: argv.slice(1) }, cwd);
+    const ok = outcome.available && !outcome.timedOut && !outcome.overflowed && outcome.code === 0;
+    return { ok, output: ok ? outcome.output : outcome.output.trim().slice(-2000) };
   };
 }
 

@@ -233,18 +233,24 @@ export function countLines(cmd: string, cwd: string): number {
  * that here so a pure-Node PATH walk matches the same files the OS
  * would. If the caller already passed an extension (`foo.exe`), we
  * don't append more.
+ *
+ * On Windows the EXTENSIONLESS name is never a candidate (#364). Node
+ * ships `npx` (a bash shim for Git Bash / MSYS) beside `npx.cmd` in the
+ * same directory; CreateProcess cannot run the extensionless file, so
+ * accepting it made a present, spawnable `npx.cmd` resolve to a file
+ * Windows could not execute and the floor was skipped as "not on
+ * PATH". The PATHEXT candidates are tried in PATHEXT order, per
+ * directory, exactly as cmd.exe does; a directory holding only a bash
+ * shim is skipped and the walk continues.
  */
 function pathExtensions(binary: string): string[] {
   if (process.platform !== 'win32') return [''];
   if (path.extname(binary)) return [''];
   const pathext = process.env.PATHEXT || '.COM;.EXE;.BAT;.CMD';
-  const exts = pathext
+  return pathext
     .split(';')
     .map((e) => e.trim())
     .filter(Boolean);
-  // Try the bare name first (some tools ship extension-less shims),
-  // then each PATHEXT candidate.
-  return ['', ...exts];
 }
 
 /** True when `p` exists, is a regular file, and (on POSIX) is executable. */
