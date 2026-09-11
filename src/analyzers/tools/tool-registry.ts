@@ -231,18 +231,11 @@ function findInNpmGlobal(binary: string): string | null {
   const npmBin = quickRun('npm bin -g') || quickRun('npm prefix -g');
   if (!npmBin) return null;
   // npm's global prefix holds binaries directly on Windows
-  // (`<prefix>\<bin>.cmd`) and under `bin/` on POSIX. Probe both, with
-  // PATHEXT-aware extensions on Windows.
-  const candidates = [path.join(npmBin, binary), path.join(npmBin, 'bin', binary)];
-  for (const c of candidates) {
-    if (fs.existsSync(c)) return c;
-    if (process.platform === 'win32') {
-      for (const ext of ['.cmd', '.exe', '.bat']) {
-        if (fs.existsSync(c + ext)) return c + ext;
-      }
-    }
-  }
-  return null;
+  // (`<prefix>\<bin>.cmd`) and under `bin/` on POSIX. Probe both through
+  // the ONE PATHEXT-aware resolver (#364: a private copy of the walk
+  // accepted the extensionless bash shim npm writes beside `<bin>.cmd`,
+  // which Windows cannot execute).
+  return resolveInDirs(binary, [npmBin, path.join(npmBin, 'bin')]);
 }
 
 /** Check if pipx has installed a tool. */

@@ -20,8 +20,13 @@ on:
       - 'src/doctor.ts'
       - 'src/baseline/coverage.ts'
       - 'src/baseline/create.ts'
+      - 'src/analyzers/tools/bounded-exec.ts'
+      - 'src/analyzers/correctness/run.ts'
+      - 'src/analyzers/correctness/surface-run.ts'
+      - 'src/execution/environment.ts'
       - 'test/cross-platform-detect.test.ts'
       - 'test/baseline-coverage.test.ts'
+      - 'test/analyzers/bounded-exec-windows-spawn.test.ts'
       - '.github/workflows/windows-detection.yml'
   pull_request:
     paths:
@@ -34,8 +39,13 @@ on:
       - 'src/doctor.ts'
       - 'src/baseline/coverage.ts'
       - 'src/baseline/create.ts'
+      - 'src/analyzers/tools/bounded-exec.ts'
+      - 'src/analyzers/correctness/run.ts'
+      - 'src/analyzers/correctness/surface-run.ts'
+      - 'src/execution/environment.ts'
       - 'test/cross-platform-detect.test.ts'
       - 'test/baseline-coverage.test.ts'
+      - 'test/analyzers/bounded-exec-windows-spawn.test.ts'
       - '.github/workflows/windows-detection.yml'
 
 jobs:
@@ -53,8 +63,48 @@ jobs:
       # The detection + coverage unit tests run platform-real here:
       # their `win32` branches exercise the actual PATHEXT walk and the
       # case-insensitive Windows filesystem, which a Linux runner can't.
-      - name: Detection + coverage unit tests
-        run: npx vitest run test/cross-platform-detect.test.ts test/baseline-coverage.test.ts
+      - name: Detection + coverage + spawn-parity unit tests
+        run: npx vitest run test/cross-platform-detect.test.ts test/baseline-coverage.test.ts test/analyzers/bounded-exec-windows-spawn.test.ts
+
+      # Smoke (#364): the correctness floor must actually RUN on Windows.
+      # Pre-fix the probe found `npx.cmd` via PATHEXT, the spawn ran the
+      # bare name with no shell, ENOENTed, and every `bin: 'npx'` check was
+      # skipped as "not on PATH" on every Windows machine. A tiny provisioned
+      # TS project emits `npx --no-install tsc` (typecheck) and `npm ci
+      # --dry-run` (lockfile-sync): both go through the .cmd -> cmd.exe route
+      # and must report `pass`, never a `skipped-*` status.
+      - name: correctness floor runs through npx.cmd / npm.cmd
+        shell: pwsh
+        run: |
+          $fixture = Join-Path $env:RUNNER_TEMP 'floor-fixture'
+          New-Item -ItemType Directory -Force -Path (Join-Path $fixture 'src') | Out-Null
+          Push-Location $fixture
+          npm init -y | Out-Null
+          npm install typescript@5 --no-audit --no-fund --silent
+          if ($LASTEXITCODE -ne 0) { Write-Error 'fixture install failed'; exit 1 }
+          Set-Content -Path tsconfig.json -Value '{ "compilerOptions": { "strict": true, "noEmit": true }, "include": ["src"] }'
+          Set-Content -Path (Join-Path 'src' 'a.ts') -Value 'export const answer: number = 42;'
+          Pop-Location
+          $raw = node dist/index.js floor check $fixture --surface ci --correctness --json 2>&1 | Out-String
+          Write-Host $raw
+          # GitHub annotations (a failing floor) precede the pretty-printed
+          # JSON on stdout; the payload starts at the first bare `{` line.
+          $lines = $raw -split "`r?`n"
+          $start = [Array]::IndexOf($lines, '{')
+          if ($start -lt 0) { Write-Error 'floor check emitted no JSON'; exit 1 }
+          $json = ($lines[$start..($lines.Length - 1)] -join "`n") | ConvertFrom-Json
+          if (-not $json.ran) { Write-Error 'the floor did not run on Windows (every check skipped)'; exit 1 }
+          $shimChecks = @($json.checks | Where-Object { $_.bin -in @('npx', 'npm') })
+          if ($shimChecks.Count -eq 0) { Write-Error 'no npx/npm-backed check was emitted for the TS fixture'; exit 1 }
+          $typecheck = @($shimChecks | Where-Object { $_.label -eq 'typecheck' })
+          if ($typecheck.Count -eq 0) { Write-Error 'the TS typecheck check was not emitted'; exit 1 }
+          foreach ($c in $shimChecks) {
+            if ($c.status -ne 'pass') {
+              Write-Error "check '$($c.label)' ($($c.bin)) reported '$($c.status)' on Windows: the .cmd shim did not run (#364 regression)"
+              exit 1
+            }
+          }
+          Write-Host "floor ran through the .cmd shims: $($shimChecks.label -join ', ')"
 
       # Smoke: git + node are installed on the runner, so doctor must
       # report git as a PASS. Pre-fix the POSIX-only `which` probe made
