@@ -55,6 +55,7 @@ import {
   installCiGuardrails,
   installCiHostGates,
   installDevcontainer,
+  installGuardrailEntryPoint,
   installDxkitDevDependency,
   installHooks,
   installHooksPostinstall,
@@ -64,7 +65,11 @@ import {
   type ShipInstallResult,
 } from './ship-installers';
 import { installClaudeLoop, isClaudeLoopInstalled } from './loop/scaffold';
-import { requiresResolvableCli } from './self-invocation';
+import {
+  GUARDRAIL_ENTRY_POINT,
+  guardrailEntryPointWanted,
+  requiresResolvableCli,
+} from './self-invocation';
 
 /** The `ManifestInstallFlags` keys that map 1:1 to a gated ship surface. */
 type PrimaryFlag =
@@ -168,6 +173,24 @@ export const MANAGED_SHIP_SURFACES: readonly ManagedShipSurface[] = [
     refreshOnUpdate: true,
     install: (cwd, { force }) => installDevcontainer(cwd, { force }),
     detectPresent: (cwd) => existsRel(cwd, '.devcontainer/devcontainer.json'),
+  },
+  {
+    // The ONE check sequence the hooks, the CI workflow and a developer or
+    // agent all run (see installGuardrailEntryPoint). Derived from its
+    // callers, so it is installed, refreshed and removed with them.
+    id: 'guardrail-entry-point',
+    gate: {
+      kind: 'derived',
+      enabled: (flags) =>
+        guardrailEntryPointWanted({
+          gitHooks: flags.withHooks,
+          ciGuardrails: flags.withCiGuardrails,
+        }),
+    },
+    artifacts: () => [GUARDRAIL_ENTRY_POINT],
+    uninstallDetection: 'flag',
+    refreshOnUpdate: true,
+    install: (cwd, { force }) => installGuardrailEntryPoint(cwd, { force }),
   },
   {
     id: 'hooks',

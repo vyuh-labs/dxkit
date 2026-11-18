@@ -17,7 +17,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { readPolicyObjectSafe } from '../baseline/policy-text';
-import { dxkitCli } from '../self-invocation';
+import { dxkitCli, GUARDRAIL_ENTRY_POINT } from '../self-invocation';
 
 export const RUNBOOK_FILENAME = 'RUNBOOK.dxkit.md';
 
@@ -82,6 +82,10 @@ export function renderRunbook(cwd: string): string {
   if (hasCi)
     gates.push(
       '- **On every PR** (CI, `dxkit-guardrails`): the same guardrail, as a required check.',
+    );
+  if (fs.existsSync(path.join(cwd, GUARDRAIL_ENTRY_POINT)))
+    gates.push(
+      `- **By hand** (\`./${GUARDRAIL_ENTRY_POINT}\`): the checks CI runs, in the same order (correctness floor, policy-render parity, guardrail). Run it before you push to see the pipeline's verdict first; the pre-push hook runs its \`--quick\` tier.`,
     );
   if (gates.length === 0) {
     gates.push(

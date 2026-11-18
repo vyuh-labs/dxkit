@@ -87,7 +87,9 @@ describe('SELF_INVOCATION_SURFACES — contract', () => {
       ['claudeSettings', 'context-hook'],
       ['claudeLoop', 'loop-stop-gate-hook'],
       ['gitHooks', 'pre-push-guardrail-hook'],
+      ['gitHooks', 'guardrail-entry-point'],
       ['ciGuardrails', 'ci-guardrail-workflow'],
+      ['ciGuardrails', 'guardrail-entry-point'],
     ];
     for (const [flag, expectedId] of cases) {
       const flags: SurfaceFlags = { [flag]: true };

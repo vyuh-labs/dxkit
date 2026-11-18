@@ -81,6 +81,34 @@ export function claudeHookCommand(subcommand: string): string {
 }
 
 /**
+ * The ONE guardrail entry point a consumer repo carries at its root: the
+ * script that holds the check sequence (correctness floor, policy-render
+ * parity, findings guardrail) and resolves the dxkit binary. The git hooks
+ * and the CI guardrail workflow call it rather than carrying their own copy
+ * of the sequence, and a developer or agent runs it by hand. Named after the
+ * workflow file and the required status check (`dxkit-guardrails`) so the
+ * local command and the pipeline check read as the same thing.
+ */
+export const GUARDRAIL_ENTRY_POINT = 'dxkit-guardrails.sh';
+
+/** Ownership marker in the generated script's header: present ⇒ dxkit owns
+ *  the file and `update` refreshes it; absent ⇒ the user's, left alone. */
+export const GUARDRAIL_ENTRY_POINT_MARKER = 'dxkit guardrails entry point';
+
+/**
+ * Does this install carry the guardrail entry point? Exactly when a surface
+ * that CALLS it does: the git hooks or the CI guardrail workflow. The one
+ * predicate, read by init, by the managed-surface registry (update,
+ * uninstall, `policy render`) and by the self-invocation registry below, so
+ * the script cannot ship without its callers or a caller without the script.
+ */
+export function guardrailEntryPointWanted(
+  flags: Pick<SurfaceFlags, 'gitHooks' | 'ciGuardrails'>,
+): boolean {
+  return !!flags.gitHooks || !!flags.ciGuardrails;
+}
+
+/**
  * The install-time decisions that determine which self-invocation surfaces
  * a given `init`/`update` run actually writes. Each surface maps itself to
  * one of these via `installedWhen`.
@@ -131,14 +159,22 @@ export const SELF_INVOCATION_SURFACES: readonly SelfInvocationSurface[] = [
     installedWhen: (f) => !!f.claudeLoop,
   },
   {
+    // The one check sequence; the hooks and the CI workflow below reach the
+    // CLI through it.
+    id: 'guardrail-entry-point',
+    description: `${GUARDRAIL_ENTRY_POINT} (correctness floor, policy-render parity, guardrail)`,
+    invokes: 'floor check, policy render --check, guardrail check',
+    installedWhen: guardrailEntryPointWanted,
+  },
+  {
     id: 'pre-push-guardrail-hook',
-    description: '.githooks/pre-push guardrail check',
+    description: `.githooks/pre-push (runs ${GUARDRAIL_ENTRY_POINT} --quick)`,
     invokes: 'guardrail check',
     installedWhen: (f) => !!f.gitHooks,
   },
   {
     id: 'ci-guardrail-workflow',
-    description: '.github/workflows/dxkit-guardrails.yml guardrail check',
+    description: `.github/workflows/dxkit-guardrails.yml (runs ${GUARDRAIL_ENTRY_POINT})`,
     invokes: 'guardrail check',
     installedWhen: (f) => !!f.ciGuardrails,
   },

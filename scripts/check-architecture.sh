@@ -1646,8 +1646,9 @@ if [ -n "$RULE_TREE_LIFECYCLE" ]; then
 fi
 
 # Rule 15 (managed-artifact lifecycle class-fix): a module that WRITES a managed
-# ship artifact — a CI workflow (.github/workflows), a git hook (.githooks), or
-# the devcontainer (.devcontainer) — must do so through src/ship-installers.ts,
+# ship artifact — a CI workflow (.github/workflows), a git hook (.githooks),
+# the devcontainer (.devcontainer), or the guardrail entry point
+# (dxkit-guardrails.sh) — must do so through src/ship-installers.ts,
 # whose surfaces are registered in src/managed-artifacts.ts:MANAGED_SHIP_SURFACES.
 #
 # What this prevents:
@@ -1674,13 +1675,13 @@ for f in $(grep -rlE "writeFileSync|copyFileSync|cpSync" src --include='*.ts' 2>
     src/ship-installers.ts | src/cli.ts | src/uninstall/index.ts) continue ;;
   esac
   grep -q "// managed-write-ok" "$f" && continue
-  if grep -qE "\.github/workflows|'\.github', 'workflows'|'\.githooks'|\.githooks/|'\.devcontainer'|\.devcontainer/" "$f"; then
+  if grep -qE "\.github/workflows|'\.github', 'workflows'|'\.githooks'|\.githooks/|'\.devcontainer'|\.devcontainer/|dxkit-guardrails\.sh|GUARDRAIL_ENTRY_POINT" "$f"; then
     RULE15_MANAGED_WRITE="$RULE15_MANAGED_WRITE $f"
   fi
 done
 if [ -n "$RULE15_MANAGED_WRITE" ]; then
   echo "❌ Rule 15 violation: a module writes a managed ship artifact (.github/workflows,"
-  echo "   .githooks, .devcontainer) outside src/ship-installers.ts:"
+  echo "   .githooks, .devcontainer, dxkit-guardrails.sh) outside src/ship-installers.ts:"
   for f in $RULE15_MANAGED_WRITE; do echo "     $f"; done
   echo "   → Move the write into src/ship-installers.ts and register the surface in"
   echo "     src/managed-artifacts.ts:MANAGED_SHIP_SURFACES so update + uninstall cover it."

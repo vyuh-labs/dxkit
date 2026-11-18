@@ -82,7 +82,9 @@ describe('managed-artifact registry — contract', () => {
   it('managedGatedArtifacts lists each surface artifact when its gate flag is on', () => {
     const cases: Array<[keyof ManifestInstallFlags, string]> = [
       ['withHooks', '.githooks/pre-push'],
+      ['withHooks', 'dxkit-guardrails.sh'],
       ['withCiGuardrails', '.github/workflows/dxkit-guardrails.yml'],
+      ['withCiGuardrails', 'dxkit-guardrails.sh'],
       ['withBaselineRefresh', '.github/workflows/dxkit-baseline-refresh.yml'],
       ['withPrReview', '.github/workflows/pr-review.yml'],
       ['withDevcontainer', '.devcontainer/devcontainer.json'],

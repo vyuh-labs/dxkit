@@ -143,7 +143,7 @@ A machine without that setup, including the dxkit dev container, cannot build or
 | Guardrail check (baseline diff) | `npx vyuh-dxkit guardrail check` |
 | Doctor (verify setup) | `npx vyuh-dxkit doctor` |
 
-The pre-push hook runs `guardrail check` automatically — blocks net-new regressions before they leave your machine.
+**Before declaring a change done, run `./dxkit-guardrails.sh` from the repo root** (present when dxkit's git hooks or CI gate are installed). It runs exactly what the CI pipeline runs: the correctness floor (build + tests), the policy-render parity check, and the guardrail (no net-new findings vs the baseline). Exit 0 means the pipeline's checks pass; otherwise fix what it reports. The pre-push hook runs its faster `--quick` tier.
 
 When fixing findings, run the detailed report with `--graph-context`
 (e.g. `npx vyuh-dxkit vulnerabilities --detailed --graph-context`) — it

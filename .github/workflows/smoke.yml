@@ -158,6 +158,7 @@ jobs:
           set -euo pipefail
           cd /tmp/dxkit-smoke
           for f in \
+            dxkit-guardrails.sh \
             .githooks/pre-commit \
             .githooks/pre-push \
             .devcontainer/devcontainer.json \
@@ -175,9 +176,17 @@ jobs:
             fi
           done
           # Verify executables (POSIX bit set on the hook scripts).
-          for f in .githooks/pre-commit .githooks/pre-push .devcontainer/post-create.sh .devcontainer/install-agent-clis.sh; do
+          for f in dxkit-guardrails.sh .githooks/pre-commit .githooks/pre-push .devcontainer/post-create.sh .devcontainer/install-agent-clis.sh; do
             if [ ! -x "$f" ]; then
               echo "::error::Expected executable: $f"
+              exit 1
+            fi
+          done
+          # The one guardrail entry point: both hooks and the PR-gate workflow
+          # call it instead of carrying their own copy of the check sequence.
+          for f in .githooks/pre-push .githooks/pre-commit .github/workflows/dxkit-guardrails.yml; do
+            if ! grep -q 'sh ./dxkit-guardrails.sh' "$f"; then
+              echo "::error::$f does not call ./dxkit-guardrails.sh"
               exit 1
             fi
           done
@@ -280,6 +289,30 @@ jobs:
             exit 1
           fi
           echo "Guardrail passed on clean state as expected."
+
+      # The one entry point the hooks and the PR-gate workflow call: run it
+      # bare (the pipeline tier) on the packed install and check it gives the
+      # same verdict as the guardrail above, both ways.
+      - name: Guardrail entry point gives the pipeline verdict
+        run: |
+          set -euo pipefail
+          cd /tmp/dxkit-smoke
+          if ! ./dxkit-guardrails.sh; then
+            echo "::error::./dxkit-guardrails.sh failed on the clean state the guardrail just passed"
+            exit 1
+          fi
+          {
+            echo '// dxkit-smoke synthetic regression'
+            for i in $(seq 1 600); do
+              echo "export const x${i} = ${i};"
+            done
+          } > src/regression.ts
+          if ./dxkit-guardrails.sh; then
+            echo "::error::./dxkit-guardrails.sh exited 0 on a synthetic regression the guardrail blocks"
+            exit 1
+          fi
+          rm src/regression.ts
+          echo "Entry point matched the guardrail verdict both ways."
 
       # 4.0.1 class-fix. Every shipped workflow template carried a bare `npm ci`,
       # so a repo whose tree only resolves under --legacy-peer-deps died at the

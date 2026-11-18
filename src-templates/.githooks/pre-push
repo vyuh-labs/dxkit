@@ -1,17 +1,15 @@
 #!/usr/bin/env sh
 #
-# dxkit pre-push hook — QUICK tier of a two-tier gate.
+# dxkit pre-push hook — runs the QUICK tier of ./dxkit-guardrails.sh.
 #
-# Enforcement is tiered so the push boundary stays fast while CI stays
-# comprehensive:
-#   - pre-push (here) = QUICK: the correctness floor scoped to the change
-#     (does it compile + do the affected tests pass?) followed by the
-#     findings guardrail scanned INCREMENTALLY (scoped to the change), so
-#     the check scales with the PR's size, not the whole repo's.
-#   - CI (dxkit-guardrails.yml) = COMPREHENSIVE: the full-scope findings
-#     guardrail plus the full-suite correctness floor.
-# The push boundary is the last point we can stop bad code from leaving
-# the developer's machine, so it blocks; but it does the cheap version.
+# The checks (correctness floor, policy-render parity, findings guardrail)
+# and their order live in ONE place: ./dxkit-guardrails.sh at the repo root,
+# the same script the CI workflow (dxkit-guardrails.yml) runs and that you or
+# an agent can run by hand. This hook adds only what is specific to a push:
+# the escape hatch, the delete-only skip, and `--quick`, the cheap tier (the
+# floor scoped to the change, the guardrail scanned incrementally, stop at
+# the first failure) so the push boundary stays fast. Run
+# `./dxkit-guardrails.sh` with no arguments for the pipeline's full verdict.
 #
 # Install:
 #   git config core.hooksPath .githooks
@@ -44,46 +42,13 @@ if [ "${all_zero}" = "true" ]; then
   exit 0
 fi
 
-# Resolve the dxkit binary: prefer the project-local install, fall
-# back to a global one. Match the pre-commit hook's resolution order.
-if [ -x "./node_modules/.bin/vyuh-dxkit" ]; then
-  DXKIT="./node_modules/.bin/vyuh-dxkit"
-elif command -v vyuh-dxkit >/dev/null 2>&1; then
-  DXKIT="vyuh-dxkit"
-else
-  echo "[dxkit pre-push] vyuh-dxkit not found on PATH or in ./node_modules/.bin." >&2
-  echo "  Install it with: npm install --save-dev __DXKIT_PACKAGE_SPEC__" >&2
+# Git runs hooks from the root of the working tree, where the script lives.
+if [ ! -f ./dxkit-guardrails.sh ]; then
+  echo "[dxkit pre-push] ./dxkit-guardrails.sh is missing from the repo root, so nothing can be checked." >&2
+  echo "  Restore it with: npx vyuh-dxkit update   (then commit it)" >&2
   echo "  Or skip this hook for this push: DXKIT_SKIP_HOOKS=1 git push ..." >&2
   exit 1
 fi
 
-# Correctness floor (liveness) — does the change still compile + do the tests
-# it affects pass? This is independent of the baseline, so it runs even before
-# a baseline exists (a brand-new / greenfield repo still gets push-time
-# liveness). It is ADAPTIVE: on a repo that already runs its tests in CI it is
-# a no-op here (opt-in), and on a repo without a test-CI it runs by default.
-# A real failure blocks the push; a missing toolchain fail-opens (CI backstop).
-# Tune via .dxkit/policy.json correctness.surfaces.pre-push, DXKIT_FLOOR_PREPUSH,
-# or bypass everything with: git push --no-verify
-"${DXKIT}" floor check --surface pre-push
-
-# Policy ⇄ rendered-workflow parity (4.3.4): a .dxkit/policy.json edit that
-# leaves the managed workflows un-rendered would fail the same check on the
-# PR — catch it here, where the fix is one command:
-#   vyuh-dxkit policy render --apply   (then commit the re-rendered files)
-# The check snapshots, renders, diffs, and restores — your tree is untouched.
-"${DXKIT}" policy render --check
-
-BASELINE_NAME="${DXKIT_BASELINE_NAME:-main}"
-BASELINE_FILE=".dxkit/baselines/${BASELINE_NAME}.json"
-
-if [ ! -f "${BASELINE_FILE}" ]; then
-  echo "[dxkit pre-push] No baseline at ${BASELINE_FILE} — not blocking."
-  echo "  Run \`${DXKIT} baseline create\` once to start gating pushes."
-  exit 0
-fi
-
-# Findings guardrail, scanned INCREMENTALLY — scoped to the change so the
-# check scales with the PR's size, not the whole repo's. CI runs the
-# full-scope guardrail as the comprehensive backstop.
-"${DXKIT}" guardrail check --name "${BASELINE_NAME}" --incremental
+# `sh` rather than relying on the executable bit, which a checkout can drop.
+exec sh ./dxkit-guardrails.sh --quick </dev/null

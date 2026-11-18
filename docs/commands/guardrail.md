@@ -116,14 +116,60 @@ EOF
 vyuh-dxkit guardrail check  # auto-discovers .dxkit/policy.json
 ```
 
+## One entry point: `dxkit-guardrails.sh`
+
+`init --with-hooks` and `init --with-ci` install `dxkit-guardrails.sh` at the
+repo root. It is the one place dxkit's checks and their order are defined:
+
+1. **correctness floor** — does the code still compile, do the tests pass?
+2. **policy-render parity** — do the managed workflows match `.dxkit/policy.json`?
+3. **findings guardrail** — no net-new findings vs the baseline.
+
+The pre-push hook, the pre-commit hook and the CI workflow all call it, so
+none of them carries its own copy of the sequence. Run it yourself, or have
+your agent run it, before declaring a change done:
+
+```bash
+./dxkit-guardrails.sh                  # what the CI pipeline runs
+./dxkit-guardrails.sh --quick          # the pre-push tier
+./dxkit-guardrails.sh --changed-only   # the pre-commit tier
+./dxkit-guardrails.sh --base develop   # reproduce a PR into develop
+```
+
+| Tier                          | Floor          | Parity | Guardrail        | On a failure            |
+| ----------------------------- | -------------- | ------ | ---------------- | ----------------------- |
+| (none) — the CI pipeline      | full suite     | yes    | full scan        | runs every check anyway |
+| `--quick` — pre-push          | affected tests | yes    | `--incremental`  | stops                   |
+| `--changed-only` — pre-commit | —              | —      | `--changed-only` | —                       |
+
+The workflow passes only its plumbing: `--base <branch>` (the PR's base; the
+floor attributes failures against the merge-base, and a PR into a non-default
+base is gated ref-based against that base), `--untrusted` (a fork's head), and
+`--report <file>` (the markdown the PR comment posts: the guardrail verdict,
+then any policy drift, then any floor failure). A cache-transport repo with no
+local anchor falls back to a ref-based gather against the base.
+
+The exit status is 0 when every check passed or was skipped for a stated
+reason, otherwise the status of the first check that failed. The summary at
+the end lists each check as passed, failed, skipped (with the reason) or did
+not run (with the reason). The hook tiers skip the guardrail, without
+blocking, until a baseline exists. `DXKIT_BASELINE_NAME` picks the baseline in
+every tier.
+
+The script resolves `./node_modules/.bin/vyuh-dxkit` first, then a global
+`vyuh-dxkit`. `vyuh-dxkit update` refreshes it and the callers; a file at that
+path without dxkit's header marker is treated as yours and left alone. If it
+goes missing, the hooks block with the remedy and `vyuh-dxkit doctor` flags
+it.
+
 ## Hooks
 
 ### What gets installed
 
-| Flag                                    | Hook                   | When it fires      | Scope                                                                                            | Wall-clock                                                                |
-| --------------------------------------- | ---------------------- | ------------------ | ------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------- |
-| `--with-hooks` (default under `--full`) | `.githooks/pre-push`   | every `git push`   | full guardrail (every regression since baseline)                                                 | scales with repo size (~3 min on a 500-file repo)                         |
-| `--with-precommit-hook` (opt-in)        | `.githooks/pre-commit` | every `git commit` | `--changed-only` (just lines you touched); add `--incremental` to also scope the underlying scan | full scan today, or near-PR-size with `--incremental` (opt-in since 2.15) |
+| Flag                                    | Hook                   | When it fires      | Scope                                                                                                            | Wall-clock                         |
+| --------------------------------------- | ---------------------- | ------------------ | ---------------------------------------------------------------------------------------------------------------- | ---------------------------------- |
+| `--with-hooks` (default under `--full`) | `.githooks/pre-push`   | every `git push`   | `./dxkit-guardrails.sh --quick`: the floor on affected tests, policy parity, the guardrail scanned incrementally | scales with the size of the change |
+| `--with-precommit-hook` (opt-in)        | `.githooks/pre-commit` | every `git commit` | `./dxkit-guardrails.sh --changed-only`: the guardrail, blocking only on lines you touched                        | a full scan                        |
 
 The pre-commit hook is **opt-in** because re-running every analyzer on every commit is slow on large codebases. Pre-push amortises the same cost across the batch of commits in a push; CI runs the same check server-side as an unbypassable backstop. Customers on small/fast repos who want commit-time gating can opt in.
 
@@ -191,8 +237,10 @@ Any local bypass (`--no-verify`, `DXKIT_SKIP_HOOKS`, missing `core.hooksPath`) i
 ## CI
 
 `dxkit init --with-ci` installs `.github/workflows/dxkit-guardrails.yml`.
-It runs on every PR, posts a markdown summary as a PR comment (updates
-in place across pushes), and fails the check if the guardrail blocks.
+It runs `./dxkit-guardrails.sh` (see [the entry point](#one-entry-point-dxkit-guardrailssh))
+on every PR, posts its report as a PR comment (updated in place across
+pushes), and fails the check if any check fails. Running
+`./dxkit-guardrails.sh` locally reproduces its verdict.
 
 `dxkit init --with-baseline-refresh` installs a sibling workflow that
 runs `baseline create --force` on every push to `main` and auto-commits

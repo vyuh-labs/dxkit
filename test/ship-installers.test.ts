@@ -7,6 +7,7 @@ import {
   installHooks,
   installDevcontainer,
   installCiGuardrails,
+  installGuardrailEntryPoint,
   installCiBaselineRefresh,
   installCiGraphRefresh,
   graphRefreshEnabled,
@@ -303,18 +304,21 @@ describe('installCiGuardrails + installCiBaselineRefresh', () => {
     execFileSync('git', ['init', '-q', '-b', 'trunk'], { cwd: tmp });
 
     installCiGuardrails(tmp);
-    const content = fs.readFileSync(
+    installGuardrailEntryPoint(tmp);
+    const workflow = fs.readFileSync(
       path.join(tmp, '.github/workflows/dxkit-guardrails.yml'),
       'utf8',
     );
-    // Placeholder resolved to the consumer's default branch...
-    expect(content).not.toContain('__DXKIT_DEFAULT_BRANCH__');
-    expect(content).toContain('DEFAULT_BRANCH="trunk"');
-    // ...and the step forces a live ref-based gather at the PR base when the
-    // PR targets a NON-default branch (the committed baseline is
-    // default-branch-anchored).
-    expect(content).toContain('DXKIT_PR_BASE: ${{ github.base_ref }}');
-    expect(content).toContain('--mode ref-based --ref origin/$DXKIT_PR_BASE');
+    const script = fs.readFileSync(path.join(tmp, 'dxkit-guardrails.sh'), 'utf8');
+    // The workflow hands the entry point the PR's base branch...
+    expect(workflow).toContain('DXKIT_PR_BASE: ${{ github.base_ref }}');
+    expect(workflow).toContain('${DXKIT_PR_BASE:+--base "$DXKIT_PR_BASE"}');
+    // ...and the entry point, rendered with the consumer's default branch,
+    // forces a live ref-based gather at the base when the PR targets a
+    // NON-default branch (the committed baseline is default-branch-anchored).
+    expect(script).not.toContain('__DXKIT_DEFAULT_BRANCH__');
+    expect(script).toContain('DEFAULT_BRANCH="trunk"');
+    expect(script).toContain('--mode ref-based --ref "origin/$BASE"');
   });
 
   it('comment-defer workflow is opt-in via policy newAdvisories.commentCommands and surface-gated', () => {
