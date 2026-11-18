@@ -46,7 +46,10 @@ function fakeExec(opts: {
   const published: string[] = [];
   const branchRows = Array.from({ length: opts.markers ?? 0 }, (_, i) =>
     resumeAttemptRow('fix-build', {
-      timestamp: `2026-08-1${i}T00:00:00.000Z`,
+      // Relative to now: the order history reads a trailing window
+      // (ORDER_HISTORY_WINDOW_DAYS), so a fixed calendar date ages out of it
+      // and the rows silently stop counting.
+      timestamp: new Date(Date.now() - (i + 1) * 86_400_000).toISOString(),
       ...STAMP,
     }),
   );
