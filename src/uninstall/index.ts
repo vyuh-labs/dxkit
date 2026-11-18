@@ -15,12 +15,8 @@ import * as path from 'path';
 import { execFileSync } from 'child_process';
 
 import { serializePreservingJson } from '../files';
-import {
-  hasAmbiguousOwnerSection,
-  managedContentHash,
-  OWNER_SECTION_FILES,
-  ownerContentOnly,
-} from '../owner-section';
+import { managedContentHash } from '../owner-section';
+import { keepOwnerSectionOnly, planOwnerSectionFile } from './owner-section-plan';
 import { stripPolicyJsoncAssociation, wouldStripPolicyJsoncAssociation } from '../editor-assoc';
 import { detectInstallFlags, type InstallFlags } from '../update';
 import { managedGatedArtifacts } from '../managed-artifacts';
@@ -159,11 +155,8 @@ export function planUninstall(cwd: string, opts: UninstallOptions = {}): Uninsta
     const claudeMadeByDxkit = !!claudeEntry && claudeEntry.provenance !== 'skipped';
     const current = read(cwd, 'CLAUDE.md');
     const stripped = stripClaudeLoopBlock(current);
-    if (
-      claudeMadeByDxkit &&
-      claudeEntry!.hash &&
-      managedContentHash('CLAUDE.md', stripped.content) === claudeEntry!.hash
-    ) {
+    const shimHash = managedContentHash('CLAUDE.md', stripped.content);
+    if (claudeMadeByDxkit && claudeEntry!.hash && shimHash === claudeEntry!.hash) {
       // dxkit created the whole file, and stripping dxkit's own loop block leaves
       // exactly the recorded dxkit shim (no user edits) → remove the whole file
       // (pre-dxkit state had no CLAUDE.md).
@@ -241,53 +234,11 @@ export function planUninstall(cwd: string, opts: UninstallOptions = {}): Uninsta
   for (const [rel, entry] of Object.entries(manifest?.files ?? {})) {
     if (MERGE_TARGETS.has(rel)) continue;
     if (entry.provenance === 'skipped') continue;
-    if (OWNER_SECTION_FILES.has(rel) && exists(cwd, rel)) {
-      // The owner section is the owner's, never dxkit's to delete. When it
-      // holds text, uninstall removes dxkit's sections and the markers and
-      // keeps that text as the file; an edit OUTSIDE the section keeps the
-      // whole file (skip-modified) unless --force, exactly like any other
-      // edited dxkit file. An empty section deletes as before.
-      const current = read(cwd, rel);
-      if (hasAmbiguousOwnerSection(current)) {
-        // Markers that do not form one section: the owner's text has no
-        // known boundary, so nothing is removed, not even under --force.
-        warnings.push(
-          `${rel} kept: its dxkit:owner markers do not form one section, so the owner's text cannot be separated from dxkit's`,
-        );
-        actions.push({
-          kind: 'delete-file',
-          target: rel,
-          detail: 'dxkit-created file',
-          status: 'skip-modified',
-        });
-        continue;
-      }
-      if (ownerContentOnly(current) !== null) {
-        const unmodified =
-          entry.evolving || !entry.hash || managedContentHash(rel, current) === entry.hash;
-        if (unmodified || opts.force) {
-          actions.push({
-            kind: 'keep-owner-section',
-            target: rel,
-            detail: "remove dxkit's sections, keep the owner section's text as the file",
-            status: 'pending',
-          });
-          warnings.push(
-            `${rel} kept: it now holds only the text of its owner section (dxkit's sections removed)`,
-          );
-        } else {
-          warnings.push(
-            `${rel} was edited after dxkit created it — skipped (use --force to remove)`,
-          );
-          actions.push({
-            kind: 'delete-file',
-            target: rel,
-            detail: 'dxkit-created file',
-            status: 'skip-modified',
-          });
-        }
-        continue;
-      }
+    const owner = exists(cwd, rel) ? planOwnerSectionFile(rel, read(cwd, rel), entry, opts) : null;
+    if (owner) {
+      actions.push(owner.action);
+      warnings.push(owner.warning);
+      continue;
     }
     del(rel, 'dxkit-created file', entry.evolving, entry.hash);
   }
@@ -430,13 +381,10 @@ export function executeUninstall(
         reverted.push(a.target);
         break;
       }
-      case 'keep-owner-section': {
-        const kept = ownerContentOnly(read(cwd, a.target));
-        if (kept === null) rm(abs);
-        else fs.writeFileSync(abs, kept, 'utf-8');
+      case 'keep-owner-section':
+        keepOwnerSectionOnly(abs);
         reverted.push(a.target);
         break;
-      }
       case 'revert-settings': {
         const original = read(cwd, '.claude/settings.json');
         const parsed = tryJson(original)!;
