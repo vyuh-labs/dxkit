@@ -1,0 +1,1 @@
+process.stdout.write(JSON.stringify({ schema: 'inventory.v1', entities: [] }));
