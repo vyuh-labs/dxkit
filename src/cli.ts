@@ -3483,7 +3483,12 @@ export async function run(argv: string[]): Promise<void> {
       // (an onboarding PR on a repo whose tests were already red) warns by
       // name; only net-new failures block. Runs ONLY when the current side
       // failed, so a green PR pays nothing extra.
-      if (surfaceRaw === 'ci' && outcome.blocks) {
+      // A current-side zero (4.5.0) earns the base run too, so a suite the
+      // PR removed is named (never a block).
+      if (
+        surfaceRaw === 'ci' &&
+        (outcome.blocks || outcome.result?.checks.some((c) => c.status === 'no-tests'))
+      ) {
         const { attributeCiFloorOutcome } = await import('./analyzers/correctness/surface-run');
         outcome = await attributeCiFloorOutcome(outcome, {
           cwd: targetPath,

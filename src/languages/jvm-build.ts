@@ -357,7 +357,10 @@ export function jvmCorrectnessProvider(opts: JvmCorrectnessOptions): Correctness
  * Gradle's plain console (the default without a TTY, i.e. every floor run)
  * prints `> Task :<path> <OUTCOME>` per task, and a test task with no test
  * sources is `NO-SOURCE`. Zero means: at least one test-task line, and every
- * one of them is NO-SOURCE. A test task that executed (no outcome suffix),
+ * one of them is NO-SOURCE. A test task is `test` or any task named
+ * `...Test` (`testDebugUnitTest`, a custom `integrationTest` the `test`
+ * task depends on), so an executed custom suite beside an empty unit suite
+ * vetoes it. A test task that executed (no outcome suffix),
  * or is UP-TO-DATE / FROM-CACHE (a previous run's tests) vetoes it. Gradle
  * is not on the capture machine; the line shape is Gradle's documented
  * task-outcome format (provenance in the fixture HARVEST.md).
@@ -369,6 +372,6 @@ export function gradleTestRanNoTests(run: {
   if (run.code !== 0) return false;
   const testTasks = [
     ...run.output.replace(/\r/g, '').matchAll(/^> Task (\S*?)(\w+)(?: ([A-Z-]+))?\s*$/gm),
-  ].filter((m) => m[2] === 'test' || new RegExp(`^${ANDROID_TEST_TASK}$`).test(m[2]));
+  ].filter((m) => m[2] === 'test' || /Test$/.test(m[2]));
   return testTasks.length > 0 && testTasks.every((m) => m[3] === 'NO-SOURCE');
 }

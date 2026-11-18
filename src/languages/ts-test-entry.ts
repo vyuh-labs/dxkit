@@ -356,7 +356,18 @@ function scriptArgs(runner: KnownTestRunner, affected: readonly string[] | null)
 
 /** The command the floor runs, or the disclosed reason it cannot. */
 export type TsAffectedTestsInvocation =
-  | { readonly bin: string; readonly args: readonly string[]; readonly cannotStart?: undefined }
+  | {
+      readonly bin: string;
+      readonly args: readonly string[];
+      readonly cannotStart?: undefined;
+      /** The run's whole output comes from ONE test command (the native
+       *  runner, or a script with no command separators), so its zero-tests
+       *  marker speaks for the whole run (4.5.0). A pipeline (`jest &&
+       *  vitest run`) is not: jest reports its count on stderr, which the
+       *  floor does not see on exit 0, so a trailing empty runner's marker
+       *  would hide a suite that ran. */
+      readonly singleRunner: boolean;
+    }
   | { readonly bin: string; readonly args: readonly string[]; readonly cannotStart: string };
 
 /**
@@ -378,11 +389,15 @@ export function tsAffectedTestsInvocation(
   }
   const { entry } = resolved;
   if (entry.via === 'native' && entry.runner !== null) {
-    return { bin: 'npx', args: nativeArgs(entry.runner, entry.extras, affected) };
+    return {
+      bin: 'npx',
+      args: nativeArgs(entry.runner, entry.extras, affected),
+      singleRunner: true,
+    };
   }
   const extra = entry.runner !== null ? scriptArgs(entry.runner, affected) : [];
   const [bin, ...args] = runScriptArgv(detectPackageManager(cwd), 'test', extra);
-  return { bin, args };
+  return { bin, args, singleRunner: !COMMAND_SEPARATORS.test(entry.script ?? '') };
 }
 
 /**
@@ -396,7 +411,9 @@ export function tsAffectedTestsInvocation(
  *   - `node --test` (a test script dxkit runs as-is): a `tests 0` summary
  *     in TAP (`# tests 0`) or spec (`ℹ tests 0`) form.
  * A summary counting any test (vitest's `Tests  1 passed`, a nonzero
- * `tests N`) vetoes it. Real output pinned in
+ * `tests N`) vetoes it. Attached only to a single-runner invocation
+ * (`singleRunner`): a pipeline's earlier runner may have run tests whose
+ * count went to stderr. Real output pinned in
  * `test/fixtures/raw/floor-no-tests/`.
  */
 export function tsRanNoTests(run: { readonly code: number; readonly output: string }): boolean {

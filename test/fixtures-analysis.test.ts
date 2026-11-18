@@ -20,6 +20,7 @@
  * ls-files`), then the gathers run in-process.
  */
 
+import { tsRanNoTests } from '../src/languages/ts-test-entry';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { execFileSync } from 'child_process';
 import {
@@ -356,6 +357,7 @@ describe('analysis fixtures: the correctness floor runs the repo’s own test en
         'src/App.js',
       ],
       parseFailures: expect.any(Function),
+      ranNoTests: tsRanNoTests,
     });
   });
 

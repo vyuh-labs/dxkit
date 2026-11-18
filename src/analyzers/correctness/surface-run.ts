@@ -25,8 +25,8 @@
  *     still blocks — base green, PR red), pre-existing debt warns by name,
  *     and a failure whose base side could not be observed is `unattributed`
  *     (disclosed, never blocked — the Rule 19 law applied to the floor). The
- *     base side only runs when the current side FAILED, so a green PR pays
- *     nothing.
+ *     base side only runs when the current side FAILED or ran zero tests
+ *     (4.5.0, to name a vanished suite), so a green PR pays nothing.
  *
  * Both surfaces are ADAPTIVE (`resolveCorrectnessSurface`): when the repo
  * already runs its tests in its own CI, the floor defaults to opt-in here, so
@@ -357,7 +357,9 @@ function provisionBaseWorktree(
  * Two-sided attribution for a BLOCKING ci floor outcome (T2.3): run the floor
  * at the merge-base in a throwaway worktree and re-derive `blocks` from the
  * ONE comparator — only failures the base side PASSED (net-new) block. Called
- * only when the current side failed, so a green PR never pays the base run.
+ * only when the current side failed or ran ZERO tests (4.5.0: the base run is
+ * what names a suite the PR removed; a zero never blocks), so a green PR
+ * never pays the base run.
  *
  * Fail-open discipline: an unresolvable base keeps the point-in-time verdict
  * (blocking — push-to-default-branch runs have no base and stay the liveness
@@ -375,7 +377,15 @@ export async function attributeCiFloorOutcome(
     readonly packs?: readonly LanguageSupport[];
   },
 ): Promise<SurfaceFloorOutcome> {
-  if (outcome.surface !== 'ci' || !outcome.blocks || !outcome.result) return outcome;
+  // A current-side zero (4.5.0) also earns the base run, never a block: a
+  // suite this PR removed is only nameable against the base.
+  if (
+    outcome.surface !== 'ci' ||
+    !outcome.result ||
+    (!outcome.blocks && !hasNoTests(outcome.result))
+  ) {
+    return outcome;
+  }
   const baseSha = resolvePrePushBase(opts.cwd, opts.base);
   if (!baseSha) {
     return {

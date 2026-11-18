@@ -353,7 +353,15 @@ export async function computeStopGate(
     stop_hook_active: stopActive,
     // Prefer the explicit configured-test status; otherwise report what the
     // correctness floor's affected-test stage saw.
-    tests_status: tests.status !== 'not_configured' ? tests.status : floorStatuses.tests_status,
+    // A floor that PROVED zero tests ran keeps `no_tests` even when the
+    // configured command exits 0 (4.5.0): that command is often the same
+    // empty suite under `--passWithNoTests`, and the ledger must not record
+    // a pass the floor disproved.
+    tests_status:
+      tests.status === 'not_configured' ||
+      (tests.status === 'pass' && floorStatuses.tests_status === 'no_tests')
+        ? floorStatuses.tests_status
+        : tests.status,
     lint_status: 'not_configured',
     typecheck_status: floorStatuses.typecheck_status,
     ...floorDisclosure,

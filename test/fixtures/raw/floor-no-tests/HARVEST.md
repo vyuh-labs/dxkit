@@ -52,7 +52,7 @@ captures when the toolchain is at hand.
 | --- | --- |
 | `go-module-no-test-files.txt`, `go-no-tests-to-run.txt`, `go-one-package-with-tests.txt`, `go-cached-pass.txt` | `go test` per-package summary lines (`?   <pkg>\t[no test files]`, `ok  <pkg>\t<time> [no tests to run]`, `ok  <pkg>\t(cached)`), `go help test` and cmd/go's test output |
 | `swift-no-test-target.txt`, `swift-xctest-zero.txt`, `swift-testing-ran-xctest-zero.txt` | SwiftPM's `error: no tests found; create a target in the 'Tests' directory`, XCTest's `Executed N tests, with ...` summary, swift-testing's `Test run with N tests ... passed` |
-| `gradle-test-no-source.txt`, `gradle-test-executed.txt`, `gradle-multiproject-one-ran.txt` | Gradle's plain-console task lines `> Task :<path> <OUTCOME>` and the `NO-SOURCE` task outcome (Gradle user manual, "Task outcomes") |
+| `gradle-test-no-source.txt`, `gradle-test-executed.txt`, `gradle-multiproject-one-ran.txt`, `gradle-custom-test-task-ran.txt` | Gradle's plain-console task lines `> Task :<path> <OUTCOME>` and the `NO-SOURCE` task outcome (Gradle user manual, "Task outcomes") |
 | `dotnet-mtp-zero-tests.txt` | Microsoft.Testing.Platform exit code 8 ("the test session ran zero tests") and its `Zero tests ran` summary |
 
 Maven has no fixture and no recogniser: the floor runs `mvn -q`, which

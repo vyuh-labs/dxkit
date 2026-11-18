@@ -477,6 +477,16 @@ describe('attributeCiFloorOutcome (two-sided CI floor, real git worktree)', () =
     expect(out.attributed?.[0].attribution).toBe('net-new');
   }, 60_000);
 
+  it('TESTS VANISHED: base ran tests + head ran ZERO → base run happens, suite named, never a block (4.5.0)', async () => {
+    const out = await runTwoSided('fine\n', 'empty\n');
+    expect(out.blocks).toBe(false);
+    expect(out.noTestsAttributed?.[0]).toMatchObject({
+      transition: 'tests-vanished',
+      baseStatus: 'pass',
+    });
+    expect(out.summary).toContain('TESTS VANISHED');
+  }, 60_000);
+
   it('UNATTRIBUTED: base side could not run the check → disclosed, not blocked (Rule 19)', async () => {
     // Base commit has NO marker file → the exec reports unavailable on the
     // base side → skipped there → the head failure cannot be attributed.

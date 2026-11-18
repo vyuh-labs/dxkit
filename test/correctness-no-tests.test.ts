@@ -109,6 +109,7 @@ const CASES: Record<string, [Recogniser, number, boolean]> = {
   'gradle-test-no-source.txt': [gradleTestRanNoTests, 0, true],
   'gradle-test-executed.txt': [gradleTestRanNoTests, 0, false],
   'gradle-multiproject-one-ran.txt': [gradleTestRanNoTests, 0, false],
+  'gradle-custom-test-task-ran.txt': [gradleTestRanNoTests, 0, false],
 };
 
 describe('per-pack zero-tests recognisers on real runner output', () => {
@@ -251,6 +252,20 @@ describe('every pack decides how it recognises "ran zero tests"', () => {
     const ruby = LANGUAGES.find((p) => p.id === 'ruby')!;
     const cmd = fullScopeTestCommand(ruby, repo({ Gemfile: "gem 'minitest'\n" }));
     expect(cmd!.ranNoTests).toBe(minitestLoadRanNoTests);
+  });
+
+  it('a TS test script that is a pipeline carries no recogniser (an earlier runner may have run tests)', () => {
+    const ts = LANGUAGES.find((p) => p.id === 'typescript')!;
+    const cwd = repo(
+      {
+        'package.json': JSON.stringify({ scripts: { test: 'jest && vitest run' } }),
+        'node_modules/.bin/vitest': '#!/bin/sh\n',
+      },
+      ['node_modules/.bin/vitest'],
+    );
+    const cmd = fullScopeTestCommand(ts, cwd);
+    expect(cmd).not.toBeNull();
+    expect(cmd!.ranNoTests).toBeUndefined();
   });
 
   it('a Maven build carries no recogniser (declared exemption)', () => {

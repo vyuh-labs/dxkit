@@ -2291,7 +2291,10 @@ const tsCorrectnessProvider: CorrectnessProvider = {
       bin: invocation.bin,
       args: invocation.args,
       parseFailures: parseTsTestRunnerFailures,
-      ranNoTests: tsRanNoTests,
+      // Only a single-runner run's marker speaks for the whole output.
+      ...(invocation.cannotStart === undefined && invocation.singleRunner
+        ? { ranNoTests: tsRanNoTests }
+        : {}),
       ...(invocation.cannotStart !== undefined ? { cannotStart: invocation.cannotStart } : {}),
     };
   },
