@@ -24,7 +24,7 @@
  * dxkit-authored prompts only. Landing (the standing PR) is composed by the
  * CLI/workflow layer on top of this runner's outcome.
  */
-import { runCorrectnessFloor } from '../analyzers/correctness/run';
+import { describeNoTestsRan, hasNoTests, runCorrectnessFloor } from '../analyzers/correctness/run';
 import { detectActiveLanguages } from '../languages';
 import { renderRemediateLedger } from './ledger-render';
 import { resolveModelSetting } from './driver';
@@ -169,9 +169,14 @@ export async function runRemediateTask(opts: RemediateRunOptions): Promise<Remed
       outcome: 'no-op',
       task: task.id,
       floor: entryFloor,
-      note:
-        'nothing to do: the entry correctness floor is green, and this task exists to fix ' +
-        'floor debt — no agent was spawned ($0).',
+      note: hasNoTests(entryFloor)
+        ? // Not "green" (4.5.0): nothing fails, but a test command ran zero
+          // tests — not floor debt a repair agent can fix, and not a pass.
+          'nothing to do: no entry floor check fails (but no tests ran: ' +
+          describeNoTestsRan(entryFloor).join('; ') +
+          '), and this task exists to fix floor debt — no agent was spawned ($0).'
+        : 'nothing to do: the entry correctness floor is green, and this task exists to fix ' +
+          'floor debt — no agent was spawned ($0).',
     });
   }
   // Entry side of the task's score hinge (when it declares one) — computed on

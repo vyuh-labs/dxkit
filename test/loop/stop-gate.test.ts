@@ -189,6 +189,7 @@ describe('computeStopGate', () => {
         blocks: checks.some((c) => c.status === 'fail'),
       },
       netNew,
+      noTests: [],
     });
 
     it('blocks the model on a net-new floor failure with a repair message', async () => {

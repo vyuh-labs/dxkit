@@ -25,8 +25,11 @@ import { policyContentHash } from '../baseline/policy';
 import { describeAttributionGap, attributionGapRemedy } from '../baseline/attribution-gap';
 import { pairBlocks } from './context';
 import type { GateCommandOutcome } from '../gate-cli';
+import { describeNoTestsCheck } from '../analyzers/correctness/run';
 
-/** Map a floor/check runner status onto the wire's three-way status. */
+/** Map a floor/check runner status onto the wire's three-way status. A
+ *  `no-tests` check (4.5.0) is `skipped` on the wire, with its cause: the
+ *  frozen schema has no fourth value, and it is never `passed`. */
 function wireStatus(status: string): WireVerdictCheck['status'] {
   if (status === 'pass') return 'passed';
   if (status === 'fail') return 'failed';
@@ -119,7 +122,11 @@ export function buildWireVerdict(outcome: GateCommandOutcome, receipt: string): 
         checks: outcome.floor.checks.map((c) => ({
           id: `floor.${c.pack}:${c.label}`,
           status: wireStatus(c.status),
-          ...(c.status.startsWith('skipped') ? { cause: c.output ?? c.status } : {}),
+          ...(c.status === 'no-tests'
+            ? { cause: describeNoTestsCheck(c, outcome.floor?.scope) }
+            : c.status.startsWith('skipped')
+              ? { cause: c.output ?? c.status }
+              : {}),
         })),
       }
     : {

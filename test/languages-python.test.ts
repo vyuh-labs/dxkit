@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { pytestRanNoTests } from '../src/languages/python';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -291,6 +292,7 @@ describe('python.correctness', () => {
       label: 'affected-tests',
       bin: py,
       args: ['-m', 'pytest', 'tests/test_app.py'],
+      ranNoTests: pytestRanNoTests,
     });
   });
 
@@ -306,7 +308,12 @@ describe('python.correctness', () => {
     const py = installVenvBin('python');
     installVenvBin('pytest');
     const cmd = python.correctness!.affectedTests(ctx({ scope: 'full' }));
-    expect(cmd).toEqual({ label: 'affected-tests', bin: py, args: ['-m', 'pytest'] });
+    expect(cmd).toEqual({
+      label: 'affected-tests',
+      bin: py,
+      args: ['-m', 'pytest'],
+      ranNoTests: pytestRanNoTests,
+    });
   });
 
   it('affectedTests: null (fail-open) when pytest is not installed in the env', () => {

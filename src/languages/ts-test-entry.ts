@@ -384,3 +384,29 @@ export function tsAffectedTestsInvocation(
   const [bin, ...args] = runScriptArgv(detectPackageManager(cwd), 'test', extra);
   return { bin, args };
 }
+
+/**
+ * Did the affected-tests run execute ZERO tests? (4.5.0, the pack's
+ * `ranNoTests` recogniser.) Every invocation above carries
+ * `--passWithNoTests`, so an empty selection exits 0 and used to record as a
+ * pass. Positive evidence only, read from the runner's own words on stdout
+ * (the floor captures stdout alone on exit 0):
+ *   - jest / react-scripts: `No tests found, exiting with code 0`;
+ *   - vitest (`run` and `related`): `No test files found, exiting with code 0`;
+ *   - `node --test` (a test script dxkit runs as-is): a `tests 0` summary
+ *     in TAP (`# tests 0`) or spec (`ℹ tests 0`) form.
+ * A summary counting any test (vitest's `Tests  1 passed`, a nonzero
+ * `tests N`) vetoes it. Real output pinned in
+ * `test/fixtures/raw/floor-no-tests/`.
+ */
+export function tsRanNoTests(run: { readonly code: number; readonly output: string }): boolean {
+  if (run.code !== 0) return false;
+  const out = run.output.replace(/\r/g, '');
+  if (/^\s*Tests:?\s+.*\b[1-9]\d* (?:passed|failed|skipped|todo)\b/m.test(out)) return false;
+  if (/^(?:#|ℹ) tests [1-9]/m.test(out)) return false;
+  return (
+    /^No tests found, exiting with code 0\s*$/m.test(out) ||
+    /^No test files found, exiting with code 0\s*$/m.test(out) ||
+    /^(?:#|ℹ) tests 0\s*$/m.test(out)
+  );
+}

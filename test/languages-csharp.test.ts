@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { dotnetTestRanNoTests } from '../src/languages/csharp';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -237,6 +238,7 @@ describe('csharp.correctness', () => {
       label: 'affected-tests',
       bin: 'dotnet',
       args: ['test', 'test/App.Tests/App.Tests.csproj'],
+      ranNoTests: dotnetTestRanNoTests,
     });
   });
 

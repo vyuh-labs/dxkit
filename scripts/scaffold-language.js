@@ -627,6 +627,14 @@ export const ${id}: LanguageSupport = {
   // the runner's output so a NEW failing test blocks even inside an
   // already-red check. Return null when unsure (check-level fallback is
   // disclosed). See parseTsTestRunnerFailures for the reference parser.
+  //
+  // REQUIRED once affectedTests returns a command: \`ranNoTests\` (4.5.0) on
+  // the same COMMAND — true only when the runner's exit code + output PROVE
+  // it executed zero tests (its own "no tests" marker, or every count 0), so
+  // an empty suite records as \`no-tests\`, never as a pass. Pin it against
+  // real runner output in test/fixtures/raw/floor-no-tests/ and add the pack
+  // to WIRING in test/correctness-no-tests.test.ts (or to NO_TESTS_EXEMPT
+  // with a reason). See cargoTestRanNoTests / pytestRanNoTests.
   // before ship. syntaxCheck = the cheap "does it compile/parse" check every
   // language can give; affectedTests = run the tests the change reaches (native
   // impact-selection where the ecosystem supports it, else a coarser fallback

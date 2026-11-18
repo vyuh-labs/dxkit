@@ -41,6 +41,7 @@ import {
 } from './analyzers/correctness/run';
 import {
   attributeFloorFailures,
+  toFloorBaseCheck,
   type AttributedFloorFailure,
   type FloorBaseCheck,
 } from './analyzers/correctness/attribution';
@@ -91,16 +92,6 @@ export interface GateCommandOutcome {
    *  `policy.floor.required`, default true): the gate refuses
    *  (`CANNOT GATE`, exit 2) instead of passing over the skip. */
   readonly floorRequiredGap?: RequiredObservationGap;
-}
-
-/** Map a floor check status onto the attribution comparator's base shape. */
-function toBaseCheck(c: CorrectnessFloorResult['checks'][number]): FloorBaseCheck {
-  return {
-    pack: c.pack,
-    label: c.label,
-    status: c.status === 'pass' ? 'pass' : c.status === 'fail' ? 'fail' : 'skipped',
-    ...(c.findings !== undefined ? { findings: c.findings } : {}),
-  };
 }
 
 /**
@@ -227,7 +218,7 @@ export async function runGateCommand(
     // blamed on the edit.
     let base: FloorBaseCheck[] | null = null;
     if (baselineDir !== undefined) {
-      base = runFloorAcrossRoots(runFloor, baselineDir).checks.map(toBaseCheck);
+      base = runFloorAcrossRoots(runFloor, baselineDir).checks.map(toFloorBaseCheck);
     }
     floorNetNew = attributeFloorFailures(floor, base, { absentMeans: 'net-new' }).filter(
       (a) => a.attribution === 'net-new',

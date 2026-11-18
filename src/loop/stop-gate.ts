@@ -36,7 +36,12 @@ export { buildRepairMessage };
 // that would be an import cycle).
 import { buildLedgerEvent, type CheckStatus, type LedgerEvent } from './ledger';
 import { dxkitCli } from '../self-invocation';
-import { buildFloorRepairMessage, floorLedgerStatuses, type FloorGateOutcome } from './floor-gate';
+import {
+  buildFloorRepairMessage,
+  describeFloorNoTests,
+  floorLedgerStatuses,
+  type FloorGateOutcome,
+} from './floor-gate';
 import { runConfiguredTests, type StopHookPayload } from './stop-gate-io';
 import { buildOrderRepairMessage, readOrderScope, unresolvedOrderIds } from './order-scope';
 
@@ -356,6 +361,13 @@ export async function computeStopGate(
   });
   // An allow's message reaches the operator on stderr — a disclosed
   // order-scope skip (malformed file, undecidable verifier) rides it so
-  // the skip is never silent.
-  return { outcome: 'allow', event, message: orderNote };
+  // the skip is never silent. A floor whose test command ran zero tests
+  // (or whose suite vanished since the loop started) rides it the same way:
+  // an allowed Stop must never read as "tests pass" when none ran.
+  const noTestsNote = describeFloorNoTests(floor);
+  return {
+    outcome: 'allow',
+    event,
+    message: [orderNote, noTestsNote].filter((l) => l !== '').join('\n'),
+  };
 }

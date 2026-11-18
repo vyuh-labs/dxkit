@@ -1,0 +1,9 @@
+
+ RUN  v4.1.9 /work/vt1
+
+
+ Test Files  1 passed (1)
+      Tests  1 passed (1)
+   Start at  21:56:09
+   Duration  96ms (transform 15ms, setup 0ms, import 23ms, tests 2ms, environment 0ms)
+

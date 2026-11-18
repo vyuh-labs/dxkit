@@ -592,9 +592,37 @@ const swiftCorrectnessProvider: CorrectnessProvider = {
     if (ctx.scope === 'affected' && !undeterminable) {
       if (!ctx.changedFiles.some(swiftRelevantChange)) return null;
     }
-    return { label: 'affected-tests', bin: 'swift', args: ['test'] };
+    return {
+      label: 'affected-tests',
+      bin: 'swift',
+      args: ['test'],
+      ranNoTests: swiftTestRanNoTests,
+    };
   },
 };
+
+/**
+ * Did `swift test` execute ZERO tests? (4.5.0, the pack's `ranNoTests`.)
+ * Two documented SwiftPM / XCTest / swift-testing shapes (no Swift
+ * toolchain on the capture machine; provenance in the fixture HARVEST.md):
+ *   - a package with no test target: `error: no tests found; create a
+ *     target in the 'Tests' directory` (non-zero exit);
+ *   - exit 0 where every XCTest summary reads `Executed 0 tests` and every
+ *     swift-testing summary reads `Test run with 0 tests`, with at least one.
+ * Any nonzero count from either framework vetoes it (a package can run
+ * both, and XCTest reports 0 while swift-testing ran the suite).
+ */
+export function swiftTestRanNoTests(run: {
+  readonly code: number;
+  readonly output: string;
+}): boolean {
+  const out = run.output.replace(/\r/g, '');
+  if (/Executed [1-9]\d* tests?/.test(out) || /Test run with [1-9]\d* tests?/.test(out)) {
+    return false;
+  }
+  if (run.code !== 0) return /error: no tests found/.test(out);
+  return /Executed 0 tests/.test(out) || /Test run with 0 tests/.test(out);
+}
 
 // ─── Version detection ──────────────────────────────────────────────────────
 

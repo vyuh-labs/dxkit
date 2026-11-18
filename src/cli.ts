@@ -2812,6 +2812,15 @@ export async function run(argv: string[]): Promise<void> {
                   `for the prioritized repair inventory.`,
               );
             }
+            const noTestsFloor = (result.file.floorDebt?.checks ?? []).filter(
+              (c) => c.status === 'no-tests',
+            );
+            if (noTestsFloor.length > 0) {
+              logger.warn(
+                `No tests ran at capture (${noTestsFloor.map((c) => `${c.pack} ${c.label}`).join(', ')}): ` +
+                  `the test command found zero tests, recorded as no-tests, never as passing.`,
+              );
+            }
           }
         } catch (err) {
           logger.fail((err as Error).message);
@@ -3518,6 +3527,21 @@ export async function run(argv: string[]): Promise<void> {
           blocks: outcome.blocks,
           reason: outcome.reason,
           checks: outcome.result?.checks ?? [],
+          // A test command that ran zero tests (4.5.0): its own field, so a
+          // JSON consumer reading `blocks: false` cannot mistake it for a
+          // passing suite. `ran` already excludes it.
+          noTests: (outcome.result?.checks ?? [])
+            .filter((c) => c.status === 'no-tests')
+            .map((c) => {
+              const v = outcome.noTestsAttributed?.find(
+                (a) => a.check.pack === c.pack && a.check.label === c.label,
+              );
+              return {
+                pack: c.pack,
+                label: c.label,
+                ...(v ? { transition: v.transition } : {}),
+              };
+            }),
           ...(outcome.attributed
             ? {
                 attribution: outcome.attributed.map((a) => ({
@@ -3537,6 +3561,9 @@ export async function run(argv: string[]): Promise<void> {
             : (outcome.result?.checks.filter((c) => c.status === 'fail') ?? []);
         if (outcome.blocks) {
           logger.fail(outcome.summary);
+        } else if (outcome.result?.checks.some((c) => c.status === 'no-tests')) {
+          // Not blocking, but not green either: no tests ran (4.5.0).
+          logger.warn(outcome.summary);
         } else {
           logger.success(outcome.summary);
         }

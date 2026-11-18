@@ -48,6 +48,17 @@ export function parseFailuresSafely(cmd: CorrectnessCommand, output: string): st
   }
 }
 
+/** Run a command's optional zero-tests recogniser defensively: a throw or a
+ *  non-boolean answer is "not recognised" (false), so the plain pass/fail
+ *  verdict stands. Only a literal `true` reclassifies a run as no-tests. */
+export function ranNoTestsSafely(cmd: CorrectnessCommand, code: number, output: string): boolean {
+  try {
+    return cmd.ranNoTests!({ code, output }) === true;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Execute a pack's optional import-resolution check (a pure computation, not a
  * command). Findings are keyed by SPECIFIER — the durable identity of "package

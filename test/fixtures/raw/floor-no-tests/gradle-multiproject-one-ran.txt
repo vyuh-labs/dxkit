@@ -1,0 +1,4 @@
+> Task :core:test
+> Task :web:test NO-SOURCE
+
+BUILD SUCCESSFUL in 4s

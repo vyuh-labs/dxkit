@@ -44,11 +44,21 @@ import {
   runCorrectnessFloor,
   describeCorrectnessFloor,
   describeEnvironmentSkips,
+  describeNoTestsCheck,
+  describeNoTestsRan,
   describeScopeEscalation,
+  hasNoTests,
   type CommandExec,
   type CorrectnessFloorResult,
 } from './run';
-import { attributeFloorFailures, type AttributedFloorFailure } from './attribution';
+import {
+  attributeFloorFailures,
+  attributeNoTests,
+  describeTestsVanished,
+  toFloorBaseCheck,
+  type AttributedFloorFailure,
+  type AttributedNoTests,
+} from './attribution';
 import { attributePrePushResolution, type PrePushDebtEvidence } from './resolution-attribution';
 export { refutedResolutionSpecifiers } from './resolution-attribution';
 import { resolveCorrectnessSurface } from './surface';
@@ -81,6 +91,10 @@ export interface SurfaceFloorOutcome {
    *  attribution vs the merge-base. Renderers print net-new with full output
    *  and the non-blocking tiers by name. */
   readonly attributed?: readonly AttributedFloorFailure[];
+  /** Present after a two-sided ci run whose current side carried a
+   *  `no-tests` check (4.5.0): what that zero means against the base —
+   *  above all `tests-vanished`, a suite the change removed. */
+  readonly noTestsAttributed?: readonly AttributedNoTests[];
 }
 
 /** Best-effort git stdout for a fixed arg vector; '' on any failure. */
@@ -207,20 +221,30 @@ export function runFloorForSurface(opts: RunFloorForSurfaceOptions): SurfaceFloo
   // A manifest-driven scope escalation is the same disclosure obligation: a
   // fast surface that ran the full suite always says why.
   const escalation = describeScopeEscalation(result);
-  const envSkips = [...(escalation ? [escalation] : []), ...describeEnvironmentSkips(result)];
+  // A test command that ran zero tests is the same disclosure obligation
+  // (4.5.0): named on every outcome, never folded into a pass.
+  const envSkips = [
+    ...(escalation ? [escalation] : []),
+    ...describeEnvironmentSkips(result),
+    ...describeNoTestsRan(result),
+  ];
   const envSuffix = envSkips.length > 0 ? ` [${envSkips.join('; ')}]` : '';
   if (!result.ran) {
-    const cause =
-      envSkips.length > 0
-        ? 'not measurable in this environment'
-        : 'all checks skipped (toolchain not present)';
+    // `ran` is false when no check produced a pass/fail verdict. A floor
+    // whose only answer is "no tests ran" says exactly that: it is neither
+    // a missing toolchain nor something CI will make green.
+    const cause = hasNoTests(result)
+      ? 'no check produced a pass/fail verdict — no tests ran'
+      : envSkips.length > 0
+        ? 'not measurable in this environment — CI is the backstop'
+        : 'all checks skipped (toolchain not present) — CI is the backstop';
     return {
       surface,
       enabled: true,
       reason: res.reason,
       ran: false,
       blocks: false,
-      summary: `correctness floor (${surface}): ${cause} — CI is the backstop${envSuffix}`,
+      summary: `correctness floor (${surface}): ${cause}${envSuffix}`,
       result,
     };
   }
@@ -381,21 +405,20 @@ export async function attributeCiFloorOutcome(
   const baseChecks =
     baseResult === null
       ? null
-      : baseResult.checks.map((c) => ({
-          pack: c.pack as string,
-          label: c.label,
-          status: c.status === 'pass' || c.status === 'fail' ? c.status : ('skipped' as const),
-          // Finding-level identities carry through so the comparator can diff
-          // the set (a base already red in import-resolution still yields
-          // net-new on a NEW unresolved specifier).
-          ...(c.findings ? { findings: c.findings } : {}),
-        }));
+      : // Finding-level identities carry through so the comparator can diff
+        // the set (a base already red in import-resolution still yields
+        // net-new on a NEW unresolved specifier).
+        baseResult.checks.map(toFloorBaseCheck);
   const attributed = attributeFloorFailures(outcome.result, baseChecks, {
     absentMeans: 'unattributed',
   });
   const netNew = attributed.filter((a) => a.attribution === 'net-new');
   const preExisting = attributed.filter((a) => a.attribution === 'pre-existing');
   const unattributed = attributed.filter((a) => a.attribution === 'unattributed');
+  // The sibling question for a current-side zero (4.5.0): did the change
+  // make the suite vanish? Same base, same keying, never a block.
+  const noTestsAttributed = attributeNoTests(outcome.result, baseChecks);
+  const vanished = noTestsAttributed.filter((a) => a.transition === 'tests-vanished');
 
   const parts: string[] = [];
   if (netNew.length > 0) {
@@ -443,10 +466,23 @@ export async function attributeCiFloorOutcome(
     );
   }
 
+  if (vanished.length > 0) {
+    parts.push(`TESTS VANISHED: ${vanished.map(describeTestsVanished).join('; ')}`);
+  }
+  // The other zeros keep their plain disclosure: this summary replaces the
+  // point-in-time one, which carried it.
+  const otherZeros = noTestsAttributed.filter((a) => a.transition !== 'tests-vanished');
+  if (otherZeros.length > 0) {
+    parts.push(
+      otherZeros.map((a) => describeNoTestsCheck(a.check, outcome.result?.scope)).join('; '),
+    );
+  }
+
   return {
     ...outcome,
     blocks: netNew.length > 0,
     summary: parts.join(' | '),
     attributed,
+    ...(noTestsAttributed.length > 0 ? { noTestsAttributed } : {}),
   };
 }

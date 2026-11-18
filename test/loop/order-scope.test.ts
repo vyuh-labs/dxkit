@@ -92,6 +92,7 @@ const ranFloor = (
     blocks: checks.some((c) => (c.status ?? 'fail') === 'fail'),
   } as never,
   netNew: [],
+  noTests: [],
 });
 
 describe('the order-scope module (write / read / clear, validating + session-bound reader)', () => {

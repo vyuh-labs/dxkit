@@ -660,9 +660,26 @@ const phpCorrectnessProvider: CorrectnessProvider = {
     if (ctx.scope === 'affected' && !undeterminable) {
       if (!ctx.changedFiles.some(phpRelevantChange)) return null;
     }
-    return { label: 'affected-tests', bin, args: [] };
+    return { label: 'affected-tests', bin, args: [], ranNoTests: phpunitRanNoTests };
   },
 };
+
+/**
+ * Did PHPUnit execute ZERO tests? (4.5.0, the pack's `ranNoTests`.) PHPUnit
+ * prints `No tests executed!` for an empty run (exit 0 by default, 1 under
+ * `failOnEmptyTestSuite`). Any test count (`OK (N tests, ...)`,
+ * `Tests: N, ...`) vetoes it. Real output pinned in
+ * `test/fixtures/raw/floor-no-tests/`.
+ */
+export function phpunitRanNoTests(run: {
+  readonly code: number;
+  readonly output: string;
+}): boolean {
+  if (run.code !== 0 && run.code !== 1) return false;
+  const out = run.output.replace(/\r/g, '');
+  if (/^OK \([1-9]\d* tests?,/m.test(out) || /^Tests: [1-9]/m.test(out)) return false;
+  return /^No tests executed!\s*$/m.test(out);
+}
 
 // ─── Version detection ──────────────────────────────────────────────────────
 
