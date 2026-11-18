@@ -1,0 +1,16 @@
+{
+  "schema": "remediate-landing.v1",
+  "task": "write-docs",
+  "action": "land",
+  "branch": "dxkit/remediate-write-docs",
+  "head": "9c6ec753ff84a8f76f8af7687ebdfe51cbf6cc60",
+  "outcome": "guardrail-red",
+  "baseHead": "aaaa1111",
+  "defaultBranch": "main",
+  "prTitle": "dxkit remediate: write-docs (blocked: guardrail-red — do not merge)",
+  "prBody": "Task: **write-docs** ... outcome: **guardrail-red**\n\n\n_Full ledger (every order, one line each): committed on this branch at `.dxkit/lanes/remediate-write-docs.ledger.md`. This body is the summary; it is capped to GitHub's PR body size._",
+  "draft": true,
+  "ledgerPath": ".dxkit/lanes/remediate-write-docs.jsonl",
+  "runLedgerPath": ".dxkit/lanes/remediate-write-docs.ledger.md",
+  "orderRows": []
+}
