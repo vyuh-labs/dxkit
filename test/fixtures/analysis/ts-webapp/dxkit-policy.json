@@ -1,3 +1,0 @@
-{
-  "flow": { "mode": "warn", "stripUrlPrefixes": ["${getClientSideURL()}"] }
-}

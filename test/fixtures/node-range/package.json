@@ -1,6 +1,0 @@
-{
-  "name": "fixture-node-range",
-  "engines": {
-    "node": ">=10"
-  }
-}
