@@ -1,1 +1,0 @@
-{"checks":[{"name":"fake-lint","command":["node","lint.cjs"],"blocking":false,"parse":{"regex":"^(?<file>[^:]+):(?<line>\\d+): (?<rule>\\S+) (?<message>.*)$"}}]}
