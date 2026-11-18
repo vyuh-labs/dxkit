@@ -1,6 +1,15 @@
 # {{PROJECT_NAME}}
 
+{{#IF_PROJECT_DESCRIPTION}}
 {{PROJECT_DESCRIPTION}}
+{{/IF_PROJECT_DESCRIPTION}}
+
+## About this product
+
+_Maintained by the repo owner; dxkit never rewrites the text between the two `dxkit:owner` markers below. Write what the product is, how to build, run and test it, and the domain rules an agent must know. If it is empty, ask the owner rather than guessing._
+
+<!-- dxkit:owner:start -->
+<!-- dxkit:owner:end -->
 
 ## How to use this file
 
@@ -30,7 +39,7 @@ The `dxkit-*` skills are installed under `.claude/skills/` (Claude Code auto-dis
 Reach for the relevant skill when working in this repo. They wrap the `vyuh-dxkit` CLI with workflow guidance.
 
 {{#IF_PYTHON}}
-## Python {{PYTHON_VERSION}}
+## {{PYTHON_STACK_LABEL}}
 
 - **Tests**: `pytest`
 - **Lint/format**: `ruff check .` / `ruff format .`
@@ -39,7 +48,7 @@ Reach for the relevant skill when working in this repo. They wrap the `vyuh-dxki
 {{/IF_PYTHON}}
 
 {{#IF_GO}}
-## Go {{GO_VERSION}}
+## {{GO_STACK_LABEL}}
 
 - **Tests**: `go test ./...`
 - **Lint**: `golangci-lint run`
@@ -48,7 +57,7 @@ Reach for the relevant skill when working in this repo. They wrap the `vyuh-dxki
 {{/IF_GO}}
 
 {{#IF_NODE}}
-## Node.js {{NODE_VERSION}}
+## {{NODE_STACK_LABEL}}
 
 - **Tests**: `npm test`
 - **Build**: `npm run build`
@@ -66,7 +75,7 @@ Reach for the relevant skill when working in this repo. They wrap the `vyuh-dxki
 {{/IF_NEXTJS}}
 
 {{#IF_RUST}}
-## Rust {{RUST_VERSION}}
+## {{RUST_STACK_LABEL}}
 
 - **Tests**: `cargo test`
 - **Build**: `cargo build` / `cargo build --release`
@@ -76,7 +85,7 @@ Reach for the relevant skill when working in this repo. They wrap the `vyuh-dxki
 {{/IF_RUST}}
 
 {{#IF_CSHARP}}
-## C# {{CSHARP_VERSION}}
+## {{CSHARP_STACK_LABEL}}
 
 - **Tests**: `dotnet test`
 - **Build**: `dotnet build` / `dotnet publish -c Release`
@@ -85,7 +94,7 @@ Reach for the relevant skill when working in this repo. They wrap the `vyuh-dxki
 {{/IF_CSHARP}}
 
 {{#IF_KOTLIN}}
-## Kotlin {{KOTLIN_VERSION}}
+## {{KOTLIN_STACK_LABEL}}
 
 - **Tests**: `./gradlew test`
 - **Build**: `./gradlew build`
@@ -94,7 +103,7 @@ Reach for the relevant skill when working in this repo. They wrap the `vyuh-dxki
 {{/IF_KOTLIN}}
 
 {{#IF_JAVA}}
-## Java {{JAVA_VERSION}}
+## {{JAVA_STACK_LABEL}}
 
 - **Tests**: `mvn test` / `./gradlew test`
 - **Build**: `mvn package` / `./gradlew build`
@@ -103,7 +112,7 @@ Reach for the relevant skill when working in this repo. They wrap the `vyuh-dxki
 {{/IF_JAVA}}
 
 {{#IF_RUBY}}
-## Ruby {{RUBY_VERSION}}
+## {{RUBY_STACK_LABEL}}
 
 - **Tests**: `bundle exec rspec` / `bundle exec rails test`
 - **Lint**: `bundle exec rubocop`

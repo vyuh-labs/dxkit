@@ -711,6 +711,32 @@ export interface LanguageSupport {
   detectVersion?(cwd: string): string | undefined;
 
   /**
+   * The human label for the runtime / framework this repo targets, as the
+   * generated agent file (`AGENTS.md`) names it: `.NET Framework 4.8`,
+   * `.NET 8 (ASP.NET Core)`, `Node.js >=20`. Read through `packStackLabel`
+   * (`src/languages/index.ts`) into the `<KEY>_STACK_LABEL` template variable.
+   * Declare it when the pack's label is not `displayName` + the detected
+   * version: when `detectVersion` answers a provisioning question (the .NET
+   * SDK to install) rather than "what does this repo target", or when the
+   * runtime has its own name (Node.js for the TypeScript pack). Return
+   * undefined when the repo states nothing; the label then falls back to
+   * `displayName` (+ the detected version), never to `defaultVersion` (a
+   * floor is not a repo fact).
+   */
+  describeTarget?(cwd: string): string | undefined;
+
+  /**
+   * The product description the repo itself states in this ecosystem's
+   * manifest (`package.json` `description`, pyproject `description`, a
+   * `.csproj` `<Description>`), or undefined. Precision-first: answer only
+   * from a field whose meaning is "what this project is", and only when the
+   * repo states it unambiguously. Consumed by `detect()` through
+   * `detectRepoDescription`; the first active pack (registry order) that
+   * answers wins.
+   */
+  detectDescription?(cwd: string): string | undefined;
+
+  /**
    * Per-pack devcontainer feature declaration. Drives the per-stack
    * `features` block in `src-templates/.devcontainer/devcontainer.json`:
    * only active packs' features land in the generated container, so a

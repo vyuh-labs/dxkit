@@ -12,6 +12,7 @@ import { fileExists, run } from '../analyzers/tools/runner';
 import { runTestsWithCoverage } from '../analyzers/tools/run-tests-helper';
 import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
 import { jvmBuildExecution, jvmCorrectnessProvider } from './jvm-build';
+import { readRepoFile } from './version-detect';
 import type { ExecutionRequirement } from '../execution';
 import type {
   CapabilityProvider,
@@ -44,6 +45,27 @@ function hasKotlinSource(cwd: string): boolean {
   // cap missed deep mixed-JVM monorepos. Honors `.gitignore` +
   // bundled excludes (`build`, `.gradle`, `target`, …).
   return walkPaths(cwd, { extensions: ['.kt', '.kts'] }).length > 0;
+}
+
+/**
+ * The AGENTS.md heading for a Kotlin repo: the Kotlin Gradle plugin version
+ * the root build (or the version catalog) declares, and `(Android)` only when
+ * an Android Gradle plugin is applied. The pack's `displayName` carries
+ * "(Android)" unconditionally, which mislabels a JVM-server Kotlin repo.
+ */
+function describeKotlinTarget(cwd: string): string {
+  const build = ['build.gradle.kts', 'build.gradle', 'settings.gradle.kts', 'settings.gradle']
+    .map((f) => readRepoFile(cwd, f))
+    .join('\n');
+  const catalog = readRepoFile(cwd, 'gradle/libs.versions.toml');
+  const version =
+    build.match(/kotlin\(\s*"[a-z.-]+"\s*\)\s+version\s+"([^"]+)"/)?.[1] ??
+    build.match(
+      /id\s*\(?\s*["']org\.jetbrains\.kotlin\.[a-z.-]+["']\s*\)?\s+version\s+["']([^"']+)["']/,
+    )?.[1] ??
+    catalog.match(/^\s*kotlin\s*=\s*"([^"]+)"/m)?.[1];
+  const android = /com\.android\.(application|library)|android\s*\{/.test(build + catalog);
+  return `Kotlin${version ? ` ${version}` : ''}${android ? ' (Android)' : ''}`;
 }
 
 function detectKotlin(cwd: string): boolean {
@@ -807,6 +829,7 @@ export const kotlin: LanguageSupport = {
   clocLanguageNames: ['Kotlin'],
 
   detect: detectKotlin,
+  describeTarget: describeKotlinTarget,
 
   tools: ['detekt', 'ktlint', 'osv-scanner'],
 

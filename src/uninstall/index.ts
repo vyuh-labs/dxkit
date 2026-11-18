@@ -14,7 +14,9 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { execFileSync } from 'child_process';
 
-import { sha256, serializePreservingJson } from '../files';
+import { serializePreservingJson } from '../files';
+import { managedContentHash } from '../owner-section';
+import { keepOwnerSectionOnly, planOwnerSectionFile } from './owner-section-plan';
 import { stripPolicyJsoncAssociation, wouldStripPolicyJsoncAssociation } from '../editor-assoc';
 import { detectInstallFlags, type InstallFlags } from '../update';
 import { managedGatedArtifacts } from '../managed-artifacts';
@@ -32,6 +34,7 @@ export type ActionKind =
   | 'delete-dir'
   | 'revert-gitignore'
   | 'revert-claude'
+  | 'keep-owner-section'
   | 'revert-settings'
   | 'revert-vscode-assoc'
   | 'revert-package'
@@ -121,7 +124,7 @@ export function planUninstall(cwd: string, opts: UninstallOptions = {}): Uninsta
     if (!evolving && storedHash) {
       let current = '';
       try {
-        current = sha256(fs.readFileSync(path.join(cwd, rel), 'utf-8'));
+        current = managedContentHash(rel, fs.readFileSync(path.join(cwd, rel), 'utf-8'));
       } catch {
         /* unreadable → treat as present */
       }
@@ -152,7 +155,8 @@ export function planUninstall(cwd: string, opts: UninstallOptions = {}): Uninsta
     const claudeMadeByDxkit = !!claudeEntry && claudeEntry.provenance !== 'skipped';
     const current = read(cwd, 'CLAUDE.md');
     const stripped = stripClaudeLoopBlock(current);
-    if (claudeMadeByDxkit && claudeEntry!.hash && sha256(stripped.content) === claudeEntry!.hash) {
+    const shimHash = managedContentHash('CLAUDE.md', stripped.content);
+    if (claudeMadeByDxkit && claudeEntry!.hash && shimHash === claudeEntry!.hash) {
       // dxkit created the whole file, and stripping dxkit's own loop block leaves
       // exactly the recorded dxkit shim (no user edits) → remove the whole file
       // (pre-dxkit state had no CLAUDE.md).
@@ -230,6 +234,12 @@ export function planUninstall(cwd: string, opts: UninstallOptions = {}): Uninsta
   for (const [rel, entry] of Object.entries(manifest?.files ?? {})) {
     if (MERGE_TARGETS.has(rel)) continue;
     if (entry.provenance === 'skipped') continue;
+    const owner = exists(cwd, rel) ? planOwnerSectionFile(rel, read(cwd, rel), entry, opts) : null;
+    if (owner) {
+      actions.push(owner.action);
+      warnings.push(owner.warning);
+      continue;
+    }
     del(rel, 'dxkit-created file', entry.evolving, entry.hash);
   }
 
@@ -371,6 +381,10 @@ export function executeUninstall(
         reverted.push(a.target);
         break;
       }
+      case 'keep-owner-section':
+        keepOwnerSectionOnly(abs);
+        reverted.push(a.target);
+        break;
       case 'revert-settings': {
         const original = read(cwd, '.claude/settings.json');
         const parsed = tryJson(original)!;

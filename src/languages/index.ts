@@ -68,6 +68,36 @@ export function detectActiveLanguages(cwd: string): LanguageSupport[] {
 }
 
 /**
+ * The label the generated agent file (`AGENTS.md`) heads a pack's section
+ * with: what the repo TARGETS, from the pack (Rule 6). The pack's
+ * `describeTarget` when it answers; else `displayName` + the DETECTED version;
+ * else the bare `displayName`. Never the pack's `defaultVersion`: that is the
+ * floor dxkit provisions when the repo says nothing, not a fact about the
+ * repo (the shipped class: an old .NET Framework 4.8 app and a .NET 8 app
+ * both headed "C# 8.0", which reads as a C# language version neither states).
+ */
+export function packStackLabel(lang: LanguageSupport, cwd: string): string {
+  const described = lang.describeTarget?.(cwd);
+  if (described) return described;
+  const detected = lang.detectVersion?.(cwd);
+  return detected ? `${lang.displayName} ${detected}` : lang.displayName;
+}
+
+/**
+ * The repo's own product description, from the first ACTIVE pack (registry
+ * order) whose `detectDescription` answers, or '' when none does. The empty
+ * answer is deliberate: the agent file then leaves the description to the
+ * owner section instead of printing a placeholder as if it were a fact.
+ */
+export function detectRepoDescription(cwd: string, active: readonly LanguageSupport[]): string {
+  for (const lang of active) {
+    const d = lang.detectDescription?.(cwd)?.trim();
+    if (d) return d;
+  }
+  return '';
+}
+
+/**
  * Map a source-file path to its owning language pack by extension,
  * using each pack's declared `sourceExtensions` (pack-driven per
  * CLAUDE.md Rule 6 — no hardcoded ext→lang table). Returns undefined
