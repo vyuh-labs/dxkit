@@ -5,11 +5,20 @@
     {
       "kind": "dep-vuln",
       "category": "accepted-risk",
-      "reason": "old",
+      "reason": "r",
       "addedBy": "a@b.c",
       "addedAt": "2026-05-22",
       "expiresAt": "2026-08-22",
       "fingerprint": "aaaa111111111111"
+    },
+    {
+      "kind": "dep-vuln",
+      "category": "accepted-risk",
+      "reason": "r",
+      "addedBy": "a@b.c",
+      "addedAt": "2026-05-22",
+      "expiresAt": "2026-08-22",
+      "fingerprint": "bbbb111111111111"
     }
   ]
 }
