@@ -1,0 +1,15 @@
+{
+  "schemaVersion": "dxkit-allowlist/v1",
+  "mode": "full",
+  "entries": [
+    {
+      "kind": "dep-vuln",
+      "category": "accepted-risk",
+      "reason": "old",
+      "addedBy": "a@b.c",
+      "addedAt": "2026-05-22",
+      "expiresAt": "2026-08-22",
+      "fingerprint": "aaaa111111111111"
+    }
+  ]
+}
