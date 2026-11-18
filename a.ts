@@ -1,5 +1,5 @@
 one
-const gone = "x";
 three
 four
 five
+const fresh = "y";
