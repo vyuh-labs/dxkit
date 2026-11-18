@@ -4,7 +4,8 @@ import * as path from 'path';
 import { DetectedStack, ToolRequirement } from './types';
 import { buildRequiredTools } from './analyzers/tools/tool-registry';
 import { DEFAULT_VERSIONS } from './constants';
-import { LANGUAGES } from './languages';
+import { LANGUAGES, detectRepoDescription, packStackLabel } from './languages';
+import type { LanguageSupport } from './languages';
 
 function fileExists(cwd: string, ...segments: string[]): boolean {
   return fs.existsSync(path.join(cwd, ...segments));
@@ -44,6 +45,19 @@ function detectVersions(cwd: string): DetectedStack['versions'] {
     if (detected ?? fallback) versions[key] = (detected ?? fallback) as string;
   }
   return versions as DetectedStack['versions'];
+}
+
+/**
+ * What each ACTIVE pack's section of the generated agent file is headed with
+ * (`packStackLabel`, pack-declared per Rule 6). Keyed like `versions`.
+ */
+function detectStackLabels(
+  cwd: string,
+  active: readonly LanguageSupport[],
+): NonNullable<DetectedStack['stackLabels']> {
+  const labels: Record<string, string> = {};
+  for (const lang of active) labels[lang.versionKey ?? lang.id] = packStackLabel(lang, cwd);
+  return labels as NonNullable<DetectedStack['stackLabels']>;
 }
 
 function findFileRecursive(cwd: string, pattern: RegExp, maxDepth = 3): string | null {
@@ -144,22 +158,6 @@ function detectProjectName(cwd: string): string {
 
   // Fallback to directory name
   return cwdBasename;
-}
-
-function detectProjectDescription(cwd: string): string {
-  const pkg = readFileOr(cwd, 'package.json', '{}');
-  try {
-    const parsed = JSON.parse(pkg);
-    if (parsed.description) return parsed.description;
-  } catch {
-    /* ignore */
-  }
-
-  const pyproject = readFileOr(cwd, 'pyproject.toml', '');
-  const match = pyproject.match(/description\s*=\s*"([^"]+)"/);
-  if (match) return match[1];
-
-  return '';
 }
 
 function detectTestRunner(cwd: string): DetectedStack['testRunner'] {
@@ -382,6 +380,7 @@ export function detect(cwd: string): DetectedStack {
   const languages = Object.fromEntries(
     LANGUAGES.map((lang) => [lang.id, lang.detect(cwd)] as const),
   ) as DetectedStack['languages'];
+  const active = LANGUAGES.filter((lang) => languages[lang.id]);
 
   return {
     languages,
@@ -391,8 +390,12 @@ export function detect(cwd: string): DetectedStack {
       redis: composeContent.includes('redis'),
     },
     projectName: detectProjectName(cwd),
-    projectDescription: detectProjectDescription(cwd),
+    // Repo evidence only (each active pack's manifest), '' when none: the
+    // agent file leaves the description to its owner section rather than
+    // printing a placeholder as if it were a fact.
+    projectDescription: detectRepoDescription(cwd, active),
     versions: detectVersions(cwd),
+    stackLabels: detectStackLabels(cwd, active),
     testRunner: detectTestRunner(cwd),
     // nextjs detection takes precedence — it's a more specific signal
     // than detectFramework's package.json scan (10f.4: nextjs moved out

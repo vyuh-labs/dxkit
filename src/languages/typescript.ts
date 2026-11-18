@@ -31,7 +31,7 @@ import { nodeInstallStrategy } from './node-install';
 import { tsAffectedTestsInvocation, tsRanNoTests } from './ts-test-entry';
 import { fileExists, run, runJSON } from '../analyzers/tools/runner';
 import { walkPaths } from '../analyzers/tools/walk-paths';
-import { readRepoFile, repoFileExists } from './version-detect';
+import { jsonManifestString, readRepoFile, repoFileExists } from './version-detect';
 import { UNIVERSAL_TEST_DIR_PATTERNS } from './test-dir-patterns';
 import { runTestsWithCoverage } from '../analyzers/tools/run-tests-helper';
 import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
@@ -2802,6 +2802,23 @@ function nodeMajorFromEngineRange(engine: string): string | undefined {
   return floor > parseInt(NODE_DEFAULT_VERSION, 10) ? String(floor) : undefined;
 }
 
+/** `Node.js 20.11.1` / `Node.js >=20`, or bare `Node.js` when the repo states nothing. */
+function describeNodeTarget(cwd: string): string {
+  const pin = readRepoFile(cwd, '.nvmrc').trim().replace(/^v/, '');
+  if (/^\d/.test(pin)) return `Node.js ${pin}`;
+  let parsed: { volta?: { node?: unknown }; engines?: { node?: unknown } } = {};
+  try {
+    parsed = JSON.parse(readRepoFile(cwd, 'package.json') || '{}') as typeof parsed;
+  } catch {
+    /* malformed package.json: no stated runtime */
+  }
+  const volta = parsed?.volta?.node;
+  if (typeof volta === 'string' && volta.trim()) return `Node.js ${volta.trim()}`;
+  const engine = parsed?.engines?.node;
+  if (typeof engine === 'string' && engine.trim()) return `Node.js ${engine.trim()}`;
+  return 'Node.js';
+}
+
 function detectNodeVersion(cwd: string): string | undefined {
   if (repoFileExists(cwd, '.nvmrc')) {
     const ver = readRepoFile(cwd, '.nvmrc').trim().replace(/^v/, '');
@@ -3137,6 +3154,10 @@ export const typescript: LanguageSupport = {
   defaultVersion: NODE_DEFAULT_VERSION,
   versionKey: 'node',
   detectVersion: detectNodeVersion,
+  // The runtime is Node.js; name what the repo states (an exact `.nvmrc` /
+  // volta pin, else the `engines.node` range verbatim), not the floor major.
+  describeTarget: describeNodeTarget,
+  detectDescription: (cwd) => jsonManifestString(cwd, 'package.json', 'description'),
   devcontainerFeature: {
     name: 'ghcr.io/devcontainers/features/node:1',
     // Node 24 LTS, matches the smoke workflow's `setup-node@v6` line.

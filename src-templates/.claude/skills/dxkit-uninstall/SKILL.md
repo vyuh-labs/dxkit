@@ -11,7 +11,7 @@ This skill owns **removing dxkit** from a repo. Its one guarantee: after uninsta
 
 dxkit's footprint falls into two kinds, handled differently:
 
-- **Files dxkit created** (they didn't exist before): `.dxkit/`, the `dxkit-*` skills under `.claude/`, `AGENTS.md`, the git hooks in `.githooks/`, the `dxkit-*` GitHub workflows, `.dxkit-ignore`, and `.vyuh-dxkit.json`. These are **removed** outright.
+- **Files dxkit created** (they didn't exist before): `.dxkit/`, the `dxkit-*` skills under `.claude/`, `AGENTS.md`, the git hooks in `.githooks/`, the `dxkit-*` GitHub workflows, `.dxkit-ignore`, and `.vyuh-dxkit.json`. These are **removed** outright. Exception: when the owner section of `AGENTS.md` (between the `dxkit:owner` markers) holds text, `AGENTS.md` is kept, reduced to that text.
 - **Additive merges into files you already had**: the `.gitignore` runtime-output block, the `CLAUDE.md` loop block (between `<!-- dxkit:loop:start -->` / `end -->`), the `.claude/settings.json` hooks (`context-hook` / `stop-gate`), and the `package.json` `@vyuhlabs/dxkit` devDependency + postinstall. These are **surgically reverted** — only dxkit's additions are stripped; your keys, prose, and formatting are preserved.
 
 It knows exactly what is dxkit's because `init` recorded a manifest (`.vyuh-dxkit.json`) with a hash of every created file. A dxkit-created file you have since **edited** is surfaced and **skipped** (not clobbered) unless you pass `--force`.

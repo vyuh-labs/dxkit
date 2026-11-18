@@ -21,6 +21,10 @@ vyuh-dxkit update [options]
   hash
 - Files with unchanged hash → safe to re-generate
 - Files with changed hash → marked "evolved", preserved by default
+- `AGENTS.md`: text inside its owner section (between the
+  `dxkit:owner` markers) is yours and is carried over verbatim; it does
+  not count as an edit, so dxkit's sections around it still refresh. See
+  [`init`](init.md#agentsmd-the-owner-section-and-the-stack-headings)
 - **Migrates your baseline + allowlist if a dxkit upgrade changed the
   finding-identity scheme** (see below) — so the upgrade is one command,
   not a manual re-baseline

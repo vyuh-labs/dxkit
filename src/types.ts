@@ -85,6 +85,14 @@ export interface DetectedStack {
    * `NODE_VERSION` → `TYPESCRIPT_VERSION` template migration ships).
    */
   versions: Partial<Record<LanguageId | 'node', string>>;
+  /**
+   * Per ACTIVE pack, the runtime / framework the repo targets as the
+   * generated agent file names it (`.NET Framework 4.8`, `Node.js >=20`),
+   * from `packStackLabel` (pack-declared, Rule 6). Keyed like `versions`.
+   * Optional: a config built before 4.5.0 (or by a test) carries none, and
+   * the template variable then falls back to the pack's bare `displayName`.
+   */
+  stackLabels?: Partial<Record<LanguageId | 'node', string>>;
   testRunner?: {
     command: string; // e.g., "npx jest", "npx mocha", "npm test"
     framework: string; // e.g., "jest", "mocha", "vitest", "pytest"

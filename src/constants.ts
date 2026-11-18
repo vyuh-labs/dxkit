@@ -56,13 +56,13 @@ export const DEFAULT_COVERAGE = '80';
  * The per-pack `<KEY>_VERSION` template variables (`NODE_VERSION`,
  * `PYTHON_VERSION`, ...) for a repo's detected versions, the ONE substitution
  * source for every template that names a language runtime, whether rendered
- * by the generator (`AGENTS.md`'s `## Node.js {{NODE_VERSION}}`) or by the
- * workflow writer (`node-version: '{{NODE_VERSION}}'` in every generated
- * `setup-node` step). Detected value first (the pack's `detectVersion`, via
- * `detect(cwd).versions`), else the pack's `defaultVersion`, so a customer
- * that declares Node 20 keeps running its gate on 20 and a repo that declares
- * nothing gets the pack default. Adding a pack with a `defaultVersion`
- * auto-extends the vocabulary.
+ * by the generator or by the workflow writer (`node-version: '{{NODE_VERSION}}'`
+ * in every generated `setup-node` step). Detected value first (the pack's
+ * `detectVersion`, via `detect(cwd).versions`), else the pack's
+ * `defaultVersion`, so a customer that declares Node 20 keeps running its
+ * gate on 20 and a repo that declares nothing gets the pack default. Adding a pack with a `defaultVersion`
+ * auto-extends the vocabulary. The agent file's section headings read
+ * `<KEY>_STACK_LABEL` instead (what the repo states, never the default).
  */
 export function packVersionVariables(
   versions: Partial<DetectedStack['versions']>,
@@ -82,7 +82,9 @@ export function buildVariables(config: ResolvedConfig): Record<string, string> {
     PROJECT_NAME: config.projectName,
     PROJECT_NAME_SNAKE: config.projectName.replace(/-/g, '_'),
     PROJECT_NAME_KEBAB: config.projectName.replace(/_/g, '-'),
-    PROJECT_DESCRIPTION: config.projectDescription || 'A project',
+    // Repo evidence or nothing (IF_PROJECT_DESCRIPTION gates the line): never a
+    // placeholder printed as if it described the product.
+    PROJECT_DESCRIPTION: config.projectDescription || '',
     GITHUB_ORG: 'myorg',
     POSTGRES_VERSION: DEFAULT_VERSIONS.postgres,
     REDIS_VERSION: DEFAULT_VERSIONS.redis,
@@ -98,6 +100,15 @@ export function buildVariables(config: ResolvedConfig): Record<string, string> {
 
   // Per-pack `<KEY>_VERSION` template variables (Phase 10i.0-LP.6).
   Object.assign(v, packVersionVariables(config.versions));
+
+  // Per-pack `<KEY>_STACK_LABEL`: what the repo targets, as `detect()` read it
+  // through `packStackLabel` (Rule 6). A config without labels (pre-4.5.0
+  // manifest, a test fixture) gets the bare displayName, never the default
+  // version dressed up as a repo fact.
+  for (const lang of LANGUAGES) {
+    const key = (lang.versionKey ?? lang.id) as LangVersionKey;
+    v[`${key.toUpperCase()}_STACK_LABEL`] = config.stackLabels?.[key] ?? lang.displayName;
+  }
 
   // Derived variables — bespoke per-language transformations of the
   // version string. Kept hardcoded; each is too idiosyncratic to
@@ -133,5 +144,6 @@ export function buildConditions(config: ResolvedConfig): Record<string, boolean>
     // moved out of `languages` in 10f.4).
     IF_NODE: config.languages.typescript ?? false,
     IF_NEXTJS: config.framework === 'nextjs',
+    IF_PROJECT_DESCRIPTION: !!config.projectDescription,
   };
 }

@@ -38,3 +38,34 @@ export function installedNodeMajor(): string | undefined {
   }
   return undefined;
 }
+
+/**
+ * A basic-string value from one TOML table (`[project]` → `description`), or
+ * undefined. Deliberately narrow: only a double-quoted single-line string
+ * directly under the named table header, so a same-named key in another table
+ * (a dependency's metadata, a tool section) never answers for the project.
+ */
+export function tomlTableString(content: string, table: string, key: string): string | undefined {
+  let inTable = false;
+  for (const line of content.split(/\r?\n/)) {
+    const header = line.match(/^\s*\[([^\]]+)\]\s*(?:#.*)?$/);
+    if (header) {
+      inTable = header[1].trim() === table;
+      continue;
+    }
+    if (!inTable) continue;
+    const m = line.match(new RegExp(`^\\s*${key}\\s*=\\s*"((?:[^"\\\\]|\\\\.)*)"`));
+    if (m) return m[1].replace(/\\"/g, '"').trim() || undefined;
+  }
+  return undefined;
+}
+
+/** A top-level string field of a repo-root JSON manifest, or undefined. */
+export function jsonManifestString(cwd: string, file: string, field: string): string | undefined {
+  try {
+    const v = (JSON.parse(readRepoFile(cwd, file) || '{}') as Record<string, unknown>)[field];
+    return typeof v === 'string' && v.trim() ? v.trim() : undefined;
+  } catch {
+    return undefined;
+  }
+}

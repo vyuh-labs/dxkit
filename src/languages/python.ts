@@ -50,7 +50,7 @@ import type { LanguageSupport, LintSeverity } from './types';
 import type { LintGateProvider, RawLocatedFinding } from './capabilities/lint-gate';
 import { asRecord, extractJsonBlob, num, str } from './capabilities/lint-structured';
 import { hashFirstConfig, toolVersionInput } from './capabilities/recall-inputs';
-import { readRepoFile, repoFileExists } from './version-detect';
+import { readRepoFile, repoFileExists, tomlTableString } from './version-detect';
 
 interface RuffResult {
   code: string;
@@ -1738,6 +1738,14 @@ const pyLicensesProvider: LicensesProvider = {
  * `.python-version` (`3.12`). Feeds setup-python's `python-version` + the
  * devcontainer, so CI runs the interpreter the repo declares.
  */
+/** `Python >=3.10` / `Python 3.12`, or undefined (the label falls back). */
+function describePythonTarget(cwd: string): string | undefined {
+  const spec = tomlTableString(readRepoFile(cwd, 'pyproject.toml'), 'project', 'requires-python');
+  if (spec) return `Python ${spec}`;
+  const pin = readRepoFile(cwd, '.python-version').trim();
+  return /^\d+\.\d+/.test(pin) ? `Python ${pin}` : undefined;
+}
+
 function detectPythonVersion(cwd: string): string | undefined {
   const pyproject = readRepoFile(cwd, 'pyproject.toml');
   const m = pyproject.match(/requires-python\s*=\s*"[><=!~ ]*(\d+\.\d+)/);
@@ -2050,6 +2058,16 @@ export const python: LanguageSupport = {
   },
   defaultVersion: '3.12',
   detectVersion: detectPythonVersion,
+  // `requires-python` verbatim (`>=3.10`): the floor-major `detectVersion`
+  // derives for provisioning is not what the repo states.
+  describeTarget: describePythonTarget,
+  detectDescription: (cwd) => {
+    const pyproject = readRepoFile(cwd, 'pyproject.toml');
+    return (
+      tomlTableString(pyproject, 'project', 'description') ??
+      tomlTableString(pyproject, 'tool.poetry', 'description')
+    );
+  },
   cliBinaries: ['python3', 'ruff'],
   devcontainerFeature: {
     name: 'ghcr.io/devcontainers/features/python:1',

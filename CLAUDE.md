@@ -163,7 +163,14 @@ ${path}` keys, which discards catch-all structure — so it did exact membership
   uninstall's provenance handling but update decided on "exists?" + `--force`
   alone, so it no-op'd its own fixes AND `--force` deleted user files. When you
   touch how a managed file is written or removed, both paths consult the same
-  fields.
+  fields. The owner section of `AGENTS.md` (4.5.0) refines this model: the
+  text between the `dxkit:owner` markers is the owner's, outside provenance.
+  `src/owner-section.ts` is the ONE module that splits, splices and hashes it
+  (`managedContentHash` is the manifest hash AND the on-disk hash for the
+  generator and uninstall), so an owner edit never reads as a user edit and
+  a regeneration never drops it. The arch-check bans the marker literal and a
+  raw `sha256(` on those paths outside the module; pinned by
+  `test/owner-section-parity.test.ts` + `test/lifecycle/agents-owner.test.ts`.
 - effective branch protection → `classifyEnforcement` in `src/enforcement.ts`
   reads BOTH mechanisms (classic `/branches/{b}/protection` AND repository
   rulesets `/rules/branches/{b}`) and unions them. Reading only one (the class
