@@ -942,7 +942,7 @@ describe('runAllowlistExport --snyk', () => {
       category: 'accepted-risk',
       reason: 'reviewed: input is internal',
       addedBy: 'a@b.c',
-      expires: '2027-01-01',
+      expires: '2099-01-01',
     });
 
     await runAllowlistExport(tmp, { snyk: true, now: '2026-06-09T00:00:00.000Z' });
@@ -951,7 +951,7 @@ describe('runAllowlistExport --snyk', () => {
     expect(snyk).toContain("'javascript/PT':");
     expect(snyk).toContain("'src/handler.ts':");
     expect(snyk).toContain('reason: "reviewed: input is internal"');
-    expect(snyk).toContain('expires: 2027-01-01T00:00:00.000Z');
+    expect(snyk).toContain('expires: 2099-01-01T00:00:00.000Z');
   });
 
   it('resolves a content-anchored (spanHash) Snyk finding', async () => {
@@ -965,7 +965,7 @@ describe('runAllowlistExport --snyk', () => {
       category: 'accepted-risk',
       reason: 'reviewed: input is internal',
       addedBy: 'a@b.c',
-      expires: '2027-01-01',
+      expires: '2099-01-01',
     });
 
     await runAllowlistExport(tmp, { snyk: true, now: '2026-06-09T00:00:00.000Z' });
