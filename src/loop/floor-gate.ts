@@ -17,12 +17,23 @@ import { detectActiveLanguages } from '../languages';
 import { computeChangedFiles } from '../baseline/changed-files';
 import {
   runCorrectnessFloor,
+  describeNoTestsCheck,
   describeScopeEscalation,
+  hasNoTests,
   type CorrectnessCheckResult,
   type CorrectnessFloorResult,
 } from '../analyzers/correctness/run';
 import { resolveCorrectnessSurface } from '../analyzers/correctness/surface';
-import { readFloorBaseline, writeFloorBaseline, netNewFloorFailures } from './floor-state';
+import {
+  readFloorBaseline,
+  writeFloorBaseline,
+  netNewFloorFailures,
+  floorNoTestsTransitions,
+} from './floor-state';
+import {
+  describeTestsVanished,
+  type AttributedNoTests,
+} from '../analyzers/correctness/attribution';
 import { clearStateCache } from './gate-cache';
 import { type CheckStatus } from './ledger';
 
@@ -43,12 +54,18 @@ export type FloorGateOutcome =
       readonly kind: 'ran';
       readonly result: CorrectnessFloorResult;
       readonly netNew: readonly CorrectnessCheckResult[];
+      /** Every current `no-tests` check against the entry snapshot (4.5.0):
+       *  never blocks, always disclosed (`describeFloorNoTests`). */
+      readonly noTests: readonly AttributedNoTests[];
     }
   | { readonly kind: 'unavailable'; readonly reason: string }
   | { readonly kind: 'internal-error'; readonly message: string };
 
 /** Derive the ledger's typecheck / tests status from a floor run. A failing
- *  check dominates; else a check that ran is `pass`; else `not_configured`. */
+ *  check dominates; then a check that ran ZERO tests (`no_tests` — never
+ *  recorded as `pass`, even beside another pack's passing suite: the ledger
+ *  must not read "tests pass" while a test command ran nothing); else a check
+ *  that ran is `pass`; else `not_configured`. */
 export function floorLedgerStatuses(result: CorrectnessFloorResult): {
   typecheck_status: CheckStatus;
   tests_status: CheckStatus;
@@ -56,6 +73,7 @@ export function floorLedgerStatuses(result: CorrectnessFloorResult): {
   const statusFor = (match: (label: string) => boolean): CheckStatus => {
     const relevant = result.checks.filter((c) => match(c.label));
     if (relevant.some((c) => c.status === 'fail')) return 'fail';
+    if (relevant.some((c) => c.status === 'no-tests')) return 'no_tests';
     if (relevant.some((c) => c.status === 'pass')) return 'pass';
     return 'not_configured';
   };
@@ -100,6 +118,21 @@ export function buildFloorRepairMessage(
     }
   });
   return lines.join('\n');
+}
+
+/**
+ * The Stop-gate's disclosure line for a floor whose test command ran zero
+ * tests (4.5.0), or '' when none did. Rides the allow (and the block)
+ * message: a Stop that ran no tests must never read as "tests pass".
+ */
+export function describeFloorNoTests(outcome: FloorGateOutcome): string {
+  if (outcome.kind !== 'ran' || outcome.noTests.length === 0) return '';
+  const lines = outcome.noTests.map((a) =>
+    a.transition === 'tests-vanished'
+      ? describeTestsVanished(a)
+      : describeNoTestsCheck(a.check, outcome.result.scope),
+  );
+  return `dxkit Stop-gate: correctness floor — ${lines.join('; ')}`;
 }
 
 /** Per-check wall-clock budget for the floor on the fast surface (ms).
@@ -174,13 +207,23 @@ export function buildFloorGate(repoDir: string): FloorGateOutcome {
       timeoutMs: floorTimeoutMs(),
       packs,
     });
-    if (!result.ran) {
+    // A floor whose only answer is "no tests ran" still RAN for the gate's
+    // purposes: its zero is attributed against the entry snapshot (a suite
+    // the agent removed must be named) and disclosed, never folded into the
+    // toolchain-missing lane.
+    if (!result.ran && !hasNoTests(result)) {
       return {
         kind: 'unavailable',
         reason: 'every floor check skipped (toolchain not present) — CI is the backstop',
       };
     }
-    return { kind: 'ran', result, netNew: netNewFloorFailures(result, readFloorBaseline(repoDir)) };
+    const baseline = readFloorBaseline(repoDir);
+    return {
+      kind: 'ran',
+      result,
+      netNew: netNewFloorFailures(result, baseline),
+      noTests: floorNoTestsTransitions(result, baseline),
+    };
   } catch (err) {
     // Fail-open: the floor must never break the gate — but an internal error
     // is DISCLOSED, never folded into "no floor here".

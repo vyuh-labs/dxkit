@@ -66,6 +66,7 @@ describe('order of evidence', () => {
         '--findRelatedTests',
         'src/a.ts',
       ],
+      singleRunner: true,
     });
   });
 
@@ -198,12 +199,14 @@ describe('a test script that names a known runner', () => {
     expect(tsAffectedTestsInvocation(tmp, AFFECTED)).toEqual({
       bin: 'npm',
       args: ['run', 'test', '--', '--passWithNoTests', '--findRelatedTests', 'src/a.ts'],
+      singleRunner: true,
     });
     // The repo's own package manager phrases the forwarding (Rule 5).
     fs.writeFileSync(path.join(tmp, 'pnpm-lock.yaml'), '');
     expect(tsAffectedTestsInvocation(tmp, AFFECTED)).toEqual({
       bin: 'pnpm',
       args: ['run', 'test', '--passWithNoTests', '--findRelatedTests', 'src/a.ts'],
+      singleRunner: true,
     });
   });
 
@@ -213,6 +216,7 @@ describe('a test script that names a known runner', () => {
     expect(tsAffectedTestsInvocation(tmp, null)).toEqual({
       bin: 'npm',
       args: ['run', 'test', '--', '--watchAll=false', '--ci', '--passWithNoTests'],
+      singleRunner: true,
     });
   });
 
@@ -222,6 +226,9 @@ describe('a test script that names a known runner', () => {
     expect(tsAffectedTestsInvocation(tmp, AFFECTED)).toEqual({
       bin: 'npm',
       args: ['run', 'test', '--', '--run', '--passWithNoTests'],
+      // A pipeline: an earlier command's tests may report on stderr, so the
+      // zero-tests marker of the last runner cannot speak for the run (4.5.0).
+      singleRunner: false,
     });
   });
 
@@ -244,7 +251,11 @@ describe('a test script that is a different wrapper', () => {
   it('runs as the script through the package manager, full suite, no guessed binary', () => {
     pkg({ scripts: { test: 'mocha --recursive' } });
     fs.mkdirSync(path.join(tmp, 'node_modules'));
-    expect(tsAffectedTestsInvocation(tmp, AFFECTED)).toEqual({ bin: 'npm', args: ['run', 'test'] });
+    expect(tsAffectedTestsInvocation(tmp, AFFECTED)).toEqual({
+      bin: 'npm',
+      args: ['run', 'test'],
+      singleRunner: true,
+    });
     for (const script of ['node --test', 'bun test', 'deno test', './scripts/test.sh']) {
       pkg({ scripts: { test: script } });
       const r = resolveTsTestEntryPoint(tmp);
@@ -271,6 +282,10 @@ describe('a test script that is a different wrapper', () => {
     fs.mkdirSync(path.join(tmp, 'node_modules'));
     // The runner is not the last command, so no selection can be forwarded;
     // the script runs as itself, full suite.
-    expect(tsAffectedTestsInvocation(tmp, AFFECTED)).toEqual({ bin: 'npm', args: ['run', 'test'] });
+    expect(tsAffectedTestsInvocation(tmp, AFFECTED)).toEqual({
+      bin: 'npm',
+      args: ['run', 'test'],
+      singleRunner: false,
+    });
   });
 });

@@ -14,9 +14,14 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import {
   attributeFloorFailures,
+  attributeNoTests,
   checkKey,
+  floorBaseStatus,
+  toFloorBaseCheck,
   type FloorBaseCheck,
 } from '../src/analyzers/correctness/attribution';
+import { floorDebtToBaseChecks } from '../src/baseline/floor-debt';
+import { toFloorBaseChecks } from '../src/lanes/verify';
 import {
   netNewFloorFailures,
   readFloorBaseline,
@@ -169,6 +174,128 @@ describe('attributeFloorFailures (the lattice)', () => {
   });
 });
 
+/**
+ * The zero-tests transitions (4.5.0), decided once and pinned both ways.
+ * Bases always run at FULL scope (loop snapshot, CI merge-base, entry
+ * floors, floor-debt capture).
+ *
+ *   base       current    → answer
+ *   no-tests   fail       → net-new (BLOCKS): the base found zero tests, so
+ *                            every failing test arrived with the change
+ *   pass       no-tests   → tests-vanished (full scope only; disclosed,
+ *                            never a block, never a pass)
+ *   fail       no-tests   → tests-vanished (deleting failing tests is not a
+ *                            fix of them)
+ *   no-tests   no-tests   → none-at-base (still disclosed as no tests ran)
+ *   skipped /  no-tests   → base-unobserved
+ *   absent
+ *   pass       no-tests   → base-unobserved at AFFECTED scope: a selection
+ *   (affected)              that matched no test for this change is "no
+ *                            tests ran for this change", not a vanished suite
+ */
+describe('zero-tests transitions (4.5.0)', () => {
+  const noTests = (pack: string, label: string): CorrectnessCheckResult => ({
+    pack: pack as CorrectnessCheckResult['pack'],
+    label,
+    bin: 'x',
+    status: 'no-tests',
+  });
+
+  it('base no-tests → current fail is NET-NEW in both loop and CI policies', () => {
+    for (const absentMeans of ['net-new', 'unattributed'] as const) {
+      const out = attributeFloorFailures(
+        result([fail('ts', 'affected-tests')]),
+        [{ pack: 'ts', label: 'affected-tests', status: 'no-tests' }],
+        { absentMeans },
+      );
+      expect(out.map((a) => a.attribution)).toEqual(['net-new']);
+    }
+  });
+
+  it('a current no-tests check is never a failure to attribute', () => {
+    const out = attributeFloorFailures(
+      { ran: false, checks: [noTests('ts', 'affected-tests')], blocks: false },
+      [{ pack: 'ts', label: 'affected-tests', status: 'pass' }],
+      { absentMeans: 'net-new' },
+    );
+    expect(out).toEqual([]);
+  });
+
+  it('pins every base status against a FULL-scope current no-tests', () => {
+    const current: CorrectnessFloorResult = {
+      ran: false,
+      blocks: false,
+      scope: 'full',
+      checks: [
+        noTests('a', 'affected-tests'),
+        noTests('b', 'affected-tests'),
+        noTests('c', 'affected-tests'),
+        noTests('d', 'affected-tests'),
+        noTests('e', 'affected-tests'),
+      ],
+    };
+    const out = attributeNoTests(current, [
+      { pack: 'a', label: 'affected-tests', status: 'pass' },
+      { pack: 'b', label: 'affected-tests', status: 'fail' },
+      { pack: 'c', label: 'affected-tests', status: 'no-tests' },
+      { pack: 'd', label: 'affected-tests', status: 'skipped' },
+    ]);
+    const by = new Map(out.map((a) => [a.check.pack as string, a]));
+    expect(by.get('a')).toMatchObject({ transition: 'tests-vanished', baseStatus: 'pass' });
+    expect(by.get('b')).toMatchObject({ transition: 'tests-vanished', baseStatus: 'fail' });
+    expect(by.get('c')?.transition).toBe('none-at-base');
+    expect(by.get('d')?.transition).toBe('base-unobserved');
+    expect(by.get('e')?.transition).toBe('base-unobserved'); // absent
+    expect(attributeNoTests(current, null).every((a) => a.transition === 'base-unobserved')).toBe(
+      true,
+    );
+  });
+
+  it('an AFFECTED-scope zero never claims a vanished suite', () => {
+    const out = attributeNoTests(
+      { ran: false, blocks: false, scope: 'affected', checks: [noTests('a', 'affected-tests')] },
+      [{ pack: 'a', label: 'affected-tests', status: 'pass' }],
+    );
+    expect(out[0].transition).toBe('base-unobserved');
+  });
+
+  it('PARITY: every base-side projection keeps no-tests (never collapses it to skipped)', () => {
+    expect(floorBaseStatus('no-tests')).toBe('no-tests');
+    expect(floorBaseStatus('skipped-timeout')).toBe('skipped');
+    const floor: CorrectnessFloorResult = {
+      ran: true,
+      blocks: false,
+      checks: [pass('ts', 'typecheck'), noTests('ts', 'affected-tests')],
+    };
+    const expected = ['pass', 'no-tests'];
+    // the lanes' entry floor
+    expect(toFloorBaseChecks(floor).map((c) => c.status)).toEqual(expected);
+    // the committed floor-debt envelope
+    expect(
+      floorDebtToBaseChecks({
+        capturedAtCommit: null,
+        capturedAt: 'x',
+        checks: floor.checks.map((c) => ({
+          pack: c.pack,
+          label: c.label,
+          status: c.status,
+          command: 'x',
+        })),
+      }).map((c) => c.status),
+    ).toEqual(expected);
+    // the CI merge-base run + the tree gate (both map through this)
+    expect(floor.checks.map(toFloorBaseCheck).map((c) => c.status)).toEqual(expected);
+    // the loop entry snapshot
+    const dir = mkdtempSync(join(tmpdir(), 'dxkit-notests-snap-'));
+    try {
+      writeFloorBaseline(dir, floor, null);
+      expect(readFloorBaseline(dir)!.checks.map((c) => c.status)).toEqual(expected);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('PARITY: the loop wrapper preserves its exact semantics through the one comparator', () => {
   it('netNewFloorFailures ≡ attributeFloorFailures(..., net-new filter) on shared fixtures', () => {
     const snapshot: FloorBaseline = {
@@ -262,7 +389,13 @@ describe('attributeCiFloorOutcome (two-sided CI floor, real git worktree)', () =
           buildTarget: 'none' as const,
           weight: 'cheap' as const,
         }),
-        syntaxCheck: () => ({ label: 'typecheck', bin: 'check-marker', args: [] }),
+        syntaxCheck: () => ({
+          label: 'typecheck',
+          bin: 'check-marker',
+          args: [],
+          ranNoTests: ({ code, output }: { code: number; output: string }) =>
+            code === 0 && output.includes('ZERO TESTS'),
+        }),
         affectedTests: () => null,
       },
     } as unknown as LanguageSupport;
@@ -274,6 +407,7 @@ describe('attributeCiFloorOutcome (two-sided CI floor, real git worktree)', () =
   const contentExec: CommandExec = (_cmd, cwd) => {
     try {
       const marker = readFileSync(join(cwd, 'marker.txt'), 'utf8');
+      if (marker.includes('empty')) return { available: true, code: 0, output: 'ZERO TESTS' };
       return marker.includes('broken')
         ? { available: true, code: 1, output: 'marker says broken' }
         : { available: true, code: 0, output: '' };
@@ -335,6 +469,22 @@ describe('attributeCiFloorOutcome (two-sided CI floor, real git worktree)', () =
     expect(out.blocks).toBe(true);
     expect(out.attributed?.[0].attribution).toBe('net-new');
     expect(out.summary).toContain('NET-NEW');
+  }, 60_000);
+
+  it('NET-NEW: base ran ZERO tests + head red → BLOCKS (4.5.0: the failing tests arrived with the change)', async () => {
+    const out = await runTwoSided('empty\n', 'broken\n');
+    expect(out.blocks).toBe(true);
+    expect(out.attributed?.[0].attribution).toBe('net-new');
+  }, 60_000);
+
+  it('TESTS VANISHED: base ran tests + head ran ZERO → base run happens, suite named, never a block (4.5.0)', async () => {
+    const out = await runTwoSided('fine\n', 'empty\n');
+    expect(out.blocks).toBe(false);
+    expect(out.noTestsAttributed?.[0]).toMatchObject({
+      transition: 'tests-vanished',
+      baseStatus: 'pass',
+    });
+    expect(out.summary).toContain('TESTS VANISHED');
   }, 60_000);
 
   it('UNATTRIBUTED: base side could not run the check → disclosed, not blocked (Rule 19)', async () => {

@@ -237,6 +237,13 @@ export function floorOrderDone(
       continue;
     }
     if (check.status === 'pass') continue; // closed
+    // `no-tests` (4.5.0) is OPEN, never closed: an order about a failing
+    // check is not done because the check's tests stopped running —
+    // removing a failing test is not fixing it.
+    if (check.status === 'no-tests') {
+      open.push(id);
+      continue;
+    }
     // status === 'fail'
     if (finding === undefined) {
       open.push(id);

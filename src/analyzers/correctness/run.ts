@@ -24,7 +24,12 @@ import type { LanguageId, LanguageSupport } from '../../languages/types';
 import type { CorrectnessScope } from '../../languages/capabilities/correctness';
 import { runLockfileCheckAcrossRoots } from './lockfile-check';
 import { resolveTolerances, type ResolvedTolerances } from '../../install/tolerances';
-import { parseFailuresSafely, runResolutionCheck, runStructureCheck } from './pure-checks';
+import {
+  parseFailuresSafely,
+  ranNoTestsSafely,
+  runResolutionCheck,
+  runStructureCheck,
+} from './pure-checks';
 export { IMPORT_RESOLUTION_LABEL, UNRESOLVED_REMEDY } from './pure-checks';
 import {
   classifyEnvironmentFailure,
@@ -47,6 +52,9 @@ import {
 } from '../tools/bounded-exec';
 
 export { makeCommandExec, defaultCommandExec, type CommandExec, type CommandOutcome };
+// The no-tests phrasings live beside the runner (module size); re-exported so
+// every surface keeps importing floor rendering from here.
+export { describeNoTestsCheck, describeNoTestsRan, hasNoTests } from './no-tests';
 
 export type CorrectnessStatus =
   | 'pass'
@@ -67,7 +75,14 @@ export type CorrectnessStatus =
    *  so a `dotnet build` of a Windows-only target never runs on Linux just to
    *  fail in a way that reads as broken code. */
   | 'skipped-environment'
-  | 'skipped-none';
+  | 'skipped-none'
+  /** The test command RAN and its runner proved ZERO tests executed (the
+   *  pack's `ranNoTests`; 4.5.0). Its own disclosed result: never a pass (a
+   *  .NET web app with no test project once read as "tests pass"), never a
+   *  failure (it sets neither `ran` nor `blocks`). Phrased by
+   *  `describeNoTestsCheck`; at `affected` scope it means "no tests ran for
+   *  this change". */
+  | 'no-tests';
 
 export interface CorrectnessCheckResult {
   readonly pack: LanguageId;
@@ -113,7 +128,10 @@ export interface CorrectnessCheckResult {
 }
 
 export interface CorrectnessFloorResult {
-  /** True when at least one check actually executed (not all skipped). */
+  /** True when at least one check produced a pass/fail VERDICT. A `no-tests`
+   *  check executed but proved nothing either way, so it never sets `ran`:
+   *  a floor whose only answer is "no tests ran" is not a floor that ran
+   *  green (`describeFloorNotRan` says which it was). */
   readonly ran: boolean;
   readonly checks: readonly CorrectnessCheckResult[];
   /** True when any check that ran failed — the floor blocks. */
@@ -295,6 +313,24 @@ export function runCorrectnessFloor(opts: CorrectnessFloorOptions): CorrectnessF
           continue;
         }
       }
+      // Zero tests executed (4.5.0): the pack's recogniser answers from the
+      // exit code + FULL output, on positive evidence only, after the
+      // environment classifier and before pass/fail — so an empty run is
+      // never `pass` (exit 0) nor a blocking `fail` (pytest's exit 5). A
+      // recogniser throw keeps the plain verdict.
+      if (cmd.ranNoTests && ranNoTestsSafely(cmd, outcome.code, outcome.output)) {
+        checks.push({
+          pack: id,
+          label: cmd.label,
+          bin: cmd.bin,
+          args: cmd.args,
+          status: 'no-tests',
+          // The runner's own words, as evidence for the disclosure (display
+          // tail only, like a failure's output).
+          ...(outcome.output.trim() ? { output: tail(outcome.output) } : {}),
+        });
+        continue;
+      }
       // Failure-level identities (4.2): parse the FULL captured output — the
       // display tail is a truncation, and a snapshot built from a truncated
       // parse would under-record the base set and false-block later. A parser
@@ -410,12 +446,25 @@ export function describeFloorCapturePlan(cwd: string, packs: readonly LanguageSu
   return plan;
 }
 
-/** One-line human summary of a floor result (for the Stop-gate / hook block). */
+/** One-line human summary of a floor result (for the Stop-gate / hook block).
+ *  A `no-tests` check is never folded into "passed": a floor whose test
+ *  command ran nothing says so in the same line. */
 export function describeCorrectnessFloor(result: CorrectnessFloorResult): string {
   const failed = result.checks.filter((c) => c.status === 'fail');
-  if (failed.length === 0) return 'correctness floor: all checks passed';
+  const noTests = result.checks.filter((c) => c.status === 'no-tests');
+  const none =
+    noTests.length > 0
+      ? `no tests ran (${noTests.map((c) => `${c.pack} ${c.label}`).join(', ')})`
+      : '';
+  if (failed.length === 0) {
+    if (none === '') return 'correctness floor: all checks passed';
+    const passed = result.checks.some((c) => c.status === 'pass');
+    return `correctness floor: ${passed ? 'no check failed, but ' : ''}${none} — not a pass`;
+  }
   const which = failed.map((c) => `${c.pack} ${c.label}`).join(', ');
-  return `correctness floor: ${failed.length} check(s) failed — ${which}`;
+  return (
+    `correctness floor: ${failed.length} check(s) failed — ${which}` + (none ? `; ${none}` : '')
+  );
 }
 
 /** The environment-boundary disclosures in a floor result, one line per pack

@@ -1,0 +1,6 @@
+PHPUnit 13.4.7 by Sebastian Bergmann and contributors.
+
+Runtime:       PHP 8.5.4
+Configuration: /work/php0/phpunit.xml
+
+No tests executed!

@@ -932,9 +932,9 @@ function goPackageDir(file: string): string {
  *
  * affectedTests: `go test`. Go's native affected unit is the PACKAGE, so on the
  * fast surface we test the changed packages' directories; the whole module at
- * full scope. `go test ./pkg` with no test files in that package is a pass (Go
- * prints "no test files" and exits 0), so a source-only package change never
- * false-blocks. (Package-level rung — Go has no per-test impact selection; a
+ * full scope. `go test ./pkg` with no test files in that package exits 0
+ * printing "no test files": never a block, and (4.5.0) recorded as
+ * `no-tests` rather than a pass when no package ran a test. (Package-level rung — Go has no per-test impact selection; a
  * change to a package whose DEPENDENTS have tests is caught at full/CI scope.)
  */
 /** Rule 20: Go's floor, lint gate, and vuln audit all compile packages (go
@@ -947,6 +947,31 @@ const GO_BUILD_EXECUTION: ExecutionRequirement = {
   buildTarget: 'discovered',
   weight: 'build',
 };
+
+/**
+ * Did `go test` execute ZERO tests? (4.5.0, the pack's `ranNoTests`.) `go
+ * test` prints one summary line per package and exits 0 when no package has
+ * a test, so a module with no tests used to read as a passing floor. Zero
+ * means: at least one package line, and EVERY package line is
+ * `?   <pkg> [no test files]` or `ok  <pkg> <time> [no tests to run]`. Any
+ * plain `ok` (tests ran, cached or not) or `FAIL` line vetoes it. The line
+ * shapes are `go test`'s documented, long-stable summary format (no Go
+ * toolchain on the capture machine; provenance in the fixture HARVEST.md).
+ */
+export function goTestRanNoTests(run: { readonly code: number; readonly output: string }): boolean {
+  if (run.code !== 0) return false;
+  const pkgLines = run.output
+    .replace(/\r/g, '')
+    .split('\n')
+    .filter((l) => /^(?:ok|\?|FAIL)\s+\S/.test(l));
+  return (
+    pkgLines.length > 0 &&
+    pkgLines.every(
+      (l) =>
+        /^\?\s+\S+\s+\[no test files\]\s*$/.test(l) || /^ok\s+\S+.*\[no tests to run\]\s*$/.test(l),
+    )
+  );
+}
 
 const goCorrectnessProvider: CorrectnessProvider = {
   execution: () => GO_BUILD_EXECUTION,
@@ -964,9 +989,19 @@ const goCorrectnessProvider: CorrectnessProvider = {
     if (ctx.scope === 'affected' && !undeterminable) {
       const pkgs = goChangedPackages(ctx.changedFiles);
       if (pkgs.length === 0) return null; // no changed .go → nothing to test
-      return { label: 'affected-tests', bin: 'go', args: ['test', ...pkgs] };
+      return {
+        label: 'affected-tests',
+        bin: 'go',
+        args: ['test', ...pkgs],
+        ranNoTests: goTestRanNoTests,
+      };
     }
-    return { label: 'affected-tests', bin: 'go', args: ['test', './...'] };
+    return {
+      label: 'affected-tests',
+      bin: 'go',
+      args: ['test', './...'],
+      ranNoTests: goTestRanNoTests,
+    };
   },
 
   // The module-sync floor check derives from the ONE install strategy

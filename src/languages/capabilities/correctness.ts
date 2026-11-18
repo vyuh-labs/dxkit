@@ -70,6 +70,26 @@ export interface CorrectnessCommand {
    */
   readonly parseFailures?: (output: string) => string[] | null;
   /**
+   * OPTIONAL zero-tests recogniser (4.5.0): true when the runner's exit code
+   * and FULL captured output PROVE the command executed zero tests (a .NET
+   * solution with no test project, pytest's exit 5, jest/vitest under
+   * `--passWithNoTests`, `cargo test` printing only `running 0 tests`). The
+   * runner then records the check as `no-tests`: its own disclosed result,
+   * never a pass (a command that exited 0 having run nothing is not
+   * evidence that the code works) and never a failure (an empty suite is
+   * not something the change broke). The pack attaches the recogniser that
+   * matches the exact command it built, beside `parseFailures` (Rule 6).
+   *
+   * Contract: decide from POSITIVE evidence of zero (the runner's own
+   * "no tests" marker or exit code, or every per-target count reading 0),
+   * never from the absence of a pass marker alone. Bias hard toward false
+   * NEGATIVES: a run that executed even one test must never be reclassified
+   * as no-tests, so an output the recogniser does not fully understand
+   * returns false and keeps its plain pass/fail. Pinned against real runner
+   * output in `test/correctness-no-tests.test.ts`.
+   */
+  readonly ranNoTests?: (run: { readonly code: number; readonly output: string }) => boolean;
+  /**
    * OPTIONAL pre-spawn disclosure (4.4.8, #377): the pack determined, from
    * the repo's own evidence, that this command CANNOT START in the repo's
    * shape (the runner named by the test script is not installed; the only

@@ -6,7 +6,7 @@
  * so a reviewer reads the same evidence grammar regardless of which robot
  * opened the PR, and a fix to the disclosure wording lands in both at once.
  */
-import type { CorrectnessFloorResult } from '../analyzers/correctness/run';
+import { describeNoTestsRan, type CorrectnessFloorResult } from '../analyzers/correctness/run';
 import type { AttributedFloorFailure } from '../analyzers/correctness/attribution';
 import { describeFloorSkip, type FloorSkip } from './verify-tree';
 import {
@@ -44,13 +44,24 @@ export function renderFloorVerification(
   // printed "not run (dry run)" for a floor that HAD run, and would print
   // "passed" over a red entry floor. Pre-existing debt is disclosed as
   // exactly that — it belongs to the repo, not to this run.
+  // A test command that ran zero tests (4.5.0) is never rendered green:
+  // the headline says so and the disclosure lines name each check.
+  const zeros = describeNoTestsRan(floor);
+  const zeroLines = zeros.length > 0 ? [...zeros.map((z) => `- ${z}`), ''] : [];
   if (!attribution) {
     const checks = floor.checks.map(renderCheckLine).join('\n');
     return [
       `Correctness floor (entry snapshot — no change to attribute): ` +
-        `**${floor.blocks ? 'red (pre-existing debt, not caused by this run)' : 'green'}**`,
+        `**${
+          floor.blocks
+            ? 'red (pre-existing debt, not caused by this run)'
+            : zeros.length > 0
+              ? 'no check failed, but no tests ran (not green)'
+              : 'green'
+        }**`,
       checks,
       '',
+      ...zeroLines,
     ];
   }
   const attributed = attribution;
@@ -63,9 +74,16 @@ export function renderFloorVerification(
     // `affected` (escalating on manifests); hardcoding "full" here misstated
     // what was verified. Older snapshots without the field were full-scope.
     `Correctness floor (${floor.scope ?? 'full'} scope, attributed vs ${entryLabel}): ` +
-      `**${netNew.length > 0 ? 'FAILED — net-new failures' : 'passed'}**`,
+      `**${
+        netNew.length > 0
+          ? 'FAILED — net-new failures'
+          : zeros.length > 0
+            ? 'no net-new failure, but no tests ran (not a pass)'
+            : 'passed'
+      }**`,
     checks,
     '',
+    ...zeroLines,
   ];
   if (preExisting.length > 0) {
     lines.push(

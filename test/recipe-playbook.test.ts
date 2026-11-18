@@ -235,6 +235,11 @@ const mockPlaybookPack = {
       // command-level parser flows pack → runner into finding identities.
       parseFailures: (output: string) =>
         output.includes('PLAYBOOK-FAIL') ? ['test: playbook broke'] : null,
+      // Zero-tests recogniser (4.5.0): a distinctive marker proves the
+      // pack-declared recogniser flows pack → runner into the `no-tests`
+      // status (never a pass), with no per-pack wiring in the runner.
+      ranNoTests: ({ code, output }: { code: number; output: string }) =>
+        code === 0 && output.includes('PLAYBOOK-ZERO-TESTS'),
     }),
     // Import-resolution floor (4.2): a distinctive unresolved specifier proves
     // the optional capability flows pack → runner with finding-level identity.
@@ -644,6 +649,22 @@ describe('recipe playbook — synthetic pack', () => {
       (c) => (c.pack as string) === 'playbook' && c.label === 'playbook-tests',
     );
     expect(failedTests?.findings).toEqual(['test: playbook broke']);
+    // Zero tests stays pack-driven (4.5.0): the synthetic recogniser turns an
+    // exit-0 run into `no-tests` through the runner, never a pass.
+    const empty = runCorrectnessFloor({
+      cwd: '/nonexistent-repo',
+      changedFiles: ['a.pbk'],
+      scope: 'affected',
+      packs,
+      exec: (cmd) =>
+        cmd.args.includes('test')
+          ? { available: true, code: 0, output: 'PLAYBOOK-ZERO-TESTS' }
+          : { available: true, code: 0, output: '' },
+    });
+    const emptyTests = empty.checks.find(
+      (c) => (c.pack as string) === 'playbook' && c.label === 'playbook-tests',
+    );
+    expect(emptyTests?.status).toBe('no-tests');
     // The optional import-resolution capability: the synthetic pack's check
     // must surface as a failing 'import-resolution' check with finding-level
     // identity — codifying "the resolution floor is pack-driven" (4.2).

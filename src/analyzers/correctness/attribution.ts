@@ -13,6 +13,9 @@
  *
  * Per current-side FAILURE, against the base side:
  *   - base `pass`     → `net-new`      — the change broke it. BLOCKS.
+ *   - base `no-tests` → `net-new`      — the base ran its test command and
+ *     it found ZERO tests (bases always run at full scope), so every failing
+ *     test now arrived with the change. BLOCKS. (4.5.0)
  *   - base `fail`     → `pre-existing` — grandfathered debt. Warns, named.
  *   - base `skipped`  → `unattributed` — dxkit could not OBSERVE the base
  *     side for this check (toolchain missing in the worktree, deps not
@@ -30,7 +33,7 @@
  * declared argument at each call site instead of a semantic fork in a second
  * comparator (the divergence class the flow gate-vs-join bug shipped from).
  */
-import type { CorrectnessCheckResult, CorrectnessFloorResult } from './run';
+import type { CorrectnessCheckResult, CorrectnessFloorResult, CorrectnessStatus } from './run';
 
 /** The durable identity of one floor check across runs. */
 export function checkKey(pack: string, label: string): string {
@@ -41,11 +44,39 @@ export function checkKey(pack: string, label: string): string {
 export interface FloorBaseCheck {
   readonly pack: string;
   readonly label: string;
-  readonly status: 'pass' | 'fail' | 'skipped';
+  readonly status: 'pass' | 'fail' | 'no-tests' | 'skipped';
   /** Finding-level identities recorded for a failing base check (today: the
    *  import-resolution check's unresolved specifiers). Lets the comparator
    *  diff the SET below instead of grandfathering the whole check. */
   readonly findings?: readonly string[];
+}
+
+/**
+ * The ONE projection of a floor check (a live run's, or a stored envelope's)
+ * onto the comparator's base shape. Every base side routes through it: the
+ * loop snapshot, the CI merge-base run, the tree gate's baseline tree, the
+ * lanes' entry floor and the committed floor-debt envelope. Four hand-rolled
+ * copies of this ternary once lived in four files; a status added to the
+ * runner (4.5.0 `no-tests`) would have been collapsed to `skipped` by each,
+ * reading "the base had zero tests" as "the base was not observed".
+ */
+export function floorBaseStatus(status: CorrectnessStatus | string): FloorBaseCheck['status'] {
+  return status === 'pass' || status === 'fail' || status === 'no-tests' ? status : 'skipped';
+}
+
+/** A floor check → the comparator's base-check shape (see `floorBaseStatus`). */
+export function toFloorBaseCheck(c: {
+  readonly pack: string;
+  readonly label: string;
+  readonly status: CorrectnessStatus | string;
+  readonly findings?: readonly string[];
+}): FloorBaseCheck {
+  return {
+    pack: c.pack,
+    label: c.label,
+    status: floorBaseStatus(c.status),
+    ...(c.findings !== undefined ? { findings: c.findings } : {}),
+  };
 }
 
 export type FloorAttribution = 'net-new' | 'pre-existing' | 'unattributed';
@@ -108,7 +139,7 @@ export function attributeFloorFailures(
     const attribution: FloorAttribution =
       baseStatus === 'fail'
         ? 'pre-existing'
-        : baseStatus === 'pass'
+        : baseStatus === 'pass' || baseStatus === 'no-tests'
           ? 'net-new'
           : baseStatus === 'skipped'
             ? 'unattributed'
@@ -123,4 +154,64 @@ export function attributeFloorFailures(
     });
   }
   return out;
+}
+
+/**
+ * What a current-side `no-tests` check means against the base side (4.5.0).
+ * The sibling question to failure attribution, same keying, same base shape:
+ *
+ *   - `tests-vanished`   — tests RAN at the base (pass or fail) and the
+ *     current FULL-scope run executed none: the change removed the suite or
+ *     broke its discovery. Disclosed loudly, never read as a pass and never
+ *     as a fix of a red base (deleting failing tests is not repairing them).
+ *     It does not block by itself: an empty suite is not a failure the
+ *     change introduced.
+ *   - `none-at-base`     — the base found zero tests too. Still disclosed as
+ *     "no tests ran"; nothing changed.
+ *   - `base-unobserved`  — the base side skipped the check or lacks it.
+ *
+ * Only a FULL-scope current run can claim `tests-vanished`: an affected run
+ * that selected zero tests for a change says "no tests ran for this change",
+ * which a full-scope base that ran the whole suite cannot contradict. Bases
+ * always run at full scope (loop snapshot, CI merge-base, entry floors,
+ * floor-debt capture).
+ */
+export type NoTestsTransition = 'tests-vanished' | 'none-at-base' | 'base-unobserved';
+
+export interface AttributedNoTests {
+  readonly check: CorrectnessCheckResult;
+  readonly transition: NoTestsTransition;
+  /** The base status behind `tests-vanished` (`pass` or `fail`). */
+  readonly baseStatus?: 'pass' | 'fail';
+}
+
+export function attributeNoTests(
+  current: CorrectnessFloorResult,
+  base: readonly FloorBaseCheck[] | null,
+): AttributedNoTests[] {
+  const byKey = new Map<string, FloorBaseCheck>();
+  for (const c of base ?? []) byKey.set(checkKey(c.pack, c.label), c);
+  const out: AttributedNoTests[] = [];
+  for (const check of current.checks) {
+    if (check.status !== 'no-tests') continue;
+    const baseStatus = byKey.get(checkKey(check.pack, check.label))?.status;
+    if (baseStatus === 'no-tests') {
+      out.push({ check, transition: 'none-at-base' });
+    } else if ((baseStatus === 'pass' || baseStatus === 'fail') && current.scope !== 'affected') {
+      out.push({ check, transition: 'tests-vanished', baseStatus });
+    } else {
+      out.push({ check, transition: 'base-unobserved' });
+    }
+  }
+  return out;
+}
+
+/** The ONE phrasing of a vanished suite, for every surface that names it. */
+export function describeTestsVanished(a: AttributedNoTests): string {
+  return (
+    `${a.check.pack} ${a.check.label}: tests ran at the base (${a.baseStatus ?? 'pass'}) and NONE ran ` +
+    `now — this change removed the tests or broke their discovery (not a pass` +
+    (a.baseStatus === 'fail' ? ', and not a fix of the failing tests' : '') +
+    ')'
+  );
 }

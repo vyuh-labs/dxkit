@@ -26,7 +26,9 @@ export const LEDGER_DIR = path.join('.dxkit', 'loop');
 export const LEDGER_FILE = path.join(LEDGER_DIR, 'ledger.jsonl');
 
 /** Status of a deterministic check at the moment the Stop-gate ran. */
-export type CheckStatus = 'pass' | 'fail' | 'error' | 'not_configured' | 'skipped';
+/** `no_tests` (4.5.0): the check's command ran and executed ZERO tests —
+ *  recorded as its own value, never as `pass`. */
+export type CheckStatus = 'pass' | 'fail' | 'error' | 'not_configured' | 'skipped' | 'no_tests';
 
 /**
  * One postflight event. Mirrors the schema in the loop pack spec so

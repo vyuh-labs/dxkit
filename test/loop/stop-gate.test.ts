@@ -189,6 +189,7 @@ describe('computeStopGate', () => {
         blocks: checks.some((c) => c.status === 'fail'),
       },
       netNew,
+      noTests: [],
     });
 
     it('blocks the model on a net-new floor failure with a repair message', async () => {
@@ -228,6 +229,34 @@ describe('computeStopGate', () => {
       expect(d.outcome).toBe('allow');
       expect(d.event.typecheck_status).toBe('pass');
       expect(d.event.tests_status).toBe('pass');
+    });
+
+    it('a floor whose test command ran ZERO tests records no_tests and says so on the allow (4.5.0)', async () => {
+      const zero: CorrectnessCheckResult = { ...passCheck('affected-tests'), status: 'no-tests' };
+      const ran = floor([passCheck('typecheck'), zero], []);
+      const outcome = (): FloorGateOutcome =>
+        ran.kind === 'ran'
+          ? { ...ran, noTests: [{ check: zero, transition: 'tests-vanished', baseStatus: 'pass' }] }
+          : ran;
+      const d = await computeStopGate(
+        '/repo',
+        { session_id: 's' },
+        async () => payload([]),
+        outcome,
+      );
+      expect(d.outcome).toBe('allow');
+      expect(d.event.tests_status).toBe('no_tests');
+      expect(d.message).toContain('NONE ran now');
+      // A configured command that exits 0 (often the same empty suite under
+      // --passWithNoTests) never overwrites the floor's proven zero.
+      process.env.DXKIT_LOOP_TEST_COMMAND = 'exit 0';
+      const withCmd = await computeStopGate(
+        process.cwd(),
+        { session_id: 's' },
+        async () => payload([]),
+        outcome,
+      );
+      expect(withCmd.event.tests_status).toBe('no_tests');
     });
 
     it('is a disclosed no-op when no pack provides a floor', async () => {

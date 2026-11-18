@@ -28,7 +28,7 @@ import {
 } from '../analyzers/tools/osv-scanner-deps';
 import { detectLockfile } from '../package-manager';
 import { nodeInstallStrategy } from './node-install';
-import { tsAffectedTestsInvocation } from './ts-test-entry';
+import { tsAffectedTestsInvocation, tsRanNoTests } from './ts-test-entry';
 import { fileExists, run, runJSON } from '../analyzers/tools/runner';
 import { walkPaths } from '../analyzers/tools/walk-paths';
 import { readRepoFile, repoFileExists } from './version-detect';
@@ -2291,6 +2291,10 @@ const tsCorrectnessProvider: CorrectnessProvider = {
       bin: invocation.bin,
       args: invocation.args,
       parseFailures: parseTsTestRunnerFailures,
+      // Only a single-runner run's marker speaks for the whole output.
+      ...(invocation.cannotStart === undefined && invocation.singleRunner
+        ? { ranNoTests: tsRanNoTests }
+        : {}),
       ...(invocation.cannotStart !== undefined ? { cannotStart: invocation.cannotStart } : {}),
     };
   },

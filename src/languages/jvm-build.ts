@@ -307,32 +307,71 @@ export function jvmCorrectnessProvider(opts: JvmCorrectnessOptions): Correctness
     affectedTests(ctx: CorrectnessContext): CorrectnessCommand | null {
       const resolved = resolveBuild(ctx.cwd);
       if (!resolved) return null;
-      const { build, android } = resolved;
-      const fullCommand = android
-        ? { label: 'affected-tests', bin: build.bin, args: [ANDROID_TEST_TASK] }
-        : testCommandFull(build);
-
-      const undeterminable = ctx.changedFiles.length === 0;
-      if (ctx.scope !== 'affected' || undeterminable) return fullCommand;
-
-      const changedSources = ctx.changedFiles.filter(isSource);
-      if (changedSources.length === 0) return null; // no relevant source change → skip
-      // A build-descriptor change can affect any module — don't narrow.
-      if (ctx.changedFiles.some(isJvmBuildFile)) return fullCommand;
-
-      const mods = jvmChangedModules(ctx.cwd, changedSources, MODULE_MANIFESTS[build.system]);
-      if (mods && mods.length > 0) {
-        if (android) {
-          // Gradle project path per changed module, variant task qualified:
-          // `app` → `:app:testDebugUnitTest`.
-          const tasks = mods.map(
-            (d) => `:${d.replace(/\\/g, '/').split('/').join(':')}:${ANDROID_TEST_TASK}`,
-          );
-          return { label: 'affected-tests', bin: build.bin, args: tasks };
-        }
-        return testCommandForModules(build, mods);
-      }
-      return fullCommand; // single-module / unattributable → whole build
+      const cmd = affectedTestsCommand(ctx, resolved);
+      // Gradle names a test task with no test sources `NO-SOURCE` (4.5.0).
+      // Maven declares no recogniser: the floor runs it `-q`, which hides
+      // surefire's "No tests to run." line, so an empty run and a passing
+      // run print the same thing and dxkit will not guess (declared in the
+      // no-tests contract test's exemption table).
+      return cmd !== null && resolved.build.system === 'gradle'
+        ? { ...cmd, ranNoTests: gradleTestRanNoTests }
+        : cmd;
     },
   };
+
+  function affectedTestsCommand(
+    ctx: CorrectnessContext,
+    resolved: { build: JvmBuild; android: boolean },
+  ): CorrectnessCommand | null {
+    const { build, android } = resolved;
+    const fullCommand = android
+      ? { label: 'affected-tests', bin: build.bin, args: [ANDROID_TEST_TASK] }
+      : testCommandFull(build);
+
+    const undeterminable = ctx.changedFiles.length === 0;
+    if (ctx.scope !== 'affected' || undeterminable) return fullCommand;
+
+    const changedSources = ctx.changedFiles.filter(isSource);
+    if (changedSources.length === 0) return null; // no relevant source change → skip
+    // A build-descriptor change can affect any module — don't narrow.
+    if (ctx.changedFiles.some(isJvmBuildFile)) return fullCommand;
+
+    const mods = jvmChangedModules(ctx.cwd, changedSources, MODULE_MANIFESTS[build.system]);
+    if (mods && mods.length > 0) {
+      if (android) {
+        // Gradle project path per changed module, variant task qualified:
+        // `app` → `:app:testDebugUnitTest`.
+        const tasks = mods.map(
+          (d) => `:${d.replace(/\\/g, '/').split('/').join(':')}:${ANDROID_TEST_TASK}`,
+        );
+        return { label: 'affected-tests', bin: build.bin, args: tasks };
+      }
+      return testCommandForModules(build, mods);
+    }
+    return fullCommand; // single-module / unattributable → whole build
+  }
+}
+
+/**
+ * Did a Gradle test run execute ZERO tests? (4.5.0, the pack's `ranNoTests`.)
+ * Gradle's plain console (the default without a TTY, i.e. every floor run)
+ * prints `> Task :<path> <OUTCOME>` per task, and a test task with no test
+ * sources is `NO-SOURCE`. Zero means: at least one test-task line, and every
+ * one of them is NO-SOURCE. A test task is `test` or any task named
+ * `...Test` (`testDebugUnitTest`, a custom `integrationTest` the `test`
+ * task depends on), so an executed custom suite beside an empty unit suite
+ * vetoes it. A test task that executed (no outcome suffix),
+ * or is UP-TO-DATE / FROM-CACHE (a previous run's tests) vetoes it. Gradle
+ * is not on the capture machine; the line shape is Gradle's documented
+ * task-outcome format (provenance in the fixture HARVEST.md).
+ */
+export function gradleTestRanNoTests(run: {
+  readonly code: number;
+  readonly output: string;
+}): boolean {
+  if (run.code !== 0) return false;
+  const testTasks = [
+    ...run.output.replace(/\r/g, '').matchAll(/^> Task (\S*?)(\w+)(?: ([A-Z-]+))?\s*$/gm),
+  ].filter((m) => m[2] === 'test' || /Test$/.test(m[2]));
+  return testTasks.length > 0 && testTasks.every((m) => m[3] === 'NO-SOURCE');
 }

@@ -1778,6 +1778,45 @@ function csharpBuildExecution(cwd: string): ExecutionRequirement {
  * can't union several projects, and a source change's dependent test project
  * isn't cheaply resolvable. A change touching no `.cs` on the fast surface skips.
  */
+/**
+ * Did `dotnet test` execute ZERO tests? (4.5.0, the pack's `ranNoTests`.)
+ * The shipped case: a web app solution with NO test project — `dotnet test`
+ * restores, finds no test assembly, prints nothing about tests and exits 0,
+ * and the floor read that as "tests pass". Zero is recognised from:
+ *   - Microsoft.Testing.Platform: exit code 8 ("zero tests ran") with its
+ *     `Zero tests ran` summary (documented exit code; MTP-mode runners);
+ *   - VSTest (the default runner): exit 0, no test-count summary anywhere
+ *     (`Passed!`/`Failed!` with `Total:`, `Total tests:`, MTP's `total:`),
+ *     and either no test assembly ran at all (no `Test run for` line) or
+ *     every one that ran reported `No test is available in ...`.
+ * The VSTest lane answers on the absence of a summary, so it additionally
+ * requires the CLI's own English restore/test markers in the output: a
+ * localized CLI whose summary dxkit cannot read keeps its plain pass
+ * (false-negative bias; dxkit's own runs set invariant globalization, which
+ * keeps the CLI in English). Real output pinned in
+ * `test/fixtures/raw/floor-no-tests/`.
+ */
+export function dotnetTestRanNoTests(run: {
+  readonly code: number;
+  readonly output: string;
+}): boolean {
+  const out = run.output.replace(/\r/g, '');
+  if (run.code === 8) return /Zero tests ran/i.test(out);
+  if (run.code !== 0) return false;
+  // Any test-count summary means tests were discovered and run.
+  if (/\b(?:Passed|Failed)!\s+-/.test(out)) return false;
+  if (/\bTotal(?: tests)?:\s*\d/i.test(out)) return false;
+  if (/Test run summary:/i.test(out)) return false;
+  const english =
+    /Determining projects to restore|All projects are up-to-date for restore|^\s*Restored \S|Restore complete|Test run for |No test is available in /m.test(
+      out,
+    );
+  if (!english) return false;
+  const runs = (out.match(/^Test run for /gm) ?? []).length;
+  const empties = (out.match(/^No test is available in /gm) ?? []).length;
+  return runs === 0 || empties >= runs;
+}
+
 const csharpCorrectnessProvider: CorrectnessProvider = {
   execution: csharpBuildExecution,
 
@@ -1802,12 +1841,22 @@ const csharpCorrectnessProvider: CorrectnessProvider = {
       if (projs.size === 1) {
         const [proj] = [...projs];
         if (csharpIsTestProject(ctx.cwd, proj)) {
-          return { label: 'affected-tests', bin: 'dotnet', args: ['test', proj] };
+          return {
+            label: 'affected-tests',
+            bin: 'dotnet',
+            args: ['test', proj],
+            ranNoTests: dotnetTestRanNoTests,
+          };
         }
       }
       // else fall through to the whole solution (safe default)
     }
-    return { label: 'affected-tests', bin: 'dotnet', args: ['test'] };
+    return {
+      label: 'affected-tests',
+      bin: 'dotnet',
+      args: ['test'],
+      ranNoTests: dotnetTestRanNoTests,
+    };
   },
 };
 

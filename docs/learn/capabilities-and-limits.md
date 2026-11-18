@@ -15,7 +15,10 @@ both directions, so you can decide what to rely on it for.
 - **Liveness of the change** (the correctness floor): the code still
   compiles or parses, imports still resolve, and the tests the change
   affects still pass. Only failures that are net-new versus the entry state
-  block.
+  block. A test command that ran zero tests is its own result, "no tests
+  ran": it never counts as passing (on any surface, in any ledger or
+  baseline) and never blocks on its own. When the base side ran tests and
+  the change's full run runs none, the vanished suite is named.
 - **What actually ran.** Every scan records which tools executed. A scanner
   that could not run is disclosed as unobserved; it never silently reads as
   "clean".

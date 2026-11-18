@@ -1,0 +1,3 @@
+Building for debugging...
+Build complete! (1.20s)
+error: no tests found; create a target in the 'Tests' directory
