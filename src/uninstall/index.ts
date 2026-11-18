@@ -19,7 +19,7 @@ import { managedContentHash } from '../owner-section';
 import { keepOwnerSectionOnly, planOwnerSectionFile } from './owner-section-plan';
 import { stripPolicyJsoncAssociation, wouldStripPolicyJsoncAssociation } from '../editor-assoc';
 import { detectInstallFlags, type InstallFlags } from '../update';
-import { managedGatedArtifacts, userOwnedManagedArtifacts } from '../managed-artifacts';
+import { MANAGED_SHIP_SURFACES, managedGatedArtifacts } from '../managed-artifacts';
 import { ALLOWLIST_FILENAME, ALLOWLIST_REASONS_FILENAME } from '../allowlist/file';
 import type { Manifest } from '../types';
 import {
@@ -270,8 +270,11 @@ export function planUninstall(cwd: string, opts: UninstallOptions = {}): Uninsta
   //    derived from the managed-artifact registry (the same source update and
   //    init read), so a surface can't be removed here yet forgotten by update.
   //    A file at a managed path that is the USER's own (install left it alone)
-  //    is kept here too: one ownership answer for both paths.
-  const userOwned = userOwnedManagedArtifacts(cwd, flags);
+  //    is kept here too: one ownership answer (`ManagedShipSurface.userOwned`)
+  //    for both paths.
+  const userOwned = new Set(
+    MANAGED_SHIP_SURFACES.filter((s) => s.userOwned?.(cwd)).flatMap((s) => s.artifacts(flags)),
+  );
   for (const rel of managedGatedArtifacts(flags)) {
     if (!exists(cwd, rel)) continue;
     if (userOwned.has(rel)) {

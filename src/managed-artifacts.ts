@@ -471,22 +471,6 @@ export function managedGatedArtifacts(
 }
 
 /**
- * The gated artifacts uninstall must KEEP because the file at that path is
- * the user's own (see `ManagedShipSurface.userOwned`).
- */
-export function userOwnedManagedArtifacts(
-  cwd: string,
-  flags: ManifestInstallFlags,
-  surfaces: readonly ManagedShipSurface[] = MANAGED_SHIP_SURFACES,
-): Set<string> {
-  const out = new Set<string>();
-  for (const surface of surfaces) {
-    if (surface.userOwned?.(cwd)) for (const rel of surface.artifacts(flags)) out.add(rel);
-  }
-  return out;
-}
-
-/**
  * Re-run every `refreshOnUpdate` surface active for these flags, in registry
  * order, merging each result via `onResult`. Replaces the hand-maintained
  * if-chain in `runUpdate`.
