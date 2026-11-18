@@ -105,6 +105,9 @@ function makeSandbox(): Sandbox {
   };
   write('npm', NPM_STUB);
   write('corepack', '#!/bin/bash\nexit 0\n');
+  // python3 with pip + venv (what the always-on python feature provides);
+  // STUB_PY_FAIL=1 is a container built from an older devcontainer.json.
+  write('python3', '#!/bin/bash\n[ "${STUB_PY_FAIL:-0}" = 1 ] && exit 1\nexit 0\n');
   // make-dxkit <version> <dest>: the stub generator, callable from the npm stub.
   write(
     'make-dxkit',
@@ -131,6 +134,8 @@ function run(
       STUB_LOG: sb.log,
       STUB_GLOBAL: sb.global,
       STUB_DIR: sb.stubs,
+      // What the rendered devcontainer.json's containerEnv sets.
+      DISABLE_AUTOUPDATER: '1',
       ...env,
     },
   });
@@ -196,6 +201,17 @@ describe.skipIf(process.platform === 'win32')('generated devcontainer scripts (e
       expect(r.stderr).toContain('FAIL: OpenAI Codex CLI');
       // The other CLI still installed: one failure does not stop the rest.
       expect(r.calls).toContain(`npm install -g ${CLAUDE.package}@${CLAUDE.version}`);
+    });
+
+    it('a CLI that prints the pinned version but exits non-zero is not "installed"', () => {
+      fs.writeFileSync(
+        path.join(sb.global, 'bin', 'claude'),
+        `#!/bin/bash\necho "${CLAUDE.version} (Claude Code)"\nexit 3\n`,
+        { mode: 0o755 },
+      );
+      const r = run(sb, 'install-agent-clis.sh');
+      expect(r.calls).toContain(`npm install -g ${CLAUDE.package}@${CLAUDE.version}`);
+      expect(r.code).toBe(0);
     });
 
     it('an install that lands at the wrong version fails the script', () => {
@@ -293,6 +309,56 @@ describe.skipIf(process.platform === 'win32')('generated devcontainer scripts (e
       ]);
       for (const f of record?.failures ?? []) expect(f.remedy.length).toBeGreaterThan(0);
       expect(fs.existsSync(path.join(sb.repo, DEVCONTAINER_READINESS_RECORD))).toBe(true);
+    });
+
+    it('a devDependency OLDER than the generating dxkit is a failure', () => {
+      fs.writeFileSync(path.join(sb.repo, 'package.json'), '{"name":"app","private":true}\n');
+      fs.writeFileSync(path.join(sb.repo, 'package-lock.json'), '{"lockfileVersion":3}\n');
+      fs.mkdirSync(path.join(sb.repo, 'node_modules', '.bin'), { recursive: true });
+      fs.writeFileSync(
+        path.join(sb.repo, 'node_modules', '.bin', 'vyuh-dxkit'),
+        dxkitStub('0.0.1'),
+        {
+          mode: 0o755,
+        },
+      );
+      const r = run(sb, 'post-create.sh');
+      expect(r.code).toBe(1);
+      expect(r.stderr).toContain(
+        `x dxkit: the project's devDependency is dxkit 0.0.1, older than the ${VERSION}`,
+      );
+    });
+
+    it('another vyuh-dxkit earlier on PATH than the linked devDependency is a failure', () => {
+      fs.writeFileSync(path.join(sb.repo, 'package.json'), '{"name":"app","private":true}\n');
+      fs.writeFileSync(path.join(sb.repo, 'package-lock.json'), '{"lockfileVersion":3}\n');
+      fs.mkdirSync(path.join(sb.repo, 'node_modules', '.bin'), { recursive: true });
+      fs.writeFileSync(
+        path.join(sb.repo, 'node_modules', '.bin', 'vyuh-dxkit'),
+        dxkitStub('7.7.7'),
+        {
+          mode: 0o755,
+        },
+      );
+      // Same version, different binary, ahead of npm's global bin on PATH.
+      fs.writeFileSync(path.join(sb.stubs, 'vyuh-dxkit'), dxkitStub('7.7.7'), { mode: 0o755 });
+      const r = run(sb, 'post-create.sh');
+      expect(r.code).toBe(1);
+      expect(r.stderr).toContain('x dxkit on PATH:');
+    });
+
+    it('a container built from an older devcontainer.json is caught with the remedy', () => {
+      const r = run(sb, 'post-create.sh', { DISABLE_AUTOUPDATER: '', STUB_PY_FAIL: '1' });
+      expect(r.code).toBe(1);
+      expect(r.stderr).toContain('x devcontainer.json: DISABLE_AUTOUPDATER is not set');
+      expect(r.stderr).toContain('python3 lacks pip or venv');
+      expect(r.stderr).toContain('.dxkit-reference/devcontainer.json');
+      // Not a configuration failure when Claude Code is not installed at all.
+      const skipped = run(sb, 'post-create.sh', {
+        DISABLE_AUTOUPDATER: '',
+        CLAUDE_CODE_VERSION: 'skip',
+      });
+      expect(skipped.code).toBe(0);
     });
 
     it('dxkit unavailable at the pinned version is a failure, and the steps needing it say so', () => {

@@ -24,10 +24,13 @@ set -uo pipefail
 FAILED=0
 
 # The first x.y.z in a CLI's `--version` output (`2.1.0 (Claude Code)`,
-# `codex-cli 0.1.0`), or empty when the binary is absent or does not run.
+# `codex-cli 0.1.0`), or empty when the binary is absent, does not run, or
+# exits non-zero.
 installed_version() {
+  local out
   command -v "$1" >/dev/null 2>&1 || return 0
-  "$1" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1
+  out="$("$1" --version 2>/dev/null)" || return 0
+  printf '%s\n' "${out}" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1
 }
 
 # install_agent_cli <label> <override-var> <requested> <npm-package> <bin>

@@ -140,7 +140,8 @@ different days get the same environment:
   and run `vyuh-dxkit update`.
 - **dxkit** — the project's own `@vyuhlabs/dxkit` devDependency is used
   when present and linked onto PATH, so terminals and agents run the
-  version the repo's hooks and CI run. Without one, dxkit is installed
+  version the repo's hooks and CI run. A devDependency older than the
+  version that generated the files is reported as not ready (bump it). Without one, dxkit is installed
   globally at exactly the version that generated the files; a global
   dxkit at another version is replaced, not reused.
 - **Scanners** — `vyuh-dxkit tools install --yes --fail-on-missing`
@@ -156,7 +157,9 @@ its reason and remedy: for example a dependency install that needs
 private-registry auth, a required scanner that did not install, or
 dxkit's pre-push hook present but not active (post-create runs
 `vyuh-dxkit hooks activate`, because a fresh clone carries no
-`core.hooksPath`). The outcome is also written to
+`core.hooksPath`), or a container built from an older
+`devcontainer.json` that `update` kept (adopt the render in
+`.devcontainer/.dxkit-reference/`, then rebuild). The outcome is also written to
 `.dxkit/cache/devcontainer-readiness.json`, which `vyuh-dxkit doctor`
 reports. Re-run with `bash .devcontainer/post-create.sh` after fixing
 the cause.

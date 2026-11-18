@@ -439,9 +439,12 @@ jobs:
           test -f .devcontainer/devcontainer.json
           test -f .githooks/pre-push
           # A fresh clone carries no core.hooksPath (it lives in .git/config):
-          # unset what init set on this host so the container has to
-          # activate the hooks itself.
+          # unset what init set on this host, and drop the package.json
+          # postinstall that would re-activate it during the container's
+          # `npm ci`, so the assertion below proves post-create's own
+          # activation (the path a non-Node repo depends on).
           git config --unset core.hooksPath || true
+          node -e 'const fs=require("fs");const p=JSON.parse(fs.readFileSync("package.json","utf8"));if(p.scripts){delete p.scripts.postinstall;}fs.writeFileSync("package.json",JSON.stringify(p,null,2)+"\n")'
           # Per-stack devcontainer features (Phase 2.5.1): the consumer
           # has no detectable language pack active beyond TypeScript-
           # default (Node always-on), so the rendered features block
@@ -490,6 +493,8 @@ jobs:
             echo "tarball $want, pinned $pinned, on PATH $on_path"
             [ "$pinned" = "$want" ] || { echo "::error::post-create pins dxkit $pinned, this build is $want"; exit 1; }
             [ "$on_path" = "$want" ] || { echo "::error::vyuh-dxkit on PATH is $on_path, not $want"; exit 1; }
+            [ "$(readlink -f "$(command -v vyuh-dxkit)")" = "$(readlink -f ./node_modules/.bin/vyuh-dxkit)" ] ||
+              { echo "::error::vyuh-dxkit on PATH is not the project's devDependency"; exit 1; }
 
             echo "==> agent CLIs at their pinned versions, self-update off"
             for pair in "CLAUDE_CODE_VERSION claude" "CODEX_VERSION codex"; do
