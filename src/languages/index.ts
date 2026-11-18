@@ -13,7 +13,13 @@ import type { CorrectnessProvider } from './capabilities/correctness';
 import type { LintGateProvider } from './capabilities/lint-gate';
 import type { InstallStrategy, InstallStrategyProvider } from './capabilities/install-strategy';
 import type { RemediationCapabilityId, RemediationSupport } from './capabilities/remediation';
-import type { CapabilityRequirement } from '../execution';
+import {
+  buildsElsewhere,
+  DEVCONTAINER_HOST,
+  type BuildElsewhere,
+  type CapabilityRequirement,
+  type ExecutionHost,
+} from '../execution';
 import type { ResolvedTolerances } from '../install/tolerances';
 import { dependencyTreeInvariant, type TreeInvariant } from './capabilities/tree-invariants';
 import { discoverPackDepRoots } from '../analyzers/security/nested-dep-roots';
@@ -814,7 +820,13 @@ export function buildDevcontainerFeatures(
     'ghcr.io/devcontainers/features/node:1': { version: '22', nvmVersion: 'latest' },
     'ghcr.io/devcontainers/features/github-cli:1': {},
   };
+  // A pack whose build cannot run in this Linux container gets no toolchain
+  // feature: the container is for editing, scanning and dependency audit, and
+  // the generated devcontainer.json + AGENTS.md say where the build runs
+  // (`repoBuildsElsewhere` — the same answer the gates place on).
+  const elsewhere = new Set(cwd !== undefined ? repoBuildsElsewhere(cwd).map((b) => b.pack) : []);
   for (const lang of activeLanguagesFromFlags(flags)) {
+    if (elsewhere.has(lang.id)) continue;
     if (lang.devcontainerFeature) {
       const opts = { ...(lang.devcontainerFeature.opts ?? {}) };
       // Provision the SDK the repo actually targets: override the feature's
@@ -928,6 +940,44 @@ export function collectExecutionRequirements(
     }
   }
   return out;
+}
+
+/** One active pack whose build cannot run on dxkit's Linux devcontainer. */
+export interface PackBuildElsewhere extends BuildElsewhere {
+  /** The pack's display name (`C#`, `Swift`). */
+  readonly displayName: string;
+}
+
+/**
+ * Which of this repo's packs cannot build on a machine of `host` (default:
+ * dxkit's generated Linux devcontainer), and on what kind of machine they
+ * build instead. The ONE
+ * entry point the devcontainer renderer, the AGENTS.md generator and
+ * `tools install` read; it consumes the same `collectExecutionRequirements`
+ * the placement resolver does, compared by the one predicate
+ * (`buildsElsewhere` → `unmetRequirement`). Repo-intrinsic: no PATH probe and
+ * no host read. Fail-open to "builds here" — an additive statement must
+ * never take an install down.
+ */
+export function repoBuildsElsewhere(
+  cwd: string,
+  host: ExecutionHost = DEVCONTAINER_HOST,
+): PackBuildElsewhere[] {
+  try {
+    const packs = detectActiveLanguages(cwd);
+    return buildsElsewhere(collectExecutionRequirements(cwd, packs), host).map((b) => ({
+      ...b,
+      displayName: getLanguage(b.pack as LanguageId)?.displayName ?? b.pack,
+    }));
+  } catch {
+    return [];
+  }
+}
+
+/** One line per pack: `C#: Windows with .NET SDK`. Both generated surfaces
+ *  print exactly these lines, so they cannot word the answer differently. */
+export function buildElsewhereLines(entries: readonly PackBuildElsewhere[]): string[] {
+  return entries.map((e) => `${e.displayName}: ${e.machine}`);
 }
 
 /**

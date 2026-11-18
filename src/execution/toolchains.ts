@@ -411,6 +411,33 @@ export const TOOLCHAIN_DEFS = {
       },
     ],
   },
+  // A .NET Framework project in the classic (non-SDK) csproj format builds
+  // with Visual Studio's MSBuild and the Framework targeting pack, not with
+  // the .NET SDK's `dotnet build`. Windows only BY DESIGN: there is no Linux
+  // or macOS install, so placement keeps it off the ubuntu runner and the
+  // generated devcontainer says the build runs elsewhere (Rule 20).
+  'netfx-msbuild': {
+    id: 'netfx-msbuild',
+    displayName: 'Visual Studio Build Tools (MSBuild) and the .NET Framework 4.x developer pack',
+    binaries: ['msbuild'],
+    install: {
+      windows:
+        'winget install Microsoft.VisualStudio.2022.BuildTools --override "--quiet --wait --add Microsoft.VisualStudio.Workload.ManagedDesktopBuildTools --includeRecommended"',
+      fallback: 'https://visualstudio.microsoft.com/downloads/#build-tools-for-visual-studio-2022',
+    },
+  },
+  // A Unity project builds only inside the Unity Editor of the version
+  // pinned in ProjectSettings/ProjectVersion.txt, installed through Unity
+  // Hub with a licence. No honest one-line install exists on any host, so
+  // every host carries only the fallback URL.
+  'unity-editor': {
+    id: 'unity-editor',
+    displayName: 'Unity Editor',
+    binaries: ['Unity', 'unity-editor'],
+    install: {
+      fallback: 'https://unity.com/download',
+    },
+  },
   ruby: {
     id: 'ruby',
     displayName: 'Ruby',
@@ -523,6 +550,16 @@ export function toolchainForBinary(bin: string): ToolchainDef | null {
     if (def.binaries.includes(bin)) return def;
   }
   return null;
+}
+
+/** Can this toolchain be installed on `host` at all? The registry's per-host
+ *  `install` entry is the fact: a host with no entry (Xcode off macOS, MSBuild
+ *  for .NET Framework off Windows, the Unity Editor anywhere) has no
+ *  unattended install, so a container or runner of that host cannot be
+ *  provisioned with it. Pure — reads the registry only. */
+export function toolchainInstallableOn(id: ToolchainId, host: ExecutionHost): boolean {
+  const def: ToolchainDef = TOOLCHAIN_DEFS[id];
+  return def.install[host] !== undefined;
 }
 
 /** The install command for a toolchain on a host — the actionable remedy line
