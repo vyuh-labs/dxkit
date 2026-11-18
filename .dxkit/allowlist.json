@@ -1,0 +1,1 @@
+{"schemaVersion":"dxkit-allowlist/v1","mode":"full","identityScheme":"v3","entries":[{"fingerprint":"dead000011112222","kind":"dep-vuln","category":"deferred","reason":"lane will fix","addedBy":"t","addedAt":"2026-08-01","expiresAt":"2026-09-15"}]}
