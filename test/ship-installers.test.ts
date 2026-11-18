@@ -222,16 +222,23 @@ describe('installDevcontainer', () => {
     expect(result.installed).not.toContain('.devcontainer/devcontainer.json');
   });
 
-  it('renders only Node + GitHub CLI features on an empty (no-stack) repo', () => {
+  it('renders only the always-on features on an empty (no-stack) repo', () => {
     // No source files, no package.json deps → detect() returns
-    // all-false language flags. Even so, dxkit's runtime + gh CLI
-    // ship as always-on features.
+    // all-false language flags. Even so, dxkit's runtime + gh CLI +
+    // the OS python its pipx/venv scanners need ship as always-on.
     const result = installDevcontainer(tmp);
     expect(result.installed).toContain('.devcontainer/devcontainer.json');
     const content = fs.readFileSync(path.join(tmp, '.devcontainer/devcontainer.json'), 'utf8');
     expect(content).toContain('ghcr.io/devcontainers/features/node:1');
     expect(content).toContain('ghcr.io/devcontainers/features/github-cli:1');
-    expect(content).not.toContain('ghcr.io/devcontainers/features/python:1');
+    const features = JSON.parse(content.replace(/^\s*\/\/.*$/gm, '')).features;
+    // The distro python (pip + venv), not a pack's source-built version.
+    expect(features['ghcr.io/devcontainers/features/python:1']).toEqual({
+      version: 'os-provided',
+      // Tools on (the feature only creates its PIPX_HOME then), pipx only.
+      installTools: true,
+      toolsToInstall: 'pipx',
+    });
     expect(content).not.toContain('ghcr.io/devcontainers/features/dotnet:2');
     expect(content).not.toContain('ghcr.io/devcontainers/features/ruby:1');
     expect(content).not.toContain('ghcr.io/devcontainers/features/java:1');
@@ -248,6 +255,8 @@ describe('installDevcontainer', () => {
     const content = fs.readFileSync(path.join(tmp, '.devcontainer/devcontainer.json'), 'utf8');
     expect(content).toContain('ghcr.io/devcontainers/features/node:1');
     expect(content).toContain('ghcr.io/devcontainers/features/python:1');
+    // The python pack's own version replaces the always-on os-provided opts.
+    expect(content).not.toContain('os-provided');
     expect(content).toContain('ghcr.io/devcontainers/features/github-cli:1');
     expect(content).not.toContain('ghcr.io/devcontainers/features/dotnet:2');
     expect(content).not.toContain('ghcr.io/devcontainers/features/ruby:1');

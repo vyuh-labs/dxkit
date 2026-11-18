@@ -215,6 +215,8 @@ ${renderCommandIndex().join('\n')}
     vyuh-dxkit to-xlsx <json>    Convert a dxkit JSON report to 15-col XLSX
     vyuh-dxkit tools [path]      Show required analysis tools status
     vyuh-dxkit tools install     Interactively install missing tools
+                                 (--yes: no prompts; --fail-on-missing: exit 1 when a
+                                 required tool is still missing afterwards)
     vyuh-dxkit baseline create [path] [--name <name>] [--force]
                                [--mode=<mode>] [--ref=<ref>]
                                  Capture per-finding identities to .dxkit/baselines/<name>.json
@@ -590,6 +592,8 @@ export async function run(argv: string[]): Promise<void> {
       'env-file': { type: 'string' },
       // baseline create: proceed despite missing scanners (CI/non-interactive)
       'allow-incomplete': { type: 'boolean', default: false },
+      // tools install: exit non-zero when a required tool is still missing
+      'fail-on-missing': { type: 'boolean', default: false },
       // install classify: the captured chain log + the install's exit code
       log: { type: 'string' },
       code: { type: 'string' },
@@ -1475,6 +1479,7 @@ export async function run(argv: string[]): Promise<void> {
         toolName,
         all: !!values.all,
         json: !!values.json,
+        failOnMissing: !!values['fail-on-missing'],
       });
       break;
     }

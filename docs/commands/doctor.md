@@ -15,15 +15,16 @@ vyuh-dxkit doctor [path]
 
 ## What it checks
 
-| Category          | Examples                                                      |
-| ----------------- | ------------------------------------------------------------- |
-| Node version      | Node ≥ 22 (the package `engines` floor)                       |
-| Tool availability | Every Layer 1 + active-pack Layer 2 tool detected             |
-| Tool versions     | Versions are within known-working ranges                      |
-| Project shape     | `.git` exists, `.gitignore` reasonable, no obvious mis-config |
-| PATH issues       | Tool present but not on PATH (e.g. `~/.local/bin` missing)    |
-| Tilde expansion   | Tools installed under `~/...` paths that didn't get expanded  |
-| Permissions       | `.dxkit/reports/` writable                                    |
+| Category          | Examples                                                                                                                   |
+| ----------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| Node version      | Node ≥ 22 (the package `engines` floor)                                                                                    |
+| Tool availability | Every Layer 1 + active-pack Layer 2 tool detected                                                                          |
+| Tool versions     | Versions are within known-working ranges                                                                                   |
+| Project shape     | `.git` exists, `.gitignore` reasonable, no obvious mis-config                                                              |
+| PATH issues       | Tool present but not on PATH (e.g. `~/.local/bin` missing)                                                                 |
+| Tilde expansion   | Tools installed under `~/...` paths that didn't get expanded                                                               |
+| Permissions       | `.dxkit/reports/` writable                                                                                                 |
+| Devcontainer      | The last `post-create.sh` outcome (`.dxkit/cache/devcontainer-readiness.json`): ready, or each failed step with its remedy |
 
 ## Output
 
