@@ -1,0 +1,1 @@
+{"schemaVersion":"dxkit-allowlist/v1","generatedAt":"","side":"served","routes":[{"method":"GET","path":"/articles","handler":null,"via":"spec"}]}
