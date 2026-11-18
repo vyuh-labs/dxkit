@@ -397,10 +397,24 @@ export function installHooks(cwd: string, opts: InstallerOpts = {}): ShipInstall
   return result;
 }
 
+/** A value as a single-quoted POSIX-sh literal (git allows `$` and quotes in
+ *  branch names; a double-quoted render would expand them). */
+function shellSingleQuote(value: string): string {
+  return `'${value.split("'").join(`'\\''`)}'`;
+}
+
+/** Is the file at the entry-point path the user's own (present, no dxkit
+ *  marker)? Install leaves it alone and uninstall keeps it: one ownership
+ *  read for both paths. */
+export function guardrailEntryPointIsUserOwned(cwd: string): boolean {
+  const abs = path.join(cwd, GUARDRAIL_ENTRY_POINT);
+  return fs.existsSync(abs) && !readFileSafe(abs).includes(GUARDRAIL_ENTRY_POINT_MARKER);
+}
+
 /**
  * The guardrail entry point (`dxkit-guardrails.sh` at the repo root): the ONE
- * place the check sequence lives (correctness floor, policy-render parity,
- * findings guardrail) and the one place the dxkit binary is resolved. The
+ * place the check sequence lives (findings guardrail, policy-render parity,
+ * correctness floor) and the one place the dxkit binary is resolved. The
  * pre-push / pre-commit hooks call it with their tier (`--quick` /
  * `--changed-only`), the CI guardrail workflow calls it with its plumbing
  * (`--base`, `--untrusted`, `--report`), and a developer or agent runs it
@@ -422,7 +436,7 @@ export function installGuardrailEntryPoint(
   const content = fs
     .readFileSync(path.join(templatesDir(), GUARDRAIL_ENTRY_POINT), 'utf8')
     .split('__DXKIT_DEFAULT_BRANCH__')
-    .join(resolveDefaultBranch(cwd));
+    .join(shellSingleQuote(resolveDefaultBranch(cwd)));
 
   if (fs.existsSync(destAbs)) {
     const existing = readFileSafe(destAbs);
@@ -430,11 +444,12 @@ export function installGuardrailEntryPoint(
       result.skipped.push(GUARDRAIL_ENTRY_POINT);
       return result;
     }
-    if (!existing.includes(GUARDRAIL_ENTRY_POINT_MARKER) && !opts.force) {
+    if (guardrailEntryPointIsUserOwned(cwd) && !opts.force) {
       result.skipped.push(GUARDRAIL_ENTRY_POINT);
       result.notes.push(
         `${GUARDRAIL_ENTRY_POINT} exists without the dxkit marker, so it is treated as yours and left alone. ` +
-          "The dxkit hooks and CI workflow call it to run their checks; re-run with --force to replace it with dxkit's.",
+          "The dxkit hooks and CI workflow refuse to run a file that is not dxkit's, so they block until you " +
+          'move yours aside and re-run, or re-run with --force to replace it.',
       );
       return result;
     }

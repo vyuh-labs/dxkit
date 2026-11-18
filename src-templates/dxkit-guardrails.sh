@@ -8,9 +8,12 @@
 #   ./dxkit-guardrails.sh --changed-only   the pre-commit tier
 #
 # The checks, in this order:
-#   1. correctness floor     does the code still compile, do the tests pass?
+#   1. findings guardrail    no net-new findings vs the baseline
 #   2. policy-render parity  do the managed workflows match .dxkit/policy.json?
-#   3. findings guardrail    no net-new findings vs the baseline
+#   3. correctness floor     does the code still compile, do the tests pass?
+# The guardrail and the parity check see the tree exactly as checked out; the
+# floor runs the repo's own build and tests, which can write to the tree, so
+# it runs last.
 #
 # Tiers:
 #   (default)        Full-suite floor and full guardrail scan: what the CI
@@ -54,15 +57,16 @@
 # it. `policy render --check` re-renders this very file and restores it, and a
 # shell that reads a script as it goes would otherwise see that mid-run.
 
-DEFAULT_BRANCH="__DXKIT_DEFAULT_BRANCH__"
+# Rendered at install as a single-quoted shell literal.
+DEFAULT_BRANCH=__DXKIT_DEFAULT_BRANCH__
 
 usage() {
   cat <<'EOF'
 Usage: ./dxkit-guardrails.sh [--quick | --changed-only] [--base <branch>]
                              [--untrusted] [--report <file>]
 
-Runs dxkit's checks in order: correctness floor, policy-render parity,
-findings guardrail. With no options it runs what the CI pipeline runs.
+Runs dxkit's checks in order: findings guardrail, policy-render parity,
+correctness floor. With no options it runs what the CI pipeline runs.
 
   --quick          the pre-push tier (affected tests, incremental scan)
   --changed-only   the pre-commit tier (guardrail on changed lines only)
@@ -131,8 +135,6 @@ parse_args() {
     esac
     shift
   done
-  # A base given as a remote-tracking ref means the same branch.
-  BASE=${BASE#origin/}
   # The report path is the caller's, so resolve it before moving to the root.
   case "$REPORT" in
     "" | /*) ;;
@@ -202,7 +204,7 @@ check_floor() {
     return
   fi
   stopped_early floor && return
-  say "1/3 $(label floor)"
+  say "3/3 $(label floor)"
   if [ "$TIER" = quick ]; then
     set -- floor check --surface pre-push
   else
@@ -238,7 +240,7 @@ check_parity() {
 
 check_guardrail() {
   stopped_early guardrail && return
-  say "3/3 $(label guardrail)"
+  say "1/3 $(label guardrail)"
   baseline_name=${DXKIT_BASELINE_NAME:-main}
   baseline_file=".dxkit/baselines/$baseline_name.json"
   set -- guardrail check --name "$baseline_name"
@@ -337,13 +339,13 @@ write_report() {
 summarize() {
   echo
   say "$TIER tier:"
-  for c in floor parity guardrail; do
+  for c in guardrail parity floor; do
     printf '  %-22s %s\n' "$(label "$c")" "$(describe_result "$c")"
   done
   if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
     {
       printf '\n### dxkit guardrails (%s tier)\n\n| Check | Result |\n| --- | --- |\n' "$TIER"
-      for c in floor parity guardrail; do
+      for c in guardrail parity floor; do
         printf '| %s | %s |\n' "$(label "$c")" "$(describe_result "$c")"
       done
     } >>"$GITHUB_STEP_SUMMARY" 2>/dev/null || true
@@ -359,12 +361,15 @@ main() {
   if [ "$TIER" = changed-only ]; then
     say "running the changed-only tier: $(label guardrail), changed lines only"
   else
-    say "running the $TIER tier: $(label floor), $(label parity), $(label guardrail)"
+    say "running the $TIER tier: $(label guardrail), $(label parity), $(label floor)"
   fi
-  check_floor
-  check_parity
   check_guardrail
-  write_report
+  check_parity
+  check_floor
+  if ! write_report; then
+    report_error "could not write the report to $REPORT, so the pull request comment cannot show this run."
+    if [ "$FIRST_FAIL" -eq 0 ]; then FIRST_FAIL=1; fi
+  fi
   summarize
   exit "$FIRST_FAIL"
 }

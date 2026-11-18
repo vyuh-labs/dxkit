@@ -317,7 +317,7 @@ describe('installCiGuardrails + installCiBaselineRefresh', () => {
     // forces a live ref-based gather at the base when the PR targets a
     // NON-default branch (the committed baseline is default-branch-anchored).
     expect(script).not.toContain('__DXKIT_DEFAULT_BRANCH__');
-    expect(script).toContain('DEFAULT_BRANCH="trunk"');
+    expect(script).toContain("DEFAULT_BRANCH='trunk'");
     expect(script).toContain('--mode ref-based --ref "origin/$BASE"');
   });
 

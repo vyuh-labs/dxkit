@@ -28,8 +28,10 @@ if [ "${DXKIT_SKIP_HOOKS:-0}" = "1" ]; then
 fi
 
 # Git runs hooks from the root of the working tree, where the script lives.
-if [ ! -f ./dxkit-guardrails.sh ]; then
-  echo "[dxkit pre-commit] ./dxkit-guardrails.sh is missing from the repo root, so nothing can be checked." >&2
+# A file there without dxkit's header is not dxkit's entry point: refuse it
+# rather than let an unrelated script stand in for the checks.
+if [ ! -f ./dxkit-guardrails.sh ] || ! grep -q 'dxkit guardrails entry point' ./dxkit-guardrails.sh; then
+  echo "[dxkit pre-commit] ./dxkit-guardrails.sh is missing from the repo root, or is not dxkit's, so nothing can be checked." >&2
   echo "  Restore it with: npx vyuh-dxkit update   (then commit it)" >&2
   echo "  Or skip this hook for this commit: DXKIT_SKIP_HOOKS=1 git commit ..." >&2
   exit 1

@@ -2,12 +2,12 @@
 #
 # dxkit pre-push hook — runs the QUICK tier of ./dxkit-guardrails.sh.
 #
-# The checks (correctness floor, policy-render parity, findings guardrail)
+# The checks (findings guardrail, policy-render parity, correctness floor)
 # and their order live in ONE place: ./dxkit-guardrails.sh at the repo root,
 # the same script the CI workflow (dxkit-guardrails.yml) runs and that you or
 # an agent can run by hand. This hook adds only what is specific to a push:
 # the escape hatch, the delete-only skip, and `--quick`, the cheap tier (the
-# floor scoped to the change, the guardrail scanned incrementally, stop at
+# guardrail scanned incrementally, the floor scoped to the change, stop at
 # the first failure) so the push boundary stays fast. Run
 # `./dxkit-guardrails.sh` with no arguments for the pipeline's full verdict.
 #
@@ -43,8 +43,10 @@ if [ "${all_zero}" = "true" ]; then
 fi
 
 # Git runs hooks from the root of the working tree, where the script lives.
-if [ ! -f ./dxkit-guardrails.sh ]; then
-  echo "[dxkit pre-push] ./dxkit-guardrails.sh is missing from the repo root, so nothing can be checked." >&2
+# A file there without dxkit's header is not dxkit's entry point: refuse it
+# rather than let an unrelated script stand in for the checks.
+if [ ! -f ./dxkit-guardrails.sh ] || ! grep -q 'dxkit guardrails entry point' ./dxkit-guardrails.sh; then
+  echo "[dxkit pre-push] ./dxkit-guardrails.sh is missing from the repo root, or is not dxkit's, so nothing can be checked." >&2
   echo "  Restore it with: npx vyuh-dxkit update   (then commit it)" >&2
   echo "  Or skip this hook for this push: DXKIT_SKIP_HOOKS=1 git push ..." >&2
   exit 1

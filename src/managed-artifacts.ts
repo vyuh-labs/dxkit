@@ -56,6 +56,7 @@ import {
   installCiHostGates,
   installDevcontainer,
   installGuardrailEntryPoint,
+  guardrailEntryPointIsUserOwned,
   installDxkitDevDependency,
   installHooks,
   installHooksPostinstall,
@@ -139,6 +140,13 @@ export interface ManagedShipSurface {
    * `always` / `derived` surfaces). Sets `flags[gate.flag] = present(cwd)`.
    */
   readonly detectPresent?: (cwd: string) => boolean;
+  /**
+   * For a surface whose path a USER file could occupy (a repo-root file, not
+   * a `dxkit-*` workflow): true when the file there is the user's own. The
+   * installer leaves such a file alone, and uninstall must keep it too, so
+   * both read this one ownership answer.
+   */
+  readonly userOwned?: (cwd: string) => boolean;
 }
 
 /** Exported for the legacy flag-detection sibling — one existence helper. */
@@ -191,6 +199,7 @@ export const MANAGED_SHIP_SURFACES: readonly ManagedShipSurface[] = [
     uninstallDetection: 'flag',
     refreshOnUpdate: true,
     install: (cwd, { force }) => installGuardrailEntryPoint(cwd, { force }),
+    userOwned: guardrailEntryPointIsUserOwned,
   },
   {
     id: 'hooks',
@@ -457,6 +466,22 @@ export function managedGatedArtifacts(
   for (const surface of surfaces) {
     const active = surface.uninstallDetection === 'presence' || surfaceEnabled(surface, flags);
     if (active) out.push(...surface.artifacts(flags));
+  }
+  return out;
+}
+
+/**
+ * The gated artifacts uninstall must KEEP because the file at that path is
+ * the user's own (see `ManagedShipSurface.userOwned`).
+ */
+export function userOwnedManagedArtifacts(
+  cwd: string,
+  flags: ManifestInstallFlags,
+  surfaces: readonly ManagedShipSurface[] = MANAGED_SHIP_SURFACES,
+): Set<string> {
+  const out = new Set<string>();
+  for (const surface of surfaces) {
+    if (surface.userOwned?.(cwd)) for (const rel of surface.artifacts(flags)) out.add(rel);
   }
   return out;
 }

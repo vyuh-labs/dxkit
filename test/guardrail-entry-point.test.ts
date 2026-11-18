@@ -12,7 +12,7 @@
  * Nets:
  *   1. Parity: the hooks and the workflow (template AND rendered) call the
  *      script and carry no CLI check invocation of their own; the script
- *      holds each check exactly once, in order.
+ *      holds each check in one function, run in the pipeline's order.
  *   2. Behaviour: the script, EXECUTED against a stub dxkit, runs the checks
  *      in order, aggregates exit codes, stops early only in the hook tiers,
  *      keeps the no-baseline path, the non-default-base and cold-cache
@@ -47,7 +47,7 @@ const WORKFLOW = fs.readFileSync(
 );
 
 /** The three checks, as the CLI invocations that define them. */
-const CHECK_INVOCATIONS = ['floor check', 'policy render --check', 'guardrail check'];
+const CHECK_INVOCATIONS = ['guardrail check', 'policy render --check', 'floor check'];
 
 /** Executable lines only: comments and echoed messages are prose and may
  *  name a check or the CLI. */
@@ -68,9 +68,9 @@ function fnBody(text: string, name: string): string {
 const POSIX = process.platform !== 'win32';
 
 describe('one sequence: the hooks and the workflow call the script, never a copy', () => {
-  it('the script holds each check in one function, run in the order floor → parity → guardrail', () => {
+  it('the script holds each check in one function, run in the order guardrail → parity → floor', () => {
     const body = code(SCRIPT_TEMPLATE);
-    const owners = ['check_floor', 'check_parity', 'check_guardrail'];
+    const owners = ['check_guardrail', 'check_parity', 'check_floor'];
     CHECK_INVOCATIONS.forEach((inv, i) => {
       // Every invocation of a check (one per tier at most) sits in its own
       // function, so a tier changes flags, never the sequence.
@@ -82,7 +82,7 @@ describe('one sequence: the hooks and the workflow call the script, never a copy
     });
     // …and the three run in that order from main().
     const main = body.slice(body.indexOf('main() {'));
-    const calls = ['check_floor', 'check_parity', 'check_guardrail'].map((c) => main.indexOf(c));
+    const calls = ['check_guardrail', 'check_parity', 'check_floor'].map((c) => main.indexOf(c));
     expect(calls.every((i) => i > 0)).toBe(true);
     expect(calls).toEqual([...calls].sort((a, b) => a - b));
   });
@@ -130,7 +130,7 @@ function stubRepo(): { dir: string; log: string } {
   const log = path.join(dir, 'calls.log');
   fs.writeFileSync(
     path.join(dir, GUARDRAIL_ENTRY_POINT),
-    SCRIPT_TEMPLATE.split('__DXKIT_DEFAULT_BRANCH__').join('main'),
+    SCRIPT_TEMPLATE.split('__DXKIT_DEFAULT_BRANCH__').join("'main'"),
   );
   fs.mkdirSync(path.join(dir, 'node_modules', '.bin'), { recursive: true });
   const stub = path.join(dir, 'node_modules', '.bin', 'vyuh-dxkit');
@@ -187,45 +187,45 @@ describe.skipIf(!POSIX)('the script, executed', () => {
   beforeEach(() => ({ dir, log } = stubRepo()));
   afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
 
-  it('no arguments = the pipeline tier: full floor, parity, full guardrail, in order', () => {
+  it('no arguments = the pipeline tier: full guardrail, parity, full floor, in order', () => {
     const r = run(dir, []);
     expect(r.status).toBe(0);
     expect(calls(log)).toEqual([
-      'floor check --surface ci',
-      'policy render --check',
       'guardrail check --name main',
+      'policy render --check',
+      'floor check --surface ci',
     ]);
   });
 
   it('the full tier runs every check after a failure and exits with the FIRST failure', () => {
-    const r = run(dir, [], { STUB_FLOOR: '3', STUB_GUARDRAIL: '1' });
+    const r = run(dir, [], { STUB_GUARDRAIL: '3', STUB_FLOOR: '1' });
     expect(r.status).toBe(3);
     expect(calls(log).map((c) => c.split(' ').slice(0, 2).join(' '))).toEqual([
-      'floor check',
-      'policy render',
       'guardrail check',
+      'policy render',
+      'floor check',
     ]);
-    expect(r.out).toMatch(/correctness floor\s+FAILED \(exit 3\)/);
-    expect(r.out).toMatch(/findings guardrail\s+FAILED \(exit 1\)/);
+    expect(r.out).toMatch(/findings guardrail\s+FAILED \(exit 3\)/);
+    expect(r.out).toMatch(/correctness floor\s+FAILED \(exit 1\)/);
   });
 
   it('a failure anywhere fails the run (no check is advisory)', () => {
     expect(run(dir, [], { STUB_PARITY: '1' }).status).toBe(1);
-    expect(run(dir, [], { STUB_GUARDRAIL: '1' }).status).toBe(1);
+    expect(run(dir, [], { STUB_FLOOR: '1' }).status).toBe(1);
   });
 
-  it('--quick: affected floor, parity, incremental guardrail; stops at the first failure and says so', () => {
+  it('--quick: incremental guardrail, parity, affected floor; stops at the first failure and says so', () => {
     expect(run(dir, ['--quick']).status).toBe(0);
     expect(calls(log)).toEqual([
-      'floor check --surface pre-push',
-      'policy render --check',
       'guardrail check --name main --incremental',
+      'policy render --check',
+      'floor check --surface pre-push',
     ]);
     fs.writeFileSync(log, '');
-    const r = run(dir, ['--quick'], { STUB_FLOOR: '1' });
+    const r = run(dir, ['--quick'], { STUB_GUARDRAIL: '1' });
     expect(r.status).toBe(1);
-    expect(calls(log)).toEqual(['floor check --surface pre-push']);
-    expect(r.out).toMatch(/findings guardrail\s+did not run: the correctness floor failed first/);
+    expect(calls(log)).toEqual(['guardrail check --name main --incremental']);
+    expect(r.out).toMatch(/correctness floor\s+did not run: the findings guardrail failed first/);
   });
 
   it('--changed-only: the guardrail on changed lines only', () => {
@@ -242,6 +242,9 @@ describe.skipIf(!POSIX)('the script, executed', () => {
       expect(calls(log).some((c) => c.startsWith('guardrail check'))).toBe(false);
       expect(r.out).toContain('No baseline at .dxkit/baselines/main.json');
     }
+    // …and a brand-new repo still gets push-time liveness: the floor runs.
+    expect(run(dir, ['--quick'], { STUB_FLOOR: '1' }).status).toBe(1);
+    expect(calls(log)).toContain('floor check --surface pre-push');
   });
 
   it('DXKIT_BASELINE_NAME selects the baseline in every tier', () => {
@@ -253,10 +256,23 @@ describe.skipIf(!POSIX)('the script, executed', () => {
   it('pipeline plumbing: a non-default base gates ref-based against it; --untrusted reaches the guardrail', () => {
     run(dir, ['--base', 'develop', '--untrusted']);
     expect(calls(log)).toEqual([
-      'floor check --surface ci --base origin/develop',
-      'policy render --check',
       'guardrail check --name main --mode ref-based --ref origin/develop --untrusted',
+      'policy render --check',
+      'floor check --surface ci --base origin/develop',
     ]);
+  });
+
+  it('a base is the literal branch name GitHub passes (a branch may itself start with origin/)', () => {
+    run(dir, ['--base', 'origin/release']);
+    expect(calls(log)).toContain('floor check --surface ci --base origin/origin/release');
+  });
+
+  it('a default branch with shell metacharacters stays a literal', () => {
+    // Rendered by the installer as a single-quoted literal; `$X` must not expand.
+    const script = path.join(dir, GUARDRAIL_ENTRY_POINT);
+    fs.writeFileSync(script, SCRIPT_TEMPLATE.split('__DXKIT_DEFAULT_BRANCH__').join("'rel$X'"));
+    run(dir, ['--base', 'rel$X'], { X: 'oops' });
+    expect(calls(log)).toContain('guardrail check --name main');
   });
 
   it('a PR into the default branch gates against the committed baseline', () => {
@@ -306,6 +322,12 @@ describe.skipIf(!POSIX)('the script, executed', () => {
     );
   });
 
+  it('a report that cannot be written fails the run, even when every check passed', () => {
+    const r = run(dir, ['--report', path.join(dir, 'missing-dir', 'r.md')]);
+    expect(r.status).not.toBe(0);
+    expect(r.out).toContain('could not write the report');
+  });
+
   it('no resolvable dxkit: exit 1 and NO report, so the PR comment says the gate did not run', () => {
     fs.rmSync(path.join(dir, 'node_modules'), { recursive: true, force: true });
     const r = run(dir, ['--report', 'r.md'], { PATH: '/usr/bin:/bin' });
@@ -343,9 +365,9 @@ describe.skipIf(!POSIX)('the hooks and the workflow step, executed, reach the sc
   it('pre-push runs the quick tier', () => {
     expect(hook('pre-push', PUSH_LINE).status).toBe(0);
     expect(calls(log)).toEqual([
-      'floor check --surface pre-push',
-      'policy render --check',
       'guardrail check --name main --incremental',
+      'policy render --check',
+      'floor check --surface pre-push',
     ]);
   });
 
@@ -371,6 +393,15 @@ describe.skipIf(!POSIX)('the hooks and the workflow step, executed, reach the sc
     expect(r.stderr).toContain('vyuh-dxkit update');
   });
 
+  it("a file at that path that is not dxkit's is refused, never run in the checks' place", () => {
+    fs.writeFileSync(path.join(dir, GUARDRAIL_ENTRY_POINT), '#!/bin/sh\nexit 0\n');
+    for (const name of ['pre-push', 'pre-commit']) {
+      const r = hook(name, PUSH_LINE);
+      expect(r.status, name).toBe(1);
+      expect(r.stderr).toContain("is not dxkit's");
+    }
+  });
+
   it("the workflow's own step hands the script the PR plumbing", () => {
     // The RENDERED workflow (the template carries install-time placeholders).
     installCiGuardrails(dir);
@@ -391,9 +422,9 @@ describe.skipIf(!POSIX)('the hooks and the workflow step, executed, reach the sc
     });
     expect(r.status).toBe(0);
     expect(calls(log)).toEqual([
-      expect.stringMatching(/^floor check --surface ci --base origin\/develop --report-md /),
-      'policy render --check',
       'guardrail check --name main --mode ref-based --ref origin/develop --untrusted --markdown',
+      'policy render --check',
+      expect.stringMatching(/^floor check --surface ci --base origin\/develop --report-md /),
     ]);
     expect(fs.readFileSync(path.join(dir, 'guardrail-report.md'), 'utf8')).toContain(
       'GUARDRAIL-VERDICT',
@@ -418,7 +449,7 @@ describe('installGuardrailEntryPoint', () => {
     const r = installGuardrailEntryPoint(dir);
     expect(r.installed).toEqual([GUARDRAIL_ENTRY_POINT]);
     const body = fs.readFileSync(dest(), 'utf8');
-    expect(body).toContain('DEFAULT_BRANCH="trunk"');
+    expect(body).toContain("DEFAULT_BRANCH='trunk'");
     expect(body).not.toContain('__DXKIT_DEFAULT_BRANCH__');
     expect(body).toContain(GUARDRAIL_ENTRY_POINT_MARKER);
     if (POSIX) expect(fs.statSync(dest()).mode & 0o111).not.toBe(0);

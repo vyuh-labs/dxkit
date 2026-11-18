@@ -1,7 +1,7 @@
 name: dxkit guardrails
 
-# Runs ./dxkit-guardrails.sh (the correctness floor, policy-render parity
-# and the findings guardrail) on every pull request. New regressions vs.
+# Runs ./dxkit-guardrails.sh (the findings guardrail, policy-render parity
+# and the correctness floor) on every pull request. New regressions vs.
 # the committed `.dxkit/baselines/main.json` block the PR. Existing
 # findings (your "brownfield debt") are allowed — they were already
 # captured when you ran `vyuh-dxkit baseline create`. Run
@@ -158,8 +158,8 @@ __DXKIT_CI_RUNTIME_SETUP__
           fi
           echo "flag=$UNTRUSTED" >> "$GITHUB_OUTPUT"
 
-      # The checks (correctness floor, policy-render parity, findings
-      # guardrail) and their ORDER live in one place: ./dxkit-guardrails.sh at
+      # The checks (findings guardrail, policy-render parity, correctness
+      # floor) and their ORDER live in one place: ./dxkit-guardrails.sh at
       # the repo root. The pre-push hook runs the same script (--quick), and a
       # developer or agent runs it with no arguments to get this job's verdict
       # locally. This step hands it only the pipeline's plumbing:
@@ -177,14 +177,15 @@ __DXKIT_CI_RUNTIME_SETUP__
       # annotates this log and the step summary, and exits non-zero when any
       # check failed, which fails this job. A cache-transport repo whose cache
       # missed falls back to a ref-based gather inside the script, too.
-      - name: Run dxkit guardrails (floor, policy parity, guardrail)
+      - name: Run dxkit guardrails (guardrail, policy parity, floor)
         id: guardrail
         env:
           # The PR's base branch (empty on a push-trigger run).
           DXKIT_PR_BASE: ${{ github.base_ref }}
         run: |
-          if [ ! -f ./dxkit-guardrails.sh ]; then
-            echo "::error::dxkit-guardrails.sh is missing from the repo root, so this PR was NOT gated. Run 'npx vyuh-dxkit update' and commit the script."
+          # Refuse a file without dxkit's header: it is not the entry point.
+          if [ ! -f ./dxkit-guardrails.sh ] || ! grep -q 'dxkit guardrails entry point' ./dxkit-guardrails.sh; then
+            echo "::error::dxkit-guardrails.sh is missing from the repo root, or is not dxkit's, so this PR was NOT gated. Run 'npx vyuh-dxkit update' and commit the script."
             exit 1
           fi
           # Trust boundary decided once in the 'Resolve tree trust' step above.

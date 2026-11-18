@@ -85,7 +85,7 @@ export function renderRunbook(cwd: string): string {
     );
   if (fs.existsSync(path.join(cwd, GUARDRAIL_ENTRY_POINT)))
     gates.push(
-      `- **By hand** (\`./${GUARDRAIL_ENTRY_POINT}\`): the checks CI runs, in the same order (correctness floor, policy-render parity, guardrail). Run it before you push to see the pipeline's verdict first; the pre-push hook runs its \`--quick\` tier.`,
+      `- **By hand** (\`./${GUARDRAIL_ENTRY_POINT}\`): the checks CI runs, in the same order (guardrail, policy-render parity, correctness floor). Run it before you push to see the pipeline's verdict first; the pre-push hook runs its \`--quick\` tier.`,
     );
   if (gates.length === 0) {
     gates.push(

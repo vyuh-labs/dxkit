@@ -82,8 +82,8 @@ export function claudeHookCommand(subcommand: string): string {
 
 /**
  * The ONE guardrail entry point a consumer repo carries at its root: the
- * script that holds the check sequence (correctness floor, policy-render
- * parity, findings guardrail) and resolves the dxkit binary. The git hooks
+ * script that holds the check sequence (findings guardrail, policy-render
+ * parity, correctness floor) and resolves the dxkit binary. The git hooks
  * and the CI guardrail workflow call it rather than carrying their own copy
  * of the sequence, and a developer or agent runs it by hand. Named after the
  * workflow file and the required status check (`dxkit-guardrails`) so the
@@ -162,7 +162,7 @@ export const SELF_INVOCATION_SURFACES: readonly SelfInvocationSurface[] = [
     // The one check sequence; the hooks and the CI workflow below reach the
     // CLI through it.
     id: 'guardrail-entry-point',
-    description: `${GUARDRAIL_ENTRY_POINT} (correctness floor, policy-render parity, guardrail)`,
+    description: `${GUARDRAIL_ENTRY_POINT} (guardrail, policy-render parity, correctness floor)`,
     invokes: 'floor check, policy render --check, guardrail check',
     installedWhen: guardrailEntryPointWanted,
   },

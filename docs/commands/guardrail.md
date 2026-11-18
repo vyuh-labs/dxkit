@@ -121,9 +121,13 @@ vyuh-dxkit guardrail check  # auto-discovers .dxkit/policy.json
 `init --with-hooks` and `init --with-ci` install `dxkit-guardrails.sh` at the
 repo root. It is the one place dxkit's checks and their order are defined:
 
-1. **correctness floor** — does the code still compile, do the tests pass?
+1. **findings guardrail** — no net-new findings vs the baseline.
 2. **policy-render parity** — do the managed workflows match `.dxkit/policy.json`?
-3. **findings guardrail** — no net-new findings vs the baseline.
+3. **correctness floor** — does the code still compile, do the tests pass?
+
+The guardrail and the parity check see the tree exactly as checked out; the
+floor runs the repo's own build and tests, which can write to the tree, so it
+runs last.
 
 The pre-push hook, the pre-commit hook and the CI workflow all call it, so
 none of them carries its own copy of the sequence. Run it yourself, or have
@@ -136,11 +140,11 @@ your agent run it, before declaring a change done:
 ./dxkit-guardrails.sh --base develop   # reproduce a PR into develop
 ```
 
-| Tier                          | Floor          | Parity | Guardrail        | On a failure            |
-| ----------------------------- | -------------- | ------ | ---------------- | ----------------------- |
-| (none) — the CI pipeline      | full suite     | yes    | full scan        | runs every check anyway |
-| `--quick` — pre-push          | affected tests | yes    | `--incremental`  | stops                   |
-| `--changed-only` — pre-commit | —              | —      | `--changed-only` | —                       |
+| Tier                          | Guardrail        | Parity | Floor          | On a failure            |
+| ----------------------------- | ---------------- | ------ | -------------- | ----------------------- |
+| (none) — the CI pipeline      | full scan        | yes    | full suite     | runs every check anyway |
+| `--quick` — pre-push          | `--incremental`  | yes    | affected tests | stops                   |
+| `--changed-only` — pre-commit | `--changed-only` | —      | —              | —                       |
 
 The workflow passes only its plumbing: `--base <branch>` (the PR's base; the
 floor attributes failures against the merge-base, and a PR into a non-default
@@ -168,7 +172,7 @@ it.
 
 | Flag                                    | Hook                   | When it fires      | Scope                                                                                                            | Wall-clock                         |
 | --------------------------------------- | ---------------------- | ------------------ | ---------------------------------------------------------------------------------------------------------------- | ---------------------------------- |
-| `--with-hooks` (default under `--full`) | `.githooks/pre-push`   | every `git push`   | `./dxkit-guardrails.sh --quick`: the floor on affected tests, policy parity, the guardrail scanned incrementally | scales with the size of the change |
+| `--with-hooks` (default under `--full`) | `.githooks/pre-push`   | every `git push`   | `./dxkit-guardrails.sh --quick`: the guardrail scanned incrementally, policy parity, the floor on affected tests | scales with the size of the change |
 | `--with-precommit-hook` (opt-in)        | `.githooks/pre-commit` | every `git commit` | `./dxkit-guardrails.sh --changed-only`: the guardrail, blocking only on lines you touched                        | a full scan                        |
 
 The pre-commit hook is **opt-in** because re-running every analyzer on every commit is slow on large codebases. Pre-push amortises the same cost across the batch of commits in a push; CI runs the same check server-side as an unbypassable backstop. Customers on small/fast repos who want commit-time gating can opt in.

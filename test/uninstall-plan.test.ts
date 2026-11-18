@@ -209,6 +209,23 @@ describe('recipe symmetry — every install surface has a removal path', () => {
   });
 });
 
+describe('the guardrail entry point: removed when dxkit owns it, kept when the user does', () => {
+  it("dxkit's own script (header marker) is planned for removal with its callers", () => {
+    write('dxkit-guardrails.sh', '#!/usr/bin/env sh\n# dxkit guardrails entry point: …\n');
+    writeManifest({}, { ...ALL_FLAGS, withHooks: true });
+    const act = planUninstall(tmp).actions.find((a) => a.target === 'dxkit-guardrails.sh');
+    expect(act?.status).toBe('pending');
+  });
+
+  it("a file at that path without the marker is the user's: never planned, and the plan says so", () => {
+    write('dxkit-guardrails.sh', '#!/bin/sh\necho mine\n');
+    writeManifest({}, { ...ALL_FLAGS, withHooks: true });
+    const plan = planUninstall(tmp);
+    expect(plan.actions.find((a) => a.target === 'dxkit-guardrails.sh')).toBeUndefined();
+    expect(plan.warnings.join(' ')).toContain('dxkit-guardrails.sh has no dxkit marker');
+  });
+});
+
 describe('planUninstall — skills resilience for older manifests', () => {
   it('removes .claude/skills/dxkit-* dirs even when the manifest did not record them', () => {
     // Simulate a repo installed by an OLDER dxkit whose manifest omits skills.

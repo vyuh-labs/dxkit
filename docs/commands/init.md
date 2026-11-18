@@ -111,8 +111,9 @@ never printed as if the repo had declared it.
 
 ## `--full` adds
 
-- `dxkit-guardrails.sh` — the one entry point for dxkit's checks (correctness
-  floor, policy-render parity, [guardrail](guardrail.md)), at the repo root.
+- `dxkit-guardrails.sh` — the one entry point for dxkit's checks
+  ([guardrail](guardrail.md), policy-render parity, correctness floor), at the
+  repo root.
   The hooks and the CI workflow both call it; run `./dxkit-guardrails.sh`
   yourself (or have your agent run it) before declaring a change done to get
   the pipeline's verdict locally. Installed whenever `--with-hooks` or
