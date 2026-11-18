@@ -26,7 +26,11 @@ __DXKIT_DEVCONTAINER_BUILD_HOST__
   // background, and two containers built from the same files would drift
   // apart again; a pin moves when dxkit is upgraded and `update` re-renders.
   "containerEnv": {
-    "DISABLE_AUTOUPDATER": "1"
+    "DISABLE_AUTOUPDATER": "1",
+    // What post-create checks to tell a container built from THIS file from
+    // one built from an older dxkit devcontainer.json (an existing install,
+    // whose readiness is reported as advice until this file is adopted).
+    "DXKIT_CONTAINER_CONTRACT": "1"
   },
 
   // Run on every container start (incl. Codespaces resume). Keeps
