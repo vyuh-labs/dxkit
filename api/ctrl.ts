@@ -1,1 +1,1 @@
-class C { @get('/articles') harticles() {} }
+class C { @get('/from-remote') hfromremote() {} }
