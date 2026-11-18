@@ -1461,6 +1461,17 @@ install` loop for an ambient SDK), never a silent skip and never a spawn
   the parity test (`test/execution/placement.test.ts`): off-primary-placed ⇔
   wrong-host-skipped, both directions — the Rule 2.30 semantic-divergence
   net.
+- **Stated** where the build runs (4.5.0): `repoBuildsElsewhere`
+  (`src/languages/index.ts`, over `buildsElsewhere` in
+  `src/execution/build-host.ts`) projects the same requirements onto "can a
+  Linux machine be provisioned to run this pack's build at all?" (a toolchain
+  with no `install` entry for the host — Xcode, `netfx-msbuild`,
+  `unity-editor` — cannot be). ONE answer read by the generated
+  devcontainer.json (comment + no toolchain feature for that pack), the
+  generated AGENTS.md block, and `findTool` (a `buildBound` tool such as
+  `dotnet-format` is n/a where its pack's build cannot run, so `tools install`
+  never provisions a toolchain that cannot build the project). Pinned against
+  the runner predicate and placement by `test/execution/build-host.test.ts`.
 - **Composed** across environments (design §3.4 — the hidden enabler): ONE
   committed baseline assembled from captures in different environments,
   sound because finding identity is environment-independent (Rule 9). The

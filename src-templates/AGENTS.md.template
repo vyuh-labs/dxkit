@@ -111,6 +111,14 @@ Reach for the relevant skill when working in this repo. They wrap the `vyuh-dxki
 - **Package**: `Gemfile`
 {{/IF_RUBY}}
 
+{{#IF_BUILD_ELSEWHERE}}
+## Where this project builds
+
+{{BUILD_ELSEWHERE_LIST}}
+
+A machine without that setup, including the dxkit dev container, cannot build or test this project. Use it for editing, scanning (`npx vyuh-dxkit guardrail check`) and dependency audit. Do not try to install the build toolchain in the dev container; leave the build and tests to such a machine or to CI.
+{{/IF_BUILD_ELSEWHERE}}
+
 ## dxkit commands
 
 | Purpose | Command |

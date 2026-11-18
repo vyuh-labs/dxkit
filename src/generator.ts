@@ -5,7 +5,7 @@ import { ResolvedConfig, GenerationMode, Manifest } from './types';
 import { buildVariables, buildConditions, VERSION } from './constants';
 import { processTemplate } from './template-engine';
 import { sha256 } from './files';
-import { activeLanguagesFromStack } from './languages';
+import { activeLanguagesFromStack, buildElsewhereLines, repoBuildsElsewhere } from './languages';
 import { dxkitCli, claudeHookCommand } from './self-invocation';
 import { decideUpdateDisposition } from './update-disposition';
 import * as logger from './logger';
@@ -226,6 +226,16 @@ interface GenerateResult {
   manifest: Manifest;
 }
 
+/**
+ * AGENTS.md's "Where this project builds" block: the same lines the
+ * devcontainer prints (`buildElsewhereLines(repoBuildsElsewhere(cwd))`), as a
+ * markdown list. Empty when every pack builds on Linux.
+ */
+export function buildHostVariables(targetDir: string): { BUILD_ELSEWHERE_LIST: string } {
+  const lines = buildElsewhereLines(repoBuildsElsewhere(targetDir));
+  return { BUILD_ELSEWHERE_LIST: lines.map((l) => `- ${l}`).join('\n') };
+}
+
 export async function generate(
   targetDir: string,
   config: ResolvedConfig,
@@ -236,6 +246,8 @@ export async function generate(
 ): Promise<GenerateResult> {
   const variables = buildVariables(config);
   const conditions = buildConditions(config);
+  Object.assign(variables, buildHostVariables(targetDir));
+  conditions.IF_BUILD_ELSEWHERE = variables.BUILD_ELSEWHERE_LIST !== '';
   const templatesDir = getTemplatesDir();
 
   const result: GenerateResult = {

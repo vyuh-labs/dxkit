@@ -60,7 +60,11 @@ function hasSpmManifest(cwd: string): boolean {
 function hasXcodeProject(cwd: string): boolean {
   return (
     walkPaths(cwd, { extensions: [], basenames: ['project.pbxproj', 'contents.xcworkspacedata'] })
-      .length > 0
+      .length > 0 ||
+    // CocoaPods integrates only into Xcode projects, so a Podfile is the
+    // Xcode shape even when the .xcodeproj itself is generated and not
+    // committed (XcodeGen / Tuist repos).
+    walkPaths(cwd, { extensions: [], basenames: ['Podfile'] }).length > 0
   );
 }
 

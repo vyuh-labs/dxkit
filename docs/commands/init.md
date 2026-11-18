@@ -73,7 +73,15 @@ CLAUDE.md              # Claude Code shim that points at AGENTS.md
 - `.githooks/pre-push` — full-mode [guardrail](guardrail.md) hook
   (pre-commit available via `--with-precommit-hook`)
 - `.devcontainer/{devcontainer.json,post-create.sh,install-agent-clis.sh}` —
-  per-stack pinned toolchains + Claude Code + Codex CLIs (auth stays user-owned)
+  per-stack pinned toolchains + Claude Code + Codex CLIs (auth stays user-owned).
+  The container is Linux. When part of the stack cannot build on Linux (a
+  .NET Framework or Windows desktop project, a Unity project, an iOS app),
+  devcontainer.json and AGENTS.md say so and name the machine the build needs
+  (for example "C#: Windows with Visual Studio Build Tools (MSBuild) and the
+  .NET Framework 4.x developer pack", "Swift: macOS with Xcode"). The container
+  then skips that toolchain and keeps editing, scanning and dependency audit.
+  The gates use the same answer: that build is placed on a Windows or macOS CI
+  job, or reported as skipped with the reason.
 - `.github/workflows/dxkit-guardrails.yml` — PR-gate workflow that
   posts a markdown comment
 - `.github/workflows/dxkit-baseline-refresh.yml` — post-merge

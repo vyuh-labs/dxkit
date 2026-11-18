@@ -22,6 +22,8 @@ import { defaultBranchViaGh } from './setup-gh';
 import {
   buildDevcontainerExtensions,
   buildDevcontainerFeatures,
+  buildElsewhereLines,
+  repoBuildsElsewhere,
   allCiSetupSteps,
   collectExecutionRequirements,
   detectActiveLanguages,
@@ -465,8 +467,33 @@ function renderDevcontainerJson(tmplDir: string, cwd: string): string {
   const features = buildDevcontainerFeatures(stack.languages, cwd);
   const extensions = buildDevcontainerExtensions(stack.languages);
   return template
+    .replace(DEVCONTAINER_BUILD_HOST_KEY, () => renderDevcontainerBuildHost(cwd))
     .replace('__DXKIT_DEVCONTAINER_FEATURES__', renderFeaturesBlock(features))
     .replace('__DXKIT_DEVCONTAINER_EXTENSIONS__', renderExtensionsBlock(extensions));
+}
+
+/** Placeholder line (with its newline, LF or CRLF — a Windows checkout may
+ *  convert the template) for the build-host statement; removed whole when
+ *  every pack builds in the container. */
+const DEVCONTAINER_BUILD_HOST_KEY = /__DXKIT_DEVCONTAINER_BUILD_HOST__\r?\n/;
+
+/**
+ * The devcontainer's plain statement of where this repo builds, as JSONC
+ * comments, from `repoBuildsElsewhere` (the answer the gates place on and
+ * AGENTS.md prints). Empty when the container can build every pack.
+ */
+function renderDevcontainerBuildHost(cwd: string): string {
+  const lines = buildElsewhereLines(repoBuildsElsewhere(cwd));
+  if (lines.length === 0) return '';
+  return (
+    [
+      '  // This container is for editing, scanning and dependency audit. It cannot',
+      '  // build or test this project, so it does not install that toolchain.',
+      '  // The build runs on:',
+      ...lines.map((l) => `  //   ${l}`),
+      '',
+    ].join('\n') + '\n'
+  );
 }
 
 /**
