@@ -17,7 +17,8 @@ import { execFileSync, execSync } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { activeLanguagesFromFlags } from '../../languages';
+import { activeLanguagesFromFlags, repoBuildsElsewhere } from '../../languages';
+import { hostOf } from '../../execution';
 import { detectPackageManager, pmAwareDevInstall } from '../../package-manager';
 import { resolveInDirs, resolveOnPath } from './runner';
 import { loadToolsConfig } from './tools-config';
@@ -103,6 +104,24 @@ export interface ToolDefinition extends ToolRequirement {
    * so customers don't chase a non-fixable warning.
    */
   applicabilityGuard?: (cwd: string) => string | null;
+  /**
+   * The tool only works where its pack's BUILD can run: it drives the build
+   * toolchain or bootstraps it (`dotnet format` installs the .NET SDK). On a
+   * host where that build cannot run at all (Rule 20, `buildCannotRunOn` —
+   * the Windows-only C# build on Linux, the Unity Editor anywhere), the tool
+   * is "n/a" with the reason, so `tools install` never provisions a
+   * toolchain that cannot build the project.
+   */
+  buildBound?: boolean;
+}
+
+/** Why a `buildBound` tool does not apply here: its pack is active and its
+ *  build cannot run on this host — read from `repoBuildsElsewhere`, the same
+ *  entry point the devcontainer and AGENTS.md print. Null when it can. */
+function buildBoundReason(def: ToolDefinition, cwd: string): string | null {
+  if (!def.buildBound) return null;
+  const hit = repoBuildsElsewhere(cwd, hostOf()).find((b) => b.pack === def.for);
+  return hit ? `the ${hit.displayName} build runs on ${hit.machine}, not on this machine` : null;
 }
 
 export interface ToolStatus {
@@ -383,8 +402,9 @@ export function findTool(def: ToolDefinition, cwd?: string, opts?: FindToolOptio
   // Applicability gate runs first. Non-applicable tools (e.g.
   // vitest-coverage on a mocha repo) get an explicit "n/a" status so
   // they never inflate the missing-count.
-  if (def.applicabilityGuard) {
-    const reason = def.applicabilityGuard(cwd || process.cwd());
+  if (def.applicabilityGuard || def.buildBound) {
+    const root = cwd || process.cwd();
+    const reason = def.applicabilityGuard?.(root) ?? buildBoundReason(def, root);
     if (reason) {
       return {
         name: def.name,
@@ -956,6 +976,7 @@ export const TOOL_DEFS: Record<string, ToolDefinition> = {
   },
   'dotnet-format': {
     name: 'dotnet-format',
+    buildBound: true,
     description: 'C# formatting and linting',
     install: 'builtin (dotnet SDK)',
     check: 'dotnet format --version',
@@ -985,6 +1006,7 @@ export const TOOL_DEFS: Record<string, ToolDefinition> = {
   },
   'nuget-license': {
     name: 'nuget-license',
+    buildBound: true,
     description: 'License inventory for NuGet package references in .NET projects',
     install: 'dotnet tool install --global nuget-license',
     check: 'nuget-license --version',

@@ -1592,37 +1592,171 @@ function csharpIsTestProject(cwd: string, relProj: string): boolean {
 }
 
 /**
- * Does any project in this repo target Windows? A `net*-windows` TFM (or an
- * explicit WinForms/WPF opt-in) makes the BUILD Windows-only — `dotnet build`
- * of such a target on Linux/macOS fails on missing Windows Desktop reference
- * packs. This is the repo fact that narrows every build-based C# capability's
- * host requirement (Rule 20): the Windows-only desktop class, where a Linux driver
- * could never produce the build half of the gate and nothing said so.
+ * How this repo's C# builds — the repo fact every build-based C# capability's
+ * requirement derives from (Rule 20). Pure and repo-intrinsic: it reads
+ * project files only.
+ *
+ *   - `unity`: a Unity project (ProjectSettings/ProjectVersion.txt beside an
+ *     Assets/ folder). It builds only in the Unity Editor; its csproj files,
+ *     when committed at all, are editor-generated and point into the editor
+ *     install.
+ *   - `netfx-classic`: a classic (non-SDK) csproj targeting .NET Framework
+ *     (`<TargetFrameworkVersion>v4.x`, usually with packages.config). It builds
+ *     with Visual Studio's MSBuild on Windows, not with `dotnet build`.
+ *   - `windows`: an SDK-style project that needs Windows — a `net*-windows`
+ *     TFM, a WinForms/WPF opt-in, or only .NET Framework TFMs (`net48`; the
+ *     tests need the Framework runtime).
+ *   - `portable`: everything else; `dotnet build` runs on any host. A project
+ *     that multi-targets a modern TFM next to `net48` stays portable: its
+ *     modern targets build and test on Linux.
  */
-function csharpTargetsWindows(cwd: string): boolean {
-  for (const csproj of walkPaths(cwd, { extensions: ['.csproj'] })) {
-    const content = readRepoFile(cwd, csproj);
-    if (
-      /<TargetFrameworks?>[^<]*-windows/i.test(content) ||
-      /<UseWindowsForms>\s*true/i.test(content) ||
-      /<UseWPF>\s*true/i.test(content)
-    ) {
-      return true;
+type CsharpBuildShape = 'unity' | 'netfx-classic' | 'windows' | 'portable';
+
+/** Unity project roots (repo-relative POSIX, `.` for the repo root):
+ *  directories holding ProjectSettings/ProjectVersion.txt beside an Assets/
+ *  directory, at any depth (canonical walker, G_v4_12). */
+function unityProjectRoots(cwd: string): string[] {
+  const roots: string[] = [];
+  for (const rel of walkPaths(cwd, { extensions: [], basenames: ['ProjectVersion.txt'] })) {
+    const settingsDir = path.dirname(rel);
+    if (path.basename(settingsDir) !== 'ProjectSettings') continue;
+    const root = path.dirname(settingsDir);
+    try {
+      if (fs.statSync(path.join(cwd, root, 'Assets')).isDirectory()) {
+        roots.push(root.split(path.sep).join('/'));
+      }
+    } catch {
+      /* no Assets/ beside it — not a Unity root */
     }
   }
-  return false;
+  return roots;
+}
+
+function isUnityProject(cwd: string): boolean {
+  return unityProjectRoots(cwd).length > 0;
+}
+
+/** Is a repo-relative path inside one of the given roots? */
+function underAnyRoot(rel: string, roots: readonly string[]): boolean {
+  const p = rel.split(path.sep).join('/');
+  return roots.some((r) => r === '.' || p === r || p.startsWith(`${r}/`));
+}
+
+/** A classic (non-SDK) csproj targeting .NET Framework. */
+function isClassicNetFrameworkProject(content: string): boolean {
+  return (
+    /<TargetFrameworkVersion>\s*v[1-4]\./i.test(content) &&
+    !/<Project\b[^>]*\bSdk\s*=/i.test(content)
+  );
+}
+
+/** An SDK-style project whose every TFM is a .NET Framework one (`net48`,
+ *  `net472;net48`). .NET Framework TFMs carry no dot; `net8.0` and
+ *  `netstandard2.0` never match. */
+function targetsOnlyNetFramework(content: string): boolean {
+  const m = content.match(/<TargetFrameworks?>([^<]*)</i);
+  if (!m) return false;
+  const tfms = m[1]
+    .split(';')
+    .map((t) => t.trim())
+    .filter(Boolean);
+  return tfms.length > 0 && tfms.every((t) => /^net[1-4]\d{0,2}$/i.test(t));
+}
+
+function needsWindowsSdkBuild(content: string): boolean {
+  return (
+    /<TargetFrameworks?>[^<]*-windows/i.test(content) ||
+    /<UseWindowsForms>\s*true/i.test(content) ||
+    /<UseWPF>\s*true/i.test(content) ||
+    targetsOnlyNetFramework(content)
+  );
+}
+
+function csharpBuildShape(cwd: string): CsharpBuildShape {
+  // Unity-generated csproj files (when committed) live inside the Unity
+  // project and are judged as Unity, not as classic .NET Framework. A
+  // project OUTSIDE every Unity root (a backend solution beside a Unity
+  // sample) keeps its own shape: the Unity part must not hide it.
+  const unityRoots = unityProjectRoots(cwd);
+  let windows = false;
+  let outsideUnity = false;
+  for (const csproj of walkPaths(cwd, { extensions: ['.csproj'] })) {
+    if (underAnyRoot(csproj, unityRoots)) continue;
+    outsideUnity = true;
+    const content = readRepoFile(cwd, csproj);
+    if (isClassicNetFrameworkProject(content)) return 'netfx-classic';
+    if (needsWindowsSdkBuild(content)) windows = true;
+  }
+  if (unityRoots.length > 0 && !outsideUnity) return 'unity';
+  return windows ? 'windows' : 'portable';
+}
+
+/**
+ * Shapes whose build command dxkit cannot choose: the floor DISCLOSES that
+ * instead of running `dotnet build` (which cannot build either shape) or
+ * returning nothing (a host job that runs nothing and passes green). Only
+ * the repo knows its Unity build method or its MSBuild invocation (solution,
+ * configuration, packages.config restore); a custom check is the remedy.
+ * Null for the shapes `dotnet` builds.
+ */
+function csharpDeclinedBuild(cwd: string): CorrectnessCommand | null {
+  const shape = csharpBuildShape(cwd);
+  if (shape === 'netfx-classic') {
+    return {
+      label: 'build',
+      bin: 'msbuild',
+      args: ['/restore'],
+      cannotStart:
+        "a classic .NET Framework project builds with the repo's own MSBuild invocation (solution, configuration, packages.config restore), which dxkit cannot choose; declare it as a custom check in .dxkit/policy.json",
+    };
+  }
+  if (shape === 'unity') {
+    return {
+      label: 'build',
+      bin: 'Unity',
+      args: ['-batchmode', '-quit'],
+      cannotStart:
+        "a Unity project builds in the Unity Editor with the repo's own build method, which dxkit cannot choose; declare it as a custom check in .dxkit/policy.json",
+    };
+  }
+  return null;
+}
+
+function csharpBuildDeclined(cwd: string): boolean {
+  return csharpDeclinedBuild(cwd) !== null;
 }
 
 /**
  * The execution requirement every BUILD-based C# capability shares (floor,
- * Roslyn lint gate, CodeQL extraction): the .NET SDK, a project build, hosts
- * narrowed to Windows when the repo targets it, and a build target that is
- * `discovered` only when `dotnet` can auto-resolve one (a root `.sln` /
- * `.csproj`) — the 29-solutions-no-root repo is `configured`.
+ * Roslyn lint gate, CodeQL extraction), derived from `csharpBuildShape`:
+ * the .NET SDK on any host for a portable project, on Windows for a
+ * Windows-targeting one; MSBuild with the .NET Framework developer pack on
+ * Windows for a classic .NET Framework project; the Unity Editor for a Unity
+ * project. `discovered` only when `dotnet` can auto-resolve a target (a root
+ * `.sln` / `.csproj`) — the 29-solutions-no-root repo is `configured`.
  */
 function csharpBuildExecution(cwd: string): ExecutionRequirement {
+  const shape = csharpBuildShape(cwd);
+  if (shape === 'unity') {
+    return {
+      hosts: ['any'],
+      toolchains: ['unity-editor'],
+      needsBuild: true,
+      buildTarget: 'configured',
+      weight: 'build',
+    };
+  }
+  if (shape === 'netfx-classic') {
+    return {
+      hosts: ['windows'],
+      toolchains: ['netfx-msbuild'],
+      needsBuild: true,
+      buildTarget: 'configured',
+      weight: 'build',
+    };
+  }
   return {
-    hosts: csharpTargetsWindows(cwd) ? ['windows'] : ['any'],
+    hosts: shape === 'windows' ? ['windows'] : ['any'],
     toolchains: ['dotnet-sdk'],
     needsBuild: true,
     buildTarget: csharpHasBuildTarget(cwd) ? 'discovered' : 'configured',
@@ -1648,13 +1782,15 @@ const csharpCorrectnessProvider: CorrectnessProvider = {
   execution: csharpBuildExecution,
 
   syntaxCheck(ctx: CorrectnessContext): CorrectnessCommand | null {
+    const declined = csharpDeclinedBuild(ctx.cwd);
+    if (declined) return declined;
     if (!csharpHasBuildTarget(ctx.cwd)) return null;
     ensureDotnetInvariant();
     return { label: 'build', bin: 'dotnet', args: ['build', '--nologo'] };
   },
 
   affectedTests(ctx: CorrectnessContext): CorrectnessCommand | null {
-    if (!csharpHasBuildTarget(ctx.cwd)) return null;
+    if (!csharpHasBuildTarget(ctx.cwd) || csharpBuildDeclined(ctx.cwd)) return null;
     ensureDotnetInvariant();
     const undeterminable = ctx.changedFiles.length === 0;
     const changedCs = ctx.changedFiles.filter((f) => f.endsWith('.cs'));
@@ -1696,7 +1832,8 @@ const csharpLintGateProvider: LintGateProvider = {
   // pre-declaration model implicitly claimed `{ hosts: any, toolchains: [],
   // needsBuild: false }` here, which was wrong on every axis.
   execution: csharpBuildExecution,
-  lintCommand() {
+  lintCommand(ctx) {
+    if (csharpBuildDeclined(ctx.cwd)) return null;
     ensureDotnetInvariant();
     return {
       bin: 'dotnet',
@@ -2067,9 +2204,14 @@ export const csharp: LanguageSupport = {
     // Depth 5 covers deeply-nested enterprise .NET layouts like
     // `app/modules/Core/<Module>/<Module>.csproj`. Lower limits
     // silently miss these from the repo root.
+    // A Unity project usually commits no .csproj / .sln (the editor
+    // regenerates them), so it is recognised by its ProjectSettings/ +
+    // Assets/ shape; otherwise it read as "no supported language" and nothing
+    // said where it builds.
     return (
       dirHasMatching(cwd, /\.(sln|csproj)$/) ||
-      walkPaths(cwd, { extensions: ['.csproj', '.sln'] }).length > 0
+      walkPaths(cwd, { extensions: ['.csproj', '.sln'] }).length > 0 ||
+      isUnityProject(cwd)
     );
   },
 

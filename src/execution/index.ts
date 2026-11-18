@@ -28,7 +28,16 @@ export {
 } from './placement';
 
 export {
+  DEVCONTAINER_HOST,
+  buildCannotRunOn,
+  buildsElsewhere,
+  describeBuildMachine,
+  type BuildElsewhere,
+} from './build-host';
+
+export {
   TOOLCHAIN_DEFS,
+  toolchainInstallableOn,
   toolchainPresent,
   toolchainInstallHint,
   toolchainHealthProblem,
