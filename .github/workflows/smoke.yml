@@ -399,14 +399,23 @@ jobs:
           tarball=$(npm pack --silent)
           echo "tarball=$(pwd)/${tarball}" >> "$GITHUB_OUTPUT"
 
-      - name: Stage a consumer repo with --with-devcontainer
+      - name: Stage a consumer repo with --with-devcontainer --with-hooks
         # Stage inside `${{ github.workspace }}/consumer/` because the
         # devcontainers/ci action looks for the config relative to the
         # workspace root via the `subFolder` input. A path outside the
         # workspace (e.g. `/tmp/...`) doesn't reach it.
+        #
+        # The PR's own tarballs are copied INTO the consumer and installed
+        # by relative path, so the lockfile resolves inside the container
+        # too (the workspace is bind-mounted there). Post-create then gets
+        # this build's dxkit as the project devDependency, at exactly the
+        # version the generated files pin, with no registry fetch of a
+        # version that is not published yet (a release branch's own).
+        # Post-create treats a failed step as a failed environment, so a
+        # host-only tarball path here would fail the job, by design.
         run: |
           set -euo pipefail
-          mkdir -p "${{ github.workspace }}/consumer"
+          mkdir -p "${{ github.workspace }}/consumer/.smoke-pkgs"
           cd "${{ github.workspace }}/consumer"
           git init -q -b main
           # Seed a root commit so `baseline create` (run inside the
@@ -418,20 +427,40 @@ jobs:
           echo '{"name":"dc-smoke","private":true}' > package.json
           git add package.json
           git commit -q -m "init"
-          npm install --save-dev "${{ steps.pack-sdk.outputs.tarball }}" "${{ steps.pack.outputs.tarball }}"
-          ./node_modules/.bin/vyuh-dxkit init --with-devcontainer --yes
+          cp "${{ steps.pack-sdk.outputs.tarball }}" "${{ steps.pack.outputs.tarball }}" .smoke-pkgs/
+          npm install --save-dev \
+            "./.smoke-pkgs/$(basename "${{ steps.pack-sdk.outputs.tarball }}")" \
+            "./.smoke-pkgs/$(basename "${{ steps.pack.outputs.tarball }}")"
+          if grep -q '"resolved": "file:/' package-lock.json; then
+            echo "::error::lockfile records an absolute tarball path the container cannot see"
+            exit 1
+          fi
+          ./node_modules/.bin/vyuh-dxkit init --with-devcontainer --with-hooks --yes --no-finish
           test -f .devcontainer/devcontainer.json
+          test -f .githooks/pre-push
+          # A fresh clone carries no core.hooksPath (it lives in .git/config):
+          # unset what init set on this host so the container has to
+          # activate the hooks itself.
+          git config --unset core.hooksPath || true
           # Per-stack devcontainer features (Phase 2.5.1): the consumer
           # has no detectable language pack active beyond TypeScript-
           # default (Node always-on), so the rendered features block
-          # must contain Node + GitHub CLI and must NOT contain the
+          # must contain the always-on set (Node, GitHub CLI, the OS
+          # python dxkit's scanners need) and must NOT contain the
           # toolchains for inactive packs.
-          if ! grep -q 'ghcr.io/devcontainers/features/node:1' .devcontainer/devcontainer.json; then
-            echo "::error::devcontainer.json missing always-on node feature"
+          for always in node:1 github-cli:1 python:1; do
+            if ! grep -q "ghcr.io/devcontainers/features/${always}" .devcontainer/devcontainer.json; then
+              echo "::error::devcontainer.json missing always-on feature ${always}"
+              cat .devcontainer/devcontainer.json
+              exit 1
+            fi
+          done
+          if ! grep -q '"version": "os-provided"' .devcontainer/devcontainer.json; then
+            echo "::error::the always-on python feature is not the os-provided one on a Node-only repo"
             cat .devcontainer/devcontainer.json
             exit 1
           fi
-          for inactive in python:1 dotnet:2 ruby:1 java:1 rust:1 go:1; do
+          for inactive in dotnet:2 ruby:1 java:1 rust:1 go:1; do
             if grep -q "ghcr.io/devcontainers/features/${inactive}" .devcontainer/devcontainer.json; then
               echo "::error::devcontainer.json includes feature ${inactive} on a Node-only repo"
               cat .devcontainer/devcontainer.json
@@ -441,38 +470,53 @@ jobs:
           echo "Per-stack devcontainer features validated."
 
       - name: Build + run devcontainer, exercise post-create
+        # post-create exits non-zero when the environment is not ready
+        # (any step failed), which fails `devcontainer up` and this step.
         uses: devcontainers/ci@v0.3
         with:
           subFolder: consumer
           push: never
-          # Inside the container: verify the AI-agent CLIs and the
-          # scanner toolchain installed successfully. Skip the CLI
-          # check when the env opt-outs are set so a future user can
-          # configure either CLI off without failing this job.
           runCmd: |
             set -euo pipefail
-            # Resolve the dxkit binary: prefer the project-local
-            # install when post-create's `npm install` succeeded;
-            # fall back to the globally-installed version that
-            # post-create's last-ditch fallback brings in. (Inside
-            # this CI smoke the consumer's lockfile points at a
-            # host-only tarball path that doesn't exist in the
-            # container, so the project-local install soft-fails
-            # and global is what we end up with.)
-            if [ -x ./node_modules/.bin/vyuh-dxkit ]; then
-              DXKIT="./node_modules/.bin/vyuh-dxkit"
-            else
-              DXKIT="vyuh-dxkit"
+            record=.dxkit/cache/devcontainer-readiness.json
+            echo "==> post-create readiness record"
+            cat "$record"
+            node -e 'const r=require(process.argv[1]); if(!r.ready){console.error("::error::post-create recorded NOT ready");process.exit(1)}' "$PWD/$record"
+
+            echo "==> dxkit: the project devDependency, at the version the files pin, on PATH"
+            want="$(node -p "require('./node_modules/@vyuhlabs/dxkit/package.json').version")"
+            pinned="$(sed -n 's/^DXKIT_VERSION="\(.*\)"$/\1/p' .devcontainer/post-create.sh)"
+            on_path="$(vyuh-dxkit --version)"
+            echo "tarball $want, pinned $pinned, on PATH $on_path"
+            [ "$pinned" = "$want" ] || { echo "::error::post-create pins dxkit $pinned, this build is $want"; exit 1; }
+            [ "$on_path" = "$want" ] || { echo "::error::vyuh-dxkit on PATH is $on_path, not $want"; exit 1; }
+
+            echo "==> agent CLIs at their pinned versions, self-update off"
+            for pair in "CLAUDE_CODE_VERSION claude" "CODEX_VERSION codex"; do
+              set -- $pair
+              pin="$(grep -oE "$1:-[0-9]+\.[0-9]+\.[0-9]+" .devcontainer/install-agent-clis.sh | cut -d- -f2)"
+              have="$("$2" --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1)"
+              echo "$2: pinned $pin, installed $have"
+              [ -n "$pin" ] && [ "$have" = "$pin" ] || { echo "::error::$2 is $have, pinned $pin"; exit 1; }
+            done
+            [ "${DISABLE_AUTOUPDATER:-}" = 1 ] || { echo "::error::DISABLE_AUTOUPDATER is not set in the container"; exit 1; }
+
+            echo "==> git hooks active"
+            hp="$(git config --local --get core.hooksPath || true)"
+            [ "$hp" = ".githooks" ] || { echo "::error::core.hooksPath is '$hp', not .githooks"; exit 1; }
+
+            echo "==> scanner toolchain"
+            vyuh-dxkit tools list
+
+            echo "==> a failed step fails post-create and is recorded"
+            if CODEX_VERSION=0.0.0-dxkit-smoke-missing bash .devcontainer/post-create.sh; then
+              echo "::error::post-create exited 0 although the codex install failed"
+              exit 1
             fi
-            echo "==> Using dxkit: $DXKIT"
-            echo "==> Verifying scanner toolchain"
-            "$DXKIT" tools list
-            echo "==> Verifying agent CLIs"
-            command -v claude || echo "WARN: claude CLI not on PATH"
-            command -v codex  || echo "WARN: codex  CLI not on PATH"
+            node -e 'const r=require(process.argv[1]); if(r.ready||!r.failures.some((f)=>f.step==="agent CLIs")){console.error("::error::the readiness record did not capture the failed step");process.exit(1)}' "$PWD/$record"
+
             echo "==> Smoke: baseline create inside container"
-            # --allow-incomplete: the devcontainer installs the toolchain,
-            # but pass it defensively so a single tool that didn't install
-            # doesn't fail the smoke on the new incomplete-baseline gate.
-            "$DXKIT" baseline create --allow-incomplete
+            # --allow-incomplete: optional tools (graphify) may be absent;
+            # the required toolchain was already enforced by post-create.
+            vyuh-dxkit baseline create --allow-incomplete
             test -f .dxkit/baselines/main.json

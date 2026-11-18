@@ -25,6 +25,8 @@ import { gatherRecommendations, type CommandRecommendation } from './discovery/c
 import { trustedLocalContext } from './analysis-trust';
 import { npmrcDeclaresLegacyPeerDeps } from './languages/node-install';
 import { resolveTolerances, toleranceWarnings } from './install/tolerances';
+import { dxkitGlobalInstallCommand } from './dxkit-package';
+import { describeDevcontainerReadiness, readDevcontainerReadiness } from './devcontainer-readiness';
 import {
   makeGhApiProbe,
   probeDeliveryPreconditions,
@@ -897,11 +899,32 @@ function runOperationalChecks(cwd: string, hasManifest: boolean): CheckResult[] 
       : {
           fix: {
             hint: 'Install dxkit globally so the bare command resolves in your shell.',
-            command: 'npm install -g @vyuhlabs/dxkit',
+            command: dxkitGlobalInstallCommand(),
             skill: 'dxkit-fix',
           },
         }),
   });
+
+  // 3b. Devcontainer readiness (4.5.0). The generated post-create records
+  // what it concluded; surface it so an agent in the container can learn
+  // why the environment is not ready without the post-create log.
+  const readiness = readDevcontainerReadiness(cwd);
+  if (readiness) {
+    checks.push({
+      label: describeDevcontainerReadiness(readiness),
+      ok: readiness.ready,
+      tier: 'operational',
+      ...(readiness.ready
+        ? {}
+        : {
+            fix: {
+              hint: readiness.failures.map((f) => `${f.step}: ${f.remedy}`).join(' | '),
+              command: 'bash .devcontainer/post-create.sh',
+              skill: 'dxkit-fix',
+            },
+          }),
+    });
+  }
 
   // 4. Scanner toolchain healthy. Reads the cached tools-status.json
   // sentinel from the last `tools install` run. If absent, we don't

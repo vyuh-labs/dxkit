@@ -440,3 +440,40 @@ describe('doctor: external snapshot staleness (3.9 graceful degradation)', () =>
     expect(check).toBeUndefined();
   });
 });
+
+describe('doctor: devcontainer readiness record (4.5.0)', () => {
+  it('reports a NOT ready post-create with each failed step and its remedy', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-doctor-dc-ready-'));
+    try {
+      execSync('git init -q', { cwd: tmp });
+      fs.writeFileSync(
+        path.join(tmp, '.vyuh-dxkit.json'),
+        JSON.stringify({ version: '1', mode: 'full', config: { languages: {} } }),
+      );
+      fs.mkdirSync(path.join(tmp, '.dxkit', 'cache'), { recursive: true });
+      fs.writeFileSync(
+        path.join(tmp, '.dxkit', 'cache', 'devcontainer-readiness.json'),
+        JSON.stringify({
+          schema: 'dxkit.devcontainer-readiness.v1',
+          ready: false,
+          generatedBy: '4.5.0',
+          dxkit: '4.5.0',
+          finishedAt: '2026-01-01T00:00:00.000Z',
+          failures: [
+            {
+              step: 'project dependencies',
+              reason: 'the dependency install failed (unclassified)',
+              remedy: 'configure the private registry auth',
+            },
+          ],
+        }),
+      );
+      const r = runDoctor(tmp);
+      expect(r.stdout).toContain('devcontainer post-create: NOT ready');
+      expect(r.stdout).toContain('project dependencies: the dependency install failed');
+      expect(r.stdout).toContain('configure the private registry auth');
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+});

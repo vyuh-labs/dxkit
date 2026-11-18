@@ -25,14 +25,18 @@ import {
   type InstallVariant,
 } from '../languages/capabilities/install-strategy';
 import type { ResolvedTolerances } from './tolerances';
+import { dxkitGlobalInstallCommand } from '../dxkit-package';
 
 /** The whole-line placeholder a workflow template carries where its
  *  dependency install goes. */
 export const INSTALL_DEPS_PLACEHOLDER = '__DXKIT_INSTALL_DEPS__';
 
 /** The last resort when no package.json exists at all: CI still needs the
- *  dxkit CLI on PATH. A dxkit-CLI fact, not a pack fact. */
-export const NO_MANIFEST_INSTALL = 'npm install -g @vyuhlabs/dxkit';
+ *  dxkit CLI on PATH. A dxkit-CLI fact, not a pack fact: the version that
+ *  rendered the chain, never npm's latest (4.5.0), so the CLI a repo's
+ *  pipeline runs is the one that generated its files until `update`
+ *  re-renders them. */
+export const NO_MANIFEST_INSTALL = dxkitGlobalInstallCommand();
 
 /** The ONE path of the install-outcome record, repo-relative: written by
  *  the rendered install step (through `install classify`, `outcome.ts`),

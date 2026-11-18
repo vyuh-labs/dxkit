@@ -2,26 +2,11 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { ResolvedConfig, DetectedStack } from './types';
 import { LANGUAGES } from './languages';
+import { DXKIT_VERSION } from './dxkit-package';
 
-/**
- * Package version — the single source of truth is `package.json` at the
- * package root. Compiled output lives in `dist/`, so `__dirname` points
- * to the installed `node_modules/@vyuhlabs/dxkit/dist/` and `../package.json`
- * resolves to the shipped manifest. Falling back to `'0.0.0'` on unreadable
- * package.json keeps the CLI from crashing if someone runs dxkit from a
- * broken install; the fallback is unambiguous in bug reports.
- */
-function readPackageVersion(): string {
-  try {
-    const pkgPath = path.join(__dirname, '..', 'package.json');
-    const raw = fs.readFileSync(pkgPath, 'utf-8');
-    return (JSON.parse(raw) as { version?: string }).version ?? '0.0.0';
-  } catch {
-    return '0.0.0';
-  }
-}
-
-export const VERSION = readPackageVersion();
+/** Package version, read once from the shipped package.json by the leaf
+ *  `dxkit-package` module (which the install-chain renderer also reads). */
+export const VERSION = DXKIT_VERSION;
 
 /**
  * The Node major dxkit itself requires: the `engines.node` floor of the

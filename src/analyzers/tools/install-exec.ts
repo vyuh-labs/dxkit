@@ -34,6 +34,9 @@ export interface ToolsInstallOptions {
   all?: boolean;
   /** `tools bom --json`: machine-readable bill of materials. */
   json?: boolean;
+  /** `tools install --fail-on-missing`: exit non-zero when a required
+   *  (non-optional, dxkit-provisioned) tool is still missing afterwards. */
+  failOnMissing?: boolean;
 }
 
 /**

@@ -25,6 +25,7 @@ import {
 } from '../../src/install';
 import { describeLockfileDrift } from '../../src/languages/capabilities/install-strategy';
 import { NODE_STRATEGY_BY_PM } from '../../src/languages/node-install';
+import { VERSION } from '../../src/constants';
 
 /**
  * The install-outcome seam (#381): the generated workflow's rendered install
@@ -251,9 +252,10 @@ describe('the outcome record and its renderer', () => {
       const record = classifyInstallLog(repo, PROVIDERS, 'npm ERR! whatever', 1);
       expect(record.manager).toBeNull();
       expect(record.class).toBe('unclassified');
-      expect(record.command).toBe('npm install -g @vyuhlabs/dxkit');
+      // The global install names the version that rendered the chain (4.5.0).
+      expect(record.command).toBe(`npm install -g @vyuhlabs/dxkit@${VERSION}`);
       expect(renderInstallOutcomeComment(record).markdown).toContain(
-        '`npm install -g @vyuhlabs/dxkit` exited non-zero',
+        `\`npm install -g @vyuhlabs/dxkit@${VERSION}\` exited non-zero`,
       );
     } finally {
       rmSync(repo, { recursive: true, force: true });

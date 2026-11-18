@@ -216,6 +216,22 @@ ${path}` keys, which discards catch-all structure — so it did exact membership
   MERGES into (`.gitignore`, `package.json`, `.claude/settings.json`,
   `CLAUDE.md`) are reverted by `src/uninstall/reversals.ts`, a separate
   centralized mechanism — a merge-only surface carries an empty `artifacts` list.
+- what a generated environment INSTALLS, and at which version → the coding-agent
+  CLIs from `AGENT_CLI_PINS` (`src/agent-cli-pins.ts`, exact `x.y.z` only,
+  pinned by `test/devcontainer-pins.test.ts`) and dxkit itself from
+  `dxkitPackageSpec` (`src/dxkit-package.ts`, the version that rendered the
+  artifact). The devcontainer scripts are RENDERED from them (never a
+  literal version or `latest` in a template), the CI install chain's global
+  fallback (`NO_MANIFEST_INSTALL`) and doctor's hint read the same spec, and
+  `post-create.sh` installs dependencies through the ONE install-chain
+  renderer above. The shipped class (4.5.0): the agent CLIs defaulted to
+  `latest` under a comment claiming a pin, and post-create installed an
+  unpinned global dxkit and warned-and-continued on every failed step, so
+  a broken container read as ready. Post-create now runs every step, exits
+  non-zero when not ready, and records the outcome
+  (`DEVCONTAINER_READINESS_RECORD`) for doctor; its behaviour is pinned by
+  executing the rendered scripts against stub binaries
+  (`test/devcontainer-post-create.test.ts`).
 - how a fail-open guardrail gate reports its OWN failure → `captureGateFailure`
   in `src/baseline/gate-failopen.ts`. The four additive gates (flow, schema-
   drift, seam-dup, paired-change) are deliberately fail-OPEN: a bad ref, an

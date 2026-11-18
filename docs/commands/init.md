@@ -82,6 +82,7 @@ CLAUDE.md              # Claude Code shim that points at AGENTS.md
   then skips that toolchain and keeps editing, scanning and dependency audit.
   The gates use the same answer: that build is placed on a Windows or macOS CI
   job, or reported as skipped with the reason.
+  See [The generated devcontainer](#the-generated-devcontainer) below.
 - `.github/workflows/dxkit-guardrails.yml` — PR-gate workflow that
   posts a markdown comment
 - `.github/workflows/dxkit-baseline-refresh.yml` — post-merge
@@ -115,10 +116,50 @@ vyuh-dxkit hooks activate
   a merge note is printed. Chain by sourcing the sidecar from your
   existing hook (`sh .githooks/pre-commit.dxkit`).
 - **Devcontainer** — if `.devcontainer/devcontainer.json` already
-  exists, the dxkit set is stashed under
-  `.devcontainer/.dxkit-reference/` for manual merge.
+  exists and is yours, the dxkit set is stashed under
+  `.devcontainer/.dxkit-reference/` for manual merge. When it is
+  dxkit's, `update` refreshes `post-create.sh` and
+  `install-agent-clis.sh` in place (that is how new pins arrive) and
+  keeps `devcontainer.json`, writing the current render beside it when
+  the two differ (`update --force` replaces it).
 - **CI workflows** — workflow files are uniquely named; if the file
   already exists, init skips it.
+
+## The generated devcontainer
+
+Everything the container installs is pinned by the dxkit release that
+generated the files, so two containers built from the same commit on
+different days get the same environment:
+
+- **Coding-agent CLIs** — `install-agent-clis.sh` installs
+  `@anthropic-ai/claude-code` and `@openai/codex` at exact versions
+  (never `latest`). Override per container with `CLAUDE_CODE_VERSION` /
+  `CODEX_VERSION` set to an exact version, or `skip` to leave that CLI
+  out. `devcontainer.json` sets `DISABLE_AUTOUPDATER=1` so Claude Code
+  does not update itself past its pin. A pin moves when you upgrade dxkit
+  and run `vyuh-dxkit update`.
+- **dxkit** — the project's own `@vyuhlabs/dxkit` devDependency is used
+  when present and linked onto PATH, so terminals and agents run the
+  version the repo's hooks and CI run. Without one, dxkit is installed
+  globally at exactly the version that generated the files; a global
+  dxkit at another version is replaced, not reused.
+- **Scanners** — `vyuh-dxkit tools install --yes --fail-on-missing`
+  (versions pinned in dxkit's tool registry). The OS python is always
+  provisioned because semgrep and graphify install through pip/venv.
+
+`post-create.sh` runs every step (project dependencies, installed the way
+the generated CI workflows install them; dxkit; scanners; git hooks;
+agent CLIs), prints one summary, and **exits non-zero when the
+environment is not ready**, so the devcontainer UI and an agent runner
+see a failed post-create rather than a green one. Each failure carries
+its reason and remedy: for example a dependency install that needs
+private-registry auth, a required scanner that did not install, or
+dxkit's pre-push hook present but not active (post-create runs
+`vyuh-dxkit hooks activate`, because a fresh clone carries no
+`core.hooksPath`). The outcome is also written to
+`.dxkit/cache/devcontainer-readiness.json`, which `vyuh-dxkit doctor`
+reports. Re-run with `bash .devcontainer/post-create.sh` after fixing
+the cause.
 
 ## Idempotency
 

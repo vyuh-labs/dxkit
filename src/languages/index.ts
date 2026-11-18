@@ -798,7 +798,8 @@ export function splitTestFilePatterns(patterns: string[] = allTestFilePatterns()
  * Returns a `{ [featureName]: opts }` map ready to serialize as the
  * value of `features` in `.devcontainer/devcontainer.json`.
  *
- * Always-on entries (Node — dxkit's own runtime; GitHub CLI) land
+ * Always-on entries (Node — dxkit's own runtime; GitHub CLI; the OS
+ * python that dxkit's pipx/venv-installed scanners need) land
  * regardless of detected stack so the post-create script can run npm
  * and `gh` even on non-Node projects. Per-pack entries layer on top
  * via object-key dedup, so the typescript pack's node feature
@@ -819,6 +820,14 @@ export function buildDevcontainerFeatures(
     // setup-branch-protection / setup-prebuild / PR review.
     'ghcr.io/devcontainers/features/node:1': { version: '22', nvmVersion: 'latest' },
     'ghcr.io/devcontainers/features/github-cli:1': {},
+    // Always-on (4.5.0): the OS python with pip + venv. dxkit's universal
+    // scanner semgrep installs through pipx and graphify into a venv; the
+    // base image's python3 has neither pip nor venv, so on a non-Python repo
+    // both installs failed and post-create reported the container ready
+    // anyway. `os-provided` is the distro package (no source build) and
+    // `installTools: false` skips the feature's own tool bundle. An active
+    // python pack replaces these opts with its own version below.
+    'ghcr.io/devcontainers/features/python:1': { version: 'os-provided', installTools: false },
   };
   // A pack whose build cannot run in this Linux container gets no toolchain
   // feature: the container is for editing, scanning and dependency audit, and
