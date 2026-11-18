@@ -1,1 +1,1 @@
-{"baseline":{"mode":"committed-full","anchor":"branch"}}
+{"flow":{"mode":"block","sources":[{"kind":"postman","path":"api-docs.json","side":"served"}]}}
