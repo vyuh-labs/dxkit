@@ -255,7 +255,10 @@ full-debt      (opt-in)   also blocks net-new test gaps and maintainability
 
 Before the finding gate, a correctness floor runs: does the change still
 compile or parse, and do the tests it affects still pass? A pre-existing
-failure never blocks; a net-new one does.
+failure never blocks; a net-new one does. A test command that ran zero
+tests is reported as "no tests ran", never as passing: it does not block
+on its own, and a test suite that disappears is named wherever the base
+side was observed (the loop's entry snapshot, a two-sided CI run).
 
 The escape-rate benchmark above used `full-debt` (it gated both the secret
 trap and the test-gap trap). The default install starts narrower so a first
@@ -529,6 +532,13 @@ maps). Compiled languages don't need it; their compiler is that check.
 Per-test failure attribution is TypeScript/JavaScript-first (jest and
 vitest output); other runners compare at whole-check level, and that
 coarser comparison is disclosed, never silent.
+Each pack also recognises its runner's "ran zero tests" output (a .NET
+solution with no test project, pytest's exit 5, jest/vitest under
+`--passWithNoTests`, `go test`'s `[no test files]`, `cargo test`'s
+`running 0 tests`, rspec, minitest, PHPUnit, SwiftPM, Gradle's
+`NO-SOURCE`), so an empty suite reads as "no tests ran" on every surface.
+Maven is the exception: the floor runs it quiet, where an empty run and a
+passing run print the same thing, so dxkit does not guess.
 
 <details>
 <summary><strong>Per-pack capabilities</strong>: coverage import, import-graph, severity tiers (click to expand)</summary>

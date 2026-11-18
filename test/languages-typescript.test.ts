@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { tsRanNoTests } from '../src/languages/ts-test-entry';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -519,6 +520,7 @@ describe('typescript.correctness', () => {
       bin: 'npx',
       args: ['--no-install', 'vitest', 'related', '--run', '--passWithNoTests', 'src/a.ts'],
       parseFailures: expect.any(Function),
+      ranNoTests: tsRanNoTests,
     });
   });
 
@@ -530,6 +532,7 @@ describe('typescript.correctness', () => {
       bin: 'npx',
       args: ['--no-install', 'vitest', 'run', '--passWithNoTests'],
       parseFailures: expect.any(Function),
+      ranNoTests: tsRanNoTests,
     });
   });
 
@@ -552,6 +555,7 @@ describe('typescript.correctness', () => {
       bin: 'npx',
       args: ['--no-install', 'jest', '--passWithNoTests', '--findRelatedTests', 'src/a.ts'],
       parseFailures: expect.any(Function),
+      ranNoTests: tsRanNoTests,
     });
   });
 
@@ -600,6 +604,7 @@ describe('typescript.correctness', () => {
         'src/App.js',
       ],
       parseFailures: expect.any(Function),
+      ranNoTests: tsRanNoTests,
     });
   });
 

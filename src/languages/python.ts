@@ -1422,19 +1422,36 @@ const pyCorrectnessProvider: CorrectnessProvider = {
   },
 
   affectedTests(ctx: CorrectnessContext): CorrectnessCommand | null {
-    if (gatherPyTestFrameworkResult(ctx.cwd) === null) return null; // no pytest project
-    const python = floorPython(ctx.cwd);
-    if (!pytestInstalledFor(python)) return null; // fail-open: pytest not installed here
-    const undeterminable = ctx.changedFiles.length === 0;
-    const changedTests = ctx.changedFiles.filter((f) => f.endsWith('.py') && isPyTestFile(f));
-    if (ctx.scope === 'affected' && !undeterminable) {
-      if (changedTests.length === 0) return null; // no changed test module → nothing to run
-      return { label: 'affected-tests', bin: python, args: ['-m', 'pytest', ...changedTests] };
-    }
-    // Full scope, or the diff was undeterminable → run the whole suite.
-    return { label: 'affected-tests', bin: python, args: ['-m', 'pytest'] };
+    const cmd = pyAffectedTestsCommand(ctx);
+    return cmd === null ? null : { ...cmd, ranNoTests: pytestRanNoTests };
   },
 };
+
+/**
+ * Did pytest execute ZERO tests? (4.5.0, the pack's `ranNoTests`.) pytest's
+ * own contract: exit code 5 is `ExitCode.NO_TESTS_COLLECTED` and nothing
+ * else ("no tests ran"). Without this the floor read exit 5 as a FAILING
+ * check, which blocked a repo for having no tests and grandfathered an
+ * empty suite as broken-build debt. Real output pinned in
+ * `test/fixtures/raw/floor-no-tests/`.
+ */
+export function pytestRanNoTests(run: { readonly code: number; readonly output: string }): boolean {
+  return run.code === 5;
+}
+
+function pyAffectedTestsCommand(ctx: CorrectnessContext): CorrectnessCommand | null {
+  if (gatherPyTestFrameworkResult(ctx.cwd) === null) return null; // no pytest project
+  const python = floorPython(ctx.cwd);
+  if (!pytestInstalledFor(python)) return null; // fail-open: pytest not installed here
+  const undeterminable = ctx.changedFiles.length === 0;
+  const changedTests = ctx.changedFiles.filter((f) => f.endsWith('.py') && isPyTestFile(f));
+  if (ctx.scope === 'affected' && !undeterminable) {
+    if (changedTests.length === 0) return null; // no changed test module → nothing to run
+    return { label: 'affected-tests', bin: python, args: ['-m', 'pytest', ...changedTests] };
+  }
+  // Full scope, or the diff was undeterminable → run the whole suite.
+  return { label: 'affected-tests', bin: python, args: ['-m', 'pytest'] };
+}
 
 /**
  * Lint-GATE provider: ruff, for the net-new lint gate. Resolved via the tool

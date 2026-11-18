@@ -288,6 +288,16 @@ imports, testFramework, licenses }`. Each is a `CapabilityProvider`
     unsure — the comparator then stays at check level and DISCLOSES it.
     The contract test requires totality over arbitrary output; see
     `parseTsTestRunnerFailures` (one parser covering jest + vitest).
+  - `ranNoTests({ code, output })` on the `affectedTests` COMMAND (4.5.0)
+    — true only when the runner's exit code and output PROVE it executed
+    zero tests (its own "no tests" marker or exit code, or every per-target
+    count reading 0); the runner then records `no-tests`, its own disclosed
+    result, never a pass and never a block. Decide on positive evidence
+    only: a run that executed even one test must never read as no-tests.
+    Pin both sides against REAL runner output in
+    `test/fixtures/raw/floor-no-tests/` (provenance in its HARVEST.md) and
+    add the pack to `WIRING` in `test/correctness-no-tests.test.ts`, or to
+    `NO_TESTS_EXEMPT` with the reason it cannot tell (Maven under `-q`).
 
 - **Lint gate** (3.0, structured since 3.9) — `lintGate?: LintGateProvider`,
   the pack's standard zero-config linter wired as an opt-in guardrail gate (a

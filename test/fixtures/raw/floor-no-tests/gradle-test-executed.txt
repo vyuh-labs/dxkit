@@ -1,0 +1,8 @@
+> Task :compileJava
+> Task :classes
+> Task :compileTestJava
+> Task :testClasses
+> Task :test
+
+BUILD SUCCESSFUL in 4s
+4 actionable tasks: 4 executed

@@ -16,6 +16,7 @@
  *     `test/fixtures/raw/ruby/HARVEST.md`.
  */
 
+import { rspecRanNoTests } from '../src/languages/ruby';
 import { describe, it, expect } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -697,7 +698,12 @@ describe('ruby.correctness', () => {
       const cmd = ruby.correctness!.affectedTests(
         ctx(dir, { changedFiles: ['lib/a.rb', 'spec/a_spec.rb'] }),
       );
-      expect(cmd).toEqual({ label: 'affected-tests', bin: 'rspec', args: ['spec/a_spec.rb'] });
+      expect(cmd).toEqual({
+        label: 'affected-tests',
+        bin: 'rspec',
+        args: ['spec/a_spec.rb'],
+        ranNoTests: rspecRanNoTests,
+      });
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
@@ -708,7 +714,12 @@ describe('ruby.correctness', () => {
     try {
       fs.writeFileSync(path.join(dir, 'Gemfile'), "gem 'rspec'\n");
       const cmd = ruby.correctness!.affectedTests(ctx(dir, { scope: 'full' }));
-      expect(cmd).toEqual({ label: 'affected-tests', bin: 'rspec', args: [] });
+      expect(cmd).toEqual({
+        label: 'affected-tests',
+        bin: 'rspec',
+        args: [],
+        ranNoTests: rspecRanNoTests,
+      });
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }

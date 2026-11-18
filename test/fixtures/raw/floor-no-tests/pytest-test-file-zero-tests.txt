@@ -1,0 +1,6 @@
+============================= test session starts ==============================
+platform linux -- Python 3.14.4, pytest-9.2.0, pluggy-1.7.0
+rootdir: /work/py0b
+collected 0 items
+
+============================ no tests ran in 0.03s =============================

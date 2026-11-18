@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { cargoTestRanNoTests } from '../src/languages/rust';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -199,6 +200,7 @@ describe('rust.correctness', () => {
       label: 'affected-tests',
       bin: 'cargo',
       args: ['test'],
+      ranNoTests: cargoTestRanNoTests,
     });
   });
 

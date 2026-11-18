@@ -21,17 +21,12 @@
  */
 import type { AnalysisTrustContext } from '../analysis-trust';
 import type { CorrectnessFloorResult } from '../analyzers/correctness/run';
-import type { FloorBaseCheck } from '../analyzers/correctness/attribution';
+import { toFloorBaseCheck, type FloorBaseCheck } from '../analyzers/correctness/attribution';
 import type { ImpactSummary } from '../baseline/impact';
 
 /** Entry-floor run → the attribution comparator's base-check shape. */
 export function toFloorBaseChecks(floor: CorrectnessFloorResult): FloorBaseCheck[] {
-  return floor.checks.map((c) => ({
-    pack: c.pack,
-    label: c.label,
-    status: c.status === 'pass' ? 'pass' : c.status === 'fail' ? 'fail' : 'skipped',
-    ...(c.findings !== undefined ? { findings: c.findings } : {}),
-  }));
+  return floor.checks.map(toFloorBaseCheck);
 }
 
 export interface GuardrailGateResult {

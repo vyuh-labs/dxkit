@@ -30,6 +30,7 @@ import * as logger from './logger';
 import { pathForBaseline, readBaselineFile, type BaselineFile } from './baseline/baseline-file';
 import { captureFloorDebt, failingFloorDebt, type FloorDebt } from './baseline/floor-debt';
 import { checkKey } from './analyzers/correctness/attribution';
+import { describeNoTestsCheck } from './analyzers/correctness/run';
 import { activeDeferredEntries, daysUntilDate, tryLoadAllowlist } from './allowlist/file';
 import { KIND_DEFAULT_SEVERITY, describeEntryLocation } from './baseline/check';
 import type { BaselineEntry, FindingSeverity } from './baseline/types';
@@ -99,6 +100,9 @@ export interface DebtReport {
     readonly failures: ReadonlyArray<DebtFloorFailure>;
     readonly fixedSinceBaseline: ReadonlyArray<string>;
     readonly unobservable: ReadonlyArray<string>;
+    /** Checks whose test command ran ZERO tests (4.5.0) — never counted as
+     *  passing; listed as inventory. */
+    readonly noTests: ReadonlyArray<string>;
   };
   readonly findings: {
     readonly total: number;
@@ -165,6 +169,11 @@ export function buildDebtReport(
   const unobservable = (live?.checks ?? [])
     .filter((c) => c.status.startsWith('skipped') && (c.unmet || c.output))
     .map((c) => `${c.pack} ${c.label}: ${c.unmet ?? c.output ?? ''}`);
+  // A test command that ran zero tests (4.5.0) is debt to name, not a pass:
+  // the floor has no evidence the code works there. Captured at full scope.
+  const noTests = (live?.checks ?? [])
+    .filter((c) => c.status === 'no-tests')
+    .map((c) => describeNoTestsCheck(c, 'full'));
 
   const byKind = new Map<string, BaselineEntry[]>();
   for (const e of baseline?.findings ?? []) {
@@ -240,6 +249,9 @@ export function buildDebtReport(
       `Burn down ${g.count} ${g.kind} finding(s) (${sev}) — fingerprints in the baseline file`,
     );
   }
+  if (noTests.length > 0) {
+    plan.push(`Add tests where none run (not counted as passing): ${noTests.join('; ')}`);
+  }
   if (unobservable.length > 0) {
     plan.push(
       `Unmeasurable here (install the toolchain or rely on CI): ${unobservable.join('; ')}`,
@@ -280,7 +292,7 @@ export function buildDebtReport(
     schema: 'dxkit.debt.v1',
     baselinePresent: baseline !== null,
     floorSource: opts.stored ? 'stored' : 'live',
-    floor: { live, baseline: storedFloor, failures, fixedSinceBaseline, unobservable },
+    floor: { live, baseline: storedFloor, failures, fixedSinceBaseline, unobservable, noTests },
     findings: { total: baseline?.findings.length ?? 0, groups },
     deferred,
     plan,
@@ -304,7 +316,11 @@ export function renderDebtConsole(report: DebtReport): string {
   if (report.floor.live === null) {
     lines.push('  no active language pack provides a floor');
   } else if (report.floor.failures.length === 0) {
-    lines.push('  all measurable checks pass');
+    lines.push(
+      report.floor.noTests.length > 0
+        ? '  no measurable check fails, but some test commands ran zero tests (below)'
+        : '  all measurable checks pass',
+    );
   } else {
     for (const f of report.floor.failures) {
       const tag =
@@ -323,6 +339,7 @@ export function renderDebtConsole(report: DebtReport): string {
   if (report.floor.fixedSinceBaseline.length > 0) {
     lines.push(`  fixed since baseline: ${report.floor.fixedSinceBaseline.join(', ')}`);
   }
+  for (const z of report.floor.noTests) lines.push(`  ○ ${z}`);
   for (const u of report.floor.unobservable) lines.push(`  ~ ${u}`);
   lines.push('');
   lines.push(`FINDING DEBT (${report.findings.total} baselined finding(s))`);

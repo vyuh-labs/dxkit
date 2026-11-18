@@ -36,7 +36,12 @@ export { buildRepairMessage };
 // that would be an import cycle).
 import { buildLedgerEvent, type CheckStatus, type LedgerEvent } from './ledger';
 import { dxkitCli } from '../self-invocation';
-import { buildFloorRepairMessage, floorLedgerStatuses, type FloorGateOutcome } from './floor-gate';
+import {
+  buildFloorRepairMessage,
+  describeFloorNoTests,
+  floorLedgerStatuses,
+  type FloorGateOutcome,
+} from './floor-gate';
 import { runConfiguredTests, type StopHookPayload } from './stop-gate-io';
 import { buildOrderRepairMessage, readOrderScope, unresolvedOrderIds } from './order-scope';
 
@@ -348,7 +353,15 @@ export async function computeStopGate(
     stop_hook_active: stopActive,
     // Prefer the explicit configured-test status; otherwise report what the
     // correctness floor's affected-test stage saw.
-    tests_status: tests.status !== 'not_configured' ? tests.status : floorStatuses.tests_status,
+    // A floor that PROVED zero tests ran keeps `no_tests` even when the
+    // configured command exits 0 (4.5.0): that command is often the same
+    // empty suite under `--passWithNoTests`, and the ledger must not record
+    // a pass the floor disproved.
+    tests_status:
+      tests.status === 'not_configured' ||
+      (tests.status === 'pass' && floorStatuses.tests_status === 'no_tests')
+        ? floorStatuses.tests_status
+        : tests.status,
     lint_status: 'not_configured',
     typecheck_status: floorStatuses.typecheck_status,
     ...floorDisclosure,
@@ -356,6 +369,13 @@ export async function computeStopGate(
   });
   // An allow's message reaches the operator on stderr — a disclosed
   // order-scope skip (malformed file, undecidable verifier) rides it so
-  // the skip is never silent.
-  return { outcome: 'allow', event, message: orderNote };
+  // the skip is never silent. A floor whose test command ran zero tests
+  // (or whose suite vanished since the loop started) rides it the same way:
+  // an allowed Stop must never read as "tests pass" when none ran.
+  const noTestsNote = describeFloorNoTests(floor);
+  return {
+    outcome: 'allow',
+    event,
+    message: [orderNote, noTestsNote].filter((l) => l !== '').join('\n'),
+  };
 }

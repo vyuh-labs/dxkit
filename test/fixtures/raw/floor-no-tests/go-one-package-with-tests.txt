@@ -1,0 +1,2 @@
+?   	example.com/app	[no test files]
+ok  	example.com/app/internal/store	0.004s

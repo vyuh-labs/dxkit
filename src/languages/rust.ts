@@ -942,6 +942,26 @@ const RUST_BUILD_EXECUTION: ExecutionRequirement = {
   weight: 'build',
 };
 
+/**
+ * Did `cargo test` execute ZERO tests? (4.5.0, the pack's `ranNoTests`.)
+ * Every test binary (unit, integration, doc-tests) prints `running N test(s)`
+ * on stdout, and a crate with no tests prints only `running 0 tests` and
+ * exits 0. Zero means at least one such line and every N is 0; a crate whose
+ * unit tests ran but whose doc-tests are empty (`running 1 test` then
+ * `running 0 tests`) ran tests. Real output pinned in
+ * `test/fixtures/raw/floor-no-tests/`.
+ */
+export function cargoTestRanNoTests(run: {
+  readonly code: number;
+  readonly output: string;
+}): boolean {
+  if (run.code !== 0) return false;
+  const counts = [...run.output.replace(/\r/g, '').matchAll(/^running (\d+) tests?\s*$/gm)].map(
+    (m) => Number(m[1]),
+  );
+  return counts.length > 0 && counts.every((n) => n === 0);
+}
+
 const rustCorrectnessProvider: CorrectnessProvider = {
   execution: () => RUST_BUILD_EXECUTION,
 
@@ -962,12 +982,18 @@ const rustCorrectnessProvider: CorrectnessProvider = {
             label: 'affected-tests',
             bin: 'cargo',
             args: ['test', ...crates.flatMap((c) => ['-p', c])],
+            ranNoTests: cargoTestRanNoTests,
           };
         }
         // else fall through to whole-workspace `cargo test` (safe default)
       }
     }
-    return { label: 'affected-tests', bin: 'cargo', args: ['test'] };
+    return {
+      label: 'affected-tests',
+      bin: 'cargo',
+      args: ['test'],
+      ranNoTests: cargoTestRanNoTests,
+    };
   },
 
   // The lockfile-sync floor check derives from the ONE install strategy

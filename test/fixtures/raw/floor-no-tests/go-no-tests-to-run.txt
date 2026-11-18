@@ -1,0 +1,2 @@
+ok  	example.com/app	0.002s [no tests to run]
+?   	example.com/app/internal/store	[no test files]

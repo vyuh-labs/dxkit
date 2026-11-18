@@ -1,0 +1,5 @@
+
+> test
+> jest --passWithNoTests
+
+No tests found, exiting with code 0

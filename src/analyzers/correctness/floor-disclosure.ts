@@ -23,13 +23,20 @@
  * A point-in-time failure (no base resolvable) gets the error tier: the
  * check is red anyway; the annotation says why without opening the log.
  *
+ * A fourth, non-failure tier (4.5.0): a test command that ran ZERO tests
+ *   no-tests      → ⚠️ warning — not a pass and not a failure; a suite the
+ *                   change removed (`tests-vanished`, when the base side
+ *                   was observed) is called out by name.
+ * A green check over an empty suite is exactly what this tier exists to
+ * prevent, so it is never silent.
+ *
  * Returns null / [] when there is nothing to shout about — a green floor
  * stays silent.
  */
 import { dxkitCli } from '../../self-invocation';
 import type { SurfaceFloorOutcome } from './surface-run';
-import type { AttributedFloorFailure } from './attribution';
-import type { CorrectnessCheckResult } from './run';
+import { describeTestsVanished, type AttributedFloorFailure } from './attribution';
+import { describeNoTestsCheck, type CorrectnessCheckResult } from './run';
 
 /** The check's own reproduction command, or null for an IN-PROCESS check
  *  (import-resolution runs no shell command — rendering its empty argv
@@ -84,10 +91,31 @@ function tiers(outcome: SurfaceFloorOutcome): {
   };
 }
 
+/** The no-tests tier: one disclosure line per check that ran zero tests,
+ *  the vanished phrasing when the base side proved tests ran there. */
+function noTestsLines(outcome: SurfaceFloorOutcome): string[] {
+  const checks = (outcome.result?.checks ?? []).filter((c) => c.status === 'no-tests');
+  return checks.map((c) => {
+    const a = outcome.noTestsAttributed?.find(
+      (x) => x.check.pack === c.pack && x.check.label === c.label,
+    );
+    return a?.transition === 'tests-vanished'
+      ? describeTestsVanished(a)
+      : describeNoTestsCheck(c, outcome.result?.scope);
+  });
+}
+
 /** Markdown block for the PR comment + step summary; null when green. */
 export function floorDisclosureMarkdown(outcome: SurfaceFloorOutcome): string | null {
   const { netNew, preExisting, unattributed, pointInTime } = tiers(outcome);
-  if (!netNew.length && !preExisting.length && !unattributed.length && !pointInTime.length) {
+  const zeros = noTestsLines(outcome);
+  if (
+    !netNew.length &&
+    !preExisting.length &&
+    !unattributed.length &&
+    !pointInTime.length &&
+    !zeros.length
+  ) {
     return null;
   }
   const lines: string[] = [];
@@ -134,6 +162,17 @@ export function floorDisclosureMarkdown(outcome: SurfaceFloorOutcome): string | 
     for (const c of unattributed) lines.push(...mdCheck(c));
     lines.push('');
   }
+  if (zeros.length > 0) {
+    lines.push('## ⚠️ Correctness floor: NO TESTS RAN (not a pass — not blocking)');
+    lines.push('');
+    lines.push(
+      '> The test command ran and executed zero tests, so the floor has no evidence that the ' +
+        'code works. This is not counted as passing anywhere.',
+    );
+    lines.push('');
+    for (const z of zeros) lines.push(`- ${z}`);
+    lines.push('');
+  }
   return lines.join('\n');
 }
 
@@ -160,6 +199,9 @@ export function githubAnnotations(outcome: SurfaceFloorOutcome): string[] {
     out.push(
       `::warning title=dxkit floor — unattributed failure::${c.pack} ${c.label} fails here and the base side could not be observed. Review advised.`,
     );
+  }
+  for (const z of noTestsLines(outcome)) {
+    out.push(`::warning title=dxkit floor — no tests ran (not a pass)::${z}`);
   }
   return out;
 }

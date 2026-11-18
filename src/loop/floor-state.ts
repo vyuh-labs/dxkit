@@ -31,18 +31,26 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { LEDGER_DIR } from './ledger';
 import type { CorrectnessCheckResult, CorrectnessFloorResult } from '../analyzers/correctness/run';
-import { attributeFloorFailures } from '../analyzers/correctness/attribution';
+import {
+  attributeFloorFailures,
+  attributeNoTests,
+  toFloorBaseCheck,
+  type AttributedNoTests,
+} from '../analyzers/correctness/attribution';
 
 /** File under `.dxkit/loop/` holding the entry snapshot. */
 export const FLOOR_BASELINE_FILE = 'floor-baseline.json';
 
-/** One check's outcome as recorded in the entry snapshot. Only `pass` / `fail`
- *  are stored — a skipped check (tool unavailable / nothing to run) carries no
- *  liveness signal and is omitted so it can never mask a later real failure. */
+/** One check's outcome as recorded in the entry snapshot. Only `pass` /
+ *  `fail` / `no-tests` are stored — a skipped check (tool unavailable /
+ *  nothing to run) carries no liveness signal and is omitted so it can never
+ *  mask a later real failure. `no-tests` IS an observation (the test command
+ *  ran and found zero tests), kept so a later failing test reads as
+ *  arriving with the change and a suite that later vanishes is named. */
 export interface FloorCheckState {
   readonly pack: string;
   readonly label: string;
-  readonly status: 'pass' | 'fail';
+  readonly status: 'pass' | 'fail' | 'no-tests';
   /** Finding-level identities of a failing check that decomposes into
    *  findings (the import-resolution check's unresolved specifiers).
    *  Persisted so the comparator can diff the SET at a later Stop — an
@@ -67,16 +75,16 @@ function floorBaselinePath(cwd: string): string {
   return path.join(cwd, LEDGER_DIR, FLOOR_BASELINE_FILE);
 }
 
-/** Keep only the pass/fail checks — skipped ones carry no liveness signal. */
+/** Keep only the observed checks (through the ONE base projection) —
+ *  skipped ones carry no liveness signal. */
 function liveChecks(checks: readonly CorrectnessCheckResult[]): FloorCheckState[] {
-  return checks
-    .filter((c) => c.status === 'pass' || c.status === 'fail')
-    .map((c) => ({
-      pack: c.pack,
-      label: c.label,
-      status: c.status as 'pass' | 'fail',
-      ...(c.findings ? { findings: c.findings } : {}),
-    }));
+  const kept: FloorCheckState[] = [];
+  for (const c of checks) {
+    const b = toFloorBaseCheck(c);
+    if (b.status === 'skipped') continue;
+    kept.push({ ...b, status: b.status });
+  }
+  return kept;
 }
 
 /**
@@ -153,4 +161,17 @@ export function netNewFloorFailures(
           }
         : a.check,
     );
+}
+
+/**
+ * What each current `no-tests` check means against the entry snapshot
+ * (4.5.0) — the loop's consumer of the ONE `attributeNoTests` comparator, so
+ * a suite the agent removed is named at the Stop instead of reading as a
+ * clean run. Never blocks; the Stop-gate discloses it.
+ */
+export function floorNoTestsTransitions(
+  current: CorrectnessFloorResult,
+  baseline: FloorBaseline | null,
+): AttributedNoTests[] {
+  return attributeNoTests(current, baseline === null ? null : baseline.checks);
 }

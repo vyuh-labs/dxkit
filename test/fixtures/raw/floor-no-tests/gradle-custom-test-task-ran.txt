@@ -1,0 +1,6 @@
+> Task :compileJava UP-TO-DATE
+> Task :compileTestJava NO-SOURCE
+> Task :integrationTest
+> Task :test NO-SOURCE
+
+BUILD SUCCESSFUL in 6s

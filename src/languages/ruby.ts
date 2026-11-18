@@ -982,6 +982,7 @@ const rubyCorrectnessProvider: CorrectnessProvider = {
         label: 'affected-tests',
         bin: 'rspec',
         args: affected ? [...changedTests] : [],
+        ranNoTests: rspecRanNoTests,
       };
     }
     // minitest / test-unit: `load` each test file so bundled minitest's at_exit
@@ -989,9 +990,50 @@ const rubyCorrectnessProvider: CorrectnessProvider = {
     const loadArgs = affected
       ? ['-e', 'ARGV.each { |f| load f }', ...changedTests]
       : ['-e', 'Dir.glob("test/**/*_test.rb").each { |f| load f }'];
-    return { label: 'affected-tests', bin: 'ruby', args: ['-Itest', '-Ilib', ...loadArgs] };
+    return {
+      label: 'affected-tests',
+      bin: 'ruby',
+      args: ['-Itest', '-Ilib', ...loadArgs],
+      ranNoTests: minitestLoadRanNoTests,
+    };
   },
 };
+
+/**
+ * Did RSpec execute ZERO examples? (4.5.0, the pack's `ranNoTests`.) RSpec
+ * exits 0 on an empty run and prints `0 examples, 0 failures` (with
+ * `No examples found.` above it). Any nonzero example count vetoes it. Real
+ * output pinned in `test/fixtures/raw/floor-no-tests/`.
+ */
+export function rspecRanNoTests(run: { readonly code: number; readonly output: string }): boolean {
+  if (run.code !== 0) return false;
+  const out = run.output.replace(/\r/g, '');
+  if (/^[1-9]\d* examples?, /m.test(out)) return false;
+  return /^0 examples, 0 failures/m.test(out);
+}
+
+/**
+ * Did the minitest / test-unit load command execute ZERO tests? (4.5.0.)
+ * The floor LOADS the test files itself, so two shapes prove zero:
+ *   - every summary reads zero (minitest `0 runs, 0 assertions`, test-unit
+ *     `0 tests, 0 assertions`) and none reads more;
+ *   - the output is EMPTY on exit 0: nothing was loaded (no test file
+ *     matched), because minitest's at_exit reporter and test-unit both
+ *     always print a summary once any test file runs.
+ * Real output pinned in `test/fixtures/raw/floor-no-tests/`.
+ */
+export function minitestLoadRanNoTests(run: {
+  readonly code: number;
+  readonly output: string;
+}): boolean {
+  if (run.code !== 0) return false;
+  const out = run.output.replace(/\r/g, '');
+  if (out.trim() === '') return true;
+  const counts = [...out.matchAll(/^(\d+) (?:runs|tests), \d+ assertions/gm)].map((m) =>
+    Number(m[1]),
+  );
+  return counts.length > 0 && counts.every((n) => n === 0);
+}
 
 /**
  * Lint-GATE provider: rubocop, for the net-new lint gate. Resolved via the tool
