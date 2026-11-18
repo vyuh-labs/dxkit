@@ -1,0 +1,42 @@
+{
+  "schema": "remediate-landing.v1",
+  "task": "fix-vulns",
+  "action": "land",
+  "branch": "dxkit/remediate-fix-vulns",
+  "head": "ba0df825d60bed8e1132c442ba4d45a633c49a76",
+  "outcome": "partially-landed",
+  "baseHead": "52f1ac9978261cf2399714b6e1bd81d8fa5af42c",
+  "defaultBranch": "main",
+  "prTitle": "dxkit remediate: fix-vulns (partial: some orders dropped, see the ledger)",
+  "prBody": "## What changed (generated)\n\n_Diff-scoped summary computed by dxkit from the branch commits and files.\nThe verification ledger below is the contractual record._\n\n**Other**\n- third\n\n_1 file touched across 1 top-level area._\n\n---\n\nTHE VERIFICATION LEDGER\n\n_Full ledger (every order, one line each): committed on this branch at `.dxkit/lanes/remediate-fix-vulns.ledger.md`. This body is the summary; it is capped to GitHub's PR body size._",
+  "draft": false,
+  "ledgerPath": ".dxkit/lanes/remediate-fix-vulns.jsonl",
+  "runLedgerPath": ".dxkit/lanes/remediate-fix-vulns.ledger.md",
+  "orderRows": [
+    {
+      "schema_version": 1,
+      "timestamp": "2026-11-18T03:02:18.482Z",
+      "lane": "remediate",
+      "task": "fix-vulns",
+      "dxkitVersion": "4.4.8",
+      "policyHash": "f9d47cbf33dd01f2",
+      "orderId": "floor-failure:a",
+      "class": "floor-failure",
+      "tier": "agent",
+      "outcome": "verified"
+    },
+    {
+      "schema_version": 1,
+      "timestamp": "2026-11-18T03:02:18.482Z",
+      "lane": "remediate",
+      "task": "fix-vulns",
+      "dxkitVersion": "4.4.8",
+      "policyHash": "f9d47cbf33dd01f2",
+      "orderId": "dep-advisory:tmp",
+      "class": "dep-advisory",
+      "tier": "agent",
+      "outcome": "guardrail-red",
+      "detail": "guardrail: the final guardrail attributed blocking finding(s) to this order"
+    }
+  ]
+}
