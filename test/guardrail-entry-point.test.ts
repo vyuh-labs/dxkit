@@ -290,6 +290,17 @@ describe.skipIf(!POSIX)('the script, executed', () => {
     expect(calls(log)).toContain('guardrail check --name main');
   });
 
+  it('cache transport: the fallback reads the SELECTED baseline, not any baseline file', () => {
+    // Another baseline in the directory must not suppress the fallback when
+    // the one this run gates against is missing.
+    fs.renameSync(
+      path.join(dir, '.dxkit', 'baselines', 'main.json'),
+      path.join(dir, '.dxkit', 'baselines', 'other.json'),
+    );
+    run(dir, [], { STUB_ANCHOR: 'cache' });
+    expect(calls(log)).toContain('guardrail check --name main --mode ref-based --ref origin/main');
+  });
+
   it('--report: the PR comment leads with the guardrail verdict, then drift, then the floor', () => {
     const report = path.join(dir, 'guardrail-report.md');
     const r = run(dir, ['--report', 'guardrail-report.md'], {

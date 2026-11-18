@@ -251,7 +251,7 @@ check_guardrail() {
       # base would read that base's own drift as this change's regressions.
       say "base '$BASE' is not the default branch '$DEFAULT_BRANCH': gating against origin/$BASE (ref-based), since the committed baseline is anchored to the default branch."
       set -- "$@" --mode ref-based --ref "origin/$BASE"
-    elif ! ls .dxkit/baselines/*.json >/dev/null 2>&1 &&
+    elif [ ! -f "$baseline_file" ] &&
       [ "$("$DXKIT" policy get baseline.anchor --default tree 2>/dev/null)" = cache ]; then
       # The cache transport keeps the anchor in the CI cache, never in the
       # tree: a cold cache in CI, or any local run, has no anchor file.
@@ -333,7 +333,10 @@ write_report() {
     elif [ "$R_floor_status" = not-run ]; then
       printf '\n\n### Correctness floor: %s\n' "$(describe_result floor)"
     fi
-  } >"$REPORT"
+  } >"$WORK/report.md" || return 1
+  # One checked copy: the group's own status is its last command's, which
+  # would hide a failed write earlier in it.
+  cat "$WORK/report.md" >"$REPORT"
 }
 
 summarize() {
