@@ -1,1 +1,1 @@
-{"duplication":{"mode":"warn"}}
+{"duplication":{"mode":"block","loneSeams":"block"}}
