@@ -1,1 +1,3 @@
-export const a = 1;
+line one
+line two
+line three
