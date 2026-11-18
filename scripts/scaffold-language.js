@@ -836,6 +836,15 @@ export const ${id}: LanguageSupport = {
     return undefined;
   },
 
+  // Optional: the AGENTS.md heading for what the repo targets, when it is not
+  // displayName + the detected version (a runtime with its own name, a
+  // framework, a version range stated verbatim). Never return defaultVersion.
+  // describeTarget(cwd) { return undefined; },
+
+  // Optional: the product description this ecosystem's manifest states, e.g.
+  // a package manifest's \`description\` field; undefined when none.
+  // detectDescription(cwd) { return undefined; },
+
   // Optional: lookup key in DetectedStack['versions']. Defaults to id.
   // Only override when legacy template/config naming differs (typescript
   // pack uses versionKey: 'node' for historical reasons).

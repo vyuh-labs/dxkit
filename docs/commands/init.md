@@ -68,6 +68,47 @@ CLAUDE.md              # Claude Code shim that points at AGENTS.md
 .vyuh-dxkit.json       # install manifest (config, install flags, evolving file hashes)
 ```
 
+## `AGENTS.md`: the owner section and the stack headings
+
+`AGENTS.md` has two kinds of content. dxkit owns most of it (the dxkit
+commands, the skills list, the per-stack sections, the security rules) and
+refreshes it on `update`. The "About this product" section near the top is
+yours: write what the product is, how to build, run and test it, and the
+domain rules an agent must know, between these two lines:
+
+```markdown
+<!-- dxkit:owner:start -->
+
+...your notes...
+
+<!-- dxkit:owner:end -->
+```
+
+dxkit never rewrites the text between the markers: not on a re-run of
+`init`, not on `update`, not on `update --force`. Editing it does not count
+as editing a dxkit file, so `update` keeps refreshing dxkit's sections around
+it. An edit anywhere else in the file is treated as before: the file becomes
+yours and dxkit leaves it alone, even under `--force`. To get refreshes back,
+move your notes between the markers and restore the rest (or delete the file
+and run `update`, then paste your notes back in).
+
+An install from before the owner section existed gets one on its next
+`update`, provided you never edited the file; an edited one is left as is.
+`uninstall` removes dxkit's sections and keeps your notes as the whole of
+`AGENTS.md` (an empty section is removed with the file).
+
+The line under the title is the description your repo states in its own
+manifest (`package.json` `description`, the pyproject `[project]`
+`description`, a single `.csproj` `<Description>`, `Cargo.toml`,
+`composer.json`). When the repo states none, there is no line; the owner
+section is where the description goes.
+
+Each per-stack heading names what the repo targets, read by the language
+pack: `C# on .NET Framework 4.8 (ASP.NET)`, `C# on .NET 8 (ASP.NET Core)`,
+`Node.js >=20`, `Python >=3.10`, `Go 1.22`. When the repo states nothing,
+the heading is the bare language name; dxkit's default toolchain version is
+never printed as if the repo had declared it.
+
 ## `--full` adds
 
 - `.githooks/pre-push` — full-mode [guardrail](guardrail.md) hook

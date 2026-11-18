@@ -858,6 +858,12 @@ export const swift: LanguageSupport = {
   },
   defaultVersion: '6.1',
   detectVersion: detectSwiftVersion,
+  // Only a real toolchain pin names what the repo targets; the pbxproj
+  // SWIFT_VERSION `detectVersion` also reads is a language MODE (`5.0`).
+  describeTarget: (cwd) => {
+    const toolchain = detectSwiftToolchainVersion(cwd);
+    return toolchain ? `Swift ${toolchain}` : 'Swift';
+  },
   // devcontainerFeature: deliberately omitted — no swift feature exists in
   // ghcr.io/devcontainers or the 450-feature community registry (verified
   // 2026-07). Swift's canonical devcontainer story is a BASE IMAGE

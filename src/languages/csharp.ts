@@ -18,6 +18,13 @@ import { findTool, TOOL_DEFS } from '../analyzers/tools/tool-registry';
 import { walkPaths } from '../analyzers/tools/walk-paths';
 import { walkSourceFiles } from '../analyzers/tools/walk-source-files';
 import { readRepoFile } from './version-detect';
+import {
+  describeDotnetTarget,
+  dotnetDescription,
+  dotnetSdkVersion,
+  isDotnetTestProjectContent,
+  readDotnetProjects,
+} from './dotnet-targets';
 import type {
   CapabilityProvider,
   DepVulnsProvider,
@@ -1584,8 +1591,7 @@ function csharpNearestProject(cwd: string, relFile: string): string | null {
  *  non-test project (which would error "no tests"). */
 function csharpIsTestProject(cwd: string, relProj: string): boolean {
   try {
-    const raw = fs.readFileSync(path.join(cwd, relProj), 'utf-8');
-    return /Microsoft\.NET\.Test\.Sdk|<IsTestProject>\s*true|\b(xunit|nunit|MSTest)\b/i.test(raw);
+    return isDotnetTestProjectContent(fs.readFileSync(path.join(cwd, relProj), 'utf-8'));
   } catch {
     return false;
   }
@@ -1919,21 +1925,16 @@ const csharpLintGateProvider: LintGateProvider = {
 };
 
 /**
- * The .NET SDK version this repo targets — from a `.csproj` TargetFramework(s)
- * or `global.json`. `net9.0` / `net9.0-windows` → `'9.0'` so CI provisions .NET
- * 9 (setup-dotnet + the devcontainer feature). The TFM tag may carry an OS
- * suffix (`net9.0-windows`) — capture the first `netX.Y` regardless. `.csproj`
- * discovery is depth-aware (enterprise layouts nest them deep).
+ * The .NET SDK version this repo targets, for provisioning (setup-dotnet + the
+ * devcontainer feature): the highest modern `netX.Y` any project targets
+ * (`net9.0` / `net9.0-windows` → `'9.0'`; SDK N builds every lower target),
+ * else `global.json`'s SDK pin. Read from the one project parse
+ * (`dotnet-targets.ts`) that also feeds the AGENTS.md label, so the two can
+ * never disagree about which projects exist. Discovery is depth-unlimited.
  */
 function detectCsharpVersion(cwd: string): string | undefined {
-  // Depth-UNLIMITED discovery via the canonical walker: enterprise .NET layouts
-  // nest .csproj files 6–9 deep, past any hardcoded cap (G_v4_12).
-  const csproj = walkPaths(cwd, { extensions: ['.csproj'] })[0];
-  if (csproj) {
-    const content = readRepoFile(cwd, csproj);
-    const m = content.match(/<TargetFrameworks?>[^<]*?net(\d+\.\d+)/);
-    if (m) return m[1];
-  }
+  const fromProjects = dotnetSdkVersion(readDotnetProjects(cwd));
+  if (fromProjects) return fromProjects;
   const globalJson = readRepoFile(cwd, 'global.json');
   if (globalJson) {
     try {
@@ -2312,6 +2313,13 @@ export const csharp: LanguageSupport = {
   },
   defaultVersion: '8.0',
   detectVersion: detectCsharpVersion,
+  // The AGENTS.md heading names the runtime the projects target (`.NET
+  // Framework 4.8`, `.NET 8`) and the app model where the project file makes
+  // it evident, never `C# <sdk version>` (which reads as a language version).
+  // A target it cannot name stays bare `C#`: never the generic fallback to
+  // `detectVersion`, whose global.json SDK pin would print `C# 8.0` again.
+  describeTarget: (cwd) => describeDotnetTarget(readDotnetProjects(cwd)) ?? 'C#',
+  detectDescription: (cwd) => dotnetDescription(readDotnetProjects(cwd)),
   cliBinaries: ['dotnet'],
   devcontainerFeature: {
     name: 'ghcr.io/devcontainers/features/dotnet:2',

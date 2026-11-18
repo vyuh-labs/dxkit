@@ -1688,6 +1688,33 @@ if [ -n "$RULE15_MANAGED_WRITE" ]; then
   ERRORS=$((ERRORS + 1))
 fi
 
+# ─── Owner section (4.5.0): one module splits / splices / hashes it ─────────
+# AGENTS.md carries an owner-maintained section dxkit never rewrites. What the
+# markers are, how a file splits around them, how a regenerated file is
+# spliced back together, and how provenance hashes the section live ONLY in
+# src/owner-section.ts. A second copy of the marker, or a raw sha256() on the
+# managed-file provenance paths (generator + uninstall), is a second
+# definition of "is this file user-modified" that would read an owner edit as
+# a user edit (or clobber it). Behaviour is pinned by
+# test/owner-section-parity.test.ts. Annotate '// owner-section-ok' for a
+# justified exception.
+OWNER_MARKER_ROGUE=$(grep -rnE "dxkit:owner:" src --include='*.ts' 2>/dev/null \
+  | grep -v "^src/owner-section.ts:" \
+  | grep -v -E '^[^:]*:[0-9]+:[[:space:]]*(//|\*|/\*)' \
+  | grep -v "// owner-section-ok")
+OWNER_HASH_ROGUE=$(grep -nE "(^|[^A-Za-z_.])sha256[[:space:]]*\(" src/generator.ts src/uninstall/*.ts 2>/dev/null \
+  | grep -v -E '^[^:]*:[0-9]+:[[:space:]]*(//|\*|/\*)' \
+  | grep -v "// owner-section-ok")
+if [ -n "$OWNER_MARKER_ROGUE$OWNER_HASH_ROGUE" ]; then
+  echo "❌ Owner-section violation: the owner section is handled outside src/owner-section.ts:"
+  [ -n "$OWNER_MARKER_ROGUE" ] && echo "$OWNER_MARKER_ROGUE"
+  [ -n "$OWNER_HASH_ROGUE" ] && echo "$OWNER_HASH_ROGUE"
+  echo "   → Use splitOwnerSection / spliceOwnerSection / managedContentHash from"
+  echo "     src/owner-section.ts (the manifest hash must be owner-section-aware)."
+  echo "   → Annotate '// owner-section-ok' for a justified exception (rare)."
+  ERRORS=$((ERRORS + 1))
+fi
+
 # ─── Rule 16: capability-registry parity (block-if-unregistered) ────────────
 # Every top-level CLI command MUST be registered in the capability registry
 # (the COMMANDS descriptor data in src/discovery/command-defs.ts, re-exported by

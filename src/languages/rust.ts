@@ -42,7 +42,7 @@ import type {
   TestFrameworkResult,
 } from './capabilities/types';
 import type { LanguageSupport, LintSeverity } from './types';
-import { readRepoFile } from './version-detect';
+import { readRepoFile, tomlTableString } from './version-detect';
 import type { LintGateProvider, RawLocatedFinding } from './capabilities/lint-gate';
 import { asRecord, jsonLines, num, str } from './capabilities/lint-structured';
 import { hashFirstConfig, toolVersionInput } from './capabilities/recall-inputs';
@@ -1239,6 +1239,8 @@ export const rust: LanguageSupport = {
   },
   defaultVersion: 'stable',
   detectVersion: detectRustVersion,
+  detectDescription: (cwd) =>
+    tomlTableString(readRepoFile(cwd, 'Cargo.toml'), 'package', 'description'),
   cliBinaries: ['rustc', 'cargo'],
   devcontainerFeature: {
     name: 'ghcr.io/devcontainers/features/rust:1',

@@ -2,6 +2,8 @@
 
 Project context lives in [`AGENTS.md`](./AGENTS.md) (open-standard, read by every coding agent). This file is Claude-Code-specific config that points at it.
 
+What the product is, and how to build, run and test it, lives in the owner-maintained "About this product" section of `AGENTS.md`. Put product notes there, not here: an edit to this file stops dxkit refreshing it.
+
 Whenever Claude Code starts a session in this repo, it reads BOTH files: this one (Claude-specific shortcuts) and `AGENTS.md` (project prose).
 
 ## dxkit skills

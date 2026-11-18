@@ -32,6 +32,10 @@ per-file provenance:
   overwritten by dxkit is removed. Non-evolving files are hash-guarded:
   if you edited one since dxkit wrote it, it is skipped and warned about
   unless you pass `--force`.
+- **The owner section of `AGENTS.md` is kept.** When the section between
+  the `dxkit:owner` markers holds text, `AGENTS.md` is reduced to that text
+  instead of being deleted (an edit outside the section is skipped and
+  warned about, as above; `--force` then removes only dxkit's part).
 - **Your files are never deleted.** An entry with `skipped` provenance is
   a file that pre-existed dxkit; it is left alone even under `--force`.
 - **Merged files are reverted, not deleted.** `.gitignore`, `CLAUDE.md`,

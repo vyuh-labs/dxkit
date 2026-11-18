@@ -39,7 +39,7 @@ import type {
   TestFrameworkResult,
 } from './capabilities/types';
 import type { LanguageSupport, LintSeverity } from './types';
-import { readRepoFile } from './version-detect';
+import { jsonManifestString, readRepoFile } from './version-detect';
 import type { LintGateProvider, RawLocatedFinding } from './capabilities/lint-gate';
 import { asRecord, extractJsonBlob, num, str } from './capabilities/lint-structured';
 import { hashFirstConfig, toolVersionInput } from './capabilities/recall-inputs';
@@ -856,6 +856,19 @@ export const php: LanguageSupport = {
   },
   defaultVersion: '8.4',
   detectVersion: detectPhpVersion,
+  // composer's `require.php` constraint verbatim (`^8.1`), not its floor.
+  describeTarget: (cwd) => {
+    try {
+      const c = JSON.parse(readRepoFile(cwd, 'composer.json') || '{}') as {
+        require?: Record<string, unknown>;
+      };
+      const php = c.require?.php;
+      return typeof php === 'string' && php.trim() ? `PHP ${php.trim()}` : undefined;
+    } catch {
+      return undefined;
+    }
+  },
+  detectDescription: (cwd) => jsonManifestString(cwd, 'composer.json', 'description'),
   devcontainerFeature: {
     name: 'ghcr.io/devcontainers/features/php:1',
     opts: { version: '8.4' },

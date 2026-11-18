@@ -4,7 +4,7 @@ import * as path from 'path';
 import { ResolvedConfig, GenerationMode, Manifest } from './types';
 import { buildVariables, buildConditions, VERSION } from './constants';
 import { processTemplate } from './template-engine';
-import { sha256 } from './files';
+import { managedContentHash, OWNER_SECTION_FILES, spliceOwnerSection } from './owner-section';
 import { activeLanguagesFromStack, buildElsewhereLines, repoBuildsElsewhere } from './languages';
 import { dxkitCli, claudeHookCommand } from './self-invocation';
 import { decideUpdateDisposition } from './update-disposition';
@@ -290,7 +290,10 @@ export async function generate(
     if (writeResult === 'created') result.created.push(rel);
     else result.overwritten.push(rel);
     result.manifest.files[rel] = {
-      hash: evolving ? null : content ? sha256(content) : null,
+      // The owner-section-aware hash (`managedContentHash`): for AGENTS.md the
+      // owner's text is outside provenance, so editing it never reads as a
+      // user-modified file.
+      hash: evolving ? null : content ? managedContentHash(rel, content) : null,
       evolving,
       provenance: writeResult,
     };
@@ -323,29 +326,59 @@ export async function generate(
     const rel = path.relative(targetDir, outputPath);
     const exists = fs.existsSync(outputPath);
 
+    const userMergeTarget = USER_MERGE_TARGETS.has(rel);
     const decision =
       priorManifest === null
-        ? // Fresh init — the historical skip-if-exists semantics, verbatim.
-          exists && (evolving || !force)
+        ? // Fresh init — skip-if-exists; --force re-applies only files the user
+          // does not extend. A user-merge target (a project's own AGENTS.md /
+          // CLAUDE.md) that dxkit has no record of is never overwritten.
+          exists && (evolving || !force || userMergeTarget)
           ? 'skip'
           : 'write'
         : decideUpdateDisposition({
             exists,
             evolving,
             priorEntry: priorManifest.files[rel],
-            onDiskHash: () => sha256(fs.readFileSync(outputPath, 'utf-8')),
+            onDiskHash: () => managedContentHash(rel, fs.readFileSync(outputPath, 'utf-8')),
             force,
-            userMergeTarget: USER_MERGE_TARGETS.has(rel),
+            userMergeTarget,
           });
 
     if (decision === 'skip') {
       trackSkipped(rel, evolving);
+      const prior = priorManifest?.files[rel];
+      if (exists && OWNER_SECTION_FILES.has(rel) && prior?.hash && prior.provenance !== 'skipped') {
+        // dxkit owns it and the normal-form hash moved: an edit OUTSIDE the
+        // owner section. Say how to get refreshes back instead of a bare skip.
+        logger.dim(
+          `  ${rel}: edited outside its owner section, so dxkit left it as is. Move your notes between the dxkit:owner markers (or into a fresh copy) to get dxkit's sections refreshed again.`,
+        );
+      }
       return;
+    }
+    // An owner-section file keeps the owner's text: the rendered template is
+    // spliced around the body on disk (the ONE splice, `owner-section.ts`).
+    let toWrite = content;
+    if (!copyFrom && OWNER_SECTION_FILES.has(rel)) {
+      const spliced = spliceOwnerSection(
+        content,
+        exists ? fs.readFileSync(outputPath, 'utf-8') : null,
+      );
+      if (spliced === null) {
+        // The template carries no owner section but the file does: writing
+        // would drop the owner's text. Never.
+        trackSkipped(rel, evolving);
+        logger.warn(
+          `${rel}: kept as is (the new template has no owner section to carry your text)`,
+        );
+        return;
+      }
+      toWrite = spliced;
     }
     fs.mkdirSync(path.dirname(outputPath), { recursive: true });
     if (copyFrom) fs.copyFileSync(copyFrom, outputPath);
-    else fs.writeFileSync(outputPath, content, 'utf-8');
-    trackWritten(rel, exists ? 'overwritten' : 'created', content || null, evolving);
+    else fs.writeFileSync(outputPath, toWrite, 'utf-8');
+    trackWritten(rel, exists ? 'overwritten' : 'created', toWrite || null, evolving);
   }
 
   async function writeTemplate(templatePath: string, outputRel: string, evolving = false) {
