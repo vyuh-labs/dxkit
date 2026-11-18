@@ -218,7 +218,7 @@ describe('installDevcontainer refresh (update delivers new pins)', () => {
     const json = JSON.parse(
       fs.readFileSync(dc('devcontainer.json'), 'utf8').replace(/^\s*\/\/.*$/gm, ''),
     );
-    expect(json.containerEnv).toEqual({ DISABLE_AUTOUPDATER: '1' });
+    expect(json.containerEnv).toEqual({ DISABLE_AUTOUPDATER: '1', DXKIT_CONTAINER_CONTRACT: '1' });
   });
 });
 

@@ -30,6 +30,10 @@ export interface DevcontainerReadiness {
   readonly dxkit: string | null;
   readonly finishedAt: string;
   readonly failures: readonly DevcontainerReadinessFailure[];
+  /** True when the container was built from an older devcontainer.json (an
+   *  existing install whose scripts `update` refreshed): the failures are
+   *  reported as advice and post-create did not fail. */
+  readonly advisory?: boolean;
 }
 
 /** The record at `cwd`, or null when no post-create wrote one (not a
@@ -54,6 +58,7 @@ export function readDevcontainerReadiness(cwd: string): DevcontainerReadiness | 
       dxkit: typeof raw.dxkit === 'string' ? raw.dxkit : null,
       finishedAt: String(raw.finishedAt ?? ''),
       failures,
+      ...(raw.advisory === true ? { advisory: true } : {}),
     };
   } catch {
     return null;
@@ -64,5 +69,8 @@ export function readDevcontainerReadiness(cwd: string): DevcontainerReadiness | 
 export function describeDevcontainerReadiness(r: DevcontainerReadiness): string {
   if (r.ready) return `devcontainer post-create: ready (dxkit ${r.dxkit ?? r.generatedBy})`;
   const steps = r.failures.map((f) => `${f.step}: ${f.reason}`).join('; ');
-  return `devcontainer post-create: NOT ready (${steps})`;
+  const advice = r.advisory
+    ? ' [advice only: the container was built from an older devcontainer.json; adopt the current one to make this strict]'
+    : '';
+  return `devcontainer post-create: NOT ready (${steps})${advice}`;
 }
