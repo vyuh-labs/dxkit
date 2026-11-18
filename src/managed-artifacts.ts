@@ -55,6 +55,8 @@ import {
   installCiGuardrails,
   installCiHostGates,
   installDevcontainer,
+  installGuardrailEntryPoint,
+  guardrailEntryPointIsUserOwned,
   installDxkitDevDependency,
   installHooks,
   installHooksPostinstall,
@@ -64,7 +66,11 @@ import {
   type ShipInstallResult,
 } from './ship-installers';
 import { installClaudeLoop, isClaudeLoopInstalled } from './loop/scaffold';
-import { requiresResolvableCli } from './self-invocation';
+import {
+  GUARDRAIL_ENTRY_POINT,
+  guardrailEntryPointWanted,
+  requiresResolvableCli,
+} from './self-invocation';
 
 /** The `ManifestInstallFlags` keys that map 1:1 to a gated ship surface. */
 type PrimaryFlag =
@@ -134,6 +140,13 @@ export interface ManagedShipSurface {
    * `always` / `derived` surfaces). Sets `flags[gate.flag] = present(cwd)`.
    */
   readonly detectPresent?: (cwd: string) => boolean;
+  /**
+   * For a surface whose path a USER file could occupy (a repo-root file, not
+   * a `dxkit-*` workflow): true when the file there is the user's own. The
+   * installer leaves such a file alone, and uninstall must keep it too, so
+   * both read this one ownership answer.
+   */
+  readonly userOwned?: (cwd: string) => boolean;
 }
 
 /** Exported for the legacy flag-detection sibling — one existence helper. */
@@ -168,6 +181,25 @@ export const MANAGED_SHIP_SURFACES: readonly ManagedShipSurface[] = [
     refreshOnUpdate: true,
     install: (cwd, { force }) => installDevcontainer(cwd, { force }),
     detectPresent: (cwd) => existsRel(cwd, '.devcontainer/devcontainer.json'),
+  },
+  {
+    // The ONE check sequence the hooks, the CI workflow and a developer or
+    // agent all run (see installGuardrailEntryPoint). Derived from its
+    // callers, so it is installed, refreshed and removed with them.
+    id: 'guardrail-entry-point',
+    gate: {
+      kind: 'derived',
+      enabled: (flags) =>
+        guardrailEntryPointWanted({
+          gitHooks: flags.withHooks,
+          ciGuardrails: flags.withCiGuardrails,
+        }),
+    },
+    artifacts: () => [GUARDRAIL_ENTRY_POINT],
+    uninstallDetection: 'flag',
+    refreshOnUpdate: true,
+    install: (cwd, { force }) => installGuardrailEntryPoint(cwd, { force }),
+    userOwned: guardrailEntryPointIsUserOwned,
   },
   {
     id: 'hooks',

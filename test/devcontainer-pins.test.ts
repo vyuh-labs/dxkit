@@ -24,6 +24,7 @@ import { VERSION } from '../src/constants';
 import {
   installCiHostGates,
   installDevcontainer,
+  installGuardrailEntryPoint,
   installHooks,
   renderDevcontainerScript,
   templatesDir,
@@ -307,15 +308,20 @@ describe('no generated template installs an unpinned dxkit', () => {
     }
   });
 
-  it('the hooks render the pinned spec into their install hint', () => {
+  it('the hooks and the entry point they run render the pinned spec (no placeholder left)', () => {
     const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-pins-hooks-'));
     try {
       installHooks(repo, { withPrecommit: true });
       for (const hook of ['pre-push', 'pre-commit']) {
         const content = fs.readFileSync(path.join(repo, '.githooks', hook), 'utf8');
         expect(content, hook).not.toContain('__DXKIT_');
-        expect(content, hook).toContain(`npm install --save-dev @vyuhlabs/dxkit@${VERSION}`);
       }
+      // The hooks resolve dxkit through dxkit-guardrails.sh, which carries the
+      // install hint.
+      installGuardrailEntryPoint(repo);
+      const entry = fs.readFileSync(path.join(repo, 'dxkit-guardrails.sh'), 'utf8');
+      expect(entry).not.toContain('__DXKIT_');
+      expect(entry).toContain(`npm install --save-dev @vyuhlabs/dxkit@${VERSION}`);
     } finally {
       fs.rmSync(repo, { recursive: true, force: true });
     }

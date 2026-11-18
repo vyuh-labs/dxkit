@@ -54,6 +54,16 @@ describe('renderRunbook — repo truth, deterministic, marker-first', () => {
     expect(md).toContain('CANNOT GATE');
   });
 
+  it('names the guardrail entry point as the by-hand way to get the pipeline verdict, when present', () => {
+    const dir = tmpdir();
+    seedRepo(dir);
+    expect(renderRunbook(dir)).not.toContain('./dxkit-guardrails.sh');
+    fs.writeFileSync(path.join(dir, 'dxkit-guardrails.sh'), '#!/bin/sh\n');
+    const md = renderRunbook(dir);
+    expect(md).toContain('**By hand** (`./dxkit-guardrails.sh`)');
+    expect(md).toContain('`--quick` tier');
+  });
+
   it('an empty repo renders honestly: no gates armed, no lanes', () => {
     const dir = tmpdir();
     const md = renderRunbook(dir);
