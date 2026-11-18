@@ -16,11 +16,12 @@ vyuh-dxkit tools install     # install missing tools (interactive)
 
 ## Options
 
-| Option   | Effect                                                                   |
-| -------- | ------------------------------------------------------------------------ |
-| `--all`  | Install ALL tools across every language pack (not just the active stack) |
-| `--yes`  | Skip confirmation prompts before each install                            |
-| `--json` | Stdout JSON (tool status, suitable for CI scripts)                       |
+| Option              | Effect                                                                                                                                                                                                                  |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--all`             | Install ALL tools across every language pack (not just the active stack)                                                                                                                                                |
+| `--yes`             | Skip confirmation prompts before each install                                                                                                                                                                           |
+| `--json`            | Stdout JSON (tool status, suitable for CI scripts)                                                                                                                                                                      |
+| `--fail-on-missing` | `tools install`: exit 1 when a required tool (not optional, not a project-local devDependency) is still missing afterwards. The generated devcontainer's post-create uses it so a partial toolchain reads as not ready. |
 
 ## Tool layers
 

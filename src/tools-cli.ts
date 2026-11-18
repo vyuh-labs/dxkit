@@ -182,12 +182,38 @@ async function confirm(rl: readline.Interface, question: string): Promise<boolea
   return answer.trim().toLowerCase().startsWith('y');
 }
 
-/** Interactive install of missing tools. */
+/**
+ * The required tools still missing after an install run: dxkit-provisioned
+ * (not a project-local devDependency the repo owns), not `optional`, and not
+ * installed by this run. `tools install --fail-on-missing` exits non-zero on
+ * a non-empty list, so a provisioning script (the generated devcontainer's
+ * post-create) can tell a complete toolchain from a partial one instead of
+ * reading every run as success.
+ */
+export function requiredToolsStillMissing(
+  missing: readonly ToolStatus[],
+  results: readonly { name: string; status: 'installed' | 'skipped' | 'failed'; msg?: string }[],
+): string[] {
+  const installed = new Set(results.filter((r) => r.status === 'installed').map((r) => r.name));
+  const builtin = new Set(results.filter((r) => r.msg === 'builtin').map((r) => r.name));
+  return missing
+    .filter(
+      (s) =>
+        s.requirement.layer !== 'optional' &&
+        s.requirement.installScope !== 'project-local' &&
+        !installed.has(s.name) &&
+        !builtin.has(s.name),
+    )
+    .map((s) => s.name);
+}
+
+/** Interactive install of missing tools. Returns the required tools still
+ *  missing afterwards (`requiredToolsStillMissing`). */
 async function runInstall(
   targetPath: string,
   autoYes: boolean,
   options: ToolsInstallOptions = {},
-): Promise<void> {
+): Promise<string[]> {
   // Validate single-tool name early so we fail fast with a useful message.
   if (options.toolName && !TOOL_DEFS[options.toolName]) {
     logger.fail(`Unknown tool: ${options.toolName}`);
@@ -229,7 +255,7 @@ async function runInstall(
   if (options.toolName && notApplicable.length === 1 && missing.length === 0) {
     const reason = notApplicable[0].notApplicableReason ?? 'not applicable to this stack';
     logger.info(`${options.toolName} is not applicable here: ${reason}.`);
-    return;
+    return [];
   }
 
   if (missing.length === 0) {
@@ -246,7 +272,7 @@ async function runInstall(
         `All applicable tools available (${notApplicable.length} n/a for this stack — skipped).`,
       );
     }
-    return;
+    return [];
   }
 
   console.log('');
@@ -330,6 +356,13 @@ async function runInstall(
   // instead of falling back to a wrong-artifact one. Registry-derived, so a new
   // language pack's scanner dir is covered with no workflow edit. No-op off CI.
   exportToolPathsToGithubEnv();
+
+  const stillMissing = requiredToolsStillMissing(missing, results);
+  if (stillMissing.length > 0) {
+    console.log(''); // slop-ok: interactive installer's own stdout framing
+    logger.warn(`Required tools still missing: ${stillMissing.join(', ')}.`);
+  }
+  return stillMissing;
 }
 
 export async function runToolsCommand(
@@ -343,7 +376,8 @@ export async function runToolsCommand(
     return;
   }
   if (subCommand === 'install') {
-    await runInstall(targetPath, autoYes, options);
+    const stillMissing = await runInstall(targetPath, autoYes, options);
+    if (options.failOnMissing && stillMissing.length > 0) process.exitCode = 1;
     return;
   }
   if (subCommand === 'bom') {

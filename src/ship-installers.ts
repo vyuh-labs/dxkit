@@ -46,9 +46,14 @@ import { BOT_IDENTITY } from './land-refresh';
 import { LANE_TOKEN_PAT_SECRET_NAME, LANE_TOKEN_SUBSTITUTIONS } from './lanes/lane-token';
 import {
   INSTALL_DEPS_PLACEHOLDER,
+  INSTALL_OUTCOME_LOG,
+  INSTALL_OUTCOME_RECORD,
   renderInstallDependenciesShell,
   resolveTolerances,
 } from './install';
+import { AGENT_CLI_INSTALLS_PLACEHOLDER, renderAgentCliInstallCalls } from './agent-cli-pins';
+import { DXKIT_PACKAGE_NAME, renderDxkitPackageSpec } from './dxkit-package';
+import { DEVCONTAINER_READINESS_RECORD } from './devcontainer-readiness';
 import { resolveRemediateConfig } from './remediate/config';
 import { driverById } from './remediate/registry';
 import { knownTaskIds } from './remediate/tasks';
@@ -278,43 +283,6 @@ function runtimeVersionOutOfDate(cwd: string, destName: string, rendered: string
 }
 
 /**
- * Copy a single source file to a destination, handling the
- * additive-vs-force decision. Returns the (relative) path that was
- * written + which bucket it lands in.
- */
-function copyAdditive(
-  srcAbs: string,
-  destAbs: string,
-  cwd: string,
-  opts: InstallerOpts,
-  result: ShipInstallResult,
-  options: { executable?: boolean; sidecarSuffix?: string } = {},
-): void {
-  const relDest = path.relative(cwd, destAbs);
-  const exists = fs.existsSync(destAbs);
-
-  if (exists && !opts.force) {
-    const suffix = options.sidecarSuffix ?? '.dxkit';
-    const sidecarAbs = destAbs + suffix;
-    const relSidecar = path.relative(cwd, sidecarAbs);
-    fs.mkdirSync(path.dirname(sidecarAbs), { recursive: true });
-    fs.copyFileSync(srcAbs, sidecarAbs);
-    if (options.executable) makeExecutable(sidecarAbs);
-    result.sidecars.push(relSidecar);
-    return;
-  }
-
-  fs.mkdirSync(path.dirname(destAbs), { recursive: true });
-  fs.copyFileSync(srcAbs, destAbs);
-  if (options.executable) makeExecutable(destAbs);
-  if (exists) {
-    result.installed.push(relDest);
-  } else {
-    result.installed.push(relDest);
-  }
-}
-
-/**
  * Hooks installer. Writes `.githooks/pre-push` by default;
  * additionally writes `.githooks/pre-commit` when
  * `opts.withPrecommit === true`. When the consumer already has a
@@ -366,7 +334,9 @@ export function installHooks(cwd: string, opts: InstallerOpts = {}): ShipInstall
     const userConflict = fs.existsSync(huskyAbs) || (destExists && !destIsDxkit);
     if (userConflict) anyConflict = true;
 
-    const srcAbs = path.join(tmplDir, name);
+    // Rendered, not copied: the install hint names the dxkit version that
+    // generated the hook (4.5.0).
+    const rendered = renderDxkitPackageSpec(fs.readFileSync(path.join(tmplDir, name), 'utf8'));
     if (userConflict && !opts.force) {
       // Always land the dxkit hook at .githooks/<name>.dxkit when
       // there's a conflict, even when the conflict is at a different
@@ -375,12 +345,12 @@ export function installHooks(cwd: string, opts: InstallerOpts = {}): ShipInstall
       // how to chain them.
       const sidecarAbs = destAbs + '.dxkit';
       fs.mkdirSync(path.dirname(sidecarAbs), { recursive: true });
-      fs.copyFileSync(srcAbs, sidecarAbs);
+      fs.writeFileSync(sidecarAbs, rendered, 'utf8');
       makeExecutable(sidecarAbs);
       result.sidecars.push(path.relative(cwd, sidecarAbs));
     } else {
       fs.mkdirSync(path.dirname(destAbs), { recursive: true });
-      fs.copyFileSync(srcAbs, destAbs);
+      fs.writeFileSync(destAbs, rendered, 'utf8');
       makeExecutable(destAbs);
       result.installed.push(path.relative(cwd, destAbs));
     }
@@ -496,26 +466,83 @@ function renderDevcontainerBuildHost(cwd: string): string {
   );
 }
 
+/** The two devcontainer scripts dxkit renders (pins + install chain). */
+const DEVCONTAINER_SCRIPTS = ['post-create.sh', 'install-agent-clis.sh'] as const;
+type DevcontainerScript = (typeof DEVCONTAINER_SCRIPTS)[number];
+
+/**
+ * Render one devcontainer script. Both carry facts dxkit owns and must not
+ * duplicate as literals (4.5.0):
+ *   - `install-agent-clis.sh`: one install call per `AGENT_CLI_PINS` entry,
+ *     the exact version as the per-container override's default;
+ *   - `post-create.sh`: the dxkit version that rendered it (the global
+ *     install pin), the readiness-record path doctor reads, and the
+ *     dependency install chain every generated CI workflow runs (the ONE
+ *     renderer, under this repo's authorized tolerances) in place of the
+ *     inline `npm ci || npm install || --legacy-peer-deps` ladder it used
+ *     to carry.
+ */
+export function renderDevcontainerScript(
+  tmplDir: string,
+  name: DevcontainerScript,
+  cwd: string,
+): string {
+  let content = fs.readFileSync(path.join(tmplDir, name), 'utf8');
+  if (name === 'install-agent-clis.sh') {
+    return content.split(AGENT_CLI_INSTALLS_PLACEHOLDER).join(renderAgentCliInstallCalls());
+  }
+  const indent = '    ';
+  content = content.split(`${indent}${INSTALL_DEPS_PLACEHOLDER}`).join(
+    renderInstallDependenciesShell(
+      indent,
+      installStrategyProviders(LANGUAGES).map((p) => p.provider),
+      resolveTolerances(cwd),
+    ),
+  );
+  const substitutions: Record<string, string> = {
+    __DXKIT_VERSION__: VERSION,
+    __DXKIT_PACKAGE__: DXKIT_PACKAGE_NAME,
+    __DXKIT_READINESS_RECORD__: DEVCONTAINER_READINESS_RECORD,
+    __DXKIT_INSTALL_RECORD__: INSTALL_OUTCOME_RECORD,
+    __DXKIT_INSTALL_LOG__: INSTALL_OUTCOME_LOG,
+  };
+  for (const [key, value] of Object.entries(substitutions)) {
+    content = content.split(key).join(value);
+  }
+  return content;
+}
+
+/** Is this devcontainer script one dxkit generated? Every version of both
+ *  scripts names dxkit in its header. Consulted only when the canonical
+ *  devcontainer.json is itself dxkit's. */
+function isDxkitManagedDevcontainerScript(content: string): boolean {
+  return content.includes('dxkit');
+}
+
 /**
  * Devcontainer installer. Writes the dxkit lightweight devcontainer
  * (devcontainer.json + post-create.sh + install-agent-clis.sh) into
- * `.devcontainer/`. If the consumer already has a devcontainer.json,
- * writes the entire dxkit set into `.devcontainer/.dxkit-reference/`
- * for manual merge.
+ * `.devcontainer/`. If the consumer already has their own
+ * devcontainer.json, writes the entire dxkit set into
+ * `.devcontainer/.dxkit-reference/` for manual merge.
  *
  * devcontainer.json is rendered per-detected-stack: only active
  * packs' features land in the output. Always-on entries (Node +
- * GitHub CLI) ship regardless so the post-create script can run on
- * a non-Node project.
+ * GitHub CLI + the OS python) ship regardless so the post-create
+ * script can run on a non-Node project.
+ *
+ * Refresh on `update` (4.5.0): when the devcontainer is dxkit's, the two
+ * scripts are dxkit machinery carrying release pins, so they refresh in
+ * place like a dxkit-managed workflow (that is what delivers a new pin to
+ * an existing install). devcontainer.json invites hand edits (features,
+ * extensions), so without --force it is kept and the current render is
+ * written beside it under `.dxkit-reference/` when the two differ.
  */
 export function installDevcontainer(cwd: string, opts: InstallerOpts = {}): ShipInstallResult {
   const result = emptyResult();
   const tmplDir = path.join(templatesDir(), '.devcontainer');
   const destDir = path.join(cwd, '.devcontainer');
-  const filesToCopyVerbatim = [
-    { name: 'post-create.sh', executable: true },
-    { name: 'install-agent-clis.sh', executable: true },
-  ];
+  const refDir = path.join(destDir, '.dxkit-reference');
 
   const devcontainerPath = path.join(destDir, 'devcontainer.json');
   const hasExistingDevcontainer = fs.existsSync(devcontainerPath);
@@ -526,23 +553,21 @@ export function installDevcontainer(cwd: string, opts: InstallerOpts = {}): Ship
   // one), the canonical path is theirs, so this correctly keeps sidecaring.
   const existingIsUserOwned =
     hasExistingDevcontainer && !isDxkitManagedDevcontainer(readFileSafe(devcontainerPath));
+  const renderedJson = renderDevcontainerJson(tmplDir, cwd);
 
-  if (hasExistingDevcontainer && (!opts.force || existingIsUserOwned)) {
+  if (existingIsUserOwned) {
     // Stash the whole dxkit set under a reference dir so the
     // consumer can read it without it interfering with their own.
     // The reference devcontainer.json is rendered with the
     // per-stack features so the customer sees the same shape as
     // a fresh install — they can lift the features block directly.
-    const refDir = path.join(destDir, '.dxkit-reference');
     fs.mkdirSync(refDir, { recursive: true });
-    const renderedJson = renderDevcontainerJson(tmplDir, cwd);
     fs.writeFileSync(path.join(refDir, 'devcontainer.json'), renderedJson, 'utf8');
     result.sidecars.push(path.relative(cwd, path.join(refDir, 'devcontainer.json')));
-    for (const f of filesToCopyVerbatim) {
-      const srcAbs = path.join(tmplDir, f.name);
-      const destAbs = path.join(refDir, f.name);
-      fs.copyFileSync(srcAbs, destAbs);
-      if (f.executable) makeExecutable(destAbs);
+    for (const name of DEVCONTAINER_SCRIPTS) {
+      const destAbs = path.join(refDir, name);
+      fs.writeFileSync(destAbs, renderDevcontainerScript(tmplDir, name, cwd), 'utf8');
+      makeExecutable(destAbs);
       result.sidecars.push(path.relative(cwd, destAbs));
     }
     result.notes.push(
@@ -556,23 +581,47 @@ export function installDevcontainer(cwd: string, opts: InstallerOpts = {}): Ship
     return result;
   }
 
-  // devcontainer.json gets rendered (per-stack features substitution),
-  // the rest are flat copies.
   fs.mkdirSync(destDir, { recursive: true });
-  const renderedJson = renderDevcontainerJson(tmplDir, cwd);
-  const destDevcontainerJson = path.join(destDir, 'devcontainer.json');
-  fs.writeFileSync(destDevcontainerJson, renderedJson, 'utf8');
-  result.installed.push(path.relative(cwd, destDevcontainerJson));
-
-  for (const f of filesToCopyVerbatim) {
-    copyAdditive(
-      path.join(tmplDir, f.name),
-      path.join(destDir, f.name),
-      cwd,
-      { force: true },
-      result,
-      { executable: f.executable },
+  const relJson = path.relative(cwd, devcontainerPath);
+  if (!hasExistingDevcontainer || opts.force) {
+    fs.writeFileSync(devcontainerPath, renderedJson, 'utf8');
+    result.installed.push(relJson);
+  } else if (readFileSafe(devcontainerPath) === renderedJson) {
+    result.skipped.push(relJson);
+  } else {
+    fs.mkdirSync(refDir, { recursive: true });
+    const refJson = path.join(refDir, 'devcontainer.json');
+    fs.writeFileSync(refJson, renderedJson, 'utf8');
+    result.skipped.push(relJson);
+    result.sidecars.push(path.relative(cwd, refJson));
+    result.notes.push(
+      '`.devcontainer/devcontainer.json` kept as is (it may carry your edits); the current ' +
+        'dxkit render is at `.devcontainer/.dxkit-reference/devcontainer.json`. Merge it by ' +
+        'hand, or run `vyuh-dxkit update --force` to replace yours with it.',
     );
+  }
+
+  for (const name of DEVCONTAINER_SCRIPTS) {
+    const destAbs = path.join(destDir, name);
+    const rel = path.relative(cwd, destAbs);
+    const content = renderDevcontainerScript(tmplDir, name, cwd);
+    const exists = fs.existsSync(destAbs);
+    const existing = exists ? readFileSafe(destAbs) : '';
+    if (exists && existing === content) {
+      makeExecutable(destAbs);
+      result.skipped.push(rel);
+      continue;
+    }
+    if (exists && !opts.force && !isDxkitManagedDevcontainerScript(existing)) {
+      const sidecar = destAbs + '.dxkit';
+      fs.writeFileSync(sidecar, content, 'utf8');
+      makeExecutable(sidecar);
+      result.sidecars.push(path.relative(cwd, sidecar));
+      continue;
+    }
+    fs.writeFileSync(destAbs, content, 'utf8');
+    makeExecutable(destAbs);
+    result.installed.push(rel);
   }
   return result;
 }
@@ -666,6 +715,10 @@ function installWorkflow(
   for (const [key, value] of Object.entries(packVersionVariables(detectedVersions(cwd)))) {
     content = content.split(`{{${key}}}`).join(value);
   }
+  // dxkit's own install spec renders last for the same reason (a partial,
+  // the fragment-capture job, carries an install step): the version that
+  // rendered the workflow, never npm's latest (4.5.0).
+  content = renderDxkitPackageSpec(content);
 
   if (fs.existsSync(destAbs)) {
     const existing = fs.readFileSync(destAbs, 'utf8');
@@ -1579,7 +1632,7 @@ export function installHooksPostinstall(cwd: string, _opts: InstallerOpts = {}):
   return result;
 }
 
-export const DXKIT_PACKAGE = '@vyuhlabs/dxkit';
+export const DXKIT_PACKAGE = DXKIT_PACKAGE_NAME;
 
 /**
  * Ensure `@vyuhlabs/dxkit` is in the consumer's package.json

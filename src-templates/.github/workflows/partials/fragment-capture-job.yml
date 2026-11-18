@@ -17,9 +17,9 @@ __DXKIT_FRAGMENT_HOST_SETUP__
         shell: bash
         run: |
           if [ -f package.json ]; then
-            npm install --no-save @vyuhlabs/dxkit >/dev/null 2>&1 || npm install -g @vyuhlabs/dxkit
+            npm install --no-save __DXKIT_PACKAGE_SPEC__ >/dev/null 2>&1 || npm install -g __DXKIT_PACKAGE_SPEC__
           else
-            npm install -g @vyuhlabs/dxkit
+            npm install -g __DXKIT_PACKAGE_SPEC__
           fi
 
       # This host's slice of the baseline: the checks the primary runner

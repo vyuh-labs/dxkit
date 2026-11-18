@@ -52,7 +52,7 @@ elif command -v vyuh-dxkit >/dev/null 2>&1; then
   DXKIT="vyuh-dxkit"
 else
   echo "[dxkit pre-push] vyuh-dxkit not found on PATH or in ./node_modules/.bin." >&2
-  echo "  Install it with: npm install --save-dev @vyuhlabs/dxkit" >&2
+  echo "  Install it with: npm install --save-dev __DXKIT_PACKAGE_SPEC__" >&2
   echo "  Or skip this hook for this push: DXKIT_SKIP_HOOKS=1 git push ..." >&2
   exit 1
 fi
