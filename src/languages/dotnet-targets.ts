@@ -54,6 +54,11 @@ export function dotnetRuntimeForTfm(tfm: string): string | undefined {
   return undefined;
 }
 
+/** A commented-out element is not a declaration (`<!-- <TargetFramework>net10.0… -->`). */
+function stripXmlComments(raw: string): string {
+  return raw.replace(/<!--[\s\S]*?-->/g, '');
+}
+
 function tagValues(raw: string, tag: string): string[] {
   const out: string[] = [];
   const re = new RegExp(`<${tag}(?:\\s[^>]*)?>([^<]*)</${tag}>`, 'gi');
@@ -106,12 +111,15 @@ export function readDotnetProjects(cwd: string): DotnetProject[] {
   // Central TFM declarations: a project without its own TFM inherits the
   // nearest Directory.Build.props above it.
   const props = walkPaths(cwd, { extensions: [], basenames: ['Directory.Build.props'] })
-    .map((p) => ({ dir: path.posix.dirname(p), tfms: declaredTfms(readRepoFile(cwd, p)) }))
+    .map((p) => ({
+      dir: path.posix.dirname(p),
+      tfms: declaredTfms(stripXmlComments(readRepoFile(cwd, p))),
+    }))
     .filter((p) => p.tfms.length > 0)
     .sort((a, b) => b.dir.length - a.dir.length);
   const out: DotnetProject[] = [];
   for (const rel of projects) {
-    const raw = readRepoFile(cwd, rel);
+    const raw = stripXmlComments(readRepoFile(cwd, rel));
     if (!raw) continue;
     let tfms = declaredTfms(raw);
     if (tfms.length === 0) {

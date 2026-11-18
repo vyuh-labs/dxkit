@@ -132,6 +132,27 @@ describe('C# heading names the .NET runtime + app model the projects target', ()
     expect(heading(await renderAgents(), 'C#')).toBe('## C#');
   });
 
+  it('a global.json SDK pin never turns an unnameable target back into "C# 8.0"', async () => {
+    write('global.json', JSON.stringify({ sdk: { version: '8.0.404' } }));
+    write('src/X/X.csproj', sdkProject('$(MyTfm)'));
+    write('src/X/A.cs', 'class A {}\n');
+    expect(heading(await renderAgents(), 'C#')).toBe('## C#');
+  });
+
+  it('a commented-out target is not a declaration (label and SDK version)', async () => {
+    write(
+      'src/Api/Api.csproj',
+      sdkProject(
+        'net8.0',
+        'Microsoft.NET.Sdk',
+        '\n    <!-- <TargetFramework>net10.0</TargetFramework> -->',
+      ),
+    );
+    write('src/Api/A.cs', 'class A {}\n');
+    expect(heading(await renderAgents(), 'C#')).toBe('## C# on .NET 8');
+    expect(csharp.detectVersion!(tmp)).toBe('8.0');
+  });
+
   it('TFM → runtime names', () => {
     expect(dotnetRuntimeForTfm('net48')).toBe('.NET Framework 4.8');
     expect(dotnetRuntimeForTfm('net472')).toBe('.NET Framework 4.7.2');
@@ -160,6 +181,16 @@ describe('every pack: the heading is what the repo states, never the default ver
     write('package.json', JSON.stringify({ name: 'n', engines: { node: '>=20' } }));
     write('src/index.ts', 'export const x = 1;\n');
     expect(heading(await renderAgents(), 'Node')).toBe('## Node.js >=20');
+  });
+
+  it('Node: heading and provisioning read one declaration (a non-numeric volta pin falls through)', async () => {
+    write(
+      'package.json',
+      JSON.stringify({ name: 'n', volta: { node: 'lts' }, engines: { node: '^22' } }),
+    );
+    write('src/index.ts', 'export const x = 1;\n');
+    expect(heading(await renderAgents(), 'Node')).toBe('## Node.js ^22');
+    expect(LANGUAGES.find((l) => l.id === 'typescript')!.detectVersion!(tmp)).toBe('22');
   });
 
   it('Node without any stated runtime', async () => {

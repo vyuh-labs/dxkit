@@ -233,6 +233,16 @@ describe('uninstall reads the same hash and keeps the owner text', () => {
     expect(fs.existsSync(path.join(tmp, '.vyuh-dxkit.json'))).toBe(false);
   });
 
+  it('markers that do not form one section → the whole file is kept, even under --force', async () => {
+    await gen();
+    const broken = fillOwner(readAgents()).replace(OWNER_SECTION_END, '');
+    fs.writeFileSync(agentsPath(), broken);
+    const forced = planUninstall(tmp, { force: true });
+    expect(forced.warnings.some((w) => w.startsWith('AGENTS.md kept'))).toBe(true);
+    executeUninstall(tmp, forced, { force: true });
+    expect(readAgents()).toBe(broken);
+  });
+
   it('owner text + an edit outside → whole file kept (skip-modified) unless --force', async () => {
     await gen();
     const edited = fillOwner(readAgents()).replace('## Conventions', '## Our conventions');

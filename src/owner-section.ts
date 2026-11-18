@@ -73,6 +73,19 @@ export function splitOwnerSection(content: string): OwnerSplit | null {
   };
 }
 
+/**
+ * True when the file carries owner-section markers that do NOT form one
+ * well-formed section (a lone, duplicated or reversed marker). The owner's
+ * text is then of unknown extent, so no consumer may remove any of it.
+ */
+export function hasAmbiguousOwnerSection(content: string): boolean {
+  if (splitOwnerSection(content) !== null) return false;
+  return (
+    markerLines(content, OWNER_SECTION_START).length > 0 ||
+    markerLines(content, OWNER_SECTION_END).length > 0
+  );
+}
+
 /** True when the file has a well-formed owner section with non-blank text. */
 export function hasOwnerContent(content: string): boolean {
   const split = splitOwnerSection(content);

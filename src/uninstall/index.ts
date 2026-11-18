@@ -15,7 +15,12 @@ import * as path from 'path';
 import { execFileSync } from 'child_process';
 
 import { serializePreservingJson } from '../files';
-import { managedContentHash, OWNER_SECTION_FILES, ownerContentOnly } from '../owner-section';
+import {
+  hasAmbiguousOwnerSection,
+  managedContentHash,
+  OWNER_SECTION_FILES,
+  ownerContentOnly,
+} from '../owner-section';
 import { stripPolicyJsoncAssociation, wouldStripPolicyJsoncAssociation } from '../editor-assoc';
 import { detectInstallFlags, type InstallFlags } from '../update';
 import { managedGatedArtifacts } from '../managed-artifacts';
@@ -243,6 +248,20 @@ export function planUninstall(cwd: string, opts: UninstallOptions = {}): Uninsta
       // whole file (skip-modified) unless --force, exactly like any other
       // edited dxkit file. An empty section deletes as before.
       const current = read(cwd, rel);
+      if (hasAmbiguousOwnerSection(current)) {
+        // Markers that do not form one section: the owner's text has no
+        // known boundary, so nothing is removed, not even under --force.
+        warnings.push(
+          `${rel} kept: its dxkit:owner markers do not form one section, so the owner's text cannot be separated from dxkit's`,
+        );
+        actions.push({
+          kind: 'delete-file',
+          target: rel,
+          detail: 'dxkit-created file',
+          status: 'skip-modified',
+        });
+        continue;
+      }
       if (ownerContentOnly(current) !== null) {
         const unmodified =
           entry.evolving || !entry.hash || managedContentHash(rel, current) === entry.hash;

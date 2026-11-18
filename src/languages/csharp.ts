@@ -2316,7 +2316,9 @@ export const csharp: LanguageSupport = {
   // The AGENTS.md heading names the runtime the projects target (`.NET
   // Framework 4.8`, `.NET 8`) and the app model where the project file makes
   // it evident, never `C# <sdk version>` (which reads as a language version).
-  describeTarget: (cwd) => describeDotnetTarget(readDotnetProjects(cwd)),
+  // A target it cannot name stays bare `C#`: never the generic fallback to
+  // `detectVersion`, whose global.json SDK pin would print `C# 8.0` again.
+  describeTarget: (cwd) => describeDotnetTarget(readDotnetProjects(cwd)) ?? 'C#',
   detectDescription: (cwd) => dotnetDescription(readDotnetProjects(cwd)),
   cliBinaries: ['dotnet'],
   devcontainerFeature: {

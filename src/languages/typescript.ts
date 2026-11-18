@@ -2802,47 +2802,45 @@ function nodeMajorFromEngineRange(engine: string): string | undefined {
   return floor > parseInt(NODE_DEFAULT_VERSION, 10) ? String(floor) : undefined;
 }
 
+/**
+ * The Node runtime this repo DECLARES, in precedence order: a numeric
+ * `.nvmrc` pin, a numeric volta pin, else the `engines.node` range. The ONE
+ * reading of those sources (Rule 2): `detectNodeVersion` turns it into the
+ * major CI provisions, `describeNodeTarget` prints it verbatim.
+ */
+function nodeRuntimeDeclaration(
+  cwd: string,
+): { readonly kind: 'pin' | 'engines'; readonly value: string } | undefined {
+  if (repoFileExists(cwd, '.nvmrc')) {
+    const ver = readRepoFile(cwd, '.nvmrc').trim().replace(/^v/, '');
+    if (/^\d+/.test(ver)) return { kind: 'pin', value: ver };
+  }
+  const pkg = readRepoFile(cwd, 'package.json');
+  if (!pkg) return undefined;
+  try {
+    const parsed = JSON.parse(pkg) as { volta?: { node?: unknown }; engines?: { node?: unknown } };
+    const volta = parsed?.volta?.node;
+    if (volta && /^\d+/.test(String(volta))) return { kind: 'pin', value: String(volta).trim() };
+    const engine = parsed?.engines?.node;
+    if (engine) return { kind: 'engines', value: String(engine).trim() };
+  } catch {
+    /* ignore malformed package.json */
+  }
+  return undefined;
+}
+
 /** `Node.js 20.11.1` / `Node.js >=20`, or bare `Node.js` when the repo states nothing. */
 function describeNodeTarget(cwd: string): string {
-  const pin = readRepoFile(cwd, '.nvmrc').trim().replace(/^v/, '');
-  if (/^\d/.test(pin)) return `Node.js ${pin}`;
-  let parsed: { volta?: { node?: unknown }; engines?: { node?: unknown } } = {};
-  try {
-    parsed = JSON.parse(readRepoFile(cwd, 'package.json') || '{}') as typeof parsed;
-  } catch {
-    /* malformed package.json: no stated runtime */
-  }
-  const volta = parsed?.volta?.node;
-  if (typeof volta === 'string' && volta.trim()) return `Node.js ${volta.trim()}`;
-  const engine = parsed?.engines?.node;
-  if (typeof engine === 'string' && engine.trim()) return `Node.js ${engine.trim()}`;
-  return 'Node.js';
+  const decl = nodeRuntimeDeclaration(cwd);
+  return decl ? `Node.js ${decl.value}` : 'Node.js';
 }
 
 function detectNodeVersion(cwd: string): string | undefined {
-  if (repoFileExists(cwd, '.nvmrc')) {
-    const ver = readRepoFile(cwd, '.nvmrc').trim().replace(/^v/, '');
-    if (/^\d+/.test(ver)) return ver.split('.')[0];
-  }
-  const pkg = readRepoFile(cwd, 'package.json');
-  if (pkg) {
-    try {
-      const parsed = JSON.parse(pkg) as {
-        volta?: { node?: string };
-        engines?: { node?: string };
-      };
-      const volta = parsed?.volta?.node;
-      if (volta) {
-        const m = String(volta).match(/^(\d+)/);
-        if (m) return m[1];
-      }
-      const engine = parsed?.engines?.node;
-      if (engine) return nodeMajorFromEngineRange(String(engine));
-    } catch {
-      /* ignore malformed package.json */
-    }
-  }
-  return undefined;
+  const decl = nodeRuntimeDeclaration(cwd);
+  if (!decl) return undefined;
+  return decl.kind === 'pin'
+    ? decl.value.match(/^(\d+)/)![1]
+    : nodeMajorFromEngineRange(decl.value);
 }
 
 export const typescript: LanguageSupport = {
