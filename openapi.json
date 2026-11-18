@@ -1,0 +1,1 @@
+{"openapi":"3.0.0","components":{"schemas":{"Invoice":{"type":"object","required":["id"],"properties":{"id":{"type":"integer"},"total":{"type":"number"}}}}}}
