@@ -1596,7 +1596,7 @@ function csharpIsTestProject(cwd: string, relProj: string): boolean {
  * explicit WinForms/WPF opt-in) makes the BUILD Windows-only — `dotnet build`
  * of such a target on Linux/macOS fails on missing Windows Desktop reference
  * packs. This is the repo fact that narrows every build-based C# capability's
- * host requirement (Rule 20): the dpl-studio class, where a Linux driver
+ * host requirement (Rule 20): the Windows-only desktop class, where a Linux driver
  * could never produce the build half of the gate and nothing said so.
  */
 function csharpTargetsWindows(cwd: string): boolean {

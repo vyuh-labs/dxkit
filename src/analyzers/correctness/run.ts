@@ -63,7 +63,7 @@ export type CorrectnessStatus =
    *  wrong host / missing ambient toolchain. Fail-OPEN like the other
    *  infrastructure skips, but DISCLOSED: `unmet` carries the structured
    *  reason so every surface can say WHERE the floor would run instead of
-   *  silently reporting nothing (the dpl-studio class). Checked BEFORE exec,
+   *  silently reporting nothing (the Windows-only desktop class). Checked BEFORE exec,
    *  so a `dotnet build` of a Windows-only target never runs on Linux just to
    *  fail in a way that reads as broken code. */
   | 'skipped-environment'

@@ -575,7 +575,7 @@ describe.each(LANGUAGES as LanguageSupport[])('language contract: $id', (lang) =
   // declares what it NEEDS from the environment that runs it. The
   // pre-declaration model implicitly assumed `{ hosts: any, toolchains: [],
   // needsBuild: false }` everywhere — wrong on every axis for the C# build
-  // gates (the dpl-studio class). This block makes the declaration total,
+  // gates (the Windows-only desktop class). This block makes the declaration total,
   // well-formed, repo-intrinsic, and non-divergent from doctor's toolchain
   // probe (the cliBinaries parity — two projections of one concept, Rule 2.30).
   // The install-strategy capability (4.4.6): a pack declares how its
