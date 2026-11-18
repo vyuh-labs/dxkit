@@ -52,7 +52,7 @@ import {
   resolveTolerances,
 } from './install';
 import { AGENT_CLI_INSTALLS_PLACEHOLDER, renderAgentCliInstallCalls } from './agent-cli-pins';
-import { DXKIT_PACKAGE_NAME } from './dxkit-package';
+import { DXKIT_PACKAGE_NAME, renderDxkitPackageSpec } from './dxkit-package';
 import { DEVCONTAINER_READINESS_RECORD } from './devcontainer-readiness';
 import { resolveRemediateConfig } from './remediate/config';
 import { driverById } from './remediate/registry';
@@ -334,7 +334,9 @@ export function installHooks(cwd: string, opts: InstallerOpts = {}): ShipInstall
     const userConflict = fs.existsSync(huskyAbs) || (destExists && !destIsDxkit);
     if (userConflict) anyConflict = true;
 
-    const srcAbs = path.join(tmplDir, name);
+    // Rendered, not copied: the install hint names the dxkit version that
+    // generated the hook (4.5.0).
+    const rendered = renderDxkitPackageSpec(fs.readFileSync(path.join(tmplDir, name), 'utf8'));
     if (userConflict && !opts.force) {
       // Always land the dxkit hook at .githooks/<name>.dxkit when
       // there's a conflict, even when the conflict is at a different
@@ -343,12 +345,12 @@ export function installHooks(cwd: string, opts: InstallerOpts = {}): ShipInstall
       // how to chain them.
       const sidecarAbs = destAbs + '.dxkit';
       fs.mkdirSync(path.dirname(sidecarAbs), { recursive: true });
-      fs.copyFileSync(srcAbs, sidecarAbs);
+      fs.writeFileSync(sidecarAbs, rendered, 'utf8');
       makeExecutable(sidecarAbs);
       result.sidecars.push(path.relative(cwd, sidecarAbs));
     } else {
       fs.mkdirSync(path.dirname(destAbs), { recursive: true });
-      fs.copyFileSync(srcAbs, destAbs);
+      fs.writeFileSync(destAbs, rendered, 'utf8');
       makeExecutable(destAbs);
       result.installed.push(path.relative(cwd, destAbs));
     }
@@ -713,6 +715,10 @@ function installWorkflow(
   for (const [key, value] of Object.entries(packVersionVariables(detectedVersions(cwd)))) {
     content = content.split(`{{${key}}}`).join(value);
   }
+  // dxkit's own install spec renders last for the same reason (a partial,
+  // the fragment-capture job, carries an install step): the version that
+  // rendered the workflow, never npm's latest (4.5.0).
+  content = renderDxkitPackageSpec(content);
 
   if (fs.existsSync(destAbs)) {
     const existing = fs.readFileSync(destAbs, 'utf8');

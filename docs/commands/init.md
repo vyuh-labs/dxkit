@@ -146,7 +146,8 @@ different days get the same environment:
   dxkit at another version is replaced, not reused.
 - **Scanners** — `vyuh-dxkit tools install --yes --fail-on-missing`
   (versions pinned in dxkit's tool registry). The OS python is always
-  provisioned because semgrep and graphify install through pip/venv.
+  provisioned (with pip, venv and pipx) because semgrep and graphify
+  install through pipx and a venv.
 
 `post-create.sh` runs every step (project dependencies, installed the way
 the generated CI workflows install them; dxkit; scanners; git hooks;

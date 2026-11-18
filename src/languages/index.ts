@@ -26,7 +26,7 @@ import { discoverPackDepRoots } from '../analyzers/security/nested-dep-roots';
 import { UNIVERSAL_TEST_DIR_PATTERNS } from './test-dir-patterns';
 import { csharp } from './csharp';
 import { go } from './go';
-import { python } from './python';
+import { python, PYTHON_FEATURE_TOOLS } from './python';
 import { rust } from './rust';
 import { typescript } from './typescript';
 import { kotlin } from './kotlin';
@@ -820,14 +820,17 @@ export function buildDevcontainerFeatures(
     // setup-branch-protection / setup-prebuild / PR review.
     'ghcr.io/devcontainers/features/node:1': { version: '22', nvmVersion: 'latest' },
     'ghcr.io/devcontainers/features/github-cli:1': {},
-    // Always-on (4.5.0): the OS python with pip + venv. dxkit's universal
-    // scanner semgrep installs through pipx and graphify into a venv; the
-    // base image's python3 has neither pip nor venv, so on a non-Python repo
-    // both installs failed and post-create reported the container ready
-    // anyway. `os-provided` is the distro package (no source build) and
-    // `installTools: false` skips the feature's own tool bundle. An active
-    // python pack replaces these opts with its own version below.
-    'ghcr.io/devcontainers/features/python:1': { version: 'os-provided', installTools: false },
+    // Always-on (4.5.0): the OS python with pip + venv + pipx. dxkit's
+    // universal scanner semgrep installs through pipx and graphify into a
+    // venv; the base image's python3 has neither pip nor venv, so on a
+    // non-Python repo both installs failed and post-create reported the
+    // container ready anyway. `os-provided` is the distro package (no source
+    // build). The feature always exports PIPX_HOME=/usr/local/py-utils, a
+    // directory it only creates (group-writable for the container user)
+    // when it installs tools: with `installTools: false` every pipx install
+    // dies on a permission error. So the tool list is pipx alone, never the
+    // feature's default bundle. An active python pack replaces these opts.
+    'ghcr.io/devcontainers/features/python:1': { version: 'os-provided', ...PYTHON_FEATURE_TOOLS },
   };
   // A pack whose build cannot run in this Linux container gets no toolchain
   // feature: the container is for editing, scanning and dependency audit, and

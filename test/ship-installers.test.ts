@@ -235,7 +235,9 @@ describe('installDevcontainer', () => {
     // The distro python (pip + venv), not a pack's source-built version.
     expect(features['ghcr.io/devcontainers/features/python:1']).toEqual({
       version: 'os-provided',
-      installTools: false,
+      // Tools on (the feature only creates its PIPX_HOME then), pipx only.
+      installTools: true,
+      toolsToInstall: 'pipx',
     });
     expect(content).not.toContain('ghcr.io/devcontainers/features/dotnet:2');
     expect(content).not.toContain('ghcr.io/devcontainers/features/ruby:1');

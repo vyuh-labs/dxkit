@@ -45,6 +45,18 @@ export function dxkitPackageSpec(version: string = DXKIT_VERSION): string {
   return version && version !== '0.0.0' ? `${DXKIT_PACKAGE_NAME}@${version}` : DXKIT_PACKAGE_NAME;
 }
 
+/** Placeholder a template carries wherever it names dxkit's npm spec (an
+ *  install command or an install hint); the ONE workflow writer and the hook
+ *  installer replace it with `dxkitPackageSpec()`. A literal unversioned
+ *  `@vyuhlabs/dxkit` in an executable template is the bug
+ *  (`test/devcontainer-pins.test.ts` scans every template). */
+export const DXKIT_PACKAGE_SPEC_PLACEHOLDER = '__DXKIT_PACKAGE_SPEC__';
+
+/** Replace every spec placeholder in a rendered template. */
+export function renderDxkitPackageSpec(content: string, version: string = DXKIT_VERSION): string {
+  return content.split(DXKIT_PACKAGE_SPEC_PLACEHOLDER).join(dxkitPackageSpec(version));
+}
+
 /** The global install command every generated artifact uses. */
 export function dxkitGlobalInstallCommand(version: string = DXKIT_VERSION): string {
   return `npm install -g ${dxkitPackageSpec(version)}`;

@@ -22,7 +22,9 @@ import { NO_MANIFEST_INSTALL, INSTALL_OUTCOME_RECORD } from '../src/install';
 import { DEVCONTAINER_READINESS_RECORD } from '../src/devcontainer-readiness';
 import { VERSION } from '../src/constants';
 import {
+  installCiHostGates,
   installDevcontainer,
+  installHooks,
   renderDevcontainerScript,
   templatesDir,
 } from '../src/ship-installers';
@@ -252,5 +254,95 @@ describe('tools install --fail-on-missing (the post-create scanner step)', () =>
 
   it('nothing missing is an empty list', () => {
     expect(requiredToolsStillMissing([], [])).toEqual([]);
+  });
+});
+
+describe('no generated template installs an unpinned dxkit', () => {
+  const TEMPLATES_ROOT = path.join(__dirname, '..', 'src-templates');
+  /** Every template file, recursively (not a list: a new template is covered). */
+  function walk(dir: string): string[] {
+    return fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+      const abs = path.join(dir, e.name);
+      return e.isDirectory() ? walk(abs) : [abs];
+    });
+  }
+  // An npm/pnpm/yarn/bun install naming the dxkit package with no version.
+  const UNPINNED_INSTALL =
+    /\b(npm|pnpm|yarn|bun)\b[^\n]*\b(install|i|add)\b[^\n]*@vyuhlabs\/dxkit(?![-@\w])/;
+  // Markdown templates are prose an agent or human reads (skills, AGENTS.md):
+  // they describe bootstrapping and upgrades, where "the latest dxkit" is the
+  // intended instruction. Everything else a repo executes is scanned.
+  const isProse = (f: string): boolean => /\.md(\.template)?$/.test(f);
+
+  it('every executable template names dxkit through the spec placeholder', () => {
+    const files = walk(TEMPLATES_ROOT).filter((f) => !isProse(f));
+    expect(files.length).toBeGreaterThan(10);
+    const offenders: string[] = [];
+    for (const f of files) {
+      fs.readFileSync(f, 'utf8')
+        .split('\n')
+        .forEach((line, i) => {
+          if (UNPINNED_INSTALL.test(line))
+            offenders.push(`${path.relative(TEMPLATES_ROOT, f)}:${i + 1}: ${line.trim()}`);
+        });
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  it('the scan bites on the shapes it guards', () => {
+    for (const bad of [
+      'npm install -g @vyuhlabs/dxkit',
+      'npm install --no-save @vyuhlabs/dxkit >/dev/null 2>&1',
+      'echo "Install it with: npm install --save-dev @vyuhlabs/dxkit" >&2',
+      'pnpm add -D @vyuhlabs/dxkit',
+    ]) {
+      expect(UNPINNED_INSTALL.test(bad), bad).toBe(true);
+    }
+    for (const ok of [
+      `npm install -g @vyuhlabs/dxkit@${VERSION}`,
+      'npm install --save-dev @vyuhlabs/dxkit-sdk',
+      'npm install -g __DXKIT_PACKAGE_SPEC__',
+    ]) {
+      expect(UNPINNED_INSTALL.test(ok), ok).toBe(false);
+    }
+  });
+
+  it('the hooks render the pinned spec into their install hint', () => {
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-pins-hooks-'));
+    try {
+      installHooks(repo, { withPrecommit: true });
+      for (const hook of ['pre-push', 'pre-commit']) {
+        const content = fs.readFileSync(path.join(repo, '.githooks', hook), 'utf8');
+        expect(content, hook).not.toContain('__DXKIT_');
+        expect(content, hook).toContain(`npm install --save-dev @vyuhlabs/dxkit@${VERSION}`);
+      }
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  it('the per-host gate workflow installs the pinned dxkit', () => {
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-pins-hostgate-'));
+    try {
+      fs.writeFileSync(
+        path.join(repo, 'App.csproj'),
+        '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net9.0-windows</TargetFramework><UseWindowsForms>true</UseWindowsForms></PropertyGroup></Project>',
+      );
+      fs.mkdirSync(path.join(repo, 'src'));
+      fs.writeFileSync(
+        path.join(repo, 'src', 'Main.cs'),
+        'class Program { static void Main() {} }',
+      );
+      installCiHostGates(repo, {});
+      const content = fs.readFileSync(
+        path.join(repo, '.github', 'workflows', 'dxkit-gate-windows.yml'),
+        'utf8',
+      );
+      expect(content).not.toContain('__DXKIT_');
+      expect(content).toContain(`npm install -g @vyuhlabs/dxkit@${VERSION}`);
+      expect(content).not.toMatch(UNPINNED_INSTALL);
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
   });
 });

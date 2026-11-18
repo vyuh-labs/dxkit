@@ -1749,6 +1749,17 @@ function detectPythonVersion(cwd: string): string | undefined {
   return undefined;
 }
 
+/**
+ * The python devcontainer feature's tool options, shared by this pack's
+ * feature and the always-on python every generated devcontainer carries
+ * (`buildDevcontainerFeatures`). The feature always exports
+ * PIPX_HOME=/usr/local/py-utils but only creates that directory (writable by
+ * the container user) when it installs tools; with `installTools: false`
+ * every pipx install (semgrep, the Python scanners) failed on a permission
+ * error (4.5.0). So tools stay on, limited to pipx itself.
+ */
+export const PYTHON_FEATURE_TOOLS = { installTools: true, toolsToInstall: 'pipx' } as const;
+
 export const python: LanguageSupport = {
   id: 'python',
   displayName: 'Python',
@@ -2042,15 +2053,10 @@ export const python: LanguageSupport = {
   cliBinaries: ['python3', 'ruff'],
   devcontainerFeature: {
     name: 'ghcr.io/devcontainers/features/python:1',
-    // installTools=false: the upstream python feature's installTools
-    // bundle (pipx, flake8, black, mypy, autopep8, yapf, pydocstyle,
-    // pycodestyle, bandit, pipenv, virtualenv, pylint, pytest) costs
-    // ~3 min per devcontainer build and overlaps with dxkit's own
-    // pinned scanner toolchain (ruff + pip-audit + pip-licenses +
-    // coverage-py installed via TOOL_DEFS). Anything dxkit's Python
-    // analyzers actually need is declared in tool-registry.ts; the
-    // feature only needs to land the python interpreter itself.
-    opts: { version: '3.12', installTools: false },
+    // The feature's own tool bundle (flake8, black, mypy, pylint, pytest…)
+    // costs minutes per build and overlaps dxkit's pinned toolchain, so the
+    // tool list is pipx alone (PYTHON_FEATURE_TOOLS).
+    opts: { version: '3.12', ...PYTHON_FEATURE_TOOLS },
   },
   devcontainerExtensions: ['ms-python.python', 'ms-python.vscode-pylance'],
 };
