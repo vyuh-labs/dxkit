@@ -233,10 +233,11 @@ describe('computeStopGate', () => {
 
     it('a floor whose test command ran ZERO tests records no_tests and says so on the allow (4.5.0)', async () => {
       const zero: CorrectnessCheckResult = { ...passCheck('affected-tests'), status: 'no-tests' };
-      const outcome = (): FloorGateOutcome => ({
-        ...floor([passCheck('typecheck'), zero], []),
-        noTests: [{ check: zero, transition: 'tests-vanished', baseStatus: 'pass' }],
-      });
+      const ran = floor([passCheck('typecheck'), zero], []);
+      const outcome = (): FloorGateOutcome =>
+        ran.kind === 'ran'
+          ? { ...ran, noTests: [{ check: zero, transition: 'tests-vanished', baseStatus: 'pass' }] }
+          : ran;
       const d = await computeStopGate(
         '/repo',
         { session_id: 's' },
