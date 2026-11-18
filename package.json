@@ -1,1 +1,7 @@
-{"name":"canary-fixture","version":"1.0.0"}
+{
+  "name": "fixture",
+  "version": "1.0.0",
+  "scripts": {
+    "typecheck": "node -e \"console.error('TS9999: fixture broken');process.exit(1)\""
+  }
+}
