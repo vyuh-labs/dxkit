@@ -1,0 +1,1 @@
+{"openapi":"3.0.0","components":{"schemas":{"User":{"type":"object","required":["id","email"],"properties":{"id":{"type":"integer"},"email":{"type":"string"},"nick":{"type":"string"}}}}}}
