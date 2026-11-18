@@ -1394,7 +1394,7 @@ does not exist.
 dxkit models language and capability as first-class, pack-declared dimensions;
 the third is **where a capability can execute**. The pre-4.0 model implicitly
 assumed "the machine driving the analysis can build and scan the repo" — false
-for any stack needing a provisioned build environment (the dpl-studio class: a
+for any stack needing a provisioned build environment (the Windows-only desktop class: a
 `net9.0-windows` WinForms build needs Windows + the .NET SDK + a chosen
 solution; it recurs harder for Swift/iOS, Android, C/C++). When it broke,
 capabilities either fail-open skipped invisibly or misread an environment

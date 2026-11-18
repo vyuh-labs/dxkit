@@ -2,7 +2,7 @@
   "results": [
     {
       "source": {
-        "path": "/home/sidc42/projects/dxkit-repo/test/fixtures/benchmarks/swift/Package.resolved",
+        "path": "/home/user/dxkit/test/fixtures/benchmarks/swift/Package.resolved",
         "type": "lockfile"
       },
       "packages": [

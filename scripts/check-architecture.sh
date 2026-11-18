@@ -1872,7 +1872,7 @@ fi
 # `unmetRequirement` (src/execution/requirement.ts) over pack-declared
 # `ExecutionRequirement`s. The class this kills: scattered point checks and
 # implicit "the driver's machine can run everything" assumptions (the
-# dpl-studio Windows-only .NET onboarding).
+# Windows-only .NET desktop onboarding).
 #
 # 20a: no NEW `process.platform` reads outside the environment model. Host
 # detection is one concept; a per-consumer point check is how the implicit

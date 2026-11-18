@@ -2,7 +2,7 @@
   "results": [
     {
       "source": {
-        "path": "/home/sidc42/projects/dxkit-repo/test/fixtures/benchmarks/php/composer.lock",
+        "path": "/home/user/dxkit/test/fixtures/benchmarks/php/composer.lock",
         "type": "lockfile"
       },
       "packages": [
