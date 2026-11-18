@@ -1,9 +1,11 @@
 name: dxkit guardrails
 
-# Runs the dxkit guardrail check on every pull request. New regressions
-# vs. the committed `.dxkit/baselines/main.json` block the PR. Existing
+# Runs ./dxkit-guardrails.sh (the findings guardrail, policy-render parity
+# and the correctness floor) on every pull request. New regressions vs.
+# the committed `.dxkit/baselines/main.json` block the PR. Existing
 # findings (your "brownfield debt") are allowed — they were already
-# captured when you ran `vyuh-dxkit baseline create`.
+# captured when you ran `vyuh-dxkit baseline create`. Run
+# `./dxkit-guardrails.sh` locally to get this workflow's verdict first.
 #
 # Customise by editing your project's `.dxkit/policy.json` (created by
 # `vyuh-dxkit init --with-ci`). The matcher's classifications
@@ -93,6 +95,7 @@ __DXKIT_CI_RUNTIME_SETUP__
       # baseline.anchor). 'tree' = anchor committed in the repo; 'branch' = dxkit
       # hydrates it from the side branch itself during the check; 'cache' = restore
       # it here from the Actions cache the refresh job wrote for this base commit.
+      # (A cache miss falls back to a ref-based gather inside dxkit-guardrails.sh.)
       - name: Detect baseline anchor transport
         id: anchor
         run: |
@@ -155,116 +158,39 @@ __DXKIT_CI_RUNTIME_SETUP__
           fi
           echo "flag=$UNTRUSTED" >> "$GITHUB_OUTPUT"
 
-      # Capture the markdown report regardless of exit code so we can
-      # post it as a PR comment even when the guardrail blocks.
-      - name: Run guardrail check
+      # The checks (findings guardrail, policy-render parity, correctness
+      # floor) and their ORDER live in one place: ./dxkit-guardrails.sh at
+      # the repo root. The pre-push hook runs the same script (--quick), and a
+      # developer or agent runs it with no arguments to get this job's verdict
+      # locally. This step hands it only the pipeline's plumbing:
+      #   --base       the PR's base branch (empty on a push-trigger run). The
+      #                floor attributes a failure against the merge-base (only a
+      #                net-new failure blocks; a pre-existing broken base warns by
+      #                name), and a PR into a NON-default base is gated against
+      #                that base (ref-based), since the committed baseline is
+      #                anchored to the default branch.
+      #   --untrusted  the fork decision from 'Resolve tree trust'.
+      #   --report     the markdown the 'Post PR comment' step posts: the
+      #                guardrail verdict, then any policy drift, then any floor
+      #                failure (a failing floor is never quiet).
+      # The script runs every check even after one fails, writes the report,
+      # annotates this log and the step summary, and exits non-zero when any
+      # check failed, which fails this job. A cache-transport repo whose cache
+      # missed falls back to a ref-based gather inside the script, too.
+      - name: Run dxkit guardrails (guardrail, policy parity, floor)
         id: guardrail
         env:
-          # The PR's base branch (empty on a push-trigger run). The guardrail
-          # gates against THIS, not always the default branch.
+          # The PR's base branch (empty on a push-trigger run).
           DXKIT_PR_BASE: ${{ github.base_ref }}
         run: |
-          if [ -x ./node_modules/.bin/vyuh-dxkit ]; then
-            DXKIT=./node_modules/.bin/vyuh-dxkit
-          else
-            DXKIT=vyuh-dxkit
+          # Refuse a file without dxkit's header: it is not the entry point.
+          if [ ! -f ./dxkit-guardrails.sh ] || ! grep -q 'dxkit guardrails entry point' ./dxkit-guardrails.sh; then
+            echo "::error::dxkit-guardrails.sh is missing from the repo root, or is not dxkit's, so this PR was NOT gated. Run 'npx vyuh-dxkit update' and commit the script."
+            exit 1
           fi
-          DEFAULT_BRANCH="__DXKIT_DEFAULT_BRANCH__"
-          EXTRA=""
-          if [ -n "$DXKIT_PR_BASE" ] && [ "$DXKIT_PR_BASE" != "$DEFAULT_BRANCH" ]; then
-            # A committed baseline is anchored to the default branch only (its
-            # refresh runs on push to '$DEFAULT_BRANCH'). A PR into a NON-default
-            # base branch therefore can't be gated by that file — diffing it
-            # against the default branch would flag the base branch's own drift as
-            # this PR's regressions. Gate it against its ACTUAL base via a live
-            # ref-based gather at the PR base instead.
-            echo "PR base '$DXKIT_PR_BASE' is not the default branch '$DEFAULT_BRANCH' — gating against the PR base via ref-based (the committed baseline is default-branch-anchored)."
-            EXTRA="--mode ref-based --ref origin/$DXKIT_PR_BASE"
-          elif [ "${{ steps.anchor.outputs.transport }}" = "cache" ] && ! ls .dxkit/baselines/*.json >/dev/null 2>&1; then
-            # Cache transport with a cold cache (eviction / first run): fall back to
-            # a live ref-based gather at the PR base for this one run rather than
-            # error on a missing anchor. 'branch'/'tree' always have an anchor by
-            # check time.
-            echo "cache miss — falling back to a ref-based gather at the PR base for this run"
-            EXTRA="--mode ref-based --ref origin/${DXKIT_PR_BASE:-$DEFAULT_BRANCH}"
-          fi
-          set +e
           # Trust boundary decided once in the 'Resolve tree trust' step above.
           UNTRUSTED="${{ steps.trust.outputs.flag }}"
-          "${DXKIT}" guardrail check $EXTRA $UNTRUSTED --markdown > guardrail-report.md
-          code=$?
-          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
-          # Surface WHY it blocked in the job log itself (not only the PR
-          # comment), so a failed run is diagnosable without leaving it.
-          if [ "$code" -ne 0 ]; then
-            echo "::group::dxkit guardrail BLOCKED — net-new findings vs the baseline"
-            cat guardrail-report.md
-            echo "::endgroup::"
-            echo "::error::dxkit guardrail blocked: this PR introduced net-new findings vs .dxkit/baselines/main.json (full report above and in the PR comment)."
-          else
-            echo "✓ dxkit guardrail passed — no net-new findings vs the baseline"
-          fi
-
-      # Policy ⇄ rendered-workflow parity (4.3.4). The managed workflows are
-      # rendered FROM .dxkit/policy.json; a policy edit that lands without a
-      # re-render leaves the repo running yesterday's schedule while the file
-      # claims today's. `policy render --check` snapshots the managed files,
-      # re-renders through update's own lane, diffs, and restores — the tree
-      # is byte-identical afterwards, and rendering executes nothing from the
-      # repo, so this is safe on every PR including forks. On drift the diff
-      # lands in the PR comment and the job fails; the fix is ONE command
-      # (`npx vyuh-dxkit policy render --apply`), or the opt-in render bot
-      # commits it for you.
-      - name: Policy render parity
-        id: parity
-        run: |
-          if [ -x ./node_modules/.bin/vyuh-dxkit ]; then DXKIT=./node_modules/.bin/vyuh-dxkit; else DXKIT=vyuh-dxkit; fi
-          set +e
-          "$DXKIT" policy render --check > parity.txt 2>&1
-          code=$?
-          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
-          if [ "$code" -ne 0 ]; then
-            {
-              printf '\n\n### Policy drift — managed workflows do not match .dxkit/policy.json\n\n'
-              printf 'A policy change is landing without the re-render of the workflows it gates. '
-              printf 'Run `npx vyuh-dxkit policy render --apply` and commit the result:\n\n'
-              printf '```diff\n'
-              cat parity.txt
-              printf '\n```\n'
-            } >> guardrail-report.md
-            echo "::error::policy drift: managed workflows do not match .dxkit/policy.json (diff in the PR comment)"
-            cat parity.txt
-          else
-            echo "managed workflows match the policy"
-          fi
-
-      # Correctness floor (liveness) — full-scope: does the code compile + do
-      # the tests pass? Runs after the finding gate. ADAPTIVE: if this repo
-      # already runs its tests in its own CI workflow, this is a no-op here
-      # (opt-in). A missing language toolchain fail-opens (this workflow sets up
-      # node + the dxkit scanner tools, not every language runtime), so the
-      # floor is most meaningful on JS/TS repos and on repos with no test-CI;
-      # your own test job is the place for full-language coverage. Tune via
-      # .dxkit/policy.json correctness.surfaces.ci or DXKIT_FLOOR_CI.
-      #
-      # On a PR the floor is DIFF-SCOPED: --base hands it the target branch,
-      # and a failing check is attributed against the merge-base — only a
-      # NET-NEW failure blocks; a repo's pre-existing broken build/tests warn
-      # by name instead of walling off the PR (the onboarding-PR class).
-      #
-      # A failing floor is never quiet: --report-md appends a loud disclosure
-      # section to the report the next step posts as the PR COMMENT (a
-      # pre-existing broken base branch is called out to approvers in the
-      # conversation, not buried in a green check's log), and the CLI also
-      # emits check annotations + a step-summary section under Actions.
-      - name: Correctness floor (compile + tests)
-        run: |
-          if [ -x ./node_modules/.bin/vyuh-dxkit ]; then
-            DXKIT=./node_modules/.bin/vyuh-dxkit
-          else
-            DXKIT=vyuh-dxkit
-          fi
-          "${DXKIT}" floor check --surface ci --report-md guardrail-report.md ${GITHUB_BASE_REF:+--base "origin/${GITHUB_BASE_REF}"}
+          sh ./dxkit-guardrails.sh --report guardrail-report.md ${DXKIT_PR_BASE:+--base "$DXKIT_PR_BASE"} $UNTRUSTED
 
       # Interactive flow console (design §E) — a self-contained HTML artifact
       # scoped to THIS PR: the UI→API map + a browser-side request runner for the
@@ -313,8 +239,9 @@ __DXKIT_CI_RUNTIME_SETUP__
           # Find a previous dxkit-guardrails comment by marker so we
           # update in place rather than appending a new one per push.
           MARKER='<!-- dxkit-guardrails -->'
-          # The report exists only if the guardrail actually RAN. When an earlier
-          # step fails (dependency install, toolchain setup), this step still runs
+          # The report exists only if ./dxkit-guardrails.sh actually ran its
+          # checks. When an earlier step fails (dependency install, toolchain
+          # setup, a missing script), this step still runs
           # under `if: always()`, and a bare `cat` would turn that into a
           # `No such file` error that buries the real cause several steps up. A gate
           # that could not run says so, and names where to look.
@@ -398,7 +325,3 @@ __DXKIT_CI_RUNTIME_SETUP__
           else
             gh pr comment "${PR_NUMBER}" --body-file comment.md
           fi
-
-      - name: Fail if guardrail blocked
-        # Either gate failing fails the job (sum is non-zero iff any is).
-        run: exit $(( ${{ steps.guardrail.outputs.exit_code }} + ${{ steps.parity.outputs.exit_code }} ))

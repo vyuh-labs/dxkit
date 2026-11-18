@@ -26,6 +26,7 @@ import {
   installHooks,
   installDevcontainer,
   installCiGuardrails,
+  installGuardrailEntryPoint,
   installCiHostGates,
   installCiBaselineRefresh,
   installCiDeepSastRefresh,
@@ -43,7 +44,7 @@ import {
   installDxkitDevDependency,
 } from './ship-installers';
 import type { ShipInstallResult } from './ship-installers';
-import { dxkitCli, requiresResolvableCli } from './self-invocation';
+import { dxkitCli, guardrailEntryPointWanted, requiresResolvableCli } from './self-invocation';
 import * as fs from 'fs';
 import * as path from 'path';
 import { trustContextFromFlag, trustedLocalContext } from './analysis-trust';
@@ -776,6 +777,14 @@ export async function run(argv: string[]): Promise<void> {
       const wantPrReview = !!values['with-pr-review'];
 
       const shipResults: { label: string; result: ShipInstallResult }[] = [];
+      // The one check sequence the hooks and the CI workflow both call (and a
+      // developer or agent runs by hand), shipped exactly when a caller is.
+      if (guardrailEntryPointWanted({ gitHooks: wantHooks, ciGuardrails: wantCi })) {
+        shipResults.push({
+          label: 'Guardrail entry point',
+          result: installGuardrailEntryPoint(cwd, { force: !!values.force }),
+        });
+      }
       if (wantHooks) {
         shipResults.push({
           label: 'Git hooks',

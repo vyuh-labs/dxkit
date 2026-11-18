@@ -7,7 +7,7 @@ import { DEFAULT_VERSIONS, NODE_ENGINE_FLOOR } from './constants';
 import { activeLanguagesFromStack } from './languages';
 import { assessLanguageToolchains } from './languages/toolchain-coverage';
 import { hostOf, toolchainForBinary, toolchainInstallHint, type ToolchainId } from './execution';
-import { dxkitCli } from './self-invocation';
+import { dxkitCli, GUARDRAIL_ENTRY_POINT } from './self-invocation';
 import * as logger from './logger';
 import { resolveBaselineMode } from './baseline/modes';
 import { anchorBranchStatus, anchorStalenessProblem } from './baseline/anchor';
@@ -800,6 +800,27 @@ function runOperationalChecks(cwd: string, hasManifest: boolean): CheckResult[] 
       label: 'dxkit in package.json devDependencies',
       ok: true,
       tier: 'operational',
+    });
+  }
+
+  // 1c. The guardrail entry point. The hooks and the CI workflow run their
+  // checks through it, so with a caller present and the script absent, every
+  // push fails and the PR gate reports "did not run".
+  if (guardrailSurfacePresent) {
+    const present = fs.existsSync(path.join(cwd, GUARDRAIL_ENTRY_POINT));
+    checks.push({
+      label: `guardrail entry point (${GUARDRAIL_ENTRY_POINT})`,
+      ok: present,
+      tier: 'operational',
+      ...(present
+        ? {}
+        : {
+            fix: {
+              hint: `The pre-push hook and the CI guardrail workflow call ./${GUARDRAIL_ENTRY_POINT}, which is missing. Restore it, then commit it.`,
+              command: dxkitCli('update'),
+              skill: 'dxkit-fix',
+            },
+          }),
     });
   }
 

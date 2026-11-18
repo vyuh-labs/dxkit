@@ -18,7 +18,15 @@
 import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest';
 import { execFileSync } from 'child_process';
 import { createHash } from 'crypto';
-import { mkdtempSync, writeFileSync, mkdirSync, readFileSync, existsSync, rmSync } from 'fs';
+import {
+  mkdtempSync,
+  writeFileSync,
+  mkdirSync,
+  readFileSync,
+  existsSync,
+  rmSync,
+  statSync,
+} from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 
@@ -299,5 +307,94 @@ describe('update refreshes dxkit-owned files but never clobbers user files', () 
     cli(repo, 'update', '--force'); // the reported data-loss trigger
 
     expect(readFileSync(join(repo, 'AGENTS.md'), 'utf8')).toBe(agents);
+  });
+});
+
+/**
+ * The guardrail entry point (`dxkit-guardrails.sh`) across the whole
+ * lifecycle. The hooks and the CI workflow call it instead of carrying their
+ * own copies of the check sequence, so an install that has the callers but
+ * not the script is broken: every path has to deliver it, refresh the callers
+ * to use it, and take it away again.
+ */
+describe('the guardrail entry point ships, refreshes and leaves with its callers', () => {
+  const ENTRY = 'dxkit-guardrails.sh';
+  const HOOK = '.githooks/pre-push';
+  const WF = '.github/workflows/dxkit-guardrails.yml';
+  const isExecutable = (rel: string): boolean =>
+    process.platform === 'win32' || (statSync(join(repo, rel)).mode & 0o111) !== 0;
+
+  function seed(name: string): void {
+    write(repo, 'package.json', JSON.stringify({ name, version: '1.0.0' }));
+    write(repo, 'src/index.ts', 'export const x = 1;\n');
+  }
+
+  it('init lands it executable, and the hook and workflow call it', () => {
+    seed('ep-init');
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-qm', 'pre-dxkit');
+    cli(repo, 'init', '--full', '--yes', '--no-finish');
+
+    expect(existsSync(join(repo, ENTRY))).toBe(true);
+    expect(isExecutable(ENTRY)).toBe(true);
+    expect(readFileSync(join(repo, HOOK), 'utf8')).toContain(`sh ./${ENTRY} --quick`);
+    expect(readFileSync(join(repo, WF), 'utf8')).toContain(`sh ./${ENTRY} --report`);
+  });
+
+  it('update brings a pre-entry-point install onto it: script added, own hook + workflow refreshed', () => {
+    seed('ep-update');
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-qm', 'pre-dxkit');
+    cli(repo, 'init', '--full', '--yes', '--no-finish');
+
+    // The shape an earlier dxkit left behind: no script, and dxkit-marked
+    // hook + workflow that each run their own copy of the sequence.
+    rmSync(join(repo, ENTRY));
+    writeFileSync(
+      join(repo, HOOK),
+      '#!/usr/bin/env sh\n# dxkit pre-push hook — QUICK tier of a two-tier gate.\n' +
+        '"${DXKIT}" floor check --surface pre-push\n"${DXKIT}" guardrail check --incremental\n',
+    );
+    writeFileSync(
+      join(repo, WF),
+      'name: dxkit guardrails\njobs:\n  g:\n    steps:\n      - run: vyuh-dxkit floor check --surface ci\n',
+    );
+
+    cli(repo, 'update');
+
+    expect(existsSync(join(repo, ENTRY))).toBe(true);
+    expect(isExecutable(ENTRY)).toBe(true);
+    const hook = readFileSync(join(repo, HOOK), 'utf8');
+    const wf = readFileSync(join(repo, WF), 'utf8');
+    expect(hook).toContain(`sh ./${ENTRY} --quick`);
+    expect(hook).not.toContain('floor check');
+    expect(wf).toContain(`sh ./${ENTRY}`);
+    expect(wf).not.toContain('floor check');
+  });
+
+  it("update never clobbers a user's own pre-push hook; the refreshed sidecar calls the script", () => {
+    seed('ep-user-hook');
+    const mine = '#!/bin/sh\necho "my own pre-push"\n';
+    write(repo, HOOK, mine);
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-qm', 'pre-dxkit with a user hook');
+    cli(repo, 'init', '--full', '--yes', '--no-finish');
+    cli(repo, 'update');
+
+    expect(readFileSync(join(repo, HOOK), 'utf8')).toBe(mine);
+    expect(readFileSync(join(repo, `${HOOK}.dxkit`), 'utf8')).toContain(`sh ./${ENTRY} --quick`);
+    expect(existsSync(join(repo, ENTRY))).toBe(true);
+  });
+
+  it('uninstall removes it with the hooks and the workflow (byte-clean round-trip)', () => {
+    seed('ep-uninstall');
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-qm', 'pre-dxkit');
+    cli(repo, 'init', '--with-hooks', '--with-ci', '--yes', '--no-finish');
+    expect(existsSync(join(repo, ENTRY))).toBe(true);
+
+    cli(repo, 'uninstall', '--yes', '--remove-devdep');
+    expect(existsSync(join(repo, ENTRY))).toBe(false);
+    expect(porcelain(repo)).toBe('');
   });
 });

@@ -19,7 +19,7 @@ import { managedContentHash } from '../owner-section';
 import { keepOwnerSectionOnly, planOwnerSectionFile } from './owner-section-plan';
 import { stripPolicyJsoncAssociation, wouldStripPolicyJsoncAssociation } from '../editor-assoc';
 import { detectInstallFlags, type InstallFlags } from '../update';
-import { managedGatedArtifacts } from '../managed-artifacts';
+import { planGatedArtifacts } from './gated-artifacts';
 import { ALLOWLIST_FILENAME, ALLOWLIST_REASONS_FILENAME } from '../allowlist/file';
 import type { Manifest } from '../types';
 import {
@@ -266,12 +266,12 @@ export function planUninstall(cwd: string, opts: UninstallOptions = {}): Uninsta
     }
   }
 
-  // 3. Delete gated ship-installer artifacts by flag / presence. The list is
-  //    derived from the managed-artifact registry (the same source update and
-  //    init read), so a surface can't be removed here yet forgotten by update.
-  for (const rel of managedGatedArtifacts(flags)) {
-    if (exists(cwd, rel)) del(rel, 'dxkit-installed artifact');
-  }
+  // 3. Delete gated ship-installer artifacts by flag / presence, keeping a
+  //    user-owned file at a managed path (see ./gated-artifacts).
+  const gated = planGatedArtifacts(cwd, flags);
+  for (const rel of gated.kept)
+    warnings.push(`${rel} has no dxkit marker — it is yours, so it was kept`);
+  for (const rel of gated.remove) del(rel, 'dxkit-installed artifact');
 
   // 4. Runtime trees.
   if (exists(cwd, '.dxkit')) {

@@ -62,6 +62,7 @@ import { discoverExtensions } from './extensions/manifest';
 import { mergeIntoPolicyFile } from './baseline/policy-write';
 import { detectEnforcement, type EnforcementState } from './enforcement';
 import { DXKIT_RUNTIME_ARTIFACT_PATHS } from './runtime-artifacts';
+import { GUARDRAIL_ENTRY_POINT, GUARDRAIL_ENTRY_POINT_MARKER } from './self-invocation';
 
 /**
  * Detect the consumer repo's default branch so workflow templates
@@ -334,8 +335,8 @@ export function installHooks(cwd: string, opts: InstallerOpts = {}): ShipInstall
     const userConflict = fs.existsSync(huskyAbs) || (destExists && !destIsDxkit);
     if (userConflict) anyConflict = true;
 
-    // Rendered, not copied: the install hint names the dxkit version that
-    // generated the hook (4.5.0).
+    // Rendered, not copied, so a template placeholder (the dxkit version
+    // that generated the hook) is filled in (4.5.0).
     const rendered = renderDxkitPackageSpec(fs.readFileSync(path.join(tmplDir, name), 'utf8'));
     if (userConflict && !opts.force) {
       // Always land the dxkit hook at .githooks/<name>.dxkit when
@@ -393,6 +394,72 @@ export function installHooks(cwd: string, opts: InstallerOpts = {}): ShipInstall
     );
   }
 
+  return result;
+}
+
+/** A value as a single-quoted POSIX-sh literal (git allows `$` and quotes in
+ *  branch names; a double-quoted render would expand them). */
+function shellSingleQuote(value: string): string {
+  return `'${value.split("'").join(`'\\''`)}'`;
+}
+
+/** Is the file at the entry-point path the user's own (present, no dxkit
+ *  marker)? Install leaves it alone and uninstall keeps it: one ownership
+ *  read for both paths. */
+export function guardrailEntryPointIsUserOwned(cwd: string): boolean {
+  const abs = path.join(cwd, GUARDRAIL_ENTRY_POINT);
+  return fs.existsSync(abs) && !readFileSafe(abs).includes(GUARDRAIL_ENTRY_POINT_MARKER);
+}
+
+/**
+ * The guardrail entry point (`dxkit-guardrails.sh` at the repo root): the ONE
+ * place the check sequence lives (findings guardrail, policy-render parity,
+ * correctness floor) and the one place the dxkit binary is resolved. The
+ * pre-push / pre-commit hooks call it with their tier (`--quick` /
+ * `--changed-only`), the CI guardrail workflow calls it with its plumbing
+ * (`--base`, `--untrusted`, `--report`), and a developer or agent runs it
+ * with no arguments to get the pipeline's verdict locally. Before this, the
+ * hook and the workflow each carried their own copy of the sequence (in a
+ * different order), so a change could pass one and fail the other.
+ *
+ * Ownership mirrors the runbook: the header marker means dxkit-owned
+ * (refreshed on update; identical content is a no-op), a file without it is
+ * the user's and is left alone unless --force. The default branch renders in
+ * from the manifest pin, the same source the workflows use.
+ */
+export function installGuardrailEntryPoint(
+  cwd: string,
+  opts: InstallerOpts = {},
+): ShipInstallResult {
+  const result = emptyResult();
+  const destAbs = path.join(cwd, GUARDRAIL_ENTRY_POINT);
+  // The install hint names the dxkit version that generated the script.
+  const content = renderDxkitPackageSpec(
+    fs
+      .readFileSync(path.join(templatesDir(), GUARDRAIL_ENTRY_POINT), 'utf8')
+      .split('__DXKIT_DEFAULT_BRANCH__')
+      .join(shellSingleQuote(resolveDefaultBranch(cwd))),
+  );
+
+  if (fs.existsSync(destAbs)) {
+    const existing = readFileSafe(destAbs);
+    if (existing === content) {
+      result.skipped.push(GUARDRAIL_ENTRY_POINT);
+      return result;
+    }
+    if (guardrailEntryPointIsUserOwned(cwd) && !opts.force) {
+      result.skipped.push(GUARDRAIL_ENTRY_POINT);
+      result.notes.push(
+        `${GUARDRAIL_ENTRY_POINT} exists without the dxkit marker, so it is treated as yours and left alone. ` +
+          "The dxkit hooks and CI workflow refuse to run a file that is not dxkit's, so they block until you " +
+          'move yours aside and re-run, or re-run with --force to replace it.',
+      );
+      return result;
+    }
+  }
+  fs.writeFileSync(destAbs, content, 'utf8');
+  makeExecutable(destAbs);
+  result.installed.push(GUARDRAIL_ENTRY_POINT);
   return result;
 }
 
@@ -768,11 +835,8 @@ export function installCiGuardrails(
     {
       [CI_RUNTIME_SETUP_KEY]: ciSetup,
       __DXKIT_CI_PUSH_TRIGGER__: pushTrigger,
-      // The committed baseline is anchored to the default branch (its refresh
-      // runs only on push to it). The guardrail step compares `github.base_ref`
-      // against this so a PR into a NON-default base is gated against its own
-      // base via ref-based, not against the default-branch baseline (#118).
-      __DXKIT_DEFAULT_BRANCH__: resolveDefaultBranch(cwd),
+      // The non-default-base fallback (#118) lives in the entry point
+      // (installGuardrailEntryPoint renders the default branch there).
     },
   );
   if (stale && result.installed.length > 0) {
