@@ -52,6 +52,9 @@ import {
 } from '../tools/bounded-exec';
 
 export { makeCommandExec, defaultCommandExec, type CommandExec, type CommandOutcome };
+// The no-tests phrasings live beside the runner (module size); re-exported so
+// every surface keeps importing floor rendering from here.
+export { describeNoTestsCheck, describeNoTestsRan, hasNoTests } from './no-tests';
 
 export type CorrectnessStatus =
   | 'pass'
@@ -73,15 +76,12 @@ export type CorrectnessStatus =
    *  fail in a way that reads as broken code. */
   | 'skipped-environment'
   | 'skipped-none'
-  /** The test command RAN and its runner proved it executed ZERO tests (the
-   *  pack's `ranNoTests` recogniser). Its own disclosed result: never a pass
-   *  (a command that ran nothing is not green evidence: the shipped class was
-   *  a .NET web app with no test project whose `dotnet test` exited 0 and the
-   *  repo read as "tests pass"), never a failure (an empty suite is not a
-   *  break the change introduced, so it does not block by itself). It does
-   *  not set `ran` and does not set `blocks`; every renderer names it via
-   *  `describeNoTestsRan`. At `affected` scope it means "no tests ran for this
-   *  change" (the selection matched nothing), not "the repo has no tests". */
+  /** The test command RAN and its runner proved ZERO tests executed (the
+   *  pack's `ranNoTests`; 4.5.0). Its own disclosed result: never a pass (a
+   *  .NET web app with no test project once read as "tests pass"), never a
+   *  failure (it sets neither `ran` nor `blocks`). Phrased by
+   *  `describeNoTestsCheck`; at `affected` scope it means "no tests ran for
+   *  this change". */
   | 'no-tests';
 
 export interface CorrectnessCheckResult {
@@ -313,13 +313,11 @@ export function runCorrectnessFloor(opts: CorrectnessFloorOptions): CorrectnessF
           continue;
         }
       }
-      // Zero tests executed (4.5.0): the pack's recogniser reads the exit
-      // code + FULL output and answers only on positive evidence of zero.
-      // Decided after the environment classifier (an SDK that could not
-      // start is a boundary, not an empty suite) and before pass/fail, so a
-      // command that ran nothing never records as `pass` (exit 0) or as a
-      // blocking `fail` (pytest's exit 5). A recogniser throw is "not
-      // recognised": the plain verdict stands.
+      // Zero tests executed (4.5.0): the pack's recogniser answers from the
+      // exit code + FULL output, on positive evidence only, after the
+      // environment classifier and before pass/fail — so an empty run is
+      // never `pass` (exit 0) nor a blocking `fail` (pytest's exit 5). A
+      // recogniser throw keeps the plain verdict.
       if (cmd.ranNoTests && ranNoTestsSafely(cmd, outcome.code, outcome.output)) {
         checks.push({
           pack: id,
@@ -467,35 +465,6 @@ export function describeCorrectnessFloor(result: CorrectnessFloorResult): string
   return (
     `correctness floor: ${failed.length} check(s) failed — ${which}` + (none ? `; ${none}` : '')
   );
-}
-
-/**
- * The ONE phrasing of a `no-tests` check, scope-aware: at `affected` scope
- * the selection for this change matched zero tests (the repo may well have
- * tests); at `full` scope the test command itself found none. Neither is a
- * pass. Every surface that names a no-tests check routes through here.
- */
-export function describeNoTestsCheck(
-  c: { readonly pack: string; readonly label: string },
-  scope: CorrectnessScope | undefined,
-): string {
-  return scope === 'affected'
-    ? `${c.pack} ${c.label}: no tests ran for this change (the affected selection matched zero tests; not a pass, the full suite in CI is the backstop)`
-    : `${c.pack} ${c.label}: no tests ran (the test command found zero tests; not a pass)`;
-}
-
-/** Every `no-tests` disclosure in a floor result, one line per check
- *  (empty when none). Rendered beside `describeEnvironmentSkips` by every
- *  surface that summarizes a floor run. */
-export function describeNoTestsRan(result: CorrectnessFloorResult): string[] {
-  return result.checks
-    .filter((c) => c.status === 'no-tests')
-    .map((c) => describeNoTestsCheck(c, result.scope));
-}
-
-/** True when a floor result carries at least one `no-tests` check. */
-export function hasNoTests(result: CorrectnessFloorResult): boolean {
-  return result.checks.some((c) => c.status === 'no-tests');
 }
 
 /** The environment-boundary disclosures in a floor result, one line per pack
