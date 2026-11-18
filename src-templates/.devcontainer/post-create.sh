@@ -70,7 +70,13 @@ fi
 if ! python3 -m pip --version >/dev/null 2>&1 || ! python3 -c 'import ensurepip' >/dev/null 2>&1; then
   stale="${stale:+${stale}; }python3 lacks pip or venv, which dxkit's semgrep and graphify installs need"
 fi
+# A container built from an older devcontainer.json is an EXISTING install
+# that `update` refreshed in place: it keeps working as it did before, so its
+# readiness is reported as advice (exit 0) until the current devcontainer.json
+# is adopted. Readiness is strict for a container built from the current one.
+ADVISORY=""
 if [ -n "${stale}" ]; then
+  ADVISORY="${stale}"
   fail_step "devcontainer.json" "${stale}" \
     "adopt the current dxkit render (.devcontainer/.dxkit-reference/devcontainer.json after 'vyuh-dxkit update', or 'vyuh-dxkit update --force'), then rebuild the container"
 fi
@@ -205,6 +211,7 @@ DXKIT_RECORD_PATH="${READINESS_RECORD}" \
   DXKIT_RECORD_VERSION="${DXKIT_VERSION}" \
   DXKIT_RECORD_RESOLVED="${DXKIT_RESOLVED}" \
   DXKIT_RECORD_FAILURES="$(printf '%s\n' ${FAILURES[@]+"${FAILURES[@]}"})" \
+  DXKIT_RECORD_ADVISORY="${ADVISORY}" \
   node -e '
 const fs = require("fs");
 const e = process.env;
@@ -215,6 +222,7 @@ const failures = (e.DXKIT_RECORD_FAILURES || "").split("\n").filter(Boolean).map
 fs.writeFileSync(e.DXKIT_RECORD_PATH, JSON.stringify({
   schema: "dxkit.devcontainer-readiness.v1",
   ready: failures.length === 0,
+  ...(e.DXKIT_RECORD_ADVISORY ? { advisory: true, advisoryReason: e.DXKIT_RECORD_ADVISORY } : {}),
   generatedBy: e.DXKIT_RECORD_VERSION,
   dxkit: e.DXKIT_RECORD_RESOLVED || null,
   finishedAt: new Date().toISOString(),
@@ -234,4 +242,12 @@ for entry in "${FAILURES[@]}"; do
   echo "    remedy: ${remedy}" >&2
 done
 echo "  Re-run after fixing: bash .devcontainer/post-create.sh" >&2
+if [ -n "${ADVISORY}" ]; then
+  # An existing install: report, do not fail the container set-up it ran
+  # before this version. Strict once the current devcontainer.json is in use.
+  echo "==> This container was built from an older devcontainer.json, so the above is advice and" >&2
+  echo "    post-create does not fail. Adopt the current devcontainer.json and rebuild to make" >&2
+  echo "    readiness strict." >&2
+  exit 0
+fi
 exit 1

@@ -208,7 +208,12 @@ dxkit's pre-push hook present but not active (post-create runs
 `vyuh-dxkit hooks activate`, because a fresh clone carries no
 `core.hooksPath`), or a container built from an older
 `devcontainer.json` that `update` kept (adopt the render in
-`.devcontainer/.dxkit-reference/`, then rebuild). The outcome is also written to
+`.devcontainer/.dxkit-reference/`, then rebuild). A container built from an
+older `devcontainer.json` is an existing install whose scripts `update`
+refreshed: there every failure is still reported and recorded, but as
+advice, and post-create exits 0 so the container set-up keeps working as it
+did before; readiness becomes strict once the current `devcontainer.json`
+is adopted. The outcome is also written to
 `.dxkit/cache/devcontainer-readiness.json`, which `vyuh-dxkit doctor`
 reports. Re-run with `bash .devcontainer/post-create.sh` after fixing
 the cause.

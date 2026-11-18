@@ -26,6 +26,7 @@ import { VERSION } from '../src/constants';
 import { installDevcontainer } from '../src/ship-installers';
 import {
   DEVCONTAINER_READINESS_RECORD,
+  describeDevcontainerReadiness,
   readDevcontainerReadiness,
 } from '../src/devcontainer-readiness';
 
@@ -347,9 +348,19 @@ describe.skipIf(process.platform === 'win32')('generated devcontainer scripts (e
       expect(r.stderr).toContain('x dxkit on PATH:');
     });
 
-    it('a container built from an older devcontainer.json is caught with the remedy', () => {
+    it('a container built from an older devcontainer.json is reported with the remedy, as advice', () => {
+      // The upgrade path: `update` refreshed the scripts but kept the older
+      // devcontainer.json, so this is an EXISTING install. It must keep
+      // working as before: every failure is still reported and recorded,
+      // but post-create does not fail the container set-up.
       const r = run(sb, 'post-create.sh', { DISABLE_AUTOUPDATER: '', STUB_PY_FAIL: '1' });
-      expect(r.code).toBe(1);
+      expect(r.code).toBe(0);
+      expect(r.stderr).toContain('environment NOT READY');
+      expect(r.stderr).toContain('built from an older devcontainer.json');
+      const record = readDevcontainerReadiness(sb.repo);
+      expect(record?.ready).toBe(false);
+      expect(record?.advisory).toBe(true);
+      expect(describeDevcontainerReadiness(record!)).toContain('advice only');
       expect(r.stderr).toContain('x devcontainer.json: DISABLE_AUTOUPDATER is not set');
       expect(r.stderr).toContain('python3 lacks pip or venv');
       expect(r.stderr).toContain('.dxkit-reference/devcontainer.json');
@@ -359,6 +370,13 @@ describe.skipIf(process.platform === 'win32')('generated devcontainer scripts (e
         CLAUDE_CODE_VERSION: 'skip',
       });
       expect(skipped.code).toBe(0);
+    });
+
+    it('advice never masks a failure in a container built from the current devcontainer.json', () => {
+      // Same scanner failure, current container: strict.
+      const r = run(sb, 'post-create.sh', { STUB_TOOLS_FAIL: '1' });
+      expect(r.code).toBe(1);
+      expect(r.stderr).not.toContain('built from an older devcontainer.json');
     });
 
     it('dxkit unavailable at the pinned version is a failure, and the steps needing it say so', () => {
