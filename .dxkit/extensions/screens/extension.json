@@ -1,1 +1,0 @@
-{"schemaVersion":1,"name":"screens","contributes":"inventory","run":{"command":"node","args":[".dxkit/extensions/screens/run.js"],"timeoutSeconds":30},"refresh":"on-merge","output":".dxkit/contrib/screens.json"}
