@@ -335,8 +335,8 @@ export function installHooks(cwd: string, opts: InstallerOpts = {}): ShipInstall
     const userConflict = fs.existsSync(huskyAbs) || (destExists && !destIsDxkit);
     if (userConflict) anyConflict = true;
 
-    // Rendered, not copied: the install hint names the dxkit version that
-    // generated the hook (4.5.0).
+    // Rendered, not copied, so a template placeholder (the dxkit version
+    // that generated the hook) is filled in (4.5.0).
     const rendered = renderDxkitPackageSpec(fs.readFileSync(path.join(tmplDir, name), 'utf8'));
     if (userConflict && !opts.force) {
       // Always land the dxkit hook at .githooks/<name>.dxkit when
@@ -433,10 +433,13 @@ export function installGuardrailEntryPoint(
 ): ShipInstallResult {
   const result = emptyResult();
   const destAbs = path.join(cwd, GUARDRAIL_ENTRY_POINT);
-  const content = fs
-    .readFileSync(path.join(templatesDir(), GUARDRAIL_ENTRY_POINT), 'utf8')
-    .split('__DXKIT_DEFAULT_BRANCH__')
-    .join(shellSingleQuote(resolveDefaultBranch(cwd)));
+  // The install hint names the dxkit version that generated the script.
+  const content = renderDxkitPackageSpec(
+    fs
+      .readFileSync(path.join(templatesDir(), GUARDRAIL_ENTRY_POINT), 'utf8')
+      .split('__DXKIT_DEFAULT_BRANCH__')
+      .join(shellSingleQuote(resolveDefaultBranch(cwd))),
+  );
 
   if (fs.existsSync(destAbs)) {
     const existing = readFileSafe(destAbs);

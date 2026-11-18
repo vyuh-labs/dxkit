@@ -152,7 +152,7 @@ resolve_dxkit() {
     DXKIT=vyuh-dxkit
   else
     warn "vyuh-dxkit not found on PATH or in ./node_modules/.bin."
-    warn "  Install it with: npm install --save-dev @vyuhlabs/dxkit"
+    warn "  Install it with: npm install --save-dev __DXKIT_PACKAGE_SPEC__"
     warn "  From a git hook, skip it once with: DXKIT_SKIP_HOOKS=1 git <command> ..."
     return 1
   fi
