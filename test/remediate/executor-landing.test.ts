@@ -61,7 +61,7 @@ function verifiedResult(): RemediateResult {
   };
 }
 
-/** The ruleset refusal git actually prints (web-client's "Push to Path
+/** The ruleset refusal git actually prints (a repository's "Push to Path
  *  block" ruleset, trimmed) — stderr rides the thrown exec error. */
 const RULESET_STDERR =
   'remote: error: GH013: Repository rule violations found for refs/heads/dxkit/remediate-write-docs.\n' +

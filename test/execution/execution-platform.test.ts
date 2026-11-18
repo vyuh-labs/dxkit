@@ -2,7 +2,7 @@
  * The execution-environment platform (CLAUDE.md Rule 20) — unit layer.
  *
  * Pins the ONE satisfaction predicate both directions, the host mapping, the
- * repo-derived C# host narrowing (the dpl-studio class), and the runners'
+ * repo-derived C# host narrowing (the Windows-only desktop class), and the runners'
  * pre-spawn environment consultation. The registry-driven flow (synthetic
  * pack → spec → runner) lives in `test/recipe-playbook.test.ts`; the per-pack
  * declaration contract lives in `test/languages-contract.test.ts`.
@@ -117,7 +117,7 @@ describe('environment model', () => {
   });
 });
 
-describe('csharp host narrowing (the dpl-studio class)', () => {
+describe('csharp host narrowing (the Windows-only desktop class)', () => {
   function csprojRepo(csprojContent: string): string {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-exec-csharp-'));
     fs.writeFileSync(path.join(dir, 'App.csproj'), csprojContent);

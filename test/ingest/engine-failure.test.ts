@@ -4,7 +4,7 @@
  * The refresh (`vyuh-dxkit ingest`) must bite BOTH ways:
  * - an INFRASTRUCTURE failure (quota / rate limit / auth / network)
  *   with a prior committed snapshot keeps the snapshot and exits 0 —
- *   the dpl-studio lesson ("used your limit of private tests" redding
+ *   the private-repository quota lesson ("used your limit of private tests" redding
  *   the refresh CI while the gate was fine);
  * - a GENUINE failure, or an infra failure with NO snapshot to fall
  *   back to, still exits 1 so it gets fixed.
@@ -48,7 +48,7 @@ function seedSnapshot(cwd: string, generatedAt = '2026-07-01T00:00:00.000Z'): vo
 
 describe('isEngineInfraFailure', () => {
   it.each([
-    // The real dpl-studio quota message, as the Snyk CLI wrapper surfaces it.
+    // The real quota message from a private repository, as the Snyk CLI wrapper surfaces it.
     'Snyk CLI produced no SARIF (exit 2): You have used your limit of private tests',
     'quota exceeded for this billing period',
     'Rate limit exceeded, retry after 60s',
