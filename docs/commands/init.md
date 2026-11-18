@@ -209,7 +209,8 @@ dxkit's pre-push hook present but not active (post-create runs
 `core.hooksPath`), or a container built from an older
 `devcontainer.json` that `update` kept (adopt the render in
 `.devcontainer/.dxkit-reference/`, then rebuild). A container built from an
-older `devcontainer.json` is an existing install whose scripts `update`
+older `devcontainer.json` (one without the `DXKIT_CONTAINER_CONTRACT`
+marker the current one sets in `containerEnv`) is an existing install whose scripts `update`
 refreshed: there every failure is still reported and recorded, but as
 advice, and post-create exits 0 so the container set-up keeps working as it
 did before; readiness becomes strict once the current `devcontainer.json`

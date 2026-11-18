@@ -74,9 +74,13 @@ fi
 # that `update` refreshed in place: it keeps working as it did before, so its
 # readiness is reported as advice (exit 0) until the current devcontainer.json
 # is adopted. Readiness is strict for a container built from the current one.
+# The decision is the build-time marker the current devcontainer.json sets,
+# never the runtime probes above: a broken current container stays strict.
 ADVISORY=""
+if [ -z "${DXKIT_CONTAINER_CONTRACT:-}" ]; then
+  ADVISORY="built from a devcontainer.json older than this script (no DXKIT_CONTAINER_CONTRACT)"
+fi
 if [ -n "${stale}" ]; then
-  ADVISORY="${stale}"
   fail_step "devcontainer.json" "${stale}" \
     "adopt the current dxkit render (.devcontainer/.dxkit-reference/devcontainer.json after 'vyuh-dxkit update', or 'vyuh-dxkit update --force'), then rebuild the container"
 fi

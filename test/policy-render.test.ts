@@ -196,6 +196,18 @@ describe('resolvePolicyRender', () => {
       expect(out.generatedBy).toBeUndefined();
     });
 
+    it('a garbled or NEWER recorded version stays strict (only an upgrade earns the waiver)', () => {
+      installRefreshSurface();
+      editCadence();
+      for (const v of ['unknown', '', '99.0.0', VERSION + '+build.7']) {
+        setGeneratedBy(v);
+        expect(resolvePolicyRender(repo, 'check').ok, v).toBe(false);
+      }
+      // A prerelease of the running version is older than it.
+      setGeneratedBy(VERSION.split('-')[0] + '-rc.1');
+      expect(resolvePolicyRender(repo, 'check').ok).toBe(!VERSION.includes('-'));
+    });
+
     it('a manifest with no recorded version stays strict', () => {
       installRefreshSurface();
       setGeneratedBy(undefined);
