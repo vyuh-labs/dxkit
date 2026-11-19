@@ -156,6 +156,14 @@ const PRESETS: Readonly<Record<LoopPreset, PresetDef>> = Object.freeze({
   },
 });
 
+/** The flow-gate posture a preset dictates. Read by `readFlowConfig` as the
+ *  default when a policy file declares that preset as its `extends` base and
+ *  sets no `flow.mode`, so the pull request gate and the loop Stop-gate agree
+ *  on what the preset means. */
+export function presetFlowMode(preset: LoopPreset): FlowGateMode {
+  return PRESETS[preset].flowMode;
+}
+
 /** A preset applied to a base policy, plus the gate postures the preset
  *  dictates. The shape both consumers hand to `runGuardrailCheck`. */
 export interface PresetPolicy {

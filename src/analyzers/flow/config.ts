@@ -10,12 +10,15 @@
  */
 
 import { mergeIntoPolicyFile } from '../../baseline/policy-write';
-import { readPolicySection } from '../../baseline/policy-text';
+import { readPolicyObjectSafe, readPolicySection } from '../../baseline/policy-text';
+import { isLoopPreset, presetFlowMode } from '../../baseline/presets';
 
 /** How the guardrail treats a net-new broken integration.
- *   - `block` (default): honor the per-finding verdict — an exact, fully
- *     specified binding fails the build; a low-confidence (placeholder-only)
- *     one warns.
+ *   - `block` (default when `flow.mode` is unset and the policy's `extends`
+ *     base is `default` or absent): honor the per-finding verdict — an exact,
+ *     fully specified binding fails the build; a low-confidence
+ *     (placeholder-only) one warns. A file that extends a preset gets that
+ *     preset's posture instead (`security-only` warns, `full-debt` blocks).
  *   - `warn`: every net-new break warns, never fails a build (soft launch, or
  *     a repo still tuning its served-side inventory).
  *   - `off`: the gate does not run at all. */
@@ -114,19 +117,35 @@ function isMode(v: unknown): v is FlowGateMode {
 }
 
 /**
+ * The flow posture when `flow.mode` is unset: the declared `extends` preset's
+ * posture, else `block`. Without this, `"extends": "security-only"` softened
+ * every other non-security class to a warning but left flow blocking in the
+ * pull request gate, while the loop Stop-gate (which applies the preset)
+ * warned: one preset name, two meanings.
+ */
+function defaultFlowMode(policyRoot: Record<string, unknown> | null): FlowGateMode {
+  const base = policyRoot?.['extends'];
+  return isLoopPreset(base) ? presetFlowMode(base) : DEFAULTS.mode;
+}
+
+/**
  * Read the `flow` section of `.dxkit/policy.json`. Fail-open — a read/parse
  * error, or an absent `flow` block, returns the defaults so a repo without flow
- * config behaves as "monorepo, block on exact net-new breaks".
+ * config behaves as "monorepo, block on exact net-new breaks" (or the declared
+ * `extends` preset's posture, see `defaultFlowMode`). An explicit `flow.mode`
+ * always wins.
  */
 export function readFlowConfig(cwd: string): FlowConfig {
+  const root = readPolicyObjectSafe(cwd);
+  const mode = defaultFlowMode(root);
   const section = readPolicySection(cwd, 'flow');
-  if (section === undefined) return DEFAULTS;
+  if (section === undefined) return { ...DEFAULTS, mode };
   const raw = section as RawFlow;
   return {
     stripUrlPrefixes: stringList(raw.stripUrlPrefixes),
     specs: stringList(raw.specs),
     sources: sourceList(raw.sources),
-    mode: isMode(raw.mode) ? raw.mode : DEFAULTS.mode,
+    mode: isMode(raw.mode) ? raw.mode : mode,
     blockThreshold:
       typeof raw.blockThreshold === 'number' && raw.blockThreshold > 0
         ? raw.blockThreshold

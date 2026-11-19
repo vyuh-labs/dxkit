@@ -21,9 +21,10 @@ Flow setup is folded into `init`; **there is no `flow init` command.**
 
 - Fresh or re-run: `npx vyuh-dxkit init --flow` (forces `warn` posture, no prompt) or plain `npx vyuh-dxkit init` (interactive — it detects a UI→API surface and asks for the posture). If the repo has no client calls / routes, init stays silent; there is nothing to gate.
 - The posture lives in `.dxkit/policy.json:flow.mode`:
-  - `warn` — surfaces net-new breaks as warnings, never fails a build (the default; good for adoption).
+  - `warn` — surfaces net-new breaks as warnings, never fails a build (what `init` writes when it finds a UI→API surface; good for adoption).
   - `block` — fails the check on an exact break (confidence-gated: only fully-specified bindings block).
   - `off` — scaffold config only, do not gate.
+  - Unset: the posture of the policy's `extends` preset (`security-only` warns, `full-debt` blocks), else `block`.
 - To change it later, edit `flow.mode` (or defer to **dxkit-config**).
 
 ### diagnose — read the contract's current state

@@ -139,9 +139,11 @@ not because it wants tuning.
 breaks a route some consumer still calls (catch-all-aware, cross-repo
 capable).
 
-**Default and why.** The scaffold suggests `warn` — see the break reports
-before letting them block. init may set `block` where the repo's flow
-signals are strong.
+**Default and why.** `init` writes `warn` when it finds a UI-to-API surface,
+so you see the break reports before letting them block. When `flow.mode`
+is unset, the posture follows the file's `extends` preset (`security-only`
+warns, `full-debt` blocks); with `extends: default` or no `extends` it is
+`block`. An explicit `flow.mode` always wins.
 
 **When you would change it.** Escalate to `block` once a week of warnings
 shows no false positives. `off` only for a repo with no HTTP surface.
@@ -169,8 +171,9 @@ dxkit-extensions skill walks it) and list its id here.
 **What it does.** The data-model drift gate: blocks a model change that
 breaks the declared wire contract (removed field, tightened optionality).
 
-**Default and why.** `warn` first, same escalation logic as
-[flow mode](#flow-mode).
+**Default and why.** `off`: the gate is opt-in (it builds the code graph),
+and no `extends` preset turns it on. When you enable it, start at `warn`
+and escalate as for [flow mode](#flow-mode).
 
 **Tuning.** `schema.specs` points at OpenAPI / JSON Schema documents so
 unmarked DTOs (or languages without a pack extractor) participate too.
