@@ -665,6 +665,11 @@ export async function run(argv: string[]): Promise<void> {
           detectStep.warn(explainNoLanguages(cwd));
         } else {
           detectStep.succeed(facts.join(' · '));
+          // A second stack in a subfolder (a root Node toolchain beside a Go
+          // module in `svc/`) is not analysed; say so rather than let the
+          // recap read as the whole repo.
+          const { explainNestedManifests } = await import('./detect');
+          for (const line of explainNestedManifests(cwd, detected.languages)) logger.warn(line);
         }
       }
 

@@ -2011,6 +2011,7 @@ export const python: LanguageSupport = {
       hasPyFile(cwd)
     );
   },
+  rootManifests: ['pyproject.toml', 'setup.py', 'requirements.txt', 'Pipfile'],
 
   tools: ['ruff', 'pip-audit', 'coverage-py', 'pip-licenses'],
   semgrepRulesets: ['p/python'],

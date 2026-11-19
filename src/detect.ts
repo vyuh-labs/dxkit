@@ -3,6 +3,7 @@ import { execFileSync } from 'child_process';
 import * as path from 'path';
 import { DetectedStack, ToolRequirement } from './types';
 import { buildRequiredTools } from './analyzers/tools/tool-registry';
+import { walkPaths } from './analyzers/tools/walk-paths';
 import { DEFAULT_VERSIONS } from './constants';
 import { LANGUAGES, detectRepoDescription, packStackLabel } from './languages';
 import type { LanguageSupport } from './languages';
@@ -304,6 +305,48 @@ function detectRequiredTools(languages: DetectedStack['languages']): ToolRequire
  * (init's detect step, describe's honesty notes). Best-effort git probes;
  * any failure degrades to the generic message, never a throw.
  */
+/**
+ * Projects a pack would claim if their manifest sat at the repo root, but
+ * which live in a subfolder. Packs that declare `rootManifests` activate
+ * only on a root manifest and run their tools from the root, so a Go module
+ * at `svc/go.mod` (or a Node app at `web/package.json`) leaves the pack off
+ * and the project unanalysed. Without this note the only message was "a
+ * language pack for it does not exist yet", which is false: the pack exists,
+ * the layout is what it does not support.
+ *
+ * Returns one line per inactive pack with a nested manifest (empty when
+ * none). Reads the working tree through the canonical walker, so ignored
+ * and vendored trees (`node_modules`, `vendor`) never count. Never throws.
+ */
+export function explainNestedManifests(
+  cwd: string,
+  languages: Readonly<Record<string, boolean>>,
+  packs: readonly LanguageSupport[] = LANGUAGES,
+): string[] {
+  const lines: string[] = [];
+  for (const pack of packs) {
+    const manifests = pack.rootManifests;
+    if (!manifests || manifests.length === 0 || languages[pack.id]) continue;
+    let nested: string[];
+    try {
+      nested = walkPaths(cwd, { extensions: [], basenames: [...manifests] }).filter((p) =>
+        p.includes('/'),
+      );
+    } catch {
+      continue;
+    }
+    if (nested.length === 0) continue;
+    const shown = nested.slice(0, 3).join(', ');
+    const more = nested.length > 3 ? ` and ${nested.length - 3} more` : '';
+    lines.push(
+      `${pack.displayName}: found ${shown}${more}, but the ${pack.displayName} pack reads ` +
+        `${manifests.join(' / ')} at the repo root only and runs its tools from there, so a ` +
+        `project in a subfolder is not analysed (the pack exists; this layout is not supported yet).`,
+    );
+  }
+  return lines;
+}
+
 export function explainNoLanguages(cwd: string): string {
   try {
     const git = (args: string[]): string =>
@@ -324,6 +367,13 @@ export function explainNoLanguages(cwd: string): string {
         return 0;
       }
     })();
+
+    // A supported stack in a subfolder is a layout gap, not a missing pack
+    // or an empty branch: say that instead of either claim.
+    const nested = explainNestedManifests(cwd, {});
+    if (nested.length > 0) {
+      return `no language active at the repo root. ${nested.join(' ')}`;
+    }
 
     if (files.length <= 10) {
       const hint =

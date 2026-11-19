@@ -600,6 +600,17 @@ export interface LanguageSupport {
 
   detect(cwd: string): boolean;
 
+  /**
+   * Manifest basenames this pack's `detect` reads at the repo ROOT only
+   * (`go.mod`, `Cargo.toml`, ...). Declared by packs whose activation and
+   * tools assume the project sits at the root. When such a manifest exists
+   * only in a subfolder, the pack stays inactive and the project there is
+   * not analysed; `explainNestedManifests` (detect.ts) names it so the user
+   * is not told the stack is unsupported. Packs that detect by a walk of
+   * the whole tree (C#, Kotlin, PHP, ...) omit it.
+   */
+  readonly rootManifests?: readonly string[];
+
   tools: string[];
   semgrepRulesets: string[];
 
