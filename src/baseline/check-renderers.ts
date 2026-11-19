@@ -1310,6 +1310,49 @@ function formatDrift(drift: EnvelopeDrift): string[] {
   return out;
 }
 
+/** Tooling-drift rows the PR comment lists per finding kind. The summary
+ *  line carries the exact count; the rows show what was found. */
+export const MAX_TOOLING_DRIFT_ROWS_PER_KIND = 20;
+
+/**
+ * The tooling-drift findings as a table, at most
+ * {@link MAX_TOOLING_DRIFT_ROWS_PER_KIND} rows per kind, with a line naming
+ * how many of each kind are not shown. Exported for tests.
+ */
+export function markdownToolingDriftRows(pairs: ReadonlyArray<ClassifiedPair>): string[] {
+  const byKind = new Map<string, ClassifiedPair[]>();
+  for (const p of pairs) {
+    const list = byKind.get(p.kind) ?? [];
+    list.push(p);
+    byKind.set(p.kind, list);
+  }
+  const out: string[] = [
+    `Tooling drift (${pairs.length}; not attributable to this diff, so warn-only):`,
+    '',
+    '| Kind | Severity | Location | Fingerprint |',
+    '|---|---|---|---|',
+  ];
+  const hidden: string[] = [];
+  for (const [kind, list] of byKind) {
+    for (const p of list.slice(0, MAX_TOOLING_DRIFT_ROWS_PER_KIND)) {
+      const fp = pairFingerprint(p);
+      out.push(
+        `| ${escapeMd(kind)} | ${escapeMd(p.severity ?? '—')} | ` +
+          `${escapeMd(locatorProse(p) || '—')} | ${fp ? `\`${fp}\`` : '—'} |`,
+      );
+    }
+    if (list.length > MAX_TOOLING_DRIFT_ROWS_PER_KIND) {
+      hidden.push(`${list.length - MAX_TOOLING_DRIFT_ROWS_PER_KIND} ${kind}`);
+    }
+  }
+  out.push('');
+  if (hidden.length > 0) {
+    out.push(`_Not shown: ${hidden.join(', ')}; see \`--json\` for each._`);
+    out.push('');
+  }
+  return out;
+}
+
 /** Markdown Resolved-table row cap. The count in the summary line is exact;
  *  the table shows a sample so a batch cleanup cannot push the comment past
  *  GitHub's 65,536-byte limit (a real PR comment hit 60,143 bytes of mostly
@@ -2085,7 +2128,8 @@ export function renderMarkdown(result: GuardrailCheckResult, opts?: CheckRenderO
         `> **${toolingDriftWarn.length} finding${toolingDriftWarn.length === 1 ? '' : 's'} demoted ` +
           `to TOOLING-DRIFT** (${perKind}) — what dxkit can see for these kinds changed between ` +
           `the baseline and this scan, so they cannot be attributed to this diff. They warn and ` +
-          `never block; see \`--json\` for each, and re-baseline (from CI) to restore attribution.`,
+          `never block; they are listed under Warnings (up to ${MAX_TOOLING_DRIFT_ROWS_PER_KIND} ` +
+          `per kind; \`--json\` has every one), and re-baseline (from CI) to restore attribution.`,
       );
       lines.push('');
     }
@@ -2115,11 +2159,16 @@ export function renderMarkdown(result: GuardrailCheckResult, opts?: CheckRenderO
       for (const p of specificWarn) lines.push(markdownPairRow(p));
       lines.push('');
     }
-    if (driftWarn.length > 0 || toolingDriftWarn.length > 0) {
-      const parts: string[] = [];
-      if (toolingDriftWarn.length > 0) parts.push(`${toolingDriftWarn.length} tooling-drift`);
-      if (driftWarn.length > 0) parts.push(`${driftWarn.length} envelope-drift`);
-      lines.push(`_${parts.join(' + ')} warning(s) collapsed above; see \`--json\` for each._`);
+    // Tooling drift is LISTED, bounded per kind: the count alone hid what a
+    // newly added check reported (its findings demote to tooling drift until
+    // the first refresh re-captures its recall), so a reviewer could not see
+    // them in the comment at all. The per-kind cap keeps an 18k-finding
+    // brownfield demotion from flooding the body.
+    if (toolingDriftWarn.length > 0) lines.push(...markdownToolingDriftRows(toolingDriftWarn));
+    if (driftWarn.length > 0) {
+      lines.push(
+        `_${driftWarn.length} envelope-drift warning(s) collapsed above; see \`--json\` for each._`,
+      );
       lines.push('');
     }
     lines.push('</details>');
