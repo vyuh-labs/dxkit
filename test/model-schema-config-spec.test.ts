@@ -137,6 +137,43 @@ describe('spec-declared models', () => {
     ]);
   });
 
+  it('loadSpecModels reads a YAML spec into the same models as its JSON twin', () => {
+    const yamlSpec = [
+      'openapi: 3.0.0',
+      'components:',
+      '  schemas:',
+      '    Order:',
+      '      type: object',
+      '      required: [id]',
+      '      properties:',
+      '        id: { type: integer }',
+      '        note: { type: string }',
+      '',
+    ].join('\n');
+    const jsonTwin = {
+      openapi: '3.0.0',
+      components: {
+        schemas: {
+          Order: {
+            type: 'object',
+            required: ['id'],
+            properties: { id: { type: 'integer' }, note: { type: 'string' } },
+          },
+        },
+      },
+    };
+    const yamlFile = path.join(tmp, 'openapi.yaml');
+    const jsonFile = path.join(tmp, 'openapi.json');
+    fs.writeFileSync(yamlFile, yamlSpec);
+    fs.writeFileSync(jsonFile, JSON.stringify(jsonTwin));
+    const fromYaml = loadSpecModels(yamlFile);
+    expect(fromYaml.map((m) => m.fields)).toEqual(loadSpecModels(jsonFile).map((m) => m.fields));
+    expect(fromYaml[0].fields).toEqual([
+      { name: 'id', type: 'integer', required: true },
+      { name: 'note', type: 'string', required: false },
+    ]);
+  });
+
   it('loadSpecModels is fail-open on unreadable/non-schema files', () => {
     expect(loadSpecModels(path.join(tmp, 'missing.json'))).toEqual([]);
     const bad = path.join(tmp, 'bad.json');

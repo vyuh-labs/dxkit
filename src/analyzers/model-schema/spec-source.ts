@@ -12,12 +12,13 @@
  * `integer`, a `$ref` target's name, `X[]` for arrays) — comparison stays
  * within the spec's language, per the normalizer's lexical doctrine.
  *
- * JSON documents today (YAML is the same fast-follow decision flow has).
- * Pure over its inputs; the file read is the only I/O. Fail-open: an
+ * JSON or YAML documents (by file extension, through the shared
+ * `parseSpecDocument` flow uses too). Pure over its inputs; the file read is the only I/O. Fail-open: an
  * unreadable or non-schema file yields `[]`, never a throw.
  */
 
 import { readFileSync } from 'fs';
+import { parseSpecDocument } from '../spec-document';
 import type { ModelEntity, ModelField } from './model';
 
 type JsonObject = Record<string, unknown>;
@@ -91,12 +92,12 @@ export function modelsFromSpec(doc: unknown, file: string): ModelEntity[] {
   return out;
 }
 
-/** Read + parse a JSON spec into models. `[]` (never throws) when the file
- *  is unreadable or not a recognizable schema document. */
+/** Read + parse a JSON or YAML spec into models. `[]` (never throws) when
+ *  the file is unreadable or not a recognizable schema document. */
 export function loadSpecModels(filePath: string): ModelEntity[] {
   let doc: unknown;
   try {
-    doc = JSON.parse(readFileSync(filePath, 'utf8'));
+    doc = parseSpecDocument(readFileSync(filePath, 'utf8'), filePath);
   } catch {
     return [];
   }
