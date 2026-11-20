@@ -10,9 +10,18 @@
  * frontend repo resolve calls to a backend it does not contain.
  *
  * With no participants it degenerates to a single-repo publish (this repo's own
- * served ∪ nothing), the monorepo case. Fail-open per participant: a missing
- * path or an unreachable ref drops that participant to zero routes rather than
- * failing the publish. Reuses the canonical contract builders (Rule 2).
+ * served ∪ nothing), the monorepo case. Reuses the canonical contract builders
+ * (Rule 2).
+ *
+ * A participant that cannot be gathered (a missing path, a failed clone) holds
+ * the WHOLE publish back: nothing is written and the result names it. Its
+ * routes are unknown, not zero. Writing the mesh without them would record
+ * every route that participant serves as removed, and a landed refresh would
+ * then arm the gate against every consumer still calling them, all from one
+ * transient clone failure. The previously committed snapshots stay as they
+ * were until every participant can be read. A pinned ref that does not
+ * resolve in a local checkout still falls back to that checkout's working
+ * tree (the participant is readable, just not at the pin).
  */
 
 import * as fs from 'fs';
@@ -30,6 +39,9 @@ import {
   writeConsumedContract,
   contractKey,
   servedContentHash,
+  FLOW_DIR,
+  SERVED_SNAPSHOT,
+  CONSUMED_SNAPSHOT,
   type ServedRoute,
   type ServedContract,
   type ParticipantSource,
@@ -53,6 +65,12 @@ export interface PublishedParticipant {
 export interface PublishResult {
   readonly servedPath: string;
   readonly consumedPath: string;
+  /** False when a participant could not be gathered: neither snapshot was
+   *  written and `failedParticipants` names why. */
+  readonly written: boolean;
+  /** Participants whose routes could not be read (`missing` / `unreachable`).
+   *  Non-empty means the publish was held back. */
+  readonly failedParticipants: readonly PublishedParticipant[];
   /** One entry per workspace participant (empty in the single-repo case). */
   readonly participants: readonly PublishedParticipant[];
   /** Total served routes in the unioned mesh contract. */
@@ -112,9 +130,9 @@ async function servedRoutesFrom(root: string, opts: PublishOptions): Promise<Ser
  *      `withRemoteRefWorktree` fetches it shallowly at `ref` (default HEAD). This
  *      is why `{ path, repo, ref }` uses the sibling on a dev machine and clones
  *      in CI where the sibling isn't checked out.
- * Fail-open throughout: a missing local path with no `repo` → `missing`; a clone
- * failure → `unreachable`; a local gather failure → `missing`. A participant
- * never wedges a publish.
+ * Never throws: a missing local path with no `repo` → `missing`; a clone
+ * failure → `unreachable`; a local gather failure → `missing`. The caller
+ * holds the publish back on either (see the module header).
  */
 async function gatherParticipant(
   cwd: string,
@@ -222,6 +240,21 @@ export async function publishFlow(cwd: string, opts: PublishOptions): Promise<Pu
 
   const mesh = dedupeServed(allRoutes);
   const contentHash = servedContentHash(mesh);
+  const failedParticipants = participants.filter(
+    (p) => p.source === 'missing' || p.source === 'unreachable',
+  );
+  if (failedParticipants.length > 0) {
+    return {
+      servedPath: path.join(cwd, FLOW_DIR, SERVED_SNAPSHOT),
+      consumedPath: path.join(cwd, FLOW_DIR, CONSUMED_SNAPSHOT),
+      written: false,
+      failedParticipants,
+      participants,
+      totalServedRoutes: mesh.length,
+      consumedBindings: consumed.bindings.length,
+      contentHash,
+    };
+  }
   const servedContract: ServedContract = {
     side: 'served',
     ...baseMeta,
@@ -239,6 +272,8 @@ export async function publishFlow(cwd: string, opts: PublishOptions): Promise<Pu
   return {
     servedPath,
     consumedPath,
+    written: true,
+    failedParticipants: [],
     participants,
     totalServedRoutes: mesh.length,
     consumedBindings: consumed.bindings.length,
