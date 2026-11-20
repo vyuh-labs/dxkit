@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { execFileSync } from 'child_process';
-import { detect, explainNoLanguages } from '../src/detect';
+import { detect, explainNestedManifests, explainNoLanguages } from '../src/detect';
 import { typescript } from '../src/languages/typescript';
 
 const FIX = (name: string) => path.join(__dirname, 'fixtures', name);
@@ -194,5 +194,87 @@ describe('explainNoLanguages — two truths, two messages (the empty-branch clas
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-nolang-plain-'));
     dirs.push(dir);
     expect(explainNoLanguages(dir)).toContain('no languages detected');
+  });
+});
+
+describe('explainNestedManifests: a supported stack in a subfolder is named, never called unsupported', () => {
+  const dirs: string[] = [];
+  afterEach(() => {
+    for (const d of dirs.splice(0)) fs.rmSync(d, { recursive: true, force: true });
+  });
+  function tree(files: Record<string, string>): string {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dxkit-nested-'));
+    dirs.push(dir);
+    for (const [rel, body] of Object.entries(files)) {
+      fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });
+      fs.writeFileSync(path.join(dir, rel), body);
+    }
+    execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: dir });
+    execFileSync('git', ['add', '-A'], { cwd: dir });
+    execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'x'], {
+      cwd: dir,
+    });
+    return dir;
+  }
+  const goModule = {
+    'svc/go.mod': 'module example.com/svc\n\ngo 1.22\n',
+    'svc/main.go': 'package main\nfunc main() {}\n',
+  };
+
+  it('a Go module in a subfolder: the pack stays off, and the note names the manifest', () => {
+    const dir = tree(goModule);
+    const stack = detect(dir);
+    expect(stack.languages.go).toBe(false);
+    const lines = explainNestedManifests(dir, stack.languages);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain('svc/go.mod');
+    expect(lines[0]).toContain('repo root only');
+  });
+
+  it('the no-language message says the layout is the gap, not that no pack exists', () => {
+    const files: Record<string, string> = { ...goModule };
+    for (let i = 0; i < 12; i++) files[`docs/page${i}.md`] = `# page ${i}`;
+    const msg = explainNoLanguages(tree(files));
+    expect(msg).toContain('svc/go.mod');
+    expect(msg).not.toContain('does not exist yet');
+  });
+
+  it('a small branch with a nested manifest is not reported as empty', () => {
+    const msg = explainNoLanguages(tree(goModule));
+    expect(msg).toContain('svc/go.mod');
+    expect(msg).not.toContain('no source on the checked-out branch');
+  });
+
+  it('a root manifest activates the pack and produces no note', () => {
+    const dir = tree({
+      'go.mod': 'module example.com/root\n\ngo 1.22\n',
+      'main.go': 'package main\nfunc main() {}\n',
+    });
+    const stack = detect(dir);
+    expect(stack.languages.go).toBe(true);
+    expect(explainNestedManifests(dir, stack.languages)).toEqual([]);
+  });
+
+  it('an active root stack beside a nested one names only the nested one', () => {
+    const dir = tree({
+      'package.json': '{"name":"root","version":"1.0.0"}',
+      'src/index.ts': 'export const a = 1;\n',
+      'rust/core/Cargo.toml': '[package]\nname = "core"\nversion = "0.1.0"\n',
+      'rust/core/src/lib.rs': 'pub fn f() {}\n',
+    });
+    const stack = detect(dir);
+    expect(stack.languages.typescript).toBe(true);
+    const lines = explainNestedManifests(dir, stack.languages);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain('rust/core/Cargo.toml');
+  });
+
+  it('manifests under ignored trees (node_modules) never count', () => {
+    const dir = tree({
+      'README.md': '# x',
+      'node_modules/dep/package.json': '{"name":"dep"}',
+      'node_modules/dep/index.js': 'module.exports = 1;\n',
+    });
+    expect(explainNestedManifests(dir, {})).toEqual([]);
   });
 });
