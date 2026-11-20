@@ -1195,6 +1195,7 @@ export const rust: LanguageSupport = {
   detect(cwd) {
     return fileExists(cwd, 'Cargo.toml');
   },
+  rootManifests: ['Cargo.toml'],
 
   tools: ['clippy', 'cargo-audit', 'cargo-llvm-cov', 'cargo-license'],
   // No dedicated semgrep Rust ruleset; covered by p/security-audit.

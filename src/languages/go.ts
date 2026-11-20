@@ -1284,6 +1284,7 @@ export const go: LanguageSupport = {
   detect(cwd) {
     return fileExists(cwd, 'go.mod');
   },
+  rootManifests: ['go.mod'],
 
   tools: ['golangci-lint', 'govulncheck', 'go-licenses'],
   semgrepRulesets: ['p/gosec'],
