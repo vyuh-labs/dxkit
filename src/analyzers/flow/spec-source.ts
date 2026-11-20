@@ -16,11 +16,12 @@
  * via the normalized path (Rule 9), so paths route through the shared normalizer
  * exactly as source-extracted ones do.
  *
- * JSON OpenAPI (2.0/3.x) today; YAML is a fast-follow (a parser dependency
- * decision). Pure over its inputs; the file read is the only I/O.
+ * OpenAPI 2.0/3.x as JSON or YAML (by file extension, through the shared
+ * `parseSpecDocument`). Pure over its inputs; the file read is the only I/O.
  */
 
 import { readFileSync } from 'fs';
+import { parseSpecDocument } from '../spec-document';
 import type { RouteEndpoint } from './extract';
 import { normalizeMethod, normalizePath, type HttpMethod } from './normalize';
 
@@ -61,14 +62,15 @@ export function routesFromOpenApi(doc: OpenApiDoc, sourceFile: string): RouteEnd
 }
 
 /**
- * Read + parse a JSON OpenAPI document into served routes. Returns `[]` (never
- * throws) when the file is unreadable or not valid JSON OpenAPI — a missing or
- * broken spec degrades to the static fallback, it does not fail the run.
+ * Read + parse an OpenAPI document (JSON or YAML) into served routes. Returns
+ * `[]` (never throws) when the file is unreadable or not a valid OpenAPI
+ * document — a missing or broken spec degrades to the static fallback, it
+ * does not fail the run.
  */
 export function loadOpenApiRoutes(filePath: string): RouteEndpoint[] {
   let doc: OpenApiDoc;
   try {
-    doc = JSON.parse(readFileSync(filePath, 'utf8')) as OpenApiDoc;
+    doc = parseSpecDocument(readFileSync(filePath, 'utf8'), filePath) as OpenApiDoc;
   } catch {
     return [];
   }

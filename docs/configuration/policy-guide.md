@@ -146,7 +146,7 @@ signals are strong.
 **When you would change it.** Escalate to `block` once a week of warnings
 shows no false positives. `off` only for a repo with no HTTP surface.
 
-**Tuning.** `flow.specs` adds served contracts from OpenAPI files;
+**Tuning.** `flow.specs` adds served contracts from OpenAPI files (JSON, or YAML by a `.yaml`/`.yml` extension);
 `flow.stripUrlPrefixes` normalizes gateway prefixes (the classic 3-line fix
 that closes most false "unresolved call" reports); `flow.blockThreshold`
 sets the confidence a break needs to block.
