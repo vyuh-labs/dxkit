@@ -99,6 +99,55 @@ export function detectInstallFlags(cwd: string): ManifestInstallFlags {
  * ON here. Turning one off is `uninstall`'s job, which reads provenance — an
  * update must never delete a workflow because a knob flipped.
  */
+/**
+ * The policy-switched lanes: each install flag, the switch that turns it on,
+ * and the predicate that reads it. ONE list, read by two consumers:
+ * `applyPolicyDerivedFlags` (install time: a switch turned on installs the
+ * workflow) and `laneSwitchFor` (run time: the installed workflow asks
+ * whether its switch is still on, via `vyuh-dxkit jobs enabled`). Install
+ * is one-directional by design (update never deletes a workflow), so
+ * without the run-time read a lane switched off kept firing on schedule.
+ */
+export interface LaneSwitch {
+  readonly flag: keyof ManifestInstallFlags;
+  /** The policy setting a user changes to turn the lane on or off. */
+  readonly switchName: string;
+  readonly enabled: (cwd: string) => boolean;
+}
+
+export const LANE_SWITCHES: readonly LaneSwitch[] = [
+  { flag: 'withGraphRefresh', switchName: 'graph.refresh: "cache"', enabled: graphRefreshEnabled },
+  { flag: 'withReportsRefresh', switchName: 'reports.onMerge', enabled: reportsRefreshEnabled },
+  { flag: 'withFlowRefresh', switchName: 'flow.onMergeRefresh', enabled: flowRefreshEnabled },
+  {
+    flag: 'withExtensionsRefresh',
+    switchName: 'an extension manifest with refresh: "on-merge"',
+    enabled: extensionsRefreshEnabled,
+  },
+  {
+    flag: 'withCommentDefer',
+    switchName: 'newAdvisories.commentCommands',
+    enabled: commentCommandsEnabled,
+  },
+  { flag: 'withDepBump', switchName: 'depBump.enabled', enabled: depBumpEnabled },
+  { flag: 'withRemediate', switchName: 'remediate.enabled', enabled: remediateEnabled },
+];
+
+/** The switch governing an installed workflow (`dxkit-dep-bump.yml`), found
+ *  through the surface registry's own artifact list; undefined for a
+ *  workflow no policy switch governs (the guardrails, the baseline refresh). */
+export function laneSwitchFor(workflowFile: string): LaneSwitch | undefined {
+  const rel = `.github/workflows/${path.basename(workflowFile)}`;
+  return LANE_SWITCHES.find((lane) =>
+    MANAGED_SHIP_SURFACES.some(
+      (surface) =>
+        surface.gate.kind === 'flag' &&
+        surface.gate.flag === lane.flag &&
+        surface.artifacts({} as ManifestInstallFlags).includes(rel),
+    ),
+  );
+}
+
 export function applyPolicyDerivedFlags(
   cwd: string,
   flags: ManifestInstallFlags,
@@ -107,17 +156,8 @@ export function applyPolicyDerivedFlags(
   // byte-identical flag set back. Writing `false` into every slot would work
   // for update, but it would also silently rewrite the shape every other
   // consumer (and the manifest self-migration) sees.
-  const enables: ReadonlyArray<[keyof ManifestInstallFlags, (cwd: string) => boolean]> = [
-    ['withGraphRefresh', graphRefreshEnabled],
-    ['withReportsRefresh', reportsRefreshEnabled],
-    ['withFlowRefresh', flowRefreshEnabled],
-    ['withExtensionsRefresh', extensionsRefreshEnabled],
-    ['withCommentDefer', commentCommandsEnabled],
-    ['withDepBump', depBumpEnabled],
-    ['withRemediate', remediateEnabled],
-  ];
-  for (const [flag, enabled] of enables) {
-    if (!flags[flag] && enabled(cwd)) flags[flag] = true;
+  for (const lane of LANE_SWITCHES) {
+    if (!flags[lane.flag] && lane.enabled(cwd)) flags[lane.flag] = true;
   }
   return flags;
 }
