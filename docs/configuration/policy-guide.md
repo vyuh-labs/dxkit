@@ -464,7 +464,12 @@ ledger + the agent envelope (model, turns, spend, outcome).
 enabled — not by dxkit, not by `configure --apply`. Enable with
 `remediate.enabled: true` + `vyuh-dxkit update`, then set the driver's
 credential secret (see the [driver table](#remediate-driver)) — a scoped
-key with a spend limit, never a personal key.
+key with a spend limit, never a personal key. Setting it back to `false`
+stops scheduled runs: the plan's matrix is empty, so a firing spawns no
+task job. `update` does not delete the installed workflow (its cron still
+fires and exits with nothing to do); delete
+`.github/workflows/dxkit-remediate.yml` to remove it. A
+`workflow_dispatch` that names a task still runs that task.
 
 **When you would change it.** The baseline grandfathers a broken floor or
 advisories the bump lane cannot version-solve, and you want a budgeted,

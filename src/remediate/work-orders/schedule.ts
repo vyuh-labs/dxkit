@@ -20,6 +20,14 @@
  * broken planner must not silently turn the whole schedule off — and says
  * why. The dispatch-override path is untouched: a workflow_dispatch naming
  * a task runs exactly that task, bypassing this derivation entirely.
+ *
+ * `remediate.enabled: false` empties the scheduled matrix before any of
+ * the above. The knob is read here, at run time, because `update` never
+ * deletes an installed workflow when a knob is turned off: a workflow
+ * installed while the lane was on keeps its cron, and without this check a
+ * repo that turned the lane off kept getting scheduled agent runs. The
+ * static fallback does not apply to a disabled lane: "off" is a decision,
+ * not a degraded plan.
  */
 import { tasksWithinSpendCeiling, type RemediateConfig } from '../config';
 import { classesSelectedBy, isBuiltinWorkOrderClass, WORK_ORDER_CLASSES } from './types';
@@ -37,8 +45,10 @@ export interface ScheduledMatrix {
   /** Enabled open-ended tasks kept by explicit policy (legacy shape). */
   readonly legacyOpenEnded: readonly RemediateTaskId[];
   /** 'orders' = derived from the plan; 'static-fallback' = no plan was
-   *  available and the policy task list ran the matrix (disclosed). */
-  readonly source: 'orders' | 'static-fallback';
+   *  available and the policy task list ran the matrix (disclosed);
+   *  'disabled' = `remediate.enabled` is not true, so a scheduled firing
+   *  runs nothing (disclosed). */
+  readonly source: 'orders' | 'static-fallback' | 'disabled';
   readonly disclosures: readonly string[];
 }
 
@@ -61,6 +71,21 @@ export interface ScheduledMatrixInput {
 export function deriveScheduledMatrix(input: ScheduledMatrixInput): ScheduledMatrix {
   const { config, plan } = input;
   const disclosures: string[] = [];
+
+  if (!config.enabled) {
+    return {
+      run: [],
+      deferred: [],
+      noOpenOrders: [],
+      legacyOpenEnded: [],
+      source: 'disabled',
+      disclosures: [
+        'matrix: remediate.enabled is not true, so a scheduled firing runs no task ($0). ' +
+          'A workflow_dispatch that names a task still runs it. To stop the schedule from ' +
+          'firing at all, delete .github/workflows/dxkit-remediate.yml (update never removes it).',
+      ],
+    };
+  }
 
   const degraded = !plan
     ? 'no work-order plan was available' + (input.planError ? ` (${input.planError})` : '')
