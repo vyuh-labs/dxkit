@@ -120,7 +120,8 @@
     "hosted-git-info": "^9.0.2",
     "jsonc-parser": "^3.3.1",
     "tree-sitter-wasms": "0.1.13",
-    "web-tree-sitter": "^0.25.10"
+    "web-tree-sitter": "^0.25.10",
+    "yaml": "^2.8.3"
   },
   "peerDependencies": {
     "exceljs": "^4.4.0"

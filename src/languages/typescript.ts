@@ -3110,6 +3110,7 @@ export const typescript: LanguageSupport = {
     // other packs already enforce (see csharp/python `detect`).
     return walkPaths(cwd, { extensions: TS_JS_EXT }).length > 0;
   },
+  rootManifests: ['package.json'],
 
   mapLintSeverity: mapEslintRuleSeverity,
 

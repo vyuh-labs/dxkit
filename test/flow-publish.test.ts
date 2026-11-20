@@ -100,7 +100,7 @@ describe('publishFlow', () => {
     expect(served?.contentHash).toBe(result.contentHash);
   });
 
-  it('marks a participant whose path is missing as source=missing without failing', async () => {
+  it('a participant whose path is missing holds the publish back: named, nothing written', async () => {
     write(root, 'app/package.json', JSON.stringify({ name: 'app', version: '0.0.0' }));
     write(root, 'app/web/List.tsx', "axios.get('/articles');\n");
     write(
@@ -110,6 +110,10 @@ describe('publishFlow', () => {
     );
     const result = await publishFlow(join(root, 'app'), { generatedAt: NOW });
     expect(result.participants).toEqual([{ name: 'ghost', routes: 0, source: 'missing' }]);
+    expect(result.written).toBe(false);
+    expect(result.failedParticipants.map((p) => p.name)).toEqual(['ghost']);
+    expect(existsSync(result.servedPath)).toBe(false);
+    expect(existsSync(result.consumedPath)).toBe(false);
   });
 
   it('publishes this repo’s own served routes when there are no participants', async () => {
@@ -173,7 +177,7 @@ describe('publishFlow', () => {
     }
   });
 
-  it('marks an unreachable REMOTE participant as source=unreachable without failing', async () => {
+  it('an unreachable REMOTE participant holds the publish back: named, nothing written', async () => {
     write(root, 'app/package.json', JSON.stringify({ name: 'app', version: '0.0.0' }));
     write(root, 'app/web/List.tsx', "axios.get('/articles');\n");
     write(
@@ -186,6 +190,41 @@ describe('publishFlow', () => {
     );
     const result = await publishFlow(join(root, 'app'), { generatedAt: NOW });
     expect(result.participants).toEqual([{ name: 'gone', routes: 0, source: 'unreachable' }]);
+    expect(result.written).toBe(false);
+    expect(result.failedParticipants.map((p) => p.name)).toEqual(['gone']);
+    expect(existsSync(result.servedPath)).toBe(false);
+  });
+
+  it('a clone failure after a good publish keeps the committed snapshot: routes are never recorded as removed', async () => {
+    // The reported shape: a provider published fine, then one refresh could
+    // not clone it. The old behaviour wrote the mesh with zero routes for it,
+    // so every route it serves read as removed.
+    const remote = makeRemoteBackend(['/articles', '/orders']);
+    try {
+      write(root, 'app/package.json', JSON.stringify({ name: 'app', version: '0.0.0' }));
+      write(root, 'app/web/List.tsx', "axios.get('/articles');\naxios.get('/orders');\n");
+      write(
+        root,
+        'app/.dxkit/workspace.json',
+        JSON.stringify({ participants: [{ name: 'backend', repo: remote }], external: [] }),
+      );
+      const appDir = join(root, 'app');
+      const first = await publishFlow(appDir, { generatedAt: NOW });
+      expect(first.written).toBe(true);
+      expect(readServedContract(appDir)?.routes).toHaveLength(2);
+
+      rmSync(remote.replace('file://', ''), { recursive: true, force: true });
+      const second = await publishFlow(appDir, { generatedAt: '2026-07-03T00:00:00.000Z' });
+      expect(second.written).toBe(false);
+      expect(second.failedParticipants).toEqual([
+        { name: 'backend', routes: 0, source: 'unreachable' },
+      ]);
+      const kept = readServedContract(appDir);
+      expect(kept?.routes.map((r) => r.path).sort()).toEqual(['/articles', '/orders']);
+      expect(kept?.generatedAt).toBe(NOW);
+    } finally {
+      rmSync(remote.replace('file://', ''), { recursive: true, force: true });
+    }
   });
 
   it('prefers a LOCAL checkout when present, falling back to the remote when absent', async () => {

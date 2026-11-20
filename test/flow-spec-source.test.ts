@@ -3,6 +3,7 @@ import { writeFileSync, mkdtempSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { routesFromOpenApi, loadOpenApiRoutes } from '../src/analyzers/flow/spec-source';
+import { openapiReader } from '../src/analyzers/flow/contract-sources/openapi';
 
 const doc = {
   openapi: '3.0.0',
@@ -70,5 +71,56 @@ describe('spec-source — loadOpenApiRoutes', () => {
     const bad = join(dir, 'bad.json');
     writeFileSync(bad, '{ not valid json');
     expect(loadOpenApiRoutes(bad)).toEqual([]);
+  });
+  // A YAML spec used to parse as JSON, fail, and contribute zero routes with
+  // no message: the served side silently lost every route it declared.
+  const YAML_SPEC = [
+    'openapi: 3.0.0',
+    'info: { title: t, version: "1" }',
+    'paths:',
+    '  /api/orders:',
+    '    get:',
+    '      operationId: listOrders',
+    "      responses: { '200': { description: ok } }",
+    '  /api/orders/{id}:',
+    '    parameters:',
+    '      - { name: id, in: path, required: true, schema: { type: string } }',
+    '    delete:',
+    "      responses: { '204': { description: gone } }",
+    '',
+  ].join('\n');
+
+  it('reads a YAML OpenAPI file (.yaml and .yml) into the same routes as JSON', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dxkit-spec-'));
+    for (const name of ['openapi.yaml', 'openapi.yml']) {
+      const file = join(dir, name);
+      writeFileSync(file, YAML_SPEC);
+      const routes = loadOpenApiRoutes(file);
+      expect(routes.map((r) => `${r.method} ${r.path} ${r.handler ?? '-'}`)).toEqual([
+        'GET /api/orders listOrders',
+        'DELETE /api/orders/{var} -',
+      ]);
+      expect(routes.every((r) => r.via === 'spec' && r.file === file)).toBe(true);
+    }
+  });
+
+  it('degrades to [] on an invalid YAML spec (never throws)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dxkit-spec-'));
+    const bad = join(dir, 'bad.yaml');
+    writeFileSync(bad, 'paths:\n  /x: [unclosed\n');
+    expect(loadOpenApiRoutes(bad)).toEqual([]);
+  });
+
+  it('the openapi contract source reads YAML and names the format in a parse error', () => {
+    expect(openapiReader.sniff('api/openapi.yaml')).toBe(true);
+    expect(openapiReader.sniff('swagger.yml')).toBe(true);
+    const ok = openapiReader.parse(YAML_SPEC, 'openapi.yaml');
+    expect(ok.errors).toEqual([]);
+    expect(ok.served.map((r) => `${r.method} ${r.path}`)).toEqual([
+      'GET /api/orders',
+      'DELETE /api/orders/{var}',
+    ]);
+    const bad = openapiReader.parse('paths: [unclosed', 'openapi.yaml');
+    expect(bad.errors[0]).toContain('not valid YAML');
   });
 });

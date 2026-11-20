@@ -665,6 +665,11 @@ export async function run(argv: string[]): Promise<void> {
           detectStep.warn(explainNoLanguages(cwd));
         } else {
           detectStep.succeed(facts.join(' · '));
+          // A second stack in a subfolder (a root Node toolchain beside a Go
+          // module in `svc/`) is not analysed; say so rather than let the
+          // recap read as the whole repo.
+          const { explainNestedManifests } = await import('./detect');
+          for (const line of explainNestedManifests(cwd, detected.languages)) logger.warn(line);
         }
       }
 
@@ -1093,6 +1098,13 @@ export async function run(argv: string[]): Promise<void> {
     }
 
     case 'jobs': {
+      // `jobs enabled <workflow>`: the run-time off-switch query the managed
+      // lane workflows call first (prints true/false).
+      if (positionals[1] === 'enabled') {
+        const { runJobsEnabled } = await import('./jobs-cli');
+        runJobsEnabled(cwd, positionals[2]);
+        break;
+      }
       const { runJobs } = await import('./jobs-cli');
       runJobs(cwd, { json: !!values.json });
       break;

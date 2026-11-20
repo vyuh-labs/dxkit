@@ -139,14 +139,16 @@ not because it wants tuning.
 breaks a route some consumer still calls (catch-all-aware, cross-repo
 capable).
 
-**Default and why.** The scaffold suggests `warn` — see the break reports
-before letting them block. init may set `block` where the repo's flow
-signals are strong.
+**Default and why.** `init` writes `warn` when it finds a UI-to-API surface,
+so you see the break reports before letting them block. When `flow.mode`
+is unset, the posture follows the file's `extends` preset (`security-only`
+warns, `full-debt` blocks); with `extends: default` or no `extends` it is
+`block`. An explicit `flow.mode` always wins.
 
 **When you would change it.** Escalate to `block` once a week of warnings
 shows no false positives. `off` only for a repo with no HTTP surface.
 
-**Tuning.** `flow.specs` adds served contracts from OpenAPI files;
+**Tuning.** `flow.specs` adds served contracts from OpenAPI files (JSON, or YAML by a `.yaml`/`.yml` extension);
 `flow.stripUrlPrefixes` normalizes gateway prefixes (the classic 3-line fix
 that closes most false "unresolved call" reports); `flow.blockThreshold`
 sets the confidence a break needs to block.
@@ -169,8 +171,9 @@ dxkit-extensions skill walks it) and list its id here.
 **What it does.** The data-model drift gate: blocks a model change that
 breaks the declared wire contract (removed field, tightened optionality).
 
-**Default and why.** `warn` first, same escalation logic as
-[flow mode](#flow-mode).
+**Default and why.** `off`: the gate is opt-in (it builds the code graph),
+and no `extends` preset turns it on. When you enable it, start at `warn`
+and escalate as for [flow mode](#flow-mode).
 
 **Tuning.** `schema.specs` points at OpenAPI / JSON Schema documents so
 unmarked DTOs (or languages without a pack extractor) participate too.
@@ -464,7 +467,12 @@ ledger + the agent envelope (model, turns, spend, outcome).
 enabled — not by dxkit, not by `configure --apply`. Enable with
 `remediate.enabled: true` + `vyuh-dxkit update`, then set the driver's
 credential secret (see the [driver table](#remediate-driver)) — a scoped
-key with a spend limit, never a personal key.
+key with a spend limit, never a personal key. Setting it back to `false`
+stops scheduled runs: the plan's matrix is empty, so a firing spawns no
+task job. `update` does not delete the installed workflow (its cron still
+fires and exits with nothing to do); delete
+`.github/workflows/dxkit-remediate.yml` to remove it. A
+`workflow_dispatch` that names a task still runs that task.
 
 **When you would change it.** The baseline grandfathers a broken floor or
 advisories the bump lane cannot version-solve, and you want a budgeted,

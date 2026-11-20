@@ -203,6 +203,28 @@ describe('deriveScheduledMatrix', () => {
     expect(m.disclosures.some((d) => d.includes('boom'))).toBe(true);
   });
 
+  it('remediate.enabled false empties the scheduled matrix on every path: open orders, degraded evidence, and no plan', () => {
+    // The installed workflow keeps its cron after the knob is turned off
+    // (update never deletes it), so the matrix is where "off" is enforced.
+    const off = config({ enabled: false });
+    const withOrders = deriveScheduledMatrix({
+      config: off,
+      plan: plan([order('a', 'dep-advisory', { tier: 'recipe' })]),
+    });
+    const degraded = deriveScheduledMatrix({
+      config: off,
+      plan: plan([]),
+      evidenceDegraded: 'no floor evidence is available',
+    });
+    const noPlan = deriveScheduledMatrix({ config: off, plan: null, planError: 'boom' });
+    for (const m of [withOrders, degraded, noPlan]) {
+      expect(m.source).toBe('disabled');
+      expect(m.run).toEqual([]);
+      expect(m.deferred).toEqual([]);
+      expect(m.disclosures.some((d) => d.includes('remediate.enabled is not true'))).toBe(true);
+    }
+  });
+
   it('an order class outside the built-in registry is DISCLOSED, never silently dropped (injection guard)', () => {
     const m = deriveScheduledMatrix({
       config: config(),

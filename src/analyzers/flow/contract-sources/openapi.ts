@@ -11,22 +11,26 @@
 
 import type { ContractSourceParse, ContractSourceReader, RawServedRoute } from './index';
 import { routesFromOpenApi } from '../spec-source';
+import { isYamlSpecPath, parseSpecDocument } from '../../spec-document';
 
 export const openapiReader: ContractSourceReader = {
   kind: 'openapi',
   displayName: 'OpenAPI document',
   sides: 'served',
   defaultSide: 'served',
-  sniff: (p) => /openapi.*\.json$|swagger.*\.json$/i.test(p),
+  sniff: (p) => /(openapi|swagger).*\.(json|ya?ml)$/i.test(p),
   parse(content, filePath): ContractSourceParse {
     let doc: Parameters<typeof routesFromOpenApi>[0];
     try {
-      doc = JSON.parse(content) as Parameters<typeof routesFromOpenApi>[0];
+      doc = parseSpecDocument(content, filePath) as Parameters<typeof routesFromOpenApi>[0];
     } catch (e) {
+      const format = isYamlSpecPath(filePath) ? 'YAML' : 'JSON';
       return {
         consumed: [],
         served: [],
-        errors: [`${filePath}: not valid JSON (${e instanceof Error ? e.message : String(e)})`],
+        errors: [
+          `${filePath}: not valid ${format} (${e instanceof Error ? e.message : String(e)})`,
+        ],
       };
     }
     if (!doc || typeof doc !== 'object' || !('paths' in doc) || !doc.paths) {
