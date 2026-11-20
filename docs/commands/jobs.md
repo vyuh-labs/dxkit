@@ -11,6 +11,7 @@ run-it-now command for anything dispatchable.
 ```bash
 vyuh-dxkit jobs           # runs against the current directory
 vyuh-dxkit jobs --json    # structured: { "jobs": [...] }
+vyuh-dxkit jobs enabled dxkit-dep-bump.yml   # prints true or false
 ```
 
 ## Options
@@ -40,6 +41,25 @@ vyuh-dxkit jobs --json    # structured: { "jobs": [...] }
 - With no dxkit workflows installed, the command points at
   `vyuh-dxkit init --with-ci` (or enabling a lane knob such as
   `depBump.enabled`).
+
+- A lane turned on by a policy switch (`depBump.enabled`, `reports.onMerge`,
+  `flow.onMergeRefresh`, `graph.refresh: "cache"`, an extension with
+  `refresh: "on-merge"`, `remediate.enabled`,
+  `newAdvisories.commentCommands`) shows `OFF` when its workflow is
+  installed but the switch is off; `--json` rows carry `enabled` and
+  `switchName`.
+
+## Off switches
+
+`update` installs a lane's workflow when its switch is turned on and never
+deletes it when the switch is turned off, so the trigger keeps firing.
+Each switched lane therefore checks its switch when it runs: the
+dep-bump, graph, reports, flow and extensions workflows call
+`vyuh-dxkit jobs enabled <workflow>` first and skip every later step on
+`false` (with a notice saying why); the remediation plan returns an empty
+matrix; a comment command is refused. To stop the trigger as well, delete
+the workflow file. An older dxkit that cannot answer `jobs enabled` makes
+the workflow run the lane as before, with a warning.
 
 Schedules themselves live in `.dxkit/policy.json`. Change one with
 `vyuh-dxkit policy set <knob> <value>` and the workflows re-render

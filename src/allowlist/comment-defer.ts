@@ -27,6 +27,7 @@
  */
 
 import { executeDefer, type DeferResult } from './defer-core';
+import { laneEnabled } from '../jobs-cli';
 import { loadAllowlist } from './file';
 
 /** One parsed `/dxkit defer` command. */
@@ -197,6 +198,20 @@ export function runCommentDeferCore(
       action: 'refused',
       replyMarkdown: reply([
         '**dxkit:** command refused — no commenter identity was provided to the runner.',
+      ]),
+    };
+  }
+
+  // The lane's off switch, read at run time like every switched lane: the
+  // installed workflow keeps triggering after `newAdvisories.commentCommands`
+  // is turned off (update never deletes it).
+  if (!laneEnabled(cwd, 'dxkit-comment-defer.yml')) {
+    return {
+      ...base,
+      action: 'refused',
+      replyMarkdown: reply([
+        '**dxkit:** comment commands are switched off for this repository ' +
+          '(`.dxkit/policy.json:newAdvisories.commentCommands`).',
       ]),
     };
   }

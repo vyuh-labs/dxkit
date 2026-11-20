@@ -19,6 +19,7 @@ import { execFileSync } from 'child_process';
 
 import * as logger from './logger';
 import { dxkitCli } from './self-invocation';
+import { laneSwitchFor } from './managed-artifacts-detect';
 
 export interface JobRow {
   readonly workflow: string;
@@ -35,6 +36,12 @@ export interface JobRow {
   readonly lastRun?: { readonly conclusion: string; readonly updatedAt: string };
   /** True when the workflow can be started from the Actions tab / `gh`. */
   readonly dispatchable: boolean;
+  /** For a lane governed by a policy switch: whether that switch is on now.
+   *  An installed lane whose switch is off runs nothing when it fires.
+   *  Absent for workflows no switch governs. */
+  readonly enabled?: boolean;
+  /** The policy setting that turns the lane on (present with `enabled`). */
+  readonly switchName?: string;
 }
 
 export interface JobsOptions {
@@ -165,6 +172,7 @@ export function collectJobs(cwd: string, opts: JobsOptions = {}): JobRow[] {
       .filter((d): d is Date => d !== null)
       .sort((a, b) => a.getTime() - b.getTime());
     const lastRun = probe(file);
+    const lane = laneSwitchFor(file);
     return {
       workflow: file,
       name: parsed.name ?? file,
@@ -173,8 +181,30 @@ export function collectJobs(cwd: string, opts: JobsOptions = {}): JobRow[] {
       ...(nexts[0] ? { nextRunUtc: fmtUtc(nexts[0]) } : {}),
       ...(lastRun ? { lastRun } : {}),
       dispatchable: parsed.dispatchable,
+      ...(lane ? { enabled: lane.enabled(cwd), switchName: lane.switchName } : {}),
     };
   });
+}
+
+/**
+ * `vyuh-dxkit jobs enabled <workflow>`: prints `true` when the workflow runs
+ * its lane (its policy switch is on, or no switch governs it) and `false`
+ * when the switch is off. Every switched lane's managed workflow asks this
+ * before doing anything, because `update` never deletes an installed
+ * workflow when its switch is turned off.
+ */
+export function laneEnabled(cwd: string, workflowFile: string): boolean {
+  const lane = laneSwitchFor(workflowFile);
+  return lane ? lane.enabled(cwd) : true;
+}
+
+export function runJobsEnabled(cwd: string, workflowFile: string | undefined): void {
+  if (!workflowFile) {
+    logger.fail('Usage: vyuh-dxkit jobs enabled <workflow file, e.g. dxkit-dep-bump.yml>');
+    process.exitCode = 2;
+    return;
+  }
+  process.stdout.write(`${laneEnabled(cwd, workflowFile)}\n`);
 }
 
 export function runJobs(cwd: string, opts: JobsOptions = {}): void {
@@ -198,7 +228,8 @@ export function runJobs(cwd: string, opts: JobsOptions = {}): void {
     const trigger = r.triggers.join(', ') || '—';
     const next = r.nextRunUtc ? `next ${r.nextRunUtc}` : '';
     const last = r.lastRun ? `last ${r.lastRun.conclusion}` : '';
-    const bits = [trigger, next, last].filter(Boolean).join('  ·  ');
+    const off = r.enabled === false ? `OFF (runs nothing; switch: ${r.switchName ?? '?'})` : '';
+    const bits = [off, trigger, next, last].filter(Boolean).join('  ·  ');
     logger.info(`  ${r.workflow.padEnd(w)}${bits}`);
   }
   const dispatchable = rows.filter((r) => r.dispatchable);

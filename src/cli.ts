@@ -1098,6 +1098,13 @@ export async function run(argv: string[]): Promise<void> {
     }
 
     case 'jobs': {
+      // `jobs enabled <workflow>`: the run-time off-switch query the managed
+      // lane workflows call first (prints true/false).
+      if (positionals[1] === 'enabled') {
+        const { runJobsEnabled } = await import('./jobs-cli');
+        runJobsEnabled(cwd, positionals[2]);
+        break;
+      }
       const { runJobs } = await import('./jobs-cli');
       runJobs(cwd, { json: !!values.json });
       break;
