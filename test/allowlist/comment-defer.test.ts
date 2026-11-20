@@ -97,10 +97,38 @@ function mkRepo(): string {
   execFileSync('git', ['add', '-A'], { cwd: dir });
   execFileSync('git', ['commit', '-qm', 'init'], { cwd: dir });
   mkdirSync(path.join(dir, '.dxkit'), { recursive: true });
+  // The comment-command lane is installed only with its switch on; the
+  // command reads it at run time.
+  writeFileSync(
+    path.join(dir, '.dxkit', 'policy.json'),
+    JSON.stringify({ newAdvisories: { commentCommands: true } }),
+  );
   return dir;
 }
 
 describe('runCommentDeferCore — end to end over the one defer core', () => {
+  it('refuses when newAdvisories.commentCommands is switched off, writing nothing', () => {
+    // update never deletes the installed workflow when the switch is turned
+    // off, so the comment still triggers it; the command reads the switch.
+    const dir = mkRepo();
+    try {
+      writeFileSync(
+        path.join(dir, '.dxkit', 'policy.json'),
+        JSON.stringify({ newAdvisories: { commentCommands: false } }),
+      );
+      const payload = runCommentDeferCore(dir, {
+        DXKIT_COMMENT_BODY: `/dxkit defer ${FP_A} --expires=+7d --reason="x"`,
+        DXKIT_COMMENT_AUTHOR: 'reviewer-login',
+        DXKIT_COMMENT_PR: '42',
+      });
+      expect(payload.action).toBe('refused');
+      expect(payload.replyMarkdown).toContain('newAdvisories.commentCommands');
+      expect(existsSync(path.join(dir, '.dxkit', 'allowlist.json'))).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('writes deferred entries attributed to the commenter and returns a postable reply', () => {
     const dir = mkRepo();
     try {

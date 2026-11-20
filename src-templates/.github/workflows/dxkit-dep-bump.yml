@@ -56,7 +56,31 @@ __DXKIT_CI_RUNTIME_SETUP__
         run: |
           __DXKIT_INSTALL_DEPS__
 
+      # The lane's off switch, read at run time: `update` never deletes an
+      # installed workflow when its policy switch is turned off, so the
+      # trigger keeps firing. With the switch off every later step skips and
+      # the run says why. `jobs enabled` reads the same switch install used.
+      - name: Check the lane is switched on
+        id: lane
+        run: |
+          if [ -x ./node_modules/.bin/vyuh-dxkit ]; then DXKIT=./node_modules/.bin/vyuh-dxkit; else DXKIT=vyuh-dxkit; fi
+          ON=$("$DXKIT" jobs enabled dxkit-dep-bump.yml 2>/dev/null | tail -n 1 || true)
+          case "$ON" in
+            true) echo "on=true" >> "$GITHUB_OUTPUT" ;;
+            false)
+              echo "on=false" >> "$GITHUB_OUTPUT"
+              echo "::notice title=dxkit lane off::dxkit-dep-bump.yml is installed but its policy switch is off, so this run does nothing. Turn it on in .dxkit/policy.json, or delete this workflow file to stop the trigger."
+              ;;
+            *)
+              # An older dxkit than this workflow cannot answer: run the lane
+              # as before rather than read silence as "off".
+              echo "on=true" >> "$GITHUB_OUTPUT"
+              echo "::warning title=dxkit lane switch not checked::the installed dxkit does not answer 'jobs enabled' (older than this workflow), so the lane runs as before. Run vyuh-dxkit update."
+              ;;
+          esac
+
       - name: Install scanner tools
+        if: steps.lane.outputs.on == 'true'
         run: |
           if [ -x ./node_modules/.bin/vyuh-dxkit ]; then
             ./node_modules/.bin/vyuh-dxkit tools install --yes
@@ -72,6 +96,7 @@ __DXKIT_CI_RUNTIME_SETUP__
       # never in this workflow. --allow-major is appended only when the
       # committed policy opts in.
       - name: Run the bump lane
+        if: steps.lane.outputs.on == 'true'
         env:
           GH_TOKEN: __DXKIT_LANE_TOKEN__
         run: |

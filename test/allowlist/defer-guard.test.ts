@@ -211,7 +211,7 @@ describe('both front-ends carry the advisories (one core, one set of facts)', ()
   });
 
   it('the PR reply carries them into the thread the reviewers read', () => {
-    const d = mkRepo();
+    const d = mkRepo({ newAdvisories: { commentCommands: true } });
     seedVerdict(d, [DEP_A, DEP_B]);
     const payload = runCommentDeferCore(
       d,
