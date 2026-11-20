@@ -1,3 +1,5 @@
+import { REPO_LOCAL_GIT_ENV } from './git-env';
+
 /**
  * Suite-wide environment defaults.
  *
@@ -11,3 +13,14 @@
  * explicit option always beats the env).
  */
 process.env.DXKIT_BASELINE_NO_FLOOR = '1';
+
+/**
+ * Inherited repository-local git variables (GIT_DIR, GIT_WORK_TREE,
+ * GIT_INDEX_FILE, ...): cleared for every worker. The pre-push hook runs this
+ * suite, and git exports GIT_DIR to hooks (an absolute path from a linked
+ * worktree). Every fixture test, and every code path under test, that runs
+ * git in a temp directory would then operate on the pushing repository:
+ * commits on its branch, its config rewritten. Cleared here once, so no
+ * test or helper has to remember. Pinned by `test/git-env-isolation.test.ts`.
+ */
+for (const key of REPO_LOCAL_GIT_ENV) delete process.env[key];
