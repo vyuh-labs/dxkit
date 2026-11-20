@@ -33,6 +33,29 @@ describe('readFlowConfig', () => {
     }
   });
 
+  it('an unset flow.mode takes the extends preset posture; an explicit mode always wins', () => {
+    // security-only warns on flow in the loop Stop-gate (presets.ts); a policy
+    // FILE extending it used to keep the compiled block default in the PR gate.
+    const cases: ReadonlyArray<[unknown, string]> = [
+      [{ extends: 'security-only' }, 'warn'],
+      [{ extends: 'security-only', flow: { specs: ['a.json'] } }, 'warn'],
+      [{ extends: 'full-debt' }, 'block'],
+      [{ extends: 'default' }, 'block'],
+      [{}, 'block'],
+      [{ extends: 'security-only', flow: { mode: 'block' } }, 'block'],
+      [{ extends: 'full-debt', flow: { mode: 'off' } }, 'off'],
+      [{ extends: 'security-only', flow: { mode: 'nonsense' } }, 'warn'],
+    ];
+    for (const [policy, expected] of cases) {
+      const dir = repoWith(policy);
+      try {
+        expect({ policy, mode: readFlowConfig(dir).mode }).toEqual({ policy, mode: expected });
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    }
+  });
+
   it('normalizes the refresh knobs: onMergeRefresh strict-true, refreshMode pr unless push', () => {
     for (const [raw, expected] of [
       [

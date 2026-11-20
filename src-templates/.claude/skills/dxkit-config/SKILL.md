@@ -131,7 +131,7 @@ This key is read **only by the Stop-gate** (`vyuh-dxkit hook stop-gate`) — you
 The UI→API integration gate has its own posture under `flow.mode` in the same file:
 
 ```jsonc
-{ "flow": { "mode": "warn" } }  // warn (default) | block | off
+{ "flow": { "mode": "warn" } }  // warn | block | off. Unset: the `extends` preset's posture (security-only warns, full-debt blocks), else block
 ```
 
 - `warn` — surface net-new broken integrations as warnings, never fail a build.
