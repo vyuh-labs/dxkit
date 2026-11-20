@@ -104,10 +104,18 @@ export async function runFlowPublish(opts: FlowViewOptions & { land?: string }):
     ...(commitSha !== undefined ? { commitSha } : {}),
   });
 
+  // A participant that could not be read holds the publish back (see
+  // publish.ts): nothing was written, so there is nothing to land, and the
+  // non-zero exit makes a scheduled refresh show red instead of quietly
+  // keeping an old snapshot forever.
+  if (!result.written) process.exitCode = 1;
+
   if (opts.json) {
     emitJson({
       servedPath: result.servedPath,
       consumedPath: result.consumedPath,
+      written: result.written,
+      failedParticipants: result.failedParticipants,
       totalServedRoutes: result.totalServedRoutes,
       consumedBindings: result.consumedBindings,
       contentHash: result.contentHash,
@@ -116,21 +124,35 @@ export async function runFlowPublish(opts: FlowViewOptions & { land?: string }):
     return;
   }
 
+  if (!result.written) {
+    logger.fail(
+      `Publish held back: ${result.failedParticipants.length} participant(s) could not be read, ` +
+        'so their routes are unknown. Nothing was written; the committed snapshots are unchanged.',
+    );
+    for (const p of result.failedParticipants) {
+      const why =
+        p.source === 'unreachable'
+          ? 'the remote fetch failed (check the repo URL, the ref, and the git credentials this machine or runner has)'
+          : 'no checkout at its path and no reachable repo URL';
+      logger.info(`  • ${p.name}: ${why}`);
+    }
+    logger.info(
+      'Publishing without them would record every route they serve as removed. Fix access, ' +
+        'or remove the participant from .dxkit/workspace.json if it has left the system.',
+    );
+    return;
+  }
+
   logger.success(
     `Published mesh contract: ${result.totalServedRoutes} served route(s) across ${result.participants.length} participant(s) + this repo (hash ${result.contentHash}).`,
   );
   for (const p of result.participants) {
-    let detail: string;
-    if (p.source === 'missing') detail = 'path not found — skipped';
-    else if (p.source === 'unreachable') detail = 'remote fetch failed — skipped';
-    else {
-      // Provenance: the commit each participant's routes were gathered at is
-      // recorded on the snapshot, so doctor can later tell when the provider
-      // has moved past this publish.
-      const at = p.sha ? ` @ ${p.sha.slice(0, 12)}` : '';
-      detail = `${p.routes} route(s) (${p.source}${at})`;
-    }
-    logger.info(`  • ${p.name}: ${detail}`);
+    // Provenance: the commit each participant's routes were gathered at is
+    // recorded on the snapshot, so doctor can later tell when the provider
+    // has moved past this publish. (A missing or unreachable participant
+    // never reaches here: it holds the publish back above.)
+    const at = p.sha ? ` @ ${p.sha.slice(0, 12)}` : '';
+    logger.info(`  • ${p.name}: ${p.routes} route(s) (${p.source}${at})`);
   }
   logger.info(`  ${path.relative(opts.cwd, result.servedPath)}`);
   logger.info(`  ${path.relative(opts.cwd, result.consumedPath)}`);
