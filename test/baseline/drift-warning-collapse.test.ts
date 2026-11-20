@@ -67,6 +67,7 @@ import { formatToolingDriftSummary } from '../../src/baseline/check-renderers';
 
 function toolingPair(kind: string, file: string, line: number, detail?: string): ClassifiedPair {
   return {
+    pair: { currentId: `fp-${file}-${line}`, status: 'added', confidence: 1, reasons: [] },
     kind,
     file,
     line,
@@ -118,5 +119,44 @@ describe('formatToolingDriftSummary (F-6)', () => {
   it('singular form for one finding', () => {
     const out = formatToolingDriftSummary([toolingPair('secret', 'x.env', 3)], '  ');
     expect(out[0]).toContain('1 secret finding demoted');
+  });
+});
+
+/**
+ * The PR comment LISTS tooling-drift findings, bounded per kind. It used to
+ * carry only "N custom-check" with no rows, so a reviewer could not see what
+ * a newly added check reported (its findings demote to tooling drift until
+ * the first refresh re-captures its recall) until after that refresh.
+ */
+
+import {
+  markdownToolingDriftRows,
+  MAX_TOOLING_DRIFT_ROWS_PER_KIND,
+} from '../../src/baseline/check-renderers';
+
+describe('markdownToolingDriftRows (PR comment)', () => {
+  it('lists each finding of a newly added check with its location', () => {
+    const pairs = [
+      toolingPair('custom-check', 'src/routes.ts', 12),
+      toolingPair('custom-check', 'src/client.ts', 40),
+    ];
+    const md = markdownToolingDriftRows(pairs).join('\n');
+    expect(md).toContain('| Kind | Severity | Location | Fingerprint |');
+    expect(md).toContain('src/routes.ts:12');
+    expect(md).toContain('src/client.ts:40');
+    expect(md).not.toContain('Not shown');
+  });
+
+  it('caps rows per kind so a brownfield demotion cannot flood the comment, naming what is hidden', () => {
+    const many = Array.from({ length: 500 }, (_, i) => toolingPair('dep-vuln', `pkg${i}`, 0));
+    const fresh = [toolingPair('custom-check', 'src/new.ts', 3)];
+    const lines = markdownToolingDriftRows([...many, ...fresh]);
+    const rows = lines.filter((l) => l.startsWith('| ') && !l.startsWith('| Kind'));
+    expect(rows).toHaveLength(MAX_TOOLING_DRIFT_ROWS_PER_KIND + 1);
+    // The small kind is still shown even though the big one sorts first.
+    expect(lines.join('\n')).toContain('src/new.ts:3');
+    expect(lines.join('\n')).toContain(
+      `Not shown: ${500 - MAX_TOOLING_DRIFT_ROWS_PER_KIND} dep-vuln`,
+    );
   });
 });
